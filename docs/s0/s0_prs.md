@@ -27,18 +27,21 @@ establish the rust workspace, shared core crate, and basic build/test plumbing.
   * `agents-core`
 * shared core types:
 
-  * `RunId` (ULID)
-  * `RunState` enum
-  * `RunSummary`
-  * `ErrorEnvelope`
-* shared error codes enum
+  * `RunId` (ULID, with optional `parse`)
+  * `RunState` enum (explicit serde renames per variant or `rename_all = "snake_case"`)
+  * `RunnerKind` enum (explicit serde renames: `claude_code`, `codex`)
+  * `RunSummary` (no `schema_version` field; `#[serde(rename_all = "snake_case")]`)
+  * `ErrorEnvelope` (error codes serialize as EXACT variant names; `#[serde(rename_all = "snake_case")]`)
+* shared error codes enum (`ErrorCode`; no `rename_all`, exact variant names)
 * config loading (toml + precedence: `--config` > `$AGENTS_CONFIG` > platform default via `directories`)
-* config schema includes runner mapping:
+* config schema with explicit struct fields and `#[serde(deny_unknown_fields)]`:
 
-  * `runners.<id>.exec`
-  * `runners.<id>.default_args[]`
+  * `runners.claude_code: Option<RunnerConfig>`
+  * `runners.codex: Option<RunnerConfig>`
+  * `RunnerConfig { exec, default_args }` with `#[serde(default)]` on `default_args`
+* config loader: `load_config(explicit_path: Option<&Path>) -> Result<Config, ConfigError>`
 * optional `$AGENTS_SOCKET` override for daemon socket path
-* shared `schema_version` constant for json envelopes
+* shared `SCHEMA_VERSION: u32 = 1` constant for json envelopes
 * data root constants:
 
   * data root: `~/.agents/`
@@ -60,8 +63,10 @@ establish the rust workspace, shared core crate, and basic build/test plumbing.
 * `cargo build` succeeds
 * `cargo test` runs (even if minimal)
 * config precedence works; runner exec/default_args parse (no binary existence requirement)
+* config with typo like `[runners.claude_cod]` fails at parse time due to `deny_unknown_fields`
 * data root/db path constants exposed
 * `RunId::new()` produces prefixed ULIDs
+* `agents --help` and `agents --version` work (clap stub)
 
 ---
 
