@@ -340,13 +340,14 @@ json error output:
 ```json
 {
   "ok": false,
+  "schema_version": 1,
   "error": {
     "code": "E_BAD_REF",
     "message": "base_ref 'foo' does not resolve",
     "details": { "base_ref": "foo" }
   }
 }
-````
+```
 
 non-json (human) output may be concise but must include error code.
 
@@ -359,7 +360,8 @@ when `--json` is provided, the command prints exactly one json object.
 ```json
 {
   "ok": true,
-  "run": {
+  "schema_version": 1,
+  "data": {
     "id": "r_01H...",
     "repo": "/abs/path",
     "base_ref": "main",
@@ -379,12 +381,13 @@ returns updated run summary with new state.
 
 ### `agents rm --json`
 
-returns `{ok:true, run:{id, removed_at, ...}}`; `state` remains the terminal state it held pre-removal. example:
+returns `{ok:true, schema_version:1, data:{id, removed_at, ...}}`; `state` remains the terminal state it held pre-removal. example:
 
 ```json
 {
   "ok": true,
-  "run": {
+  "schema_version": 1,
+  "data": {
     "id": "r_01H...",
     "state": "completed",
     "removed": true,
