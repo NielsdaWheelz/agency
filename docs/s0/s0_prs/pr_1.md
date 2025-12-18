@@ -1,428 +1,308 @@
-# PR-00 — spec
-
-**repo bootstrap + core scaffolding**
-
----
+# pr-01 spec — daemon + ipc + cli autospawn (s0 foundation)
 
 ## goal
 
-establish the rust workspace, shared core crate, config + path contracts, and shared types that all later PRs depend on.
+introduce `agentsd` (daemon) and a length-prefixed unix-socket rpc channel so `agents` can reliably talk to a single local daemon instance, auto-spawning it when needed.
 
-this PR defines **names, shapes, paths, and boundaries**. it must not implement behavior.
+this pr adds **infrastructure only**. it must not implement run/worktree/tmux/sqlite logic beyond minimal boot wiring.
 
----
+## hard constraints
 
-## scope (in)
+- do not modify `docs/agents.md` or `docs/slices.md`
+- do not introduce any s1/s2 commands (`ls/show/diff/merge`)
+- no user-facing `agents ping` command; ping is **internal only**
+- unix domain socket only (no tcp)
+- no pidfiles/lockfiles; single-daemon exclusivity is enforced by socket bind
+- cli never opens sqlite (daemon owns db in later prs)
+- all user-facing commands (none new here) must still support `--json` (plumbing only)
 
-### workspace + crates
+## crates and boundaries
 
-create a rust workspace with exactly these members:
+- `agents-core`
+  - defines ipc protocol types + framing
+  - defines socket path resolution helpers
+  - defines shared error envelope + codes (extend as needed)
 
-```
-.
-├─ Cargo.toml              # workspace
-└─ crates/
-   ├─ agents-core/         # shared library
-   │  └─ src/
-   │     ├─ lib.rs
-   │     ├─ ids.rs
-   │     ├─ types.rs
-   │     ├─ errors.rs
-   │     ├─ config.rs
-   │     └─ paths.rs
-   ├─ agents-cli/          # binary: agents
-   │  └─ src/main.rs
-   └─ agentsd/             # binary: agentsd
-      └─ src/main.rs
-```
+- `agentsd`
+  - binds unix socket
+  - accepts connections and serves rpc requests
+  - logs to file
 
-no additional crates, binaries, or scripts.
+- `agents-cli`
+  - client for rpc
+  - auto-spawns daemon if connect fails
+  - uses internal ping to verify daemon ready
 
-rust edition: **2021**
+## socket path rules
 
----
+- default socket path (mac+linux): `~/.agents/agents.sock`
+- override: `$AGENTS_SOCKET` (absolute path required; must pass `Path::is_absolute()`)
+  - no tilde expansion; value used verbatim
+- daemon creates parent directories as needed
 
-## shared core contracts (`agents-core`)
+stale socket handling:
+- if connect succeeds → ping
+- else:
+  - if socket path doesn't exist → spawn daemon
+  - else if socket path exists but connect fails → attempt to remove socket file (best-effort), then spawn daemon
 
-### serde policy (applies to all types)
+## daemon spawn rules (cli side)
 
-* **struct fields:** use `#[serde(rename_all = "snake_case")]` on structs
-* **protocol enums:** use explicit `#[serde(rename = "...")]` on each variant - never rely on `rename_all` for externally visible enums
-* **error codes:** serialize as EXACT variant name (no `rename_all`)
+- spawn command: `agentsd --socket <socket_path> --log-file <log_path>`
+- default log path: `~/.agents/logs/agentsd.log`
+- ensure log file parent directories exist before spawn
+- spawn via `Command`:
+  - set stdin to null
+  - set stdout/stderr to the log file (append)
+  - do not wait
+  - do not set process group / daemonize
+  - return immediately
+- after spawn: retry connect+ping with backoff:
+  - up to 20 attempts
+  - sleep 50ms between attempts
+  - total ~1s budget
+- if still failing: return `E_DAEMON_START_FAILED`
 
-this prevents accidental drift when variants are added.
+## rpc protocol (length-prefixed json)
 
----
+transport: unix stream socket.
 
-### run id
+message framing (both directions):
+- 4-byte unsigned length prefix, little-endian (`u32 LE`)
+- followed by exactly `len` bytes of utf-8 json payload
+- reject frames larger than `MAX_FRAME_LEN = 10_485_760` bytes (10 MB) with `E_IPC_PROTOCOL_ERROR`
 
-```rust
-pub struct RunId(String);
-```
+payload encoding:
+- requests are JSON via `serde_json`
+- replies are JSON via `serde_json`
 
-* generated via ULID
-* string form: `r_<ULID>`
-* implements:
+### reply envelope (required)
 
-  * `new() -> RunId`
-  * `as_str(&self) -> &str`
-  * `parse(s: &str) -> Result<RunId, ParseError>` (optional but recommended)
-* serde serialize/deserialize as string
+all replies (success and error) use the same top-level envelope:
 
----
-
-### run state
-
-```rust
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunState {
-    Queued,
-    Running,
-    Completed,
-    Failed,
-    Killed,
-}
-```
-
-**serde:** `rename_all = "snake_case"` is acceptable here since all variants happen to work correctly, but explicit renames per variant is also fine.
-
-no other states.
-
----
-
-### runner kind
-
-```rust
-#[derive(Serialize, Deserialize)]
-pub enum RunnerKind {
-    #[serde(rename = "claude_code")]
-    ClaudeCode,
-    #[serde(rename = "codex")]
-    Codex,
-}
-```
-
-**serde:** explicit `rename` on each variant. never rely on `rename_all` for protocol enums.
-
----
-
-### run summary (shared json shape)
-
-```rust
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct RunSummary {
-    pub id: RunId,
-    pub state: RunState,
-    pub name: Option<String>,
-}
-```
-
-later PRs may extend this, but fields above are required.
-
-**note:** `schema_version` lives only in the top-level json envelope, not in domain types.
-
----
-
-### error model
-
-#### error codes enum
-
-```rust
-pub enum ErrorCode {
-    E_NOT_GIT_REPO,
-    E_BAD_REF,
-    E_INVALID_PATH,
-    E_INPUT_NOT_FILE,
-    E_TMUX_NOT_FOUND,
-    E_TMUX_START_FAILED,
-    E_WORKTREE_CREATE_FAILED,
-    E_RUNNER_NOT_CONFIGURED,
-    E_RUN_NOT_FOUND,
-    E_INVALID_STATE,
-    E_CLEANUP_FAILED,
-    E_BRANCH_EXISTS,
-    E_DB_ERROR,
-    E_PERMISSION_DENIED,
-}
-```
-
-**serde:** serialize as EXACT variant name (no `rename_all`). example: `"E_NOT_GIT_REPO"`
-
-#### error envelope
-
-```rust
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ErrorEnvelope {
-    pub code: ErrorCode,
-    pub message: String,
-    pub details: Option<serde_json::Value>,
-}
-```
-
----
-
-## json output convention (frozen)
-
-define a constant:
-
-```rust
-pub const SCHEMA_VERSION: u32 = 1;
-```
-
-all `--json` outputs must follow:
-
+success:
 ```json
 {
+  "protocol_version": 1,
   "ok": true,
-  "schema_version": 1,
-  "data": { ... }
+  "response": { "type": "Pong", "daemon_pid": 123, "build_version": "0.1.0" }
 }
 ```
 
-or on error:
-
+error:
 ```json
 {
+  "protocol_version": 1,
   "ok": false,
-  "schema_version": 1,
-  "error": {
-    "code": "E_BAD_REF",
-    "message": "...",
-    "details": { ... }
-  }
+  "error": { "code": "E_IPC_PROTOCOL_ERROR", "message": "...", "details": {} }
 }
 ```
 
-no additional top-level keys.
+- `response` is a tagged enum (serde `#[serde(tag = "type")]`)
+- `error` uses the shared error envelope type from agents-core
+- `build_version` comes from `env!("CARGO_PKG_VERSION")`
 
----
+### request types
 
-## config contract (`config.toml`)
+`Request` (externally stable for v1):
+- `Ping {}`
 
-format: **TOML**
+## new/updated error codes (agents-core)
 
-### default locations
+add these codes to the shared error enum:
 
-* mac: `~/Library/Application Support/agents/config.toml`
-* linux: `~/.config/agents/config.toml`
+* `E_SOCKET_PATH_INVALID`
+* `E_DAEMON_CONNECT_FAILED`
+* `E_DAEMON_START_FAILED`
+* `E_IPC_PROTOCOL_ERROR`
 
-precedence:
+## cli behavior changes
 
-1. `--config <path>`
-2. `$AGENTS_CONFIG`
-3. platform default
+add a shared internal helper in `agents-cli`:
 
-### env override
+* `ensure_daemon() -> Client`
 
-* `$AGENTS_SOCKET` overrides daemon socket path
+  * resolve socket path
+  * try connect + ping
+  * on failure, spawn daemon and retry
+  * returns a connected client
 
-### schema
+no new public subcommands required in this pr.
 
-```toml
-[daemon]
-socket_path = "~/.agents/agents.sock"
+## daemon behavior
 
-[runners.claude_code]
-exec = "/absolute/path/to/claude-code"
-default_args = ["--some-flag"]
+* `agentsd` parses flags:
 
-[runners.codex]
-exec = "/absolute/path/to/codex"
-default_args = []
-```
+  * `--socket <path>` (required)
+  * `--log-file <path>` (required)
+* daemon binds the socket; if bind fails because the socket is already in use:
 
-rust struct (config.rs):
+  * exit with non-zero status
+* accept loop:
 
-```rust
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Config {
-    pub daemon: DaemonConfig,
-    pub runners: RunnersConfig,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DaemonConfig {
-    pub socket_path: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RunnersConfig {
-    pub claude_code: Option<RunnerConfig>,
-    pub codex: Option<RunnerConfig>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RunnerConfig {
-    pub exec: String,
-    #[serde(default)]
-    pub default_args: Vec<String>,
-}
-```
-
-config loader signature:
-
-```rust
-pub fn load_config(explicit_path: Option<&Path>) -> Result<Config, ConfigError>
-```
-
-rules:
-
-* `deny_unknown_fields` on all config structs prevents typos and unknown keys
-* runner fields are `Option<RunnerConfig>` to allow partial config
-* `default_args` has `#[serde(default)]` so it can be omitted
-* `~` must be expanded in `socket_path` and runner `exec` paths
-* missing config file is allowed (return error or default)
-* typo like `[runners.claude_cod]` will fail at parse time due to `deny_unknown_fields`
-
----
-
-## filesystem path contracts (`paths.rs`)
-
-data root (fixed in v1):
-
-```
-~/.agents
-```
-
-helpers to expose:
-
-```rust
-fn data_root() -> PathBuf
-fn db_path() -> PathBuf            // ~/.agents/agents.db
-fn runs_root() -> PathBuf          // ~/.agents/runs
-fn worktrees_root() -> PathBuf     // ~/.agents/worktrees
-fn locks_root() -> PathBuf         // ~/.agents/locks
-fn default_socket_path() -> PathBuf // ~/.agents/agents.sock
-```
-
-no IO side effects in these helpers.
-
----
+  * spawn a tokio task per connection
+  * each task: read exactly one framed request, write one framed response, then close
+  * daemon reads exactly one request per connection then closes, even if client keeps open
+  * client should open new connection per call
 
 ## logging
 
-* use `tracing`
-* subscriber via `tracing_subscriber`
-* log level controlled by `RUST_LOG`
-* no `println!` outside CLI output layer
+* use `tracing` + `tracing_subscriber`
+* file appender (rolling not needed)
+* log format: compact
+* daemon logs:
 
----
+  * startup (socket path, pid)
+  * each request handled (run pid, request type, ok/error)
+  * shutdown
+* log file is append-only
 
-## dependencies (pin majors)
+## tests
 
-agents-core:
+### unit tests (agents-core)
 
-* serde = "1"
-* serde_json = "1"
-* toml = "0.8"
-* ulid = "1"
-* thiserror = "1"
-* directories = "5"
-* tracing = "0.1"
+* socket path resolution:
 
-agents-cli / agentsd:
+  * default path when `$AGENTS_SOCKET` unset
+  * env override requires absolute path; relative path errors with `E_SOCKET_PATH_INVALID`
+* framing encode/decode roundtrip:
 
-* clap = "4" (derive)
-* tracing = "0.1"
-* tracing-subscriber = "0.3"
-* agents-core (path dep)
+  * given request object -> bytes -> decode -> same object
+  * invalid length prefix / truncated payload -> error
 
----
+### integration test (gated, but should run on mac+linux CI)
 
-## explicit non-goals (forbid)
-
-* no sqlite
-* no tmux
-* no git
-* no daemon ipc
-* no background tasks
-* no run logic
-* no migrations
-* no network code
-
----
+* spawn `agentsd` as child process using a temp socket path under a temp dir
+* connect with client and send `Ping`
+* assert reply envelope: `protocol_version == 1`, `ok == true`, `response.daemon_pid > 0`
+* cleanup:
+  * terminate child
+  * wait with timeout
+  * if not dead, kill
+  * delete temp dir
 
 ## acceptance criteria
 
-* `cargo build` succeeds
-* `cargo test` passes
-* `RunId::new()` produces `r_`-prefixed ULID
-* config precedence works (unit test)
-* path helpers return correct suffixes
-* `agents --help` and `agents --version` work (clap stub)
-* no extra crates or binaries
+this pr is complete when:
+
+1. `agentsd` starts and binds the socket at the resolved path
+2. `agents-cli` can connect and successfully ping via length-prefixed rpc
+3. `agents-cli` auto-spawns `agentsd` when daemon is not running and then pings successfully
+4. concurrent `agents` invocations do not create multiple daemons (socket bind exclusivity)
+5. tests pass (unit + integration)
 
 ---
 
-# PR-00 — prompt pack (for claude-code)
+# claude-code prompt pack — pr-01
 
-```
-you are implementing PR-00 of the agents project.
+you are implementing PR-01 per the spec in docs/prs/pr-01-daemon-ipc.md.
 
-this PR is foundational. do not invent behavior. do not add features.
-follow the spec exactly.
-
-## context
-
-this project is a terminal-native orchestrator for AI coding runs.
-PR-00 establishes the rust workspace, shared contracts, and config/path primitives.
-
-future PRs depend on names, shapes, and boundaries you define here.
+## repository context
+- rust workspace with crates: agents-core, agents-cli, agentsd (already created in pr-00)
+- shared types live in agents-core
+- cli must auto-spawn daemon
+- rpc framing is length-prefixed json over unix domain sockets
 
 ## hard rules
+- do not modify docs/agents.md or docs/slices.md
+- do not add any s1/s2 commands or functionality
+- no user-facing `agents ping` command
+- no pidfile/lockfile; use socket bind exclusivity
+- unix socket only; no tcp listeners
+- keep behavior minimal and deterministic
 
-- implement only what is explicitly in scope
-- do not add sqlite, tmux, git, ipc, or run logic
-- do not add commands or flags beyond scaffolding
-- do not change public names once introduced
-- use rust edition 2021
-- use snake_case for all serde json keys
-- every `--json` envelope must include `schema_version: 1`
-- no println! outside cli layer
+## implementation constraints
+
+### rust module structure
+
+lock the following module layout:
+
+**agents-core/src/ipc/mod.rs:**
+- `pub enum Request { Ping }`
+- `pub enum Response` (tagged with `#[serde(tag = "type")]`):
+  - `Pong { daemon_pid: u32, build_version: String }`
+- `pub struct RpcEnvelope<T> { protocol_version: u32, ok: bool, response: Option<T>, error: Option<ErrorEnvelope> }`
+- `pub const MAX_FRAME_LEN: usize = 10_485_760;` (10 MB)
+- `pub async fn read_frame(stream: &mut UnixStream) -> Result<Vec<u8>, AgentError>`
+- `pub async fn write_frame(stream: &mut UnixStream, bytes: &[u8]) -> Result<(), AgentError>`
+
+**agents-cli/src/daemon.rs:**
+- `pub(crate) async fn ensure_daemon(cfg: &Config) -> Result<Client, AgentError>`
+
+**agentsd/src/main.rs:**
+- parse args, init logging, bind socket, loop
+
+### tokio requirement
+
+**must use tokio** in all crates:
+- `tokio::net::UnixListener/UnixStream`
+- `tokio::io::{AsyncReadExt, AsyncWriteExt}`
+- server spawns a task per connection
 
 ## tasks
+1) implement agents-core ipc:
+   - Request/Response enums per module structure above
+   - RpcEnvelope with protocol_version at top level
+   - Error envelope reuse
+   - length-prefixed framing helpers with MAX_FRAME_LEN enforcement
+   - socket path resolution:
+     - default ~/.agents/agents.sock
+     - env override $AGENTS_SOCKET (must be absolute via `Path::is_absolute()`, else E_SOCKET_PATH_INVALID)
+     - no tilde expansion; value used verbatim
 
-1. create the rust workspace and crates exactly as specified
-2. implement `agents-core` with:
-   - RunId (ULID, prefixed)
-   - RunState
-   - RunnerKind
-   - RunSummary
-   - ErrorCode + ErrorEnvelope
-   - config parsing (toml + precedence + env overrides)
-   - filesystem path helpers
-3. wire minimal `agents` and `agentsd` binaries that compile and do nothing except initialize logging
-4. add minimal unit tests for:
-   - RunId format
-   - config precedence
-   - path helper suffixes
+2) implement agentsd:
+   - flags: --socket, --log-file (required)
+   - initialize logging with tracing + tracing_subscriber (compact format, file appender)
+   - bind unix socket; exit non-zero if already bound/in use
+   - accept loop:
+     - spawn tokio task per connection
+     - read one framed Request
+     - handle Ping -> RpcEnvelope { protocol_version: 1, ok: true, response: Pong { daemon_pid, build_version } }
+     - on error -> RpcEnvelope { protocol_version: 1, ok: false, error: ErrorEnvelope {...} }
+     - write framed response then close
+     - log each request: run pid, request type, ok/error
+   - build_version from `env!("CARGO_PKG_VERSION")`
 
-## forbidden
+3) implement agents-cli client + autospawn:
+   - Client struct that can connect and ping
+   - ensure_daemon() in src/daemon.rs as `pub(crate)`:
+     - resolve socket path
+     - try connect+ping
+     - on failure:
+       - if socket path doesn't exist → spawn daemon
+       - else if socket path exists but connect fails → remove socket file (best-effort), then spawn daemon
+     - spawn `agentsd --socket <sock> --log-file <~/.agents/logs/agentsd.log>`
+       - ensure log file parent dirs exist
+       - set stdin to null
+       - set stdout/stderr to log file (append)
+       - do not wait
+       - do not set process group / daemonize
+       - return immediately
+     - retry connect+ping 20 times with 50ms sleep
+     - on failure: return E_DAEMON_START_FAILED
+   - do not add a public ping subcommand; ensure_daemon can be used by later commands
 
-- no placeholder TODO behavior
-- no mock implementations of future features
-- no extra crates, bins, or modules
-- no deviation from specified json shapes
+4) add tests:
+   - unit tests for path resolution + framing roundtrip in agents-core
+   - unit test: frames larger than MAX_FRAME_LEN rejected with E_IPC_PROTOCOL_ERROR
+   - integration test that spawns agentsd with a temp socket/log file, pings it, then:
+     - terminate child
+     - wait with timeout
+     - if not dead, kill
+     - delete temp dir
 
 ## deliverables
+- code in the three crates implementing the above
+- tests passing:
+  - cargo test -p agents-core
+  - cargo test -p agents-cli
+  - cargo test -p agentsd
+  - cargo test (workspace)
 
-- compiling workspace
-- passing tests
-- clean, minimal code
-
-stop when done. do not speculate about future PRs.
-```
-
----
-
-that’s it.
-this is tight enough that claude either passes or clearly violates spec.
-
-when you’re ready, next step is **PR-01 spec+prompt** (daemon + ipc), and that’s where things start getting interesting.
+## notes
+- **MUST** use tokio in all crates for unix sockets and async io
+- framing must be exact: 4-byte u32 little-endian length, then payload bytes
+- all replies must use RpcEnvelope with protocol_version: 1 at top level
+- build_version from `env!("CARGO_PKG_VERSION")`
+- MAX_FRAME_LEN = 10_485_760 bytes (10 MB)
+- response is a tagged enum with `type` field
