@@ -33,6 +33,7 @@ a user can:
 - start a run in a git repo
 - have it execute in an isolated worktree
 - see that it is running
+- attach to a run's live or completed runner session
 - stop or let it finish
 - cleanly remove all resources afterward
 
@@ -41,6 +42,7 @@ a user can:
 - git worktree creation and teardown
 - run id generation
 - tmux session per run
+- tmux attach/switch-client support per run
 - launching an external runner inside the worktree
 - passing a prompt and optional read-only file references to the runner
 - capturing logs
@@ -85,7 +87,7 @@ a user can:
 - list all runs
 - see each run’s state
 - inspect logs
-- select a run as the current focus
+- select a run as the current focus for subsequent commands
 - open a run’s worktree in their editor
 - view commit history produced by the runner
 
@@ -127,7 +129,7 @@ a user can:
 - review a run’s diff
 - explicitly approve it
 - merge it into the base branch
-- have the run fully cleaned up afterward
+- explicitly clean up run resources after merge
 
 **scope**
 
@@ -154,6 +156,12 @@ a user can:
 - merges are safe and explicit
 - no merged run leaves behind dangling resources
 - failed merges are visible and recoverable
+
+---
+
+## milestone: v2 — planning and coordination (placeholder)
+
+details to be defined after v1 stabilization.
 
 ---
 
