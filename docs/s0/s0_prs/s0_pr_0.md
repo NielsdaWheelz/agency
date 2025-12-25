@@ -22,7 +22,7 @@ create a rust workspace with exactly these members:
 .
 ├─ Cargo.toml              # workspace
 └─ crates/
-   ├─ agents-core/         # shared library
+   ├─ agency-core/         # shared library
    │  └─ src/
    │     ├─ lib.rs
    │     ├─ ids.rs
@@ -30,9 +30,9 @@ create a rust workspace with exactly these members:
    │     ├─ errors.rs
    │     ├─ config.rs
    │     └─ paths.rs
-   ├─ agents-cli/          # binary: agents
+   ├─ agency-cli/          # binary: agency
    │  └─ src/main.rs
-   └─ agentsd/             # binary: agentsd
+   └─ agencyd/             # binary: agencyd
       └─ src/main.rs
 ```
 
@@ -42,7 +42,7 @@ rust edition: **2021**
 
 ---
 
-## shared core contracts (`agents-core`)
+## shared core contracts (`agency-core`)
 
 ### serde policy (applies to all types)
 
@@ -206,24 +206,24 @@ format: **TOML**
 
 ### default locations
 
-* mac: `~/Library/Application Support/agents/config.toml`
-* linux: `~/.config/agents/config.toml`
+* mac: `~/Library/Application Support/agency/config.toml`
+* linux: `~/.config/agency/config.toml`
 
 precedence:
 
 1. `--config <path>`
-2. `$AGENTS_CONFIG`
+2. `$agency_CONFIG`
 3. platform default
 
 ### env override
 
-* `$AGENTS_SOCKET` overrides daemon socket path
+* `$agency_SOCKET` overrides daemon socket path
 
 ### schema
 
 ```toml
 [daemon]
-socket_path = "~/.agents/agents.sock"
+socket_path = "~/.agency/agency.sock"
 
 [runners.claude_code]
 exec = "/absolute/path/to/claude-code"
@@ -288,18 +288,18 @@ rules:
 data root (fixed in v1):
 
 ```
-~/.agents
+~/.agency
 ```
 
 helpers to expose:
 
 ```rust
 fn data_root() -> PathBuf
-fn db_path() -> PathBuf            // ~/.agents/agents.db
-fn runs_root() -> PathBuf          // ~/.agents/runs
-fn worktrees_root() -> PathBuf     // ~/.agents/worktrees
-fn locks_root() -> PathBuf         // ~/.agents/locks
-fn default_socket_path() -> PathBuf // ~/.agents/agents.sock
+fn db_path() -> PathBuf            // ~/.agency/agency.db
+fn runs_root() -> PathBuf          // ~/.agency/runs
+fn worktrees_root() -> PathBuf     // ~/.agency/worktrees
+fn locks_root() -> PathBuf         // ~/.agency/locks
+fn default_socket_path() -> PathBuf // ~/.agency/agency.sock
 ```
 
 no IO side effects in these helpers.
@@ -317,7 +317,7 @@ no IO side effects in these helpers.
 
 ## dependencies (pin majors)
 
-agents-core:
+agency-core:
 
 * serde = "1"
 * serde_json = "1"
@@ -327,12 +327,12 @@ agents-core:
 * directories = "5"
 * tracing = "0.1"
 
-agents-cli / agentsd:
+agency-cli / agencyd:
 
 * clap = "4" (derive)
 * tracing = "0.1"
 * tracing-subscriber = "0.3"
-* agents-core (path dep)
+* agency-core (path dep)
 
 ---
 
@@ -356,7 +356,7 @@ agents-cli / agentsd:
 * `RunId::new()` produces `r_`-prefixed ULID
 * config precedence works (unit test)
 * path helpers return correct suffixes
-* `agents --help` and `agents --version` work (clap stub)
+* `agency --help` and `agency --version` work (clap stub)
 * no extra crates or binaries
 
 ---
@@ -364,7 +364,7 @@ agents-cli / agentsd:
 # PR-00 — prompt pack (for claude-code)
 
 ```
-you are implementing PR-00 of the agents project.
+you are implementing PR-00 of the agency project.
 
 this PR is foundational. do not invent behavior. do not add features.
 follow the spec exactly.
@@ -390,7 +390,7 @@ future PRs depend on names, shapes, and boundaries you define here.
 ## tasks
 
 1. create the rust workspace and crates exactly as specified
-2. implement `agents-core` with:
+2. implement `agency-core` with:
    - RunId (ULID, prefixed)
    - RunState
    - RunnerKind
@@ -398,7 +398,7 @@ future PRs depend on names, shapes, and boundaries you define here.
    - ErrorCode + ErrorEnvelope
    - config parsing (toml + precedence + env overrides)
    - filesystem path helpers
-3. wire minimal `agents` and `agentsd` binaries that compile and do nothing except initialize logging
+3. wire minimal `agency` and `agencyd` binaries that compile and do nothing except initialize logging
 4. add minimal unit tests for:
    - RunId format
    - config precedence

@@ -1,4 +1,4 @@
-# agents — slice s0 PR roadmap
+# agency — slice s0 PR roadmap
 
 **slice goal:** correct run lifecycle with isolated worktrees, tmux-supervised runners, durable state, and deterministic cleanup.
 
@@ -22,9 +22,9 @@ establish the rust workspace, shared core crate, and basic build/test plumbing.
 
 * create rust workspace:
 
-  * `agents-cli`
-  * `agentsd`
-  * `agents-core`
+  * `agency-cli`
+  * `agencyd`
+  * `agency-core`
 * shared core types:
 
   * `RunId` (ULID, with optional `parse`)
@@ -33,21 +33,21 @@ establish the rust workspace, shared core crate, and basic build/test plumbing.
   * `RunSummary` (no `schema_version` field; `#[serde(rename_all = "snake_case")]`)
   * `ErrorEnvelope` (error codes serialize as EXACT variant names; `#[serde(rename_all = "snake_case")]`)
 * shared error codes enum (`ErrorCode`; no `rename_all`, exact variant names)
-* config loading (toml + precedence: `--config` > `$AGENTS_CONFIG` > platform default via `directories`)
+* config loading (toml + precedence: `--config` > `$agency_CONFIG` > platform default via `directories`)
 * config schema with explicit struct fields and `#[serde(deny_unknown_fields)]`:
 
   * `runners.claude_code: Option<RunnerConfig>`
   * `runners.codex: Option<RunnerConfig>`
   * `RunnerConfig { exec, default_args }` with `#[serde(default)]` on `default_args`
 * config loader: `load_config(explicit_path: Option<&Path>) -> Result<Config, ConfigError>`
-* optional `$AGENTS_SOCKET` override for daemon socket path
+* optional `$agency_SOCKET` override for daemon socket path
 * shared `SCHEMA_VERSION: u32 = 1` constant for json envelopes
 * data root constants:
 
-  * data root: `~/.agents/`
-  * db path: `~/.agents/agents.db`
-  * runs root: `~/.agents/runs/<run_id>/`
-  * locks root: `~/.agents/locks/`
+  * data root: `~/.agency/`
+  * db path: `~/.agency/agency.db`
+  * runs root: `~/.agency/runs/<run_id>/`
+  * locks root: `~/.agency/locks/`
   * (worktrees root defined in PR-03)
 * logging setup (env-based level)
 
@@ -66,23 +66,23 @@ establish the rust workspace, shared core crate, and basic build/test plumbing.
 * config with typo like `[runners.claude_cod]` fails at parse time due to `deny_unknown_fields`
 * data root/db path constants exposed
 * `RunId::new()` produces prefixed ULIDs
-* `agents --help` and `agents --version` work (clap stub)
+* `agency --help` and `agency --version` work (clap stub)
 
 ---
 
 ## PR-01 — daemon process + ipc + lifecycle bootstrap
 
 **goal**
-introduce the daemon (`agentsd`) and client ↔ daemon communication.
+introduce the daemon (`agencyd`) and client ↔ daemon communication.
 
 **scope**
 
 * unix domain socket setup
 * daemon start + graceful shutdown
 * auto-spawn daemon from CLI if not running
-* internal `Ping` RPC for health/auto-spawn; no user-facing `agents ping` subcommand
+* internal `Ping` RPC for health/auto-spawn; no user-facing `agency ping` subcommand
 * pid/lock handling (best-effort, not perfect)
-* daemon owns sqlite file at `~/.agents/agents.db`; CLI never opens db
+* daemon owns sqlite file at `~/.agency/agency.db`; CLI never opens db
 
 **explicit non-goals**
 
@@ -93,7 +93,7 @@ introduce the daemon (`agentsd`) and client ↔ daemon communication.
 **acceptance**
 
 * health check via internal RPC succeeds whether daemon already running or auto-started
-* concurrent `agents` calls don’t start multiple daemons
+* concurrent `agency` calls don’t start multiple daemons
 * daemon logs startup + shutdown cleanly
 
 **depends on**
@@ -109,13 +109,13 @@ make run state authoritative and durable.
 
 **scope**
 
-* sqlite initialization + migrations; WAL mode; `busy_timeout`; short transactions; daemon is the only writer (CLI writes via daemon RPC); db file at `~/.agents/agents.db`
+* sqlite initialization + migrations; WAL mode; `busy_timeout`; short transactions; daemon is the only writer (CLI writes via daemon RPC); db file at `~/.agency/agency.db`
 * migrations via embedded SQL (e.g., `sqlx::migrate!` with bundled migrations)
 * `runs` table exactly as per s0 spec
 * run creation (`queued`)
 * state transitions with validation
 * `removed_at` handling (not a state)
-* path helpers for data root and run dir: `~/.agents/runs/<run_id>/`
+* path helpers for data root and run dir: `~/.agency/runs/<run_id>/`
 * reconciliation on daemon startup, and opportunistically on run/stop/rm RPCs (no periodic ticker in s0):
 
   * detect exited runners by consuming run_dir outputs (`exit_code.txt`, `runner_done.json`)
@@ -191,10 +191,10 @@ create and destroy isolated git worktrees safely.
 
   * error if branch exists
   * branch created at base_ref
-* repo-level lock: `~/.agents/locks/<repo_fingerprint>.lock` serializes branch creation and worktree add/rm
+* repo-level lock: `~/.agency/locks/<repo_fingerprint>.lock` serializes branch creation and worktree add/rm
 * worktree creation under:
 
-  * `~/.agents/worktrees/<repo_fingerprint>/<run_id>/`
+  * `~/.agency/worktrees/<repo_fingerprint>/<run_id>/`
 * worktree removal
 * invariant enforcement: no reuse
 
@@ -227,7 +227,7 @@ launch and supervise runners in tmux with reliable logging and exit detection.
 **scope**
 
 * `Tmux` adapter over `Exec`
-* session naming: `agents:<run_id>`
+* session naming: `agency:<run_id>`
 * attach semantics:
 
   * inside tmux → `switch-client`
@@ -269,7 +269,7 @@ launch and supervise runners in tmux with reliable logging and exit detection.
 
 ---
 
-## PR-05 — `agents run` command (integration)
+## PR-05 — `agency run` command (integration)
 
 **goal**
 end-to-end run creation and execution.
@@ -281,8 +281,8 @@ end-to-end run creation and execution.
 * input validation + fingerprinting
 * prompt handling:
 
-  * `--prompt` writes to run dir and copies into worktree `.agents/prompt.md`
-  * materialized `spec.json` rewrites prompt path to `.agents/prompt.md`
+  * `--prompt` writes to run dir and copies into worktree `.agency/prompt.md`
+  * materialized `spec.json` rewrites prompt path to `.agency/prompt.md`
   * validation runs on the materialized spec
 * validation ownership/flow:
 
@@ -296,7 +296,7 @@ end-to-end run creation and execution.
     * post-id validation on materialized spec
 * run dir lifecycle:
 
-  * run dir path: `~/.agents/runs/<run_id>/`
+  * run dir path: `~/.agency/runs/<run_id>/`
   * daemon creates run dir after validation alongside sqlite row creation
 * create sqlite run record (`queued`)
 * create worktree
@@ -313,15 +313,15 @@ end-to-end run creation and execution.
 
 **acceptance**
 
-* `agents run` creates:
+* `agency run` creates:
 
   * sqlite record
   * worktree
   * tmux session
 * invalid inputs fail before run_id allocation; no db row, no run_dir, no worktree
 * `--json` output matches spec exactly
-* prompt file exists in run dir and `.agents/prompt.md`; spec reflects `.agents/prompt.md`; validation runs on materialized spec
-* run dir exists at `~/.agents/runs/<run_id>/` (daemon-created after validation)
+* prompt file exists in run dir and `.agency/prompt.md`; spec reflects `.agency/prompt.md`; validation runs on materialized spec
+* run dir exists at `~/.agency/runs/<run_id>/` (daemon-created after validation)
 
 **depends on**
 
@@ -332,19 +332,19 @@ end-to-end run creation and execution.
 
 ---
 
-## PR-06 — `agents stop` and `agents rm`
+## PR-06 — `agency stop` and `agency rm`
 
 **goal**
 controlled termination and deterministic cleanup.
 
 **scope**
 
-* `agents stop <run_id>`:
+* `agency stop <run_id>`:
 
   * valid only in `running`
   * kill tmux session
   * mark state `killed`
-* `agents rm <run_id>`:
+* `agency rm <run_id>`:
 
   * requires terminal state on first removal; if `removed_at` already set, return ok/idempotent (no state check)
   * delete worktree

@@ -2,15 +2,15 @@
 
 ## goal
 
-introduce `agentsd` (daemon) and a length-prefixed unix-socket rpc channel so `agents` can reliably talk to a single local daemon instance, auto-spawning it when needed.
+introduce `agencyd` (daemon) and a length-prefixed unix-socket rpc channel so `agency` can reliably talk to a single local daemon instance, auto-spawning it when needed.
 
 this pr adds **infrastructure only**. it must not implement run/worktree/tmux/sqlite logic beyond minimal boot wiring.
 
 ## hard constraints
 
-- do not modify `docs/agents.md` or `docs/slices.md`
+- do not modify `docs/agency.md` or `docs/slices.md`
 - do not introduce any s1/s2 commands (`ls/show/diff/merge`)
-- no user-facing `agents ping` command; ping is **internal only**
+- no user-facing `agency ping` command; ping is **internal only**
 - unix domain socket only (no tcp)
 - no pidfiles/lockfiles; single-daemon exclusivity is enforced by socket bind
 - cli never opens sqlite (daemon owns db in later prs)
@@ -18,25 +18,25 @@ this pr adds **infrastructure only**. it must not implement run/worktree/tmux/sq
 
 ## crates and boundaries
 
-- `agents-core`
+- `agency-core`
   - defines ipc protocol types + framing
   - defines socket path resolution helpers
   - defines shared error envelope + codes (extend as needed)
 
-- `agentsd`
+- `agencyd`
   - binds unix socket
   - accepts connections and serves rpc requests
   - logs to file
 
-- `agents-cli`
+- `agency-cli`
   - client for rpc
   - auto-spawns daemon if connect fails
   - uses internal ping to verify daemon ready
 
 ## socket path rules
 
-- default socket path (mac+linux): `~/.agents/agents.sock`
-- override: `$AGENTS_SOCKET` (absolute path required; must pass `Path::is_absolute()`)
+- default socket path (mac+linux): `~/.agency/agency.sock`
+- override: `$agency_SOCKET` (absolute path required; must pass `Path::is_absolute()`)
   - no tilde expansion; value used verbatim
 - daemon creates parent directories as needed
 
@@ -48,8 +48,8 @@ stale socket handling:
 
 ## daemon spawn rules (cli side)
 
-- spawn command: `agentsd --socket <socket_path> --log-file <log_path>`
-- default log path: `~/.agents/logs/agentsd.log`
+- spawn command: `agencyd --socket <socket_path> --log-file <log_path>`
+- default log path: `~/.agency/logs/agencyd.log`
 - ensure log file parent directories exist before spawn
 - spawn via `Command`:
   - set stdin to null
@@ -99,7 +99,7 @@ error:
 ```
 
 - `response` is a tagged enum (serde `#[serde(tag = "type")]`)
-- `error` uses the shared error envelope type from agents-core
+- `error` uses the shared error envelope type from agency-core
 - `build_version` comes from `env!("CARGO_PKG_VERSION")`
 
 ### request types
@@ -107,7 +107,7 @@ error:
 `Request` (externally stable for v1):
 - `Ping {}`
 
-## new/updated error codes (agents-core)
+## new/updated error codes (agency-core)
 
 add these codes to the shared error enum:
 
@@ -118,7 +118,7 @@ add these codes to the shared error enum:
 
 ## cli behavior changes
 
-add a shared internal helper in `agents-cli`:
+add a shared internal helper in `agency-cli`:
 
 * `ensure_daemon() -> Client`
 
@@ -131,7 +131,7 @@ no new public subcommands required in this pr.
 
 ## daemon behavior
 
-* `agentsd` parses flags:
+* `agencyd` parses flags:
 
   * `--socket <path>` (required)
   * `--log-file <path>` (required)
@@ -159,11 +159,11 @@ no new public subcommands required in this pr.
 
 ## tests
 
-### unit tests (agents-core)
+### unit tests (agency-core)
 
 * socket path resolution:
 
-  * default path when `$AGENTS_SOCKET` unset
+  * default path when `$agency_SOCKET` unset
   * env override requires absolute path; relative path errors with `E_SOCKET_PATH_INVALID`
 * framing encode/decode roundtrip:
 
@@ -172,7 +172,7 @@ no new public subcommands required in this pr.
 
 ### integration test (gated, but should run on mac+linux CI)
 
-* spawn `agentsd` as child process using a temp socket path under a temp dir
+* spawn `agencyd` as child process using a temp socket path under a temp dir
 * connect with client and send `Ping`
 * assert reply envelope: `protocol_version == 1`, `ok == true`, `response.daemon_pid > 0`
 * cleanup:
@@ -185,10 +185,10 @@ no new public subcommands required in this pr.
 
 this pr is complete when:
 
-1. `agentsd` starts and binds the socket at the resolved path
-2. `agents-cli` can connect and successfully ping via length-prefixed rpc
-3. `agents-cli` auto-spawns `agentsd` when daemon is not running and then pings successfully
-4. concurrent `agents` invocations do not create multiple daemons (socket bind exclusivity)
+1. `agencyd` starts and binds the socket at the resolved path
+2. `agency-cli` can connect and successfully ping via length-prefixed rpc
+3. `agency-cli` auto-spawns `agencyd` when daemon is not running and then pings successfully
+4. concurrent `agency` invocations do not create multiple daemons (socket bind exclusivity)
 5. tests pass (unit + integration)
 
 ---
@@ -198,15 +198,15 @@ this pr is complete when:
 you are implementing PR-01 per the spec in docs/prs/pr-01-daemon-ipc.md.
 
 ## repository context
-- rust workspace with crates: agents-core, agents-cli, agentsd (already created in pr-00)
-- shared types live in agents-core
+- rust workspace with crates: agency-core, agency-cli, agencyd (already created in pr-00)
+- shared types live in agency-core
 - cli must auto-spawn daemon
 - rpc framing is length-prefixed json over unix domain sockets
 
 ## hard rules
-- do not modify docs/agents.md or docs/slices.md
+- do not modify docs/agency.md or docs/slices.md
 - do not add any s1/s2 commands or functionality
-- no user-facing `agents ping` command
+- no user-facing `agency ping` command
 - no pidfile/lockfile; use socket bind exclusivity
 - unix socket only; no tcp listeners
 - keep behavior minimal and deterministic
@@ -217,7 +217,7 @@ you are implementing PR-01 per the spec in docs/prs/pr-01-daemon-ipc.md.
 
 lock the following module layout:
 
-**agents-core/src/ipc/mod.rs:**
+**agency-core/src/ipc/mod.rs:**
 - `pub enum Request { Ping }`
 - `pub enum Response` (tagged with `#[serde(tag = "type")]`):
   - `Pong { daemon_pid: u32, build_version: String }`
@@ -226,10 +226,10 @@ lock the following module layout:
 - `pub async fn read_frame(stream: &mut UnixStream) -> Result<Vec<u8>, AgentError>`
 - `pub async fn write_frame(stream: &mut UnixStream, bytes: &[u8]) -> Result<(), AgentError>`
 
-**agents-cli/src/daemon.rs:**
+**agency-cli/src/daemon.rs:**
 - `pub(crate) async fn ensure_daemon(cfg: &Config) -> Result<Client, AgentError>`
 
-**agentsd/src/main.rs:**
+**agencyd/src/main.rs:**
 - parse args, init logging, bind socket, loop
 
 ### tokio requirement
@@ -240,17 +240,17 @@ lock the following module layout:
 - server spawns a task per connection
 
 ## tasks
-1) implement agents-core ipc:
+1) implement agency-core ipc:
    - Request/Response enums per module structure above
    - RpcEnvelope with protocol_version at top level
    - Error envelope reuse
    - length-prefixed framing helpers with MAX_FRAME_LEN enforcement
    - socket path resolution:
-     - default ~/.agents/agents.sock
-     - env override $AGENTS_SOCKET (must be absolute via `Path::is_absolute()`, else E_SOCKET_PATH_INVALID)
+     - default ~/.agency/agency.sock
+     - env override $agency_SOCKET (must be absolute via `Path::is_absolute()`, else E_SOCKET_PATH_INVALID)
      - no tilde expansion; value used verbatim
 
-2) implement agentsd:
+2) implement agencyd:
    - flags: --socket, --log-file (required)
    - initialize logging with tracing + tracing_subscriber (compact format, file appender)
    - bind unix socket; exit non-zero if already bound/in use
@@ -263,7 +263,7 @@ lock the following module layout:
      - log each request: run pid, request type, ok/error
    - build_version from `env!("CARGO_PKG_VERSION")`
 
-3) implement agents-cli client + autospawn:
+3) implement agency-cli client + autospawn:
    - Client struct that can connect and ping
    - ensure_daemon() in src/daemon.rs as `pub(crate)`:
      - resolve socket path
@@ -271,7 +271,7 @@ lock the following module layout:
      - on failure:
        - if socket path doesn't exist → spawn daemon
        - else if socket path exists but connect fails → remove socket file (best-effort), then spawn daemon
-     - spawn `agentsd --socket <sock> --log-file <~/.agents/logs/agentsd.log>`
+     - spawn `agencyd --socket <sock> --log-file <~/.agency/logs/agencyd.log>`
        - ensure log file parent dirs exist
        - set stdin to null
        - set stdout/stderr to log file (append)
@@ -283,9 +283,9 @@ lock the following module layout:
    - do not add a public ping subcommand; ensure_daemon can be used by later commands
 
 4) add tests:
-   - unit tests for path resolution + framing roundtrip in agents-core
+   - unit tests for path resolution + framing roundtrip in agency-core
    - unit test: frames larger than MAX_FRAME_LEN rejected with E_IPC_PROTOCOL_ERROR
-   - integration test that spawns agentsd with a temp socket/log file, pings it, then:
+   - integration test that spawns agencyd with a temp socket/log file, pings it, then:
      - terminate child
      - wait with timeout
      - if not dead, kill
@@ -294,9 +294,9 @@ lock the following module layout:
 ## deliverables
 - code in the three crates implementing the above
 - tests passing:
-  - cargo test -p agents-core
-  - cargo test -p agents-cli
-  - cargo test -p agentsd
+  - cargo test -p agency-core
+  - cargo test -p agency-cli
+  - cargo test -p agencyd
   - cargo test (workspace)
 
 ## notes

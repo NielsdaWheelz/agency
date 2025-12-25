@@ -1,4 +1,4 @@
-# agents — slice roadmap
+# agency — slice roadmap
 
 this document defines the ordered delivery of user-visible capabilities.
 it is about sequencing and dependency, not detailed design.
@@ -45,7 +45,7 @@ a user can:
 - passing a prompt and optional read-only file references to the runner
 - capturing logs
 - basic run state tracking (queued / running / completed / failed / killed)
-- explicit cleanup via `agents rm`; no implicit deletion
+- explicit cleanup via `agency rm`; no implicit deletion
 
 **explicit non-goals**
 
@@ -68,7 +68,7 @@ none
 
 - multiple runs can execute concurrently
 - killing one run never affects another
-- worktrees are cleaned up deterministically via explicit `agents rm`
+- worktrees are cleaned up deterministically via explicit `agency rm`
 - run completion is determined by runner process exit status
 
 ---
@@ -91,8 +91,8 @@ a user can:
 
 **scope**
 
-- `agents ls` (summary view)
-- `agents show <run_id>` (detailed view)
+- `agency ls` (summary view)
+- `agency show <run_id>` (detailed view)
 - log viewing / tailing
 - opening worktree paths
 - basic commit chain inspection
@@ -131,8 +131,8 @@ a user can:
 
 **scope**
 
-- `agents diff <run_id>`
-- `agents merge <run_id>`
+- `agency diff <run_id>`
+- `agency merge <run_id>`
 - merge conflict handling (fail + report, not auto-resolve)
 - post-merge cleanup (worktree, tmux session, metadata)
 
