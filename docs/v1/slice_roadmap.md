@@ -15,7 +15,7 @@ agency doctor
   - Find repo root (`git rev-parse --show-toplevel`).
   - Require `agency.json` at repo root; validate schema + required fields.
   - Define schema versioning rules (`agency.json`, `meta.json`, `events.jsonl`): additive only in v1; new required fields bump version; ignore unknown fields.
-  - Resolve XDG dirs (`AGENCY_DATA_DIR`, config, cache) and print them.
+  - Resolve dirs (`AGENCY_DATA_DIR`, config, cache) with macOS Library defaults, XDG fallbacks, and env overrides; print them.
   - Verify `git`, `tmux`, `gh`, runner command exists; `gh auth status` OK.
   - Optionally parse `origin` and report "GitHub flow available: yes/no".
   - Write repo linkage files even for non-GitHub repos:
@@ -24,7 +24,7 @@ agency doctor
     - update `${AGENCY_DATA_DIR}/repo_index.json` mapping repo_key -> seen paths
 - Non-scope: worktrees, tmux sessions, PRs, scripts execution.
 - Dependencies: none.
-- Acceptance: `agency doctor` exits 0 only when everything required is present; otherwise returns a specific error code + actionable message.
+- Acceptance: `agency doctor` exits 0 only when slice-1 readiness is met (tools/scripts present + gh authenticated), regardless of GitHub flow availability; otherwise returns a specific error code + actionable message.
 - Failure modes: missing gh auth; missing tmux; invalid `agency.json` -> exits non-zero with concrete fix.
 - Risks/spikes: robust parsing of GitHub origin into `repo_key` (fallback to path-key).
 
@@ -145,10 +145,7 @@ agency kill <id> # kill tmux only
   - `run_id`, `repo_id`, `title`, `runner`, `parent_branch`, `branch`, `worktree_path`, `created_at`, `tmux_session_name`,
     `pr_number?`, `pr_url?`, `last_push_at?`, `last_verify_at?`, `flags(needs_attention, setup_failed, abandoned)`,
     `archive(archived_at, merged_at)`.
-- Error code taxonomy:
-  - `E_NO_REPO`, `E_NO_AGENCY_JSON`, `E_INVALID_AGENCY_JSON`, `E_RUNNER_NOT_CONFIGURED`, `E_GH_NOT_AUTHENTICATED`,
-    `E_GH_NOT_INSTALLED`, `E_TMUX_NOT_INSTALLED`, `E_PARENT_DIRTY`, `E_EMPTY_DIFF`, `E_PR_NOT_MERGEABLE`,
-    `E_REPO_LOCKED`, `E_RUN_NOT_FOUND`, `E_SCRIPT_TIMEOUT`, `E_SCRIPT_FAILED`.
+- Error code taxonomy: see constitution.
 - Branch naming + slug rules: title empty OK; always include shortid to avoid collisions.
 - Origin policy: `agency push`/`agency merge` require `github.com` origin; non-GitHub origins are rejected.
 - Push behavior: always `git push -u origin <branch>` for agency-managed branches.
