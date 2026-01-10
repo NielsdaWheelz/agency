@@ -24,6 +24,7 @@ worktrees or tmux.
 - Add `BuildRunnerShell(worktreePath, runnerCmd string) string` for the tmux
   pane command.
 - Add `AgencyError` type with structured fields (code/message/cause/details).
+- Ensure `E_INTERNAL` exists in the l0 error list (add if missing).
 - Add subprocess helper:
   - `RunCmd(ctx, name, args, opts) (stdout, stderr string, exitCode int)`
   - Supports cwd, env override/add, stdin null, context timeout.
