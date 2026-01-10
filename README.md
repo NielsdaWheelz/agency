@@ -19,8 +19,9 @@ slice 1 progress:
 - [x] PR-01: core utilities + errors + subprocess + atomic json
 - [x] PR-02: repo detection + safety gates + repo.json update
 - [x] PR-03: agency.json load + runner resolution for S1
+- [x] PR-04: run pipeline orchestration (internal API)
 
-next: slice 1 PR-04 (run pipeline orchestration)
+next: slice 1 PR-05 (worktree + scaffolding + collision handling)
 
 ## installation
 
@@ -198,6 +199,7 @@ agency/
 │   ├── git/              # repo discovery + origin info + safety gates
 │   ├── identity/         # repo_key + repo_id derivation
 │   ├── paths/            # XDG directory resolution
+│   ├── pipeline/         # run pipeline orchestrator (step execution, error handling)
 │   ├── repo/             # repo safety checks + CheckRepoSafe API
 │   ├── scaffold/         # agency.json template + stub script creation
 │   ├── store/            # repo_index.json + repo.json persistence
