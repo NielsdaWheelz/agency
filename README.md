@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 in progress.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -26,7 +26,16 @@ slice 1 progress:
 - [x] PR-08: tmux session creation + attach command
 - [x] PR-09: wire agency run end-to-end + --attach UX
 
-next: slice 2 (observability: ls, show, events)
+slice 2 progress:
+- [x] PR-00: repo lock helper
+- [ ] PR-01: run discovery + parsing + broken run records
+- [ ] PR-02: run id resolution (exact + unique prefix)
+- [ ] PR-03: derived status computation
+- [ ] PR-04: `agency ls` command
+- [ ] PR-05: `agency show` command
+- [ ] PR-06: transcript capture + events.jsonl
+
+next: slice 2 PR-01 (run discovery)
 
 ## installation
 
@@ -292,6 +301,7 @@ agency/
 │   ├── fs/               # FS interface + atomic write + WriteJSONAtomic
 │   ├── git/              # repo discovery + origin info + safety gates
 │   ├── identity/         # repo_key + repo_id derivation
+│   ├── lock/             # repo-level locking for mutating commands
 │   ├── paths/            # XDG directory resolution
 │   ├── pipeline/         # run pipeline orchestrator (step execution, error handling)
 │   ├── repo/             # repo safety checks + CheckRepoSafe API
@@ -311,6 +321,8 @@ agency/
 - [slice 0 PRs](docs/v1/s0/s0_prs.md) — slice 0 PR breakdown
 - [slice 1 spec](docs/v1/s1/s1_spec.md) — run workspace slice detailed spec
 - [slice 1 PRs](docs/v1/s1/s1_prs.md) — slice 1 PR breakdown
+- [slice 2 spec](docs/v1/s2/s2_spec.md) — observability slice detailed spec
+- [slice 2 PRs](docs/v1/s2/s2_prs.md) — slice 2 PR breakdown
 
 ## license
 
