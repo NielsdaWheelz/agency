@@ -49,18 +49,14 @@ rules for every PR:
 - implement deterministic path resolution + repo identity parsing with table-driven tests.
 
 **scope**
-- XDG dir resolution per l0:
-  - `AGENCY_DATA_DIR` env override
-  - else `XDG_DATA_HOME/agency`
-  - else `~/.local/share/agency`
-  - config/cache resolution (even if reserved)
+- directory resolution per constitution (macOS defaults + XDG fallbacks + env overrides)
 - repo root discovery:
   - `git rev-parse --show-toplevel` via `CommandRunner`
   - normalize/realpath repo root for hashing
 - origin url parsing (pure function; no gh usage):
   - support ssh + https github.com formats → `repo_key = github:<owner>/<repo>`
   - else `repo_key = path:<sha256(abs_repo_root)>`
-  - compute `repo_id = sha256(repo_key)` truncated (define trunc length in code + doc)
+  - compute `repo_id = sha256(repo_key)` truncated to 16 hex chars
 
 **files**
 - `internal/paths/xdg.go`
@@ -85,9 +81,10 @@ rules for every PR:
 
 **scope**
 - parse JSON strictly:
-  - version must be `1`
+  - version must be integer `1`
   - required fields: `defaults.parent_branch`, `defaults.runner`, `scripts.setup/verify/archive`
-  - `runners` values must be strings if present
+  - `runners` values must be non-empty strings if present
+  - runner commands must be single executables (no args)
   - reject empty strings for script paths / runner commands
 - runner resolution logic:
   - if `runners.<name>` exists → use it
@@ -123,15 +120,15 @@ rules for every PR:
   - `${AGENCY_DATA_DIR}/repo_index.json`
   - `${AGENCY_DATA_DIR}/repos/<repo_id>/repo.json`
 - implement read/merge/write with atomic rename:
-  - repo_index keyed by `repo_key` (or `repo_id`, pick one and lock it)
+  - repo_index keyed by `repo_key`
   - store seen paths + last_seen_at
   - repo.json stores:
     - schema_version
     - repo_key, repo_id
-    - root_path, agency_json_path
+    - repo_root_last_seen, agency_json_path
     - origin_present, origin_url, origin_host
-    - github_flow_available (bool)
-    - created_at, last_seen_at
+    - capabilities (github_origin, origin_host, gh_authed)
+    - created_at, updated_at
 - no run state, no events
 
 **files**
@@ -202,6 +199,7 @@ rules for every PR:
   - `gh --version` else `E_GH_NOT_INSTALLED`
   - `gh auth status` else `E_GH_NOT_AUTHENTICATED`
 - resolve runner command and verify it exists (PATH lookup or `exec.LookPath`) else `E_RUNNER_NOT_CONFIGURED`
+  - runner command is a single executable (no args)
 - script checks:
   - resolve script paths relative to repo root
   - missing → `E_SCRIPT_NOT_FOUND`
