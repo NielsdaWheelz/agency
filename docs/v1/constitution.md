@@ -153,6 +153,7 @@ All global state lives under `${AGENCY_DATA_DIR}`.
 - `scripts.setup|verify|archive` must be non-empty strings
 - `runners` if present must be object of string -> string (values non-empty)
 - unknown top-level keys are ignored
+- runner commands must be a single executable name (no args); otherwise `E_INVALID_AGENCY_JSON`
 
 **runner resolution**:
 - if `runners.<name>` exists: use that command
@@ -260,6 +261,8 @@ ${AGENCY_DATA_DIR}/
   }
 }
 ```
+
+`repos` is keyed by `repo_key`; `repo_id` is stored inside each entry.
 
 ### repo.json (public contract, v1)
 
