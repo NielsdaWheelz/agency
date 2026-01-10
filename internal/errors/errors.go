@@ -10,10 +10,13 @@ import (
 // Code is a stable error code string.
 type Code string
 
-// Error codes for pr-00. Additional codes will be added in later PRs.
+// Error codes. Stable public contract per constitution.
 const (
 	EUsage          Code = "E_USAGE"
 	ENotImplemented Code = "E_NOT_IMPLEMENTED"
+
+	// Slice 0 error codes
+	ENoRepo Code = "E_NO_REPO"
 )
 
 // AgencyError is the standard error type for agency errors.

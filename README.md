@@ -4,7 +4,16 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) in progress.
+**v1 in development** — slice 0 (bootstrap) PR-01 complete.
+
+current progress:
+- [x] PR-00: project skeleton + shared contracts
+- [x] PR-01: directory resolution + repo discovery + origin parsing
+- [ ] PR-02: agency.json schema + validation
+- [ ] PR-03: persistence schemas + repo store
+- [ ] PR-04: `agency init` command
+- [ ] PR-05: `agency doctor` command
+- [ ] PR-06: docs + cleanup
 
 ## installation
 
@@ -88,11 +97,29 @@ go run ./cmd/agency init --help
 go run ./cmd/agency doctor --help
 ```
 
+## project structure
+
+```
+agency/
+├── cmd/agency/           # main entry point
+├── internal/
+│   ├── cli/              # command dispatcher (stdlib flag)
+│   ├── errors/           # stable error codes
+│   ├── exec/             # CommandRunner interface for external commands
+│   ├── fs/               # FS interface + atomic write
+│   ├── git/              # repo discovery + origin info
+│   ├── identity/         # repo_key + repo_id derivation
+│   ├── paths/            # XDG directory resolution
+│   └── version/          # build version
+└── docs/                 # specifications
+```
+
 ## documentation
 
 - [constitution](docs/v1/constitution.md) — full v1 specification
 - [slice roadmap](docs/v1/slice_roadmap.md) — implementation plan
 - [slice 0 spec](docs/v1/s0/s0_spec.md) — bootstrap slice details
+- [slice 0 PRs](docs/v1/s0/s0_prs.md) — PR breakdown
 
 ## license
 
