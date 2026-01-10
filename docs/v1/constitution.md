@@ -587,6 +587,8 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_SCRIPT_TIMEOUT`
 - `E_SCRIPT_FAILED`
 - `E_REPO_ID_COLLISION`
+- `E_PERSIST_FAILED`
+- `E_INTERNAL`
 
 error output (v1):
 - on non-zero exit, print `error_code: E_...` as the first line on stderr
@@ -594,11 +596,13 @@ error output (v1):
 
 doctor output (v1):
 - stdout is `key: value` lines, no color
-- includes: `repo_root`, `data_dir`, `config_dir`, `cache_dir`, `repo_key`, `repo_id`,
-  `github_flow_available`, `origin_present`, `origin_url`, `origin_host`,
-  `git`, `git_version`, `tmux`, `tmux_version`, `gh`, `gh_version`, `gh_auth`,
-  `runner`, `scripts_setup`, `scripts_verify`, `scripts_archive`
-- final line on success: `result: ok`
+- includes (in this order): `repo_root`, `agency_data_dir`, `agency_config_dir`, `agency_cache_dir`,
+  `repo_key`, `repo_id`, `origin_present`, `origin_url`, `origin_host`, `github_flow_available`,
+  `git_version`, `tmux_version`, `gh_version`, `gh_authenticated`,
+  `defaults_parent_branch`, `defaults_runner`, `runner_cmd`,
+  `script_setup`, `script_verify`, `script_archive`,
+  `status`
+- on success: `status: ok`
 
 ---
 

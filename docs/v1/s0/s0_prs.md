@@ -201,6 +201,7 @@ rules for every PR:
   - `gh auth status` else `E_GH_NOT_AUTHENTICATED`
 - resolve runner command and verify it exists (PATH lookup or `exec.LookPath`) else `E_RUNNER_NOT_CONFIGURED`
   - runner command is a single executable (no args)
+  - stdout empty on failure
 - script checks:
   - resolve script paths relative to repo root
   - missing → `E_SCRIPT_NOT_FOUND`

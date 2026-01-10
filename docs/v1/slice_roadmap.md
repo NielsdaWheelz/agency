@@ -21,7 +21,7 @@ agency doctor
   - Write repo linkage files even for non-GitHub repos:
     - resolve `repo_id` from `origin` when parseable; fallback to path-based key
     - create `repo.json` under `${AGENCY_DATA_DIR}/repos/<repo_id>/`
-    - update `${AGENCY_DATA_DIR}/repo_index.json` mapping repo_key -> seen paths
+    - update `${AGENCY_DATA_DIR}/repo_index.json` entries with `repo_id`, `paths`, `last_seen_at`
 - Non-scope: worktrees, tmux sessions, PRs, scripts execution.
 - Dependencies: none.
 - Acceptance: `agency doctor` exits 0 only when slice-1 readiness is met (tools/scripts present + gh authenticated), regardless of GitHub flow availability; otherwise returns a specific error code + actionable message.
