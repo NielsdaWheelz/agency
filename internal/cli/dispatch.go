@@ -24,6 +24,7 @@ commands:
   doctor      check prerequisites and show resolved paths
   run         create workspace, setup, and start tmux runner session
   ls          list runs and their statuses
+  show        show run details
   attach      attach to a tmux session for an existing run
 
 options:
@@ -104,6 +105,27 @@ examples:
   agency ls --json             # machine-readable output
 `
 
+const showUsageText = `usage: agency show <run_id> [options]
+
+show details for a single run.
+resolves run_id globally (works from anywhere, not just inside a repo).
+accepts exact run_id or unique prefix.
+
+arguments:
+  run_id        the run identifier or unique prefix
+
+options:
+  --json          output as JSON (stable format)
+  --path          output only resolved filesystem paths
+  -h, --help      show this help
+
+examples:
+  agency show 20260110120000-a3f2           # show run details
+  agency show 20260110                       # unique prefix resolution
+  agency show 20260110120000-a3f2 --json    # machine-readable output
+  agency show 20260110120000-a3f2 --path    # print paths only
+`
+
 // Run parses arguments and dispatches to the appropriate subcommand.
 // Returns an error if the command fails; the caller should print the error and exit.
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -134,6 +156,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runRun(cmdArgs, stdout, stderr)
 	case "ls":
 		return runLS(cmdArgs, stdout, stderr)
+	case "show":
+		return runShow(cmdArgs, stdout, stderr)
 	case "attach":
 		return runAttach(cmdArgs, stdout, stderr)
 	default:
@@ -290,6 +314,53 @@ func runLS(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.LS(ctx, cr, fsys, cwd, opts, stdout, stderr)
+}
+
+func runShow(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("show", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	jsonOutput := flagSet.Bool("json", false, "output as JSON")
+	pathOutput := flagSet.Bool("path", false, "output only resolved paths")
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, showUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, showUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.ShowOpts{
+		RunID: runID,
+		JSON:  *jsonOutput,
+		Path:  *pathOutput,
+	}
+
+	return commands.Show(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
 
 func runAttach(args []string, stdout, stderr io.Writer) error {

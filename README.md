@@ -32,10 +32,10 @@ slice 2 progress:
 - [x] PR-02: run id resolution (exact + unique prefix)
 - [x] PR-03: derived status computation (pure)
 - [x] PR-04: `agency ls` command
-- [ ] PR-05: `agency show` command
+- [x] PR-05: `agency show` command
 - [ ] PR-06: transcript capture + events.jsonl
 
-next: slice 2 PR-05 (`agency show` command)
+next: slice 2 PR-06 (transcript capture + events.jsonl)
 
 ## installation
 
@@ -309,6 +309,102 @@ agency ls --all-repos        # list all repos
 agency ls --all-repos --all  # everything
 agency ls --json             # machine-readable output
 agency ls --json | jq '.data[].run_id'
+```
+
+### `agency show`
+
+shows detailed information about a single run.
+
+**usage:**
+```bash
+agency show <run_id> [--json] [--path]
+```
+
+**arguments:**
+- `run_id`: the run identifier (exact) or unique prefix
+
+**flags:**
+- `--json`: output as JSON (stable format)
+- `--path`: output only resolved filesystem paths
+
+**behavior:**
+- resolves run_id globally (works from anywhere, not just inside a repo)
+- accepts exact run_id or unique prefix for convenience
+- displays rich metadata, derived status, and paths
+
+**id resolution:**
+- exact match wins if found
+- if no exact match, checks for unique prefix match
+- multiple matches: fails with `E_RUN_ID_AMBIGUOUS` and lists candidates
+- no matches: fails with `E_RUN_NOT_FOUND`
+
+**human output sections:**
+- **run**: core metadata (run_id, title, runner, created_at, repo identity)
+- **workspace**: git/workspace info (branches, worktree, tmux session)
+- **pr**: PR info if present (pr_number, pr_url, last_push_at)
+- **report**: report file info (exists, bytes, path)
+- **logs**: script log paths
+- **status**: derived status and archived state
+- **warnings**: contextual warnings (repo not found, worktree missing)
+
+**json output:**
+```json
+{
+  "schema_version": "1.0",
+  "data": {
+    "meta": { /* raw meta.json */ },
+    "repo_id": "abc123",
+    "repo_key": "github:owner/repo",
+    "origin_url": "git@github.com:owner/repo.git",
+    "archived": false,
+    "derived": {
+      "derived_status": "active",
+      "tmux_active": true,
+      "worktree_present": true,
+      "report": { "exists": true, "bytes": 256, "path": "..." },
+      "logs": { "setup_log_path": "...", "verify_log_path": "...", "archive_log_path": "..." }
+    },
+    "paths": {
+      "repo_root": "/path/to/repo",
+      "worktree_root": "/path/to/worktree",
+      "run_dir": "/path/to/run",
+      "events_path": "/path/to/events.jsonl",
+      "transcript_path": "/path/to/transcript.txt"
+    },
+    "broken": false
+  }
+}
+```
+
+**path output:**
+```
+repo_root: /path/to/repo
+worktree_root: /path/to/worktree
+run_dir: /path/to/run
+logs_dir: /path/to/run/logs
+events_path: /path/to/run/events.jsonl
+transcript_path: /path/to/run/transcript.txt
+report_path: /path/to/worktree/.agency/report.md
+```
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_RUN_ID_AMBIGUOUS` — prefix matches multiple runs (lists candidates)
+- `E_RUN_BROKEN` — run exists but meta.json is unreadable/invalid
+
+**broken run handling:**
+- `ls` shows broken runs with `<broken>` title and `broken` status
+- `show` targeting a broken run fails with `E_RUN_BROKEN`
+- `--json` still outputs envelope with `broken=true` and `meta=null`
+- `--path` outputs best-effort paths and exits non-zero
+
+**examples:**
+```bash
+agency show 20260110120000-a3f2           # show run details
+agency show 20260110                       # unique prefix resolution
+agency show 20260110120000-a3f2 --json    # machine-readable output
+agency show 20260110120000-a3f2 --path    # print paths only
+agency show 20260110120000-a3f2 --json | jq '.data.derived.derived_status'
 ```
 
 ### `agency attach`
