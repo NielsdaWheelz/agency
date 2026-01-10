@@ -53,6 +53,10 @@ const (
 
 	// Tmux attach error codes (slice 1 PR-09)
 	ETmuxAttachFailed Code = "E_TMUX_ATTACH_FAILED"
+
+	// Slice 2 observability error codes
+	ERunIDAmbiguous Code = "E_RUN_ID_AMBIGUOUS" // id prefix matches >1 run
+	ERunBroken      Code = "E_RUN_BROKEN"       // run exists but meta.json is unreadable/invalid
 )
 
 // AgencyError is the standard error type for agency errors.
