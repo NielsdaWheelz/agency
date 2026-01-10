@@ -20,6 +20,7 @@ const (
 	ENoAgencyJSON        Code = "E_NO_AGENCY_JSON"
 	EInvalidAgencyJSON   Code = "E_INVALID_AGENCY_JSON"
 	ERunnerNotConfigured Code = "E_RUNNER_NOT_CONFIGURED"
+	EStoreCorrupt        Code = "E_STORE_CORRUPT"
 )
 
 // AgencyError is the standard error type for agency errors.

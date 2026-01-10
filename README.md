@@ -4,13 +4,13 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) PR-02 complete.
+**v1 in development** — slice 0 (bootstrap) PR-03 complete.
 
 current progress:
 - [x] PR-00: project skeleton + shared contracts
 - [x] PR-01: directory resolution + repo discovery + origin parsing
 - [x] PR-02: agency.json schema + validation
-- [ ] PR-03: persistence schemas + repo store
+- [x] PR-03: persistence schemas + repo store
 - [ ] PR-04: `agency init` command
 - [ ] PR-05: `agency doctor` command
 - [ ] PR-06: docs + cleanup
@@ -111,6 +111,7 @@ agency/
 │   ├── git/              # repo discovery + origin info
 │   ├── identity/         # repo_key + repo_id derivation
 │   ├── paths/            # XDG directory resolution
+│   ├── store/            # repo_index.json + repo.json persistence
 │   └── version/          # build version
 └── docs/                 # specifications
 ```
