@@ -115,7 +115,7 @@ behavior:
 origin handling:
 - if remote `origin` missing OR `remote.origin.url` is empty: treat as `origin_present: false`, `origin_url: ""`
 - repo_key falls back to `path:<sha256(abs_path)>` in these cases
-- do NOT require github.com origin in slice 0 (doctor still works with fallback repo_key). github.com origin is required later for push/merge.
+- do NOT require github.com origin in slice 0 (doctor still works with fallback repo_key). missing origin is not an error; github.com origin is required later for push/merge.
 
 output format (doctor): see constitution
 error output (doctor): see constitution
