@@ -40,7 +40,7 @@ Core loop:
   - supports `https://github.com/<owner>/<repo>.git`
 - fallback: `path:<sha256(abs_path)>` (for non-GitHub remotes or unsupported URL formats)
 - GitHub Enterprise hosts are not supported in v1; treat them as non-GitHub and use the fallback
-- stored in `${AGENCY_DATA_DIR}/repo_index.json` mapping repo_key -> seen paths
+- stored in `${AGENCY_DATA_DIR}/repo_index.json` (schema defined below)
 
 **workspace (run)**: git worktree + branch + tmux session + metadata. survives multiple invocations.
 
@@ -153,7 +153,7 @@ All global state lives under `${AGENCY_DATA_DIR}`.
 - `scripts.setup|verify|archive` must be non-empty strings
 - `runners` if present must be object of string -> string (values non-empty)
 - unknown top-level keys are ignored
-- runner commands must be a single executable name (no args); otherwise `E_INVALID_AGENCY_JSON`
+- runner commands must be a single executable name or path with no whitespace (no args); otherwise `E_INVALID_AGENCY_JSON`
 
 **runner resolution**:
 - if `runners.<name>` exists: use that command
