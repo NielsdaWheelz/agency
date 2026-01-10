@@ -23,14 +23,7 @@ implement `agency run` to create an isolated git worktree + branch, execute the 
 - `agency attach <id>`:
   - attaches to tmux session `agency:<run_id>` (no creation; no resume behavior in this slice)
 
-- minimal `agency ls` (current repo only; non-archived only):
-  - lists runs by scanning `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/*/`
-  - if `meta.json` is missing or invalid for a run dir, still show a row flagged as broken with the run path
-  - archived definition: `meta.archive.archived_at` exists (even if archive logic is added later)
-  - in this slice, archive is not implemented; treat all runs as non-archived
-  - displays: run_id, title, runner, created_at, tmux_session_exists (boolean), broken (boolean)
-  - stable sort by `created_at` desc (missing/invalid `created_at` sort last)
-  - no rich status derivation beyond tmux session existence
+- no `agency ls` in this slice (defer to slice 2)
 
 ### out-of-scope
 
@@ -49,7 +42,6 @@ implement `agency run` to create an isolated git worktree + branch, execute the 
 
 - `agency run [--title <string>] [--runner <claude|codex>] [--parent <branch>] [--attach]`
 - `agency attach <run_id>`
-- `agency ls`
 
 ### flags
 
@@ -58,8 +50,6 @@ implement `agency run` to create an isolated git worktree + branch, execute the 
   - `--runner`: optional; default from `agency.json defaults.runner`
   - `--parent`: optional; default from `agency.json defaults.parent_branch`
   - `--attach`: optional; if set, attach immediately after tmux session is created
-- `agency ls`
-  - no flags in this slice
 
 ---
 
@@ -71,10 +61,9 @@ implement `agency run` to create an isolated git worktree + branch, execute the 
 
 ### created/updated (global; under `${AGENCY_DATA_DIR}`)
 
-- `${AGENCY_DATA_DIR}/repo_index.json` (create if missing; update if needed)
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/repo.json` (create/update “last seen” + origin info if present)
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/meta.json` (create; may be updated during run)
-- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/setup.log` (create; append if re-run)
+- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/setup.log` (create; overwrite on re-run)
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>/` (git worktree directory)
 
 ### created/updated (workspace-local; under the worktree)
@@ -124,13 +113,15 @@ implement `agency run` to create an isolated git worktree + branch, execute the 
 
 **then**
 - a new run_id is generated and printed
-- a new branch `agency/<slug>-<shortid>` is created from `<parent_branch>`
-- a worktree is created at `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>`
+- a new branch and worktree are created in one step:
+  - `git worktree add -b <branch> <worktree_path> <parent_branch>`
 - `<worktree>/.agency/{out,tmp}/` exist
 - `<worktree>/.agency/report.md` exists (templated; title prefilled)
 - setup script executes outside tmux with injected env; stdout/stderr captured to `logs/setup.log`
 - tmux session `agency:<run_id>` is created detached, with pane command:
+  - runner command is a single string from `agency.json`
   - runner command is executed via `sh -lc` and treated as a shell command string (users may include wrappers/args)
+  - agency does not escape or parse the runner command; it is passed as-is to the shell
   - example: `sh -lc 'cd "<worktree>" && exec <runner_cmd>'`
 - `meta.json` exists and includes required fields (see below)
 - command exits 0
@@ -224,7 +215,9 @@ implement `agency run` to create an isolated git worktree + branch, execute the 
 
 **then**
 - exit non-zero with `E_RUN_NOT_FOUND` (if run_id unknown) or `E_TMUX_SESSION_MISSING` (if run exists but no session)
-- message instructs user that resume is not in this slice (deferred) and suggests re-running runner manually inside worktree
+- message instructs user that resume is not in this slice (deferred) and provides:
+  - `worktree_path` (from `meta.json`)
+  - suggested command: `cd <worktree_path> && <runner_cmd>`
 
 
 ---
@@ -249,6 +242,9 @@ optional fields updated in this slice:
 - `flags.needs_attention` (not set in this slice)
 - `last_seen_at` (optional; if implemented, must be rfc3339)
 - `archive.archived_at` (optional; rfc3339 if set)
+
+timestamp note:
+- `created_at` is written in UTC (e.g., `time.Now().UTC().Format(time.RFC3339)`)
 
 versioning note:
 - `agency.json` uses integer `version` (e.g., `1`)
@@ -313,7 +309,7 @@ guardrails (what not to touch)
 	•	do not add new persistent formats beyond those listed
 	•	do not create additional global daemons; tmux is the only substrate
 	•	`.agency/` ignore check (best-effort):
-	•	run `git check-ignore -q .agency/` at repo root
+	•	run `git -C <worktree> check-ignore -q .agency/` after the worktree exists
 	•	exit 0 = ignored, 1 = not ignored, 128 = error (treat as unknown, do not warn)
 
 ⸻

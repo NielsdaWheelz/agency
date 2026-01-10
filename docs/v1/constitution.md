@@ -249,37 +249,104 @@ ${AGENCY_DATA_DIR}/
 
 ### repo_index.json (public contract, v1)
 
+Global index mapping repository keys to their metadata. Written only on successful `agency doctor`.
+
+**Schema:**
+- `schema_version` (string): `"1.0"`
+- `repos` (object): keyed by `repo_key`
+  - `repo_id` (string): sha256 hash truncated to 16 hex chars
+  - `paths` (array of strings): known absolute paths, most recent first
+  - `last_seen_at` (string): ISO 8601 timestamp in UTC
+
+**Example:**
 ```json
 {
   "schema_version": "1.0",
   "repos": {
     "github:owner/repo": {
       "repo_id": "abcd1234ef567890",
-      "paths": ["/abs/path"],
+      "paths": ["/Users/dev/projects/repo"],
       "last_seen_at": "2025-01-09T12:34:56Z"
+    },
+    "path:f1e2d3c4b5a69870": {
+      "repo_id": "f1e2d3c4b5a69870",
+      "paths": ["/Users/dev/local-only-project"],
+      "last_seen_at": "2025-01-09T12:35:00Z"
     }
   }
 }
 ```
 
-`repos` is keyed by `repo_key`; `repo_id` is stored inside each entry.
+**Merge behavior:**
+- Existing entries: update `last_seen_at`, move current path to front of `paths` list
+- New entries: create with single path and current timestamp
+- Paths are de-duplicated case-sensitively
 
 ### repo.json (public contract, v1)
 
-- `schema_version: "1.0"`
-- `repo_id`
-- `repo_key`
-- `origin_present` (bool)
-- `origin_url` (string or empty if no origin)
-- `origin_host` (string or empty if none)
-- `repo_root_last_seen` (absolute path)
-- `agency_json_path` (absolute path)
-- `capabilities`:
-  - `github_origin` (bool)
-  - `origin_host` (string or empty)
-  - `gh_authed` (bool)
-- `created_at`
-- `updated_at`
+Per-repository metadata. Written only on successful `agency doctor`.
+
+**Schema:**
+- `schema_version` (string): `"1.0"`
+- `repo_key` (string): `github:<owner>/<repo>` or `path:<sha256>`
+- `repo_id` (string): sha256 hash truncated to 16 hex chars
+- `repo_root_last_seen` (string): absolute path to repo root
+- `agency_json_path` (string): absolute path to agency.json
+- `origin_present` (bool): whether origin remote exists
+- `origin_url` (string): remote URL or empty string
+- `origin_host` (string): hostname or empty string
+- `capabilities` (object):
+  - `github_origin` (bool): whether origin is github.com
+  - `origin_host` (string): hostname or empty string
+  - `gh_authed` (bool): whether gh is authenticated
+- `created_at` (string): ISO 8601 timestamp when first created
+- `updated_at` (string): ISO 8601 timestamp when last updated
+
+**Example (GitHub repo):**
+```json
+{
+  "schema_version": "1.0",
+  "repo_key": "github:owner/repo",
+  "repo_id": "abcd1234ef567890",
+  "repo_root_last_seen": "/Users/dev/projects/repo",
+  "agency_json_path": "/Users/dev/projects/repo/agency.json",
+  "origin_present": true,
+  "origin_url": "git@github.com:owner/repo.git",
+  "origin_host": "github.com",
+  "capabilities": {
+    "github_origin": true,
+    "origin_host": "github.com",
+    "gh_authed": true
+  },
+  "created_at": "2025-01-09T12:34:56Z",
+  "updated_at": "2025-01-09T12:34:56Z"
+}
+```
+
+**Example (local-only repo):**
+```json
+{
+  "schema_version": "1.0",
+  "repo_key": "path:f1e2d3c4b5a69870",
+  "repo_id": "f1e2d3c4b5a69870",
+  "repo_root_last_seen": "/Users/dev/local-only-project",
+  "agency_json_path": "/Users/dev/local-only-project/agency.json",
+  "origin_present": false,
+  "origin_url": "",
+  "origin_host": "",
+  "capabilities": {
+    "github_origin": false,
+    "origin_host": "",
+    "gh_authed": true
+  },
+  "created_at": "2025-01-09T12:35:00Z",
+  "updated_at": "2025-01-09T12:35:00Z"
+}
+```
+
+**Timestamp semantics:**
+- `created_at`: set once when record is first created, never updated
+- `updated_at`: updated on every successful `agency doctor`
 
 ### meta.json (public contract, v1)
 
@@ -566,43 +633,85 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 
 ## 16.5) Error codes (public contract, v1)
 
-- `E_NO_REPO`
-- `E_NO_AGENCY_JSON`
-- `E_INVALID_AGENCY_JSON`
-- `E_AGENCY_JSON_EXISTS`
-- `E_GIT_NOT_INSTALLED`
-- `E_RUNNER_NOT_CONFIGURED`
-- `E_GH_NOT_AUTHENTICATED`
-- `E_GH_NOT_INSTALLED`
-- `E_TMUX_NOT_INSTALLED`
-- `E_PARENT_DIRTY`
-- `E_EMPTY_DIFF`
-- `E_PR_NOT_MERGEABLE`
-- `E_UNSUPPORTED_ORIGIN_HOST`
-- `E_REPO_LOCKED`
-- `E_RUN_NOT_FOUND`
-- `E_NO_PR`
-- `E_SCRIPT_NOT_FOUND`
-- `E_SCRIPT_NOT_EXECUTABLE`
-- `E_SCRIPT_TIMEOUT`
-- `E_SCRIPT_FAILED`
-- `E_REPO_ID_COLLISION`
-- `E_PERSIST_FAILED`
-- `E_INTERNAL`
+### Core/CLI errors
+- `E_USAGE` — invalid CLI usage (flags, arguments)
+- `E_NOT_IMPLEMENTED` — command not yet implemented
+- `E_INTERNAL` — unexpected internal error
 
-error output (v1):
+### Repository errors
+- `E_NO_REPO` — not inside a git repository
+- `E_NO_AGENCY_JSON` — agency.json not found at repo root
+- `E_INVALID_AGENCY_JSON` — agency.json validation failed
+- `E_AGENCY_JSON_EXISTS` — agency.json already exists (init without --force)
+
+### Tool/prerequisite errors
+- `E_GIT_NOT_INSTALLED` — git not found on PATH
+- `E_TMUX_NOT_INSTALLED` — tmux not found on PATH
+- `E_GH_NOT_INSTALLED` — gh CLI not found on PATH
+- `E_GH_NOT_AUTHENTICATED` — gh not authenticated (run `gh auth login`)
+- `E_RUNNER_NOT_CONFIGURED` — runner command not found
+
+### Script errors
+- `E_SCRIPT_NOT_FOUND` — required script not found
+- `E_SCRIPT_NOT_EXECUTABLE` — script is not executable (suggests `chmod +x`)
+- `E_SCRIPT_TIMEOUT` — script exceeded timeout
+- `E_SCRIPT_FAILED` — script exited non-zero
+
+### Persistence errors
+- `E_PERSIST_FAILED` — failed to write persistence files
+- `E_STORE_CORRUPT` — store file is corrupted or has invalid schema
+- `E_REPO_ID_COLLISION` — repo_id hash collision (extremely rare)
+
+### Run/workflow errors (slice 1+)
+- `E_PARENT_DIRTY` — parent working tree is not clean
+- `E_EMPTY_DIFF` — no commits ahead of parent branch
+- `E_PR_NOT_MERGEABLE` — PR cannot be merged
+- `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
+- `E_REPO_LOCKED` — another agency process holds the lock
+- `E_RUN_NOT_FOUND` — specified run does not exist
+- `E_NO_PR` — no PR exists for the run
+
+### Error output format (v1)
 - on non-zero exit, print `error_code: E_...` as the first line on stderr
 - follow with a human-readable message on stderr
+- optional: `hint:` line with actionable guidance
 
-doctor output (v1):
+### Doctor output format (v1)
 - stdout is `key: value` lines, no color
-- includes (in this order): `repo_root`, `agency_data_dir`, `agency_config_dir`, `agency_cache_dir`,
-  `repo_key`, `repo_id`, `origin_present`, `origin_url`, `origin_host`, `github_flow_available`,
-  `git_version`, `tmux_version`, `gh_version`, `gh_authenticated`,
-  `defaults_parent_branch`, `defaults_runner`, `runner_cmd`,
-  `script_setup`, `script_verify`, `script_archive`,
-  `status`
-- on success: `status: ok`
+- includes keys in this exact order:
+  1. `repo_root` — absolute path to repo root
+  2. `agency_data_dir` — resolved data directory
+  3. `agency_config_dir` — resolved config directory (reserved)
+  4. `agency_cache_dir` — resolved cache directory (reserved)
+  5. `repo_key` — `github:<owner>/<repo>` or `path:<sha256>`
+  6. `repo_id` — truncated sha256 of repo_key (16 hex chars)
+  7. `origin_present` — `true` or `false`
+  8. `origin_url` — remote URL or empty string
+  9. `origin_host` — hostname or empty string
+  10. `github_flow_available` — `true` or `false`
+  11. `git_version` — output of `git --version`
+  12. `tmux_version` — output of `tmux -V`
+  13. `gh_version` — first line of `gh --version`
+  14. `gh_authenticated` — `true` or `false`
+  15. `defaults_parent_branch` — from agency.json
+  16. `defaults_runner` — from agency.json
+  17. `runner_cmd` — resolved runner command
+  18. `script_setup` — absolute path to setup script
+  19. `script_verify` — absolute path to verify script
+  20. `script_archive` — absolute path to archive script
+  21. `status` — `ok` on success
+- booleans are `true` or `false` (lowercase)
+- on success: exits 0
+- on failure: stdout is empty, error printed to stderr, exits non-zero
+
+### Init output format (v1)
+- stdout is `key: value` lines, no color
+- includes keys:
+  1. `repo_root` — absolute path to repo root
+  2. `agency_json` — `created` or `overwritten`
+  3. `scripts_created` — comma-separated list or `none`
+  4. `gitignore` — `updated`, `already_present`, `created`, or `skipped`
+- on `--no-gitignore`: prints `warning: gitignore_skipped`
 
 ---
 
