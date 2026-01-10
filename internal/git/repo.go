@@ -179,3 +179,74 @@ func isValidHost(host string) bool {
 	}
 	return true
 }
+
+// HasCommits checks if the repository has at least one commit.
+// Uses `git rev-parse --verify HEAD` via CommandRunner.
+//
+// Returns (true, nil) if HEAD exists (repo has commits).
+// Returns (false, nil) if HEAD does not exist (empty repo, fresh git init).
+// Returns (false, error) only for execution failures (binary not found, etc.).
+func HasCommits(ctx context.Context, cr exec.CommandRunner, repoRoot string) (bool, error) {
+	result, err := cr.Run(ctx, "git", []string{"rev-parse", "--verify", "HEAD"}, exec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		// Execution failure (binary not found, etc.)
+		return false, errors.Wrap(errors.EInternal, "failed to run git rev-parse --verify HEAD", err)
+	}
+
+	// Exit code 0 = HEAD exists, non-zero = no commits
+	return result.ExitCode == 0, nil
+}
+
+// IsClean checks if the working tree is clean (no uncommitted changes).
+// Uses `git status --porcelain` via CommandRunner.
+//
+// Returns (true, nil) if the working tree is clean (stdout empty).
+// Returns (false, nil) if there are uncommitted changes.
+// Returns (false, error) only for execution failures.
+func IsClean(ctx context.Context, cr exec.CommandRunner, repoRoot string) (bool, error) {
+	result, err := cr.Run(ctx, "git", []string{"status", "--porcelain"}, exec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		// Execution failure (binary not found, etc.)
+		return false, errors.Wrap(errors.EInternal, "failed to run git status --porcelain", err)
+	}
+
+	// Non-zero exit code from git status is unusual but treat as dirty
+	if result.ExitCode != 0 {
+		return false, nil
+	}
+
+	// Clean = empty stdout
+	return strings.TrimSpace(result.Stdout) == "", nil
+}
+
+// BranchExists checks if a local branch exists.
+// Uses `git show-ref --verify refs/heads/<branch>` via CommandRunner.
+//
+// Returns (true, nil) if the branch exists locally.
+// Returns (false, nil) if the branch does not exist.
+// Returns (false, error) only for execution failures.
+func BranchExists(ctx context.Context, cr exec.CommandRunner, repoRoot, branch string) (bool, error) {
+	ref := "refs/heads/" + branch
+	result, err := cr.Run(ctx, "git", []string{"show-ref", "--verify", ref}, exec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		// Execution failure (binary not found, etc.)
+		return false, errors.Wrap(errors.EInternal, "failed to run git show-ref --verify", err)
+	}
+
+	// Exit code 0 = branch exists, non-zero = does not exist
+	return result.ExitCode == 0, nil
+}
+
+// GetOriginURL retrieves the origin remote URL using `git remote get-url origin`.
+// Returns the URL if origin exists, or empty string if missing.
+// Never returns an error; failures result in empty string.
+func GetOriginURL(ctx context.Context, cr exec.CommandRunner, repoRoot string) string {
+	result, err := cr.Run(ctx, "git", []string{"remote", "get-url", "origin"}, exec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		return ""
+	}
+	if result.ExitCode != 0 {
+		return ""
+	}
+	return strings.TrimSpace(result.Stdout)
+}

@@ -368,3 +368,179 @@ func TestParseOriginHost(t *testing.T) {
 		})
 	}
 }
+
+// Tests for HasCommits
+
+func TestHasCommits_HasCommits(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"rev-parse", "--verify", "HEAD"}, repoRoot, exec.CmdResult{
+		Stdout:   "abc123def456\n",
+		ExitCode: 0,
+	})
+
+	has, err := HasCommits(ctx, cr, repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
+		t.Error("expected HasCommits = true")
+	}
+}
+
+func TestHasCommits_NoCommits(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"rev-parse", "--verify", "HEAD"}, repoRoot, exec.CmdResult{
+		Stderr:   "fatal: Needed a single revision",
+		ExitCode: 128,
+	})
+
+	has, err := HasCommits(ctx, cr, repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if has {
+		t.Error("expected HasCommits = false for empty repo")
+	}
+}
+
+// Tests for IsClean
+
+func TestIsClean_Clean(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"status", "--porcelain"}, repoRoot, exec.CmdResult{
+		Stdout:   "",
+		ExitCode: 0,
+	})
+
+	clean, err := IsClean(ctx, cr, repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !clean {
+		t.Error("expected IsClean = true")
+	}
+}
+
+func TestIsClean_Dirty(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"status", "--porcelain"}, repoRoot, exec.CmdResult{
+		Stdout:   " M file.txt\n",
+		ExitCode: 0,
+	})
+
+	clean, err := IsClean(ctx, cr, repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if clean {
+		t.Error("expected IsClean = false for dirty tree")
+	}
+}
+
+func TestIsClean_DirtyWithUntracked(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"status", "--porcelain"}, repoRoot, exec.CmdResult{
+		Stdout:   "?? newfile.txt\n",
+		ExitCode: 0,
+	})
+
+	clean, err := IsClean(ctx, cr, repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if clean {
+		t.Error("expected IsClean = false for untracked files")
+	}
+}
+
+// Tests for BranchExists
+
+func TestBranchExists_Exists(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+	branch := "main"
+
+	cr.On("git", []string{"show-ref", "--verify", "refs/heads/main"}, repoRoot, exec.CmdResult{
+		Stdout:   "abc123 refs/heads/main\n",
+		ExitCode: 0,
+	})
+
+	exists, err := BranchExists(ctx, cr, repoRoot, branch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !exists {
+		t.Error("expected BranchExists = true")
+	}
+}
+
+func TestBranchExists_NotExists(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+	branch := "nonexistent"
+
+	cr.On("git", []string{"show-ref", "--verify", "refs/heads/nonexistent"}, repoRoot, exec.CmdResult{
+		Stderr:   "fatal: 'refs/heads/nonexistent' - not a valid ref",
+		ExitCode: 1,
+	})
+
+	exists, err := BranchExists(ctx, cr, repoRoot, branch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("expected BranchExists = false for nonexistent branch")
+	}
+}
+
+// Tests for GetOriginURL
+
+func TestGetOriginURL_Present(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"remote", "get-url", "origin"}, repoRoot, exec.CmdResult{
+		Stdout:   "git@github.com:owner/repo.git\n",
+		ExitCode: 0,
+	})
+
+	url := GetOriginURL(ctx, cr, repoRoot)
+	expected := "git@github.com:owner/repo.git"
+	if url != expected {
+		t.Errorf("GetOriginURL = %q, want %q", url, expected)
+	}
+}
+
+func TestGetOriginURL_Missing(t *testing.T) {
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"remote", "get-url", "origin"}, repoRoot, exec.CmdResult{
+		Stderr:   "fatal: No such remote 'origin'",
+		ExitCode: 2,
+	})
+
+	url := GetOriginURL(ctx, cr, repoRoot)
+	if url != "" {
+		t.Errorf("GetOriginURL = %q, want empty for missing origin", url)
+	}
+}

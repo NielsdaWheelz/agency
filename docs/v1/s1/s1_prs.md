@@ -1,17 +1,14 @@
 # Agency Slice 01: PR Roadmap (v1 MVP)
 
 ## Goal
-Split S1 into small PRs that are one-shot implementable, low blast-radius, and
-leave the repo always in a shippable state. Keep dependencies explicit; focus
-on internal capability PRs first, then CLI UX last.
+Split S1 into small PRs that are one-shot implementable, low blast-radius, and leave the repo always in a shippable state. Keep dependencies explicit; focus on internal capability PRs first, then CLI UX last.
 
 ---
 
 ## PR-01: Core utilities + error type + subprocess helper
 
 ### Goal
-Introduce foundational types/utilities used across S1 without touching git
-worktrees or tmux.
+Introduce foundational types/utilities used across S1 without touching git worktrees or tmux.
 
 ### Scope
 - Add run id generation, slugify, branch name builder.
@@ -90,8 +87,7 @@ is persisted.
 ## PR-03: agency.json load + runner resolution (read-only)
 
 ### Goal
-Load and validate `agency.json` fields used by S1 and resolve the runner/setup
-strings.
+Load and validate `agency.json` fields used by S1 and resolve the runner/setup strings.
 
 ### Scope
 - Read `agency.json` at repo root.
@@ -127,8 +123,7 @@ strings.
 ## PR-04: Run pipeline orchestration (internal API)
 
 ### Goal
-Establish the integration seam early so later PRs plug into a stable flow
-without adding "not implemented" production behavior.
+Establish the integration seam early so later PRs plug into a stable flow without adding "not implemented" production behavior.
 
 ### Scope
 - Define `RunPipeline(ctx, opts) (runID string, err error)`.
@@ -203,16 +198,14 @@ Create the workspace deterministically and handle common collision cases.
 ## PR-06: meta.json writer + run dir creation
 
 ### Goal
-Persist run metadata immediately after worktree creation and prevent run-id
-collisions.
+Persist run metadata immediately after worktree creation and prevent run-id collisions.
 
 ### Scope
 - Create `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/` using O_EXCL
   semantics (fail if it already exists).
 - Create `logs/` under the run dir.
 - Write initial `meta.json` right after worktree creation:
-  - Required fields (`schema_version` 1.0, ids, title, runner, parent, branch,
-    `worktree_path`, `created_at`, `runner_cmd`).
+  - Required fields (`schema_version` 1.0, ids, title, runner, parent, branch, `worktree_path`, `created_at`, `runner_cmd`).
 
 ### Non-scope
 - Do not execute setup yet.
@@ -235,8 +228,7 @@ collisions.
 ## PR-07: Setup script execution + logging
 
 ### Goal
-Run `scripts.setup` outside tmux with injected env and capture logs
-deterministically.
+Run `scripts.setup` outside tmux with injected env and capture logs deterministically.
 
 ### Scope
 - Execute setup script as shell command string via `sh -lc <script>`.
@@ -299,8 +291,7 @@ Create the real runner TUI session and allow attaching.
 - Manual:
   - Run creates tmux session; `tmux ls | grep agency:<id>` shows it.
   - `agency attach <id>` lands in the runner pane.
-  - Forced tmux failure sets `flags.tmux_failed=true` and leaves
-    `tmux_session_name` absent.
+  - Forced tmux failure sets `flags.tmux_failed=true` and leaves `tmux_session_name` absent.
 - Automated (optional/integration):
   - `tmux has-session -t agency:<id>` succeeds after run.
 
@@ -338,5 +329,4 @@ Expose the full S1 user flow with the exact CLI UX promised by the spec.
 ## Roadmap notes
 - Ordering is linear; PR-04 establishes the integration seam early.
 - Prefer tests and internal harnesses over partial CLI demos until PR-09.
-- Every PR should update/maintain the slice's promised behavior and keep the
-  binary usable (earlier PRs must not break init/doctor from S0).
+- Every PR should update/maintain the slice's promised behavior and keep the binary usable (earlier PRs must not break init/doctor from S0).

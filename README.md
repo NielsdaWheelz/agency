@@ -17,8 +17,9 @@ slice 0 progress:
 
 slice 1 progress:
 - [x] PR-01: core utilities + errors + subprocess + atomic json
+- [x] PR-02: repo detection + safety gates + repo.json update
 
-next: slice 1 PR-02 (repo detection + gates)
+next: slice 1 PR-03 (agency.json load + runner resolution)
 
 ## installation
 
@@ -193,9 +194,10 @@ agency/
 │   ├── errors/           # stable error codes + AgencyError type
 │   ├── exec/             # CommandRunner interface + RunScript with timeout
 │   ├── fs/               # FS interface + atomic write + WriteJSONAtomic
-│   ├── git/              # repo discovery + origin info
+│   ├── git/              # repo discovery + origin info + safety gates
 │   ├── identity/         # repo_key + repo_id derivation
 │   ├── paths/            # XDG directory resolution
+│   ├── repo/             # repo safety checks + CheckRepoSafe API
 │   ├── scaffold/         # agency.json template + stub script creation
 │   ├── store/            # repo_index.json + repo.json persistence
 │   └── version/          # build version
