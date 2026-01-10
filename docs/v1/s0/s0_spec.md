@@ -50,7 +50,7 @@ flags:
 behavior:
 - finds repo root; errors `E_NO_REPO` if not in a git repo
 - if `agency.json` exists and `--force` not set: error `E_AGENCY_JSON_EXISTS` with message “agency.json already exists; use --force to overwrite”
-- writes template `agency.json` (version 1) exactly as in l0 (defaults + scripts + runners)
+- writes template `agency.json` (version 1) exactly as in l0 (defaults + scripts + runners) via atomic write
 - writes stub scripts if missing (executable); never overwrite:
   - `scripts/agency_setup.sh`
   - `scripts/agency_verify.sh`

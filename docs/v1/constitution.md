@@ -496,6 +496,7 @@ agency doctor                     check prerequisites + show paths
 - `scripts/agency_archive.sh` (exit 0)
 
 Scripts are never overwritten by init.
+`agency init` writes `agency.json` via atomic write (temp file + rename).
 Stub scripts:
 - path normalization: always under repo root (no absolute paths)
 - file mode: 0755
