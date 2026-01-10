@@ -6,6 +6,7 @@ package runservice
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -13,26 +14,38 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
 	"github.com/NielsdaWheelz/agency/internal/repo"
+	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/worktree"
 )
 
 // Service is the production implementation of pipeline.RunService.
 type Service struct {
-	cr   exec.CommandRunner
-	fsys fs.FS
+	cr      exec.CommandRunner
+	fsys    fs.FS
+	nowFunc func() time.Time
 }
 
 // New creates a new Service with production dependencies.
 func New() *Service {
 	return &Service{
-		cr:   exec.NewRealRunner(),
-		fsys: fs.NewRealFS(),
+		cr:      exec.NewRealRunner(),
+		fsys:    fs.NewRealFS(),
+		nowFunc: time.Now,
 	}
 }
 
 // NewWithDeps creates a new Service with injected dependencies for testing.
 func NewWithDeps(cr exec.CommandRunner, fsys fs.FS) *Service {
-	return &Service{cr: cr, fsys: fsys}
+	return &Service{
+		cr:      cr,
+		fsys:    fsys,
+		nowFunc: time.Now,
+	}
+}
+
+// SetNowFunc overrides the time source for testing.
+func (s *Service) SetNowFunc(fn func() time.Time) {
+	s.nowFunc = fn
 }
 
 // CheckRepoSafe verifies repo safety (clean working tree, parent branch exists, etc.).
@@ -213,6 +226,7 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 	}
 
 	// Populate state
+	st.Runner = runnerName // Store the resolved runner name (may differ from CLI input)
 	st.ResolvedRunnerCmd = resolvedRunnerCmd
 	st.SetupScript = cfg.Scripts.Setup
 	st.ParentBranch = parentBranch
@@ -265,13 +279,71 @@ func (s *Service) CreateWorktree(ctx context.Context, st *pipeline.PipelineState
 }
 
 // WriteMeta writes the initial meta.json for the run.
-// Not implemented in this PR (PR-06).
+// Creates the run directory with exclusive semantics, creates the logs subdirectory,
+// and writes meta.json atomically with required fields.
 func (s *Service) WriteMeta(ctx context.Context, st *pipeline.PipelineState) error {
-	return errors.NewWithDetails(
-		errors.ENotImplemented,
-		"WriteMeta not implemented (PR-06)",
-		map[string]string{"step": "WriteMeta"},
+	// Validate worktree exists (should have been created by CreateWorktree)
+	info, err := s.fsys.Stat(st.WorktreePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.NewWithDetails(
+				errors.EInternal,
+				"worktree_path does not exist (WriteMeta called before CreateWorktree?)",
+				map[string]string{
+					"step":          "WriteMeta",
+					"worktree_path": st.WorktreePath,
+				},
+			)
+		}
+		return errors.WrapWithDetails(
+			errors.EInternal,
+			"failed to stat worktree_path",
+			err,
+			map[string]string{
+				"step":          "WriteMeta",
+				"worktree_path": st.WorktreePath,
+			},
+		)
+	}
+	if !info.IsDir() {
+		return errors.NewWithDetails(
+			errors.EInternal,
+			"worktree_path is not a directory",
+			map[string]string{
+				"step":          "WriteMeta",
+				"worktree_path": st.WorktreePath,
+			},
+		)
+	}
+
+	// Create a store for the run operations
+	st2 := store.NewStore(s.fsys, st.DataDir, s.nowFunc)
+
+	// Create run directory (exclusive semantics) + logs subdirectory
+	_, err = st2.EnsureRunDir(st.RepoID, st.RunID)
+	if err != nil {
+		return err
+	}
+
+	// Create initial meta (runner name was resolved in LoadAgencyConfig)
+	meta := store.NewRunMeta(
+		st.RunID,
+		st.RepoID,
+		st.Title,
+		st.Runner,
+		st.ResolvedRunnerCmd,
+		st.ParentBranch,
+		st.Branch,
+		st.WorktreePath,
+		s.nowFunc(),
 	)
+
+	// Write meta.json atomically
+	if err := st2.WriteInitialMeta(st.RepoID, st.RunID, meta); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // RunSetup executes the setup script with timeout.

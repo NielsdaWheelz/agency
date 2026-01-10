@@ -272,19 +272,193 @@ func TestService_LoadAgencyConfig(t *testing.T) {
 	}
 }
 
-func TestService_WriteMeta_NotImplemented(t *testing.T) {
+func TestService_WriteMeta_Success(t *testing.T) {
+	repoRoot, dataDir, cleanup := setupTempRepo(t)
+	defer cleanup()
+
+	// Set AGENCY_DATA_DIR
+	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
+	os.Setenv("AGENCY_DATA_DIR", dataDir)
+	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+
+	// Change to repo directory
+	oldWd, _ := os.Getwd()
+	os.Chdir(repoRoot)
+	defer os.Chdir(oldWd)
+
+	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+
 	svc := New()
 	ctx := context.Background()
-	st := &pipeline.PipelineState{}
 
-	err := svc.WriteMeta(ctx, st)
+	runID := "20260110120000-test"
+	repoID := "abcd1234ef567890"
+
+	// First create the worktree
+	st := &pipeline.PipelineState{
+		RunID:        runID,
+		Title:        "Test Run",
+		RepoRoot:     resolvedRepoRoot,
+		RepoID:       repoID,
+		DataDir:      dataDir,
+		ParentBranch: "main",
+		Runner:       "claude",
+	}
+
+	err := svc.CreateWorktree(ctx, st)
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	// Populate remaining fields needed for WriteMeta
+	st.ResolvedRunnerCmd = "claude"
+
+	// Now test WriteMeta
+	err = svc.WriteMeta(ctx, st)
+	if err != nil {
+		t.Fatalf("WriteMeta failed: %v", err)
+	}
+
+	// Verify run directory was created
+	runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
+	if _, err := os.Stat(runDir); os.IsNotExist(err) {
+		t.Error("run directory should exist")
+	}
+
+	// Verify logs directory was created
+	logsDir := filepath.Join(runDir, "logs")
+	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
+		t.Error("logs directory should exist")
+	}
+
+	// Verify meta.json was created
+	metaPath := filepath.Join(runDir, "meta.json")
+	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
+		t.Error("meta.json should exist")
+	}
+
+	// Read and verify meta.json content
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("failed to read meta.json: %v", err)
+	}
+
+	// Basic content checks
+	content := string(data)
+	if !strings.Contains(content, `"schema_version": "1.0"`) {
+		t.Error("meta.json should contain schema_version 1.0")
+	}
+	if !strings.Contains(content, `"run_id": "20260110120000-test"`) {
+		t.Error("meta.json should contain correct run_id")
+	}
+	if !strings.Contains(content, `"repo_id": "abcd1234ef567890"`) {
+		t.Error("meta.json should contain correct repo_id")
+	}
+	if !strings.Contains(content, `"title": "Test Run"`) {
+		t.Error("meta.json should contain correct title")
+	}
+	if !strings.Contains(content, `"runner": "claude"`) {
+		t.Error("meta.json should contain correct runner")
+	}
+	if !strings.Contains(content, `"runner_cmd": "claude"`) {
+		t.Error("meta.json should contain correct runner_cmd")
+	}
+	if !strings.Contains(content, `"parent_branch": "main"`) {
+		t.Error("meta.json should contain correct parent_branch")
+	}
+	if !strings.Contains(content, `"created_at"`) {
+		t.Error("meta.json should contain created_at")
+	}
+	// tmux_session_name should NOT be present
+	if strings.Contains(content, `"tmux_session_name"`) {
+		t.Error("meta.json should not contain tmux_session_name")
+	}
+}
+
+func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
+	dataDir, err := os.MkdirTemp("", "agency-data-*")
+	if err != nil {
+		t.Fatalf("failed to create temp data dir: %v", err)
+	}
+	defer os.RemoveAll(dataDir)
+
+	svc := New()
+	ctx := context.Background()
+
+	st := &pipeline.PipelineState{
+		RunID:        "20260110120000-test",
+		RepoID:       "abcd1234ef567890",
+		DataDir:      dataDir,
+		WorktreePath: "/nonexistent/path",
+		Runner:       "claude",
+	}
+
+	err = svc.WriteMeta(ctx, st)
 	if err == nil {
-		t.Fatal("expected error for not implemented")
+		t.Fatal("expected error for missing worktree")
 	}
 
 	code := errors.GetCode(err)
-	if code != errors.ENotImplemented {
-		t.Errorf("error code = %q, want %q", code, errors.ENotImplemented)
+	if code != errors.EInternal {
+		t.Errorf("error code = %q, want %q", code, errors.EInternal)
+	}
+}
+
+func TestService_WriteMeta_RunDirCollision(t *testing.T) {
+	repoRoot, dataDir, cleanup := setupTempRepo(t)
+	defer cleanup()
+
+	// Set AGENCY_DATA_DIR
+	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
+	os.Setenv("AGENCY_DATA_DIR", dataDir)
+	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+
+	// Change to repo directory
+	oldWd, _ := os.Getwd()
+	os.Chdir(repoRoot)
+	defer os.Chdir(oldWd)
+
+	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+
+	svc := New()
+	ctx := context.Background()
+
+	runID := "20260110120000-coll"
+	repoID := "abcd1234ef567890"
+
+	// Create worktree first
+	st := &pipeline.PipelineState{
+		RunID:        runID,
+		Title:        "Collision Test",
+		RepoRoot:     resolvedRepoRoot,
+		RepoID:       repoID,
+		DataDir:      dataDir,
+		ParentBranch: "main",
+		Runner:       "claude",
+	}
+
+	err := svc.CreateWorktree(ctx, st)
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	st.ResolvedRunnerCmd = "claude"
+
+	// First WriteMeta should succeed
+	err = svc.WriteMeta(ctx, st)
+	if err != nil {
+		t.Fatalf("first WriteMeta failed: %v", err)
+	}
+
+	// Second WriteMeta should fail with E_RUN_DIR_EXISTS
+	err = svc.WriteMeta(ctx, st)
+	if err == nil {
+		t.Fatal("expected error for run dir collision")
+	}
+
+	code := errors.GetCode(err)
+	if code != errors.ERunDirExists {
+		t.Errorf("error code = %q, want %q", code, errors.ERunDirExists)
 	}
 }
 

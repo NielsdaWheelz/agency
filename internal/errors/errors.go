@@ -45,6 +45,11 @@ const (
 	ERunRepoMismatch      Code = "E_RUN_REPO_MISMATCH"
 	EScriptTimeout        Code = "E_SCRIPT_TIMEOUT"
 	EScriptFailed         Code = "E_SCRIPT_FAILED"
+
+	// Run persistence error codes (slice 1 PR-06)
+	ERunDirExists       Code = "E_RUN_DIR_EXISTS"
+	ERunDirCreateFailed Code = "E_RUN_DIR_CREATE_FAILED"
+	EMetaWriteFailed    Code = "E_META_WRITE_FAILED"
 )
 
 // AgencyError is the standard error type for agency errors.

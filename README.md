@@ -21,8 +21,9 @@ slice 1 progress:
 - [x] PR-03: agency.json load + runner resolution for S1
 - [x] PR-04: run pipeline orchestration (internal API)
 - [x] PR-05: worktree + scaffolding + collision handling
+- [x] PR-06: meta.json writer + run dir creation
 
-next: slice 1 PR-06 (meta.json writer + run dir creation)
+next: slice 1 PR-07 (setup script execution + logging)
 
 ## installation
 
@@ -204,7 +205,7 @@ agency/
 │   ├── repo/             # repo safety checks + CheckRepoSafe API
 │   ├── runservice/       # concrete RunService implementation (wires all steps)
 │   ├── scaffold/         # agency.json template + stub script creation
-│   ├── store/            # repo_index.json + repo.json persistence
+│   ├── store/            # repo_index.json + repo.json + run meta.json persistence
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
 └── docs/                 # specifications
