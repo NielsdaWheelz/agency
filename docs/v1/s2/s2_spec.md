@@ -8,15 +8,16 @@ in-scope (v1):
 - `agency ls` with sane defaults + `--all` + `--all-repos` + `--json`
 - `agency show <id>` with rich details + `--path` + `--json` + `--capture`
 - derive display status from local evidence only (no `gh` calls)
-- per-run append-only `events.jsonl` (commands that take the repo lock emit; read-only commands do not)
+- per-run append-only `events.jsonl` (commands that take the repo lock emit; read-only commands without mutating flags do not)
 - script logs already exist from s1; this slice standardizes how `show` surfaces them
 - repo move handling (best-effort): use `repo_index.json` to map repo_key -> seen paths and pick an existing path deterministically
-  - path selection preference order:
+  - path selection preference order (for printing paths and default scope only; never affects run discovery or run_id resolution):
     1. current cwd repo root if it matches repo_key (when in repo)
     2. most recently seen path in repo_index that still exists
     3. any existing path from seen_paths
   - if none exist: `repo_root = null` and show warns “repo not found on disk”
   - do not try to resolve repo_root for archived runs beyond detecting missing worktree; show whatever path is in meta
+  - cwd repo root match only applies when repo_key is available (via repo.json)
 
 out-of-scope (explicit):
 - any `gh` refresh during `ls`/`show` (`show --refresh` deferred)
@@ -44,7 +45,7 @@ behavior tweaks (locked):
 #### `agency show <id>`
 new flags:
 - `--json` : machine output (stable)
-- `--capture` : capture tmux scrollback into transcript files (best-effort), then show
+- `--capture` : capture tmux scrollback into transcript files (best-effort), then show (mutating mode; takes repo lock and emits events)
 existing:
 - `--path` : print only resolved filesystem paths (repo root, worktree, global run dir, logs, report)
 
@@ -56,7 +57,7 @@ existing:
 
 ### outputs (human)
 `ls` row fields (human mode):
-- `run_id` (shortened display ok, but must include enough to be unique in current listing)
+- `run_id` (full)
 - `title` (truncate to 50 chars; indicate truncation)
 - `runner`
 - `created_at` (relative ok, but `--json` must include absolute)
@@ -69,7 +70,7 @@ existing:
 - workspace presence (worktree exists?)
 - report presence + size
 - last script outcomes (setup/verify/archive): exit code, duration, last lines pointer, log path
-- derived status + which predicates triggered it
+- derived status
 - repo identity details (repo_key/repo_id/origin url if known)
 
 ### outputs (json)
@@ -104,6 +105,7 @@ on `agency show <id> --capture`:
 add (public contract):
 - `E_RUN_ID_AMBIGUOUS` — id prefix matches >1 run; output candidates
 - `E_RUN_BROKEN` — run exists but `meta.json` is unreadable/invalid; show path + recovery hint
+  - only applies to commands targeting a specific run (not `ls`)
 
 exit code expectations:
 - `ls` exits 0 unless catastrophic (e.g., data dir unreadable)
@@ -124,6 +126,7 @@ exit code expectations:
   - when: `agency ls --all-repos`
   - then: agency scans those directories, parses meta where possible, and lists runs
   - and: unreadable/invalid meta results in a “broken run” row (human) and `broken=true` in json output
+  - and: `E_RUN_BROKEN` only applies to commands targeting a specific run (show/attach/push/etc.); `ls` never throws it
 
 ### id resolution
 - given: two runs `20260110-a3f2` and `20260110-a3ff`
@@ -151,9 +154,17 @@ status precedence (highest wins):
 - `needs_attention`
 - `ready_for_review`
 - else: active/idle variants as currently defined
+terminal outcome source:
+- merged/abandoned outcomes come only from meta fields written by agency (no gh calls in s2)
 report size heuristic:
 - constant threshold in v1: 64 bytes
 - report is "empty" if missing or bytes < 64
+ - `report_nonempty` is true if report exists and bytes >= 64
+ready_for_review predicates:
+- `pr_number` present
+- `last_push_at` present
+- `report_nonempty` (heuristic; can be false-positive/false-negative)
+- outcome is open
 
 ### transcript capture
 - given: tmux session exists for run
@@ -180,6 +191,7 @@ RunSummary fields:
 - `title`
 - `runner`
 - `created_at` (rfc3339)
+- `last_push_at` (nullable rfc3339)
 - `tmux_active` (bool; session exists)
 - `worktree_present` (bool; path exists)
 - `archived` (bool)
@@ -187,6 +199,10 @@ RunSummary fields:
 - `pr_url` (nullable)
 - `derived_status` (string)
 - `broken` (bool; true if meta unreadable)
+repo identity join:
+- `repo_key`/`origin_url` are populated by loading `repos/<repo_id>/repo.json`
+- if repo.json is missing or corrupt, set `repo_key=null` and `origin_url=null` and continue (do not mark run broken unless meta is broken)
+ - same join behavior applies to `show --json`
 
 ### `show --json` schema (v1)
 `{ "schema_version": "1.0", "data": RunDetail }`
@@ -234,15 +250,15 @@ schema (each line):
 emission rules:
 	•	any command that takes the repo lock emits `cmd_start`/`cmd_end`
 	•	`resume` only takes the lock if it will create/kill a session (detect before locking)
-	•	stop/kill emit without taking the lock; mark `data.best_effort=true`
-	•	read-only commands (ls, show, attach, doctor) do not emit
+	•	read-only commands without mutating flags (ls, show, attach, doctor) do not emit
 	•	script events always emitted when setup/verify/archive run
+	•	`show --capture` is mutating: it takes the repo lock and emits `cmd_start`/`cmd_end`
 
 minimum data:
 	•	for cmd_start: { "cmd": "...", "args": ["..."] }
 	•	for cmd_end: { "cmd": "...", "exit_code": 0, "duration_ms": 123, "error_code": "E_..."? }
 	•	for script_*: { "script": "setup|verify|archive", "exit_code": 0, "duration_ms": 123, "timed_out": false }
-	•	for stop/kill: include `{ "best_effort": true, "tmux_session_existed": true|false }`
+	•	no events are emitted for stop/kill in s2 (best-effort commands without repo lock)
 
 tests
 
@@ -272,6 +288,7 @@ guardrails
 	•	do not add runner pid inspection
 	•	do not introduce new indexes beyond scanning existing directory layout
 	•	do not mutate meta.json during read-only commands (no “last_seen_at” writes)
+	•	do not modify repo_index.json during ls/show
 
 rollout notes
 	•	events.jsonl will start appearing for new mutating operations post-s2; existing runs may lack events.jsonl until next mutation.
