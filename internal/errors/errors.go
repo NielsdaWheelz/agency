@@ -16,7 +16,10 @@ const (
 	ENotImplemented Code = "E_NOT_IMPLEMENTED"
 
 	// Slice 0 error codes
-	ENoRepo Code = "E_NO_REPO"
+	ENoRepo              Code = "E_NO_REPO"
+	ENoAgencyJSON        Code = "E_NO_AGENCY_JSON"
+	EInvalidAgencyJSON   Code = "E_INVALID_AGENCY_JSON"
+	ERunnerNotConfigured Code = "E_RUNNER_NOT_CONFIGURED"
 )
 
 // AgencyError is the standard error type for agency errors.

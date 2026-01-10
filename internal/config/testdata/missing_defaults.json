@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "scripts": {
+    "setup": "scripts/agency_setup.sh",
+    "verify": "scripts/agency_verify.sh",
+    "archive": "scripts/agency_archive.sh"
+  }
+}
