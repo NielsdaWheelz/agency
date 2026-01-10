@@ -61,6 +61,7 @@ Core loop:
 - config: **`agency.json`** required at repo root
 - scripts: **setup/verify/archive** required
 - merge: **human confirmation** required
+- cli parsing: **stdlib `flag`** in v1
 
 ---
 
@@ -84,29 +85,36 @@ Agency requires (checked via `agency doctor`):
 - `gh` (authenticated: `gh auth status`)
 - `tmux`
 - configured runner (`claude` or `codex` on PATH, or custom command)
+- scripts `setup/verify/archive` exist and are executable
 
 `agency doctor` also prints resolved directory paths (data, config, cache).
+`agency doctor` exits 0 only when all required tools/scripts are present and `gh auth status` succeeds. origin may be absent; GitHub flow availability does not affect success.
 
 ---
 
 ## 7) Directories
 
-### XDG-based resolution
+### Directory resolution
 
 **data directory** (`AGENCY_DATA_DIR`):
 1. if `$AGENCY_DATA_DIR` set: use it
-2. else if `$XDG_DATA_HOME` set: `$XDG_DATA_HOME/agency`
-3. else: `~/.local/share/agency`
+2. else if macOS: `~/Library/Application Support/agency`
+3. else if `$XDG_DATA_HOME` set: `$XDG_DATA_HOME/agency`
+4. else: `~/.local/share/agency`
 
 **config directory** (reserved, unused in v1):
-1. if `$XDG_CONFIG_HOME` set: `$XDG_CONFIG_HOME/agency`
-2. else: `~/.config/agency`
+1. if `$AGENCY_CONFIG_DIR` set: use it
+2. else if macOS: `~/Library/Preferences/agency`
+3. else if `$XDG_CONFIG_HOME` set: `$XDG_CONFIG_HOME/agency`
+4. else: `~/.config/agency`
 
 **cache directory** (reserved, unused in v1):
-1. if `$XDG_CACHE_HOME` set: `$XDG_CACHE_HOME/agency`
-2. else: `~/.cache/agency`
+1. if `$AGENCY_CACHE_DIR` set: use it
+2. else if macOS: `~/Library/Caches/agency`
+3. else if `$XDG_CACHE_HOME` set: `$XDG_CACHE_HOME/agency`
+4. else: `~/.cache/agency`
 
-All global state lives under `${AGENCY_DATA_DIR}`. note: on mac, v1 still follows XDG unless `AGENCY_DATA_DIR` is set.
+All global state lives under `${AGENCY_DATA_DIR}`.
 
 ---
 
@@ -122,9 +130,9 @@ All global state lives under `${AGENCY_DATA_DIR}`. note: on mac, v1 still follow
     "runner": "claude"
   },
   "scripts": {
-    "setup": "./scripts/agency_setup.sh",
-    "verify": "./scripts/agency_verify.sh",
-    "archive": "./scripts/agency_archive.sh"
+    "setup": "scripts/agency_setup.sh",
+    "verify": "scripts/agency_verify.sh",
+    "archive": "scripts/agency_archive.sh"
   },
   "runners": {
     "claude": "claude",
@@ -138,10 +146,20 @@ All global state lives under `${AGENCY_DATA_DIR}`. note: on mac, v1 still follow
 - `defaults.runner`
 - `scripts.setup`, `scripts.verify`, `scripts.archive`
 
+**validation (v1)**:
+- `version` must be integer `1`
+- `defaults.parent_branch` must be non-empty string
+- `defaults.runner` must be `claude` or `codex`
+- `scripts.setup|verify|archive` must be non-empty strings
+- `runners` if present must be object of string -> string (values non-empty)
+- unknown top-level keys are ignored
+
 **runner resolution**:
 - if `runners.<name>` exists: use that command
 - else if `defaults.runner` is `claude` or `codex`: assume on PATH
 - else: error `E_RUNNER_NOT_CONFIGURED`
+
+Invalid `runners.<name>` values (non-string or empty string) are configuration errors (`E_INVALID_AGENCY_JSON`).
 
 **schema versioning (v1)** (applies to `agency.json`, `meta.json`, `events.jsonl`):
 - additive only
@@ -211,7 +229,7 @@ If present, agency uses `ok` field; if absent, uses exit code only.
 
 ```
 ${AGENCY_DATA_DIR}/
-  repo_index.json         # repo_key -> [seen_paths]
+  repo_index.json
   repos/<repo_id>/
     repo.json
     runs/<run_id>/
@@ -220,7 +238,45 @@ ${AGENCY_DATA_DIR}/
     worktrees/<run_id>/   # git worktree (deleted on archive)
 ```
 
-`repo_id` = sha256(repo_key) truncated.
+`repo_id` = sha256(repo_key) truncated to 16 hex chars.
+
+### Atomic write behavior (v1)
+
+- JSON files are written via temp file + atomic rename.
+- Do not write `repo_index.json` or `repo.json` unless `agency doctor` succeeds.
+- Optional: fsync temp file and parent directory before rename (not required in v1).
+
+### repo_index.json (public contract, v1)
+
+```json
+{
+  "schema_version": "1.0",
+  "repos": {
+    "github:owner/repo": {
+      "repo_id": "abcd1234ef567890",
+      "paths": ["/abs/path"],
+      "last_seen_at": "2025-01-09T12:34:56Z"
+    }
+  }
+}
+```
+
+### repo.json (public contract, v1)
+
+- `schema_version: "1.0"`
+- `repo_id`
+- `repo_key`
+- `origin_present` (bool)
+- `origin_url` (string or empty if no origin)
+- `origin_host` (string or empty if none)
+- `repo_root_last_seen` (absolute path)
+- `agency_json_path` (absolute path)
+- `capabilities`:
+  - `github_origin` (bool)
+  - `origin_host` (string or empty)
+  - `gh_authed` (bool)
+- `created_at`
+- `updated_at`
 
 ### meta.json (public contract, v1)
 
@@ -431,6 +487,26 @@ agency doctor                     check prerequisites + show paths
 ### Init semantics
 
 `agency init` writes the template and appends `.agency/` to the repo `.gitignore` by default. use `--no-gitignore` for a non-invasive mode.
+`agency init` also creates stub scripts if missing:
+- `scripts/agency_setup.sh` (exit 0)
+- `scripts/agency_verify.sh` (print "replace scripts/agency_verify.sh" and exit 1)
+- `scripts/agency_archive.sh` (exit 0)
+
+Scripts are never overwritten by init.
+Stub scripts:
+- path normalization: always under repo root (no absolute paths)
+- file mode: 0755
+- contents (setup/archive):
+  - `#!/usr/bin/env bash`
+  - `set -euo pipefail`
+  - comment indicating it is a stub
+  - `exit 0`
+- contents (verify):
+  - `#!/usr/bin/env bash`
+  - `set -euo pipefail`
+  - comment indicating it is a stub and must be replaced
+  - `echo "replace scripts/agency_verify.sh"`
+  - `exit 1`
 
 ### Resume semantics
 
@@ -489,6 +565,8 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_NO_REPO`
 - `E_NO_AGENCY_JSON`
 - `E_INVALID_AGENCY_JSON`
+- `E_AGENCY_JSON_EXISTS`
+- `E_GIT_NOT_INSTALLED`
 - `E_RUNNER_NOT_CONFIGURED`
 - `E_GH_NOT_AUTHENTICATED`
 - `E_GH_NOT_INSTALLED`
@@ -496,10 +574,27 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_PARENT_DIRTY`
 - `E_EMPTY_DIFF`
 - `E_PR_NOT_MERGEABLE`
+- `E_UNSUPPORTED_ORIGIN_HOST`
 - `E_REPO_LOCKED`
 - `E_RUN_NOT_FOUND`
+- `E_NO_PR`
+- `E_SCRIPT_NOT_FOUND`
+- `E_SCRIPT_NOT_EXECUTABLE`
 - `E_SCRIPT_TIMEOUT`
 - `E_SCRIPT_FAILED`
+- `E_REPO_ID_COLLISION`
+
+error output (v1):
+- on non-zero exit, print `error_code: E_...` as the first line on stderr
+- follow with a human-readable message on stderr
+
+doctor output (v1):
+- stdout is `key: value` lines, no color
+- includes: `repo_root`, `data_dir`, `config_dir`, `cache_dir`, `repo_key`, `repo_id`,
+  `github_flow_available`, `origin_present`, `origin_url`, `origin_host`,
+  `git`, `git_version`, `tmux`, `tmux_version`, `gh`, `gh_version`, `gh_auth`,
+  `runner`, `scripts_setup`, `scripts_verify`, `scripts_archive`
+- final line on success: `result: ok`
 
 ---
 
