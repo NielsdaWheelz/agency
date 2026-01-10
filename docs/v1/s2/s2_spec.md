@@ -72,6 +72,7 @@ existing:
 - last script outcomes (setup/verify/archive): exit code, duration, last lines pointer, log path
 - derived status
 - repo identity details (repo_key/repo_id/origin url if known)
+note: `show` is read-only unless `--capture` is specified
 
 ### outputs (json)
 `--json` outputs must be stable and versioned:
@@ -126,6 +127,7 @@ exit code expectations:
   - when: `agency ls --all-repos`
   - then: agency scans those directories, parses meta where possible, and lists runs
   - and: unreadable/invalid meta results in a “broken run” row (human) and `broken=true` in json output
+  - and: broken rows derive `run_id` from the run directory name; set `title="<broken>"`, `runner=null`, `created_at=null`
   - and: `E_RUN_BROKEN` only applies to commands targeting a specific run (show/attach/push/etc.); `ls` never throws it
 
 ### id resolution
@@ -159,7 +161,8 @@ terminal outcome source:
 report size heuristic:
 - constant threshold in v1: 64 bytes
 - report is "empty" if missing or bytes < 64
- - `report_nonempty` is true if report exists and bytes >= 64
+- `report_nonempty` is true if report exists and bytes >= 64
+ - template-only reports may exceed 64 bytes; false positives are accepted in v1
 ready_for_review predicates:
 - `pr_number` present
 - `last_push_at` present
@@ -258,7 +261,7 @@ minimum data:
 	•	for cmd_start: { "cmd": "...", "args": ["..."] }
 	•	for cmd_end: { "cmd": "...", "exit_code": 0, "duration_ms": 123, "error_code": "E_..."? }
 	•	for script_*: { "script": "setup|verify|archive", "exit_code": 0, "duration_ms": 123, "timed_out": false }
-	•	no events are emitted for stop/kill in s2 (best-effort commands without repo lock)
+	•	stop/kill do not emit in s2 (best-effort commands without repo lock)
 
 tests
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -617,12 +618,107 @@ func parseSetupJSON(fsys fs.FS, path string) *structuredSetupOutput {
 	}
 }
 
+// TmuxSessionPrefix is the prefix for all agency tmux session names.
+// Note: Using underscore instead of colon because tmux interprets colons
+// as session:window.pane syntax separators and converts them to underscores.
+const TmuxSessionPrefix = "agency_"
+
 // StartTmux creates the tmux session with the runner command.
-// Not implemented in this PR (PR-08).
+// Only runs if setup succeeded (flags.setup_failed is absent/false).
+// Creates a detached tmux session `agency:<run_id>` running the runner.
+// Updates meta.json with tmux_session_name on success or flags.tmux_failed on failure.
 func (s *Service) StartTmux(ctx context.Context, st *pipeline.PipelineState) error {
-	return errors.NewWithDetails(
-		errors.ENotImplemented,
-		"StartTmux not implemented (PR-08)",
-		map[string]string{"step": "StartTmux"},
-	)
+	// Check if setup failed - should not start tmux if so
+	st2 := store.NewStore(s.fsys, st.DataDir, s.nowFunc)
+	meta, err := st2.ReadMeta(st.RepoID, st.RunID)
+	if err != nil {
+		return err
+	}
+
+	if meta.Flags != nil && meta.Flags.SetupFailed {
+		return errors.NewWithDetails(
+			errors.ETmuxFailed,
+			"cannot start tmux: setup failed",
+			map[string]string{
+				"run_id": st.RunID,
+			},
+		)
+	}
+
+	// Build the tmux session name
+	sessionName := TmuxSessionPrefix + st.RunID
+
+	// Check if session already exists (collision detection)
+	hasSessionResult, err := s.cr.Run(ctx, "tmux", []string{"has-session", "-t", sessionName}, exec.RunOpts{})
+	if err != nil {
+		// tmux command failed to run (not installed, etc.)
+		return errors.Wrap(errors.ETmuxNotInstalled, "failed to check tmux session", err)
+	}
+	if hasSessionResult.ExitCode == 0 {
+		// Session already exists - collision
+		return errors.NewWithDetails(
+			errors.ETmuxSessionExists,
+			"tmux session '"+sessionName+"' already exists",
+			map[string]string{
+				"session": sessionName,
+				"run_id":  st.RunID,
+			},
+		)
+	}
+
+	// Build the pane command
+	paneCmd := core.BuildRunnerShellScript(st.WorktreePath, st.ResolvedRunnerCmd)
+
+	// Create the tmux session detached
+	// Use: tmux new-session -d -s <session> -- sh -lc '<pane_cmd>'
+	newSessionResult, err := s.cr.Run(ctx, "tmux", []string{
+		"new-session",
+		"-d",
+		"-s", sessionName,
+		"--",
+		"sh", "-lc", paneCmd,
+	}, exec.RunOpts{})
+	if err != nil {
+		// tmux command failed to run
+		s.setTmuxFailedFlag(st.DataDir, st.RepoID, st.RunID)
+		return errors.Wrap(errors.ETmuxFailed, "failed to create tmux session", err)
+	}
+	if newSessionResult.ExitCode != 0 {
+		// tmux command returned non-zero
+		s.setTmuxFailedFlag(st.DataDir, st.RepoID, st.RunID)
+		return errors.NewWithDetails(
+			errors.ETmuxFailed,
+			"tmux new-session failed: "+newSessionResult.Stderr,
+			map[string]string{
+				"session":   sessionName,
+				"exit_code": fmt.Sprintf("%d", newSessionResult.ExitCode),
+				"stderr":    newSessionResult.Stderr,
+			},
+		)
+	}
+
+	// Update meta.json with tmux_session_name
+	err = st2.UpdateMeta(st.RepoID, st.RunID, func(m *store.RunMeta) {
+		m.TmuxSessionName = sessionName
+	})
+	if err != nil {
+		// Meta write failed, but tmux session was created
+		// Best effort: try to kill the session
+		s.cr.Run(ctx, "tmux", []string{"kill-session", "-t", sessionName}, exec.RunOpts{})
+		return err
+	}
+
+	return nil
+}
+
+// setTmuxFailedFlag updates meta.json to set flags.tmux_failed=true.
+// Called when tmux session creation fails.
+func (s *Service) setTmuxFailedFlag(dataDir, repoID, runID string) {
+	st2 := store.NewStore(s.fsys, dataDir, s.nowFunc)
+	_ = st2.UpdateMeta(repoID, runID, func(m *store.RunMeta) {
+		if m.Flags == nil {
+			m.Flags = &store.RunMetaFlags{}
+		}
+		m.Flags.TmuxFailed = true
+	})
 }

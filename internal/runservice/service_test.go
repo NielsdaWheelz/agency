@@ -820,18 +820,248 @@ exit 0
 	}
 }
 
-func TestService_StartTmux_NotImplemented(t *testing.T) {
+func TestService_StartTmux_Success(t *testing.T) {
+	repoRoot, dataDir, cleanup := setupTempRepo(t)
+	defer cleanup()
+
+	// Set AGENCY_DATA_DIR
+	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
+	os.Setenv("AGENCY_DATA_DIR", dataDir)
+	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+
+	// Change to repo directory
+	oldWd, _ := os.Getwd()
+	os.Chdir(repoRoot)
+	defer os.Chdir(oldWd)
+
+	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+
 	svc := New()
 	ctx := context.Background()
-	st := &pipeline.PipelineState{}
 
-	err := svc.StartTmux(ctx, st)
+	runID := "20260110120000-tmux"
+	repoID := "abcd1234ef567890"
+
+	// Create worktree
+	st := &pipeline.PipelineState{
+		RunID:        runID,
+		Title:        "Tmux Test",
+		RepoRoot:     resolvedRepoRoot,
+		RepoID:       repoID,
+		DataDir:      dataDir,
+		ParentBranch: "main",
+		Runner:       "sh", // Use sh as runner for testing
+	}
+
+	err := svc.CreateWorktree(ctx, st)
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	// Use 'sh' as the runner command (just opens a shell, which is safe for testing)
+	st.ResolvedRunnerCmd = "sh"
+	st.SetupScript = "scripts/agency_setup.sh"
+
+	// Write meta
+	err = svc.WriteMeta(ctx, st)
+	if err != nil {
+		t.Fatalf("WriteMeta failed: %v", err)
+	}
+
+	// Create setup script that succeeds
+	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("failed to create scripts dir: %v", err)
+	}
+
+	setupScript := "#!/bin/bash\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
+		t.Fatalf("failed to write setup script: %v", err)
+	}
+
+	// Run setup
+	err = svc.RunSetup(ctx, st)
+	if err != nil {
+		t.Fatalf("RunSetup failed: %v", err)
+	}
+
+	// Now test StartTmux
+	err = svc.StartTmux(ctx, st)
+	if err != nil {
+		t.Fatalf("StartTmux failed: %v", err)
+	}
+
+	// Clean up tmux session
+	sessionName := "agency_" + runID
+	exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+
+	// Verify meta was updated with tmux_session_name
+	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
+	metaContent, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("failed to read meta.json: %v", err)
+	}
+	if !strings.Contains(string(metaContent), `"tmux_session_name": "agency_`+runID+`"`) {
+		t.Error("meta.json should contain tmux_session_name")
+	}
+}
+
+func TestService_StartTmux_SetupFailed(t *testing.T) {
+	repoRoot, dataDir, cleanup := setupTempRepo(t)
+	defer cleanup()
+
+	// Set AGENCY_DATA_DIR
+	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
+	os.Setenv("AGENCY_DATA_DIR", dataDir)
+	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+
+	// Change to repo directory
+	oldWd, _ := os.Getwd()
+	os.Chdir(repoRoot)
+	defer os.Chdir(oldWd)
+
+	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+
+	svc := New()
+	ctx := context.Background()
+
+	runID := "20260110120001-fail"
+	repoID := "abcd1234ef567890"
+
+	// Create worktree
+	st := &pipeline.PipelineState{
+		RunID:        runID,
+		Title:        "Tmux Fail Test",
+		RepoRoot:     resolvedRepoRoot,
+		RepoID:       repoID,
+		DataDir:      dataDir,
+		ParentBranch: "main",
+		Runner:       "sh",
+	}
+
+	err := svc.CreateWorktree(ctx, st)
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	st.ResolvedRunnerCmd = "sh"
+	st.SetupScript = "scripts/agency_setup.sh"
+
+	// Write meta
+	err = svc.WriteMeta(ctx, st)
+	if err != nil {
+		t.Fatalf("WriteMeta failed: %v", err)
+	}
+
+	// Create setup script that FAILS
+	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("failed to create scripts dir: %v", err)
+	}
+
+	setupScript := "#!/bin/bash\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
+		t.Fatalf("failed to write setup script: %v", err)
+	}
+
+	// Run setup (should fail)
+	err = svc.RunSetup(ctx, st)
 	if err == nil {
-		t.Fatal("expected error for not implemented")
+		t.Fatal("expected RunSetup to fail")
+	}
+
+	// Now test StartTmux - should fail because setup failed
+	err = svc.StartTmux(ctx, st)
+	if err == nil {
+		t.Fatal("expected StartTmux to fail when setup failed")
 	}
 
 	code := errors.GetCode(err)
-	if code != errors.ENotImplemented {
-		t.Errorf("error code = %q, want %q", code, errors.ENotImplemented)
+	if code != errors.ETmuxFailed {
+		t.Errorf("error code = %q, want %q", code, errors.ETmuxFailed)
+	}
+}
+
+func TestService_StartTmux_SessionExists(t *testing.T) {
+	repoRoot, dataDir, cleanup := setupTempRepo(t)
+	defer cleanup()
+
+	// Set AGENCY_DATA_DIR
+	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
+	os.Setenv("AGENCY_DATA_DIR", dataDir)
+	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+
+	// Change to repo directory
+	oldWd, _ := os.Getwd()
+	os.Chdir(repoRoot)
+	defer os.Chdir(oldWd)
+
+	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+
+	svc := New()
+	ctx := context.Background()
+
+	runID := "20260110120002-coll"
+	repoID := "abcd1234ef567890"
+	sessionName := "agency_" + runID
+
+	// Pre-create a tmux session with this name (collision)
+	// Use sleep to keep the session alive
+	if err := exec.Command("tmux", "new-session", "-d", "-s", sessionName, "sleep", "60").Run(); err != nil {
+		t.Skip("tmux not available, skipping test")
+	}
+	defer exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+
+	// Create worktree
+	st := &pipeline.PipelineState{
+		RunID:        runID,
+		Title:        "Collision Test",
+		RepoRoot:     resolvedRepoRoot,
+		RepoID:       repoID,
+		DataDir:      dataDir,
+		ParentBranch: "main",
+		Runner:       "sh",
+	}
+
+	err := svc.CreateWorktree(ctx, st)
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	st.ResolvedRunnerCmd = "sh"
+	st.SetupScript = "scripts/agency_setup.sh"
+
+	// Write meta
+	err = svc.WriteMeta(ctx, st)
+	if err != nil {
+		t.Fatalf("WriteMeta failed: %v", err)
+	}
+
+	// Create setup script that succeeds
+	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("failed to create scripts dir: %v", err)
+	}
+
+	setupScript := "#!/bin/bash\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
+		t.Fatalf("failed to write setup script: %v", err)
+	}
+
+	// Run setup
+	err = svc.RunSetup(ctx, st)
+	if err != nil {
+		t.Fatalf("RunSetup failed: %v", err)
+	}
+
+	// Now test StartTmux - should fail because session already exists
+	err = svc.StartTmux(ctx, st)
+	if err == nil {
+		t.Fatal("expected StartTmux to fail with session collision")
+	}
+
+	code := errors.GetCode(err)
+	if code != errors.ETmuxSessionExists {
+		t.Errorf("error code = %q, want %q", code, errors.ETmuxSessionExists)
 	}
 }

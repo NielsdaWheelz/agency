@@ -23,8 +23,9 @@ slice 1 progress:
 - [x] PR-05: worktree + scaffolding + collision handling
 - [x] PR-06: meta.json writer + run dir creation
 - [x] PR-07: setup script execution + logging
+- [x] PR-08: tmux session creation + attach command
 
-next: slice 1 PR-08 (tmux session creation + attach command)
+next: slice 1 PR-09 (wire agency run end-to-end + --attach UX)
 
 ## installation
 
@@ -163,6 +164,37 @@ status: ok
 - `E_SCRIPT_NOT_FOUND` — required script not found
 - `E_SCRIPT_NOT_EXECUTABLE` — script is not executable (suggests `chmod +x`)
 - `E_PERSIST_FAILED` — failed to write persistence files
+
+### `agency attach`
+
+attaches to an existing tmux session for a run.
+
+**usage:**
+```bash
+agency attach <run_id>
+```
+
+**arguments:**
+- `run_id`: the run identifier (e.g., `20260110120000-a3f2`)
+
+**behavior:**
+- resolves repo root from current directory
+- loads run metadata from `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/meta.json`
+- verifies tmux session exists
+- attaches to the tmux session (blocks until user detaches)
+
+**error codes:**
+- `E_NO_REPO` — not inside a git repository
+- `E_RUN_NOT_FOUND` — run not found (meta.json does not exist)
+- `E_TMUX_SESSION_MISSING` — tmux session does not exist (killed or system restarted)
+- `E_TMUX_NOT_INSTALLED` — tmux not found
+
+**when session is missing:**
+
+if the run exists but the tmux session has been killed (e.g., system restarted), attach will fail with `E_TMUX_SESSION_MISSING` and print:
+- worktree path
+- runner command
+- suggested manual command to restart the runner
 
 ## development
 
