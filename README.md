@@ -30,7 +30,7 @@ slice 2 progress:
 - [x] PR-00: repo lock helper
 - [x] PR-01: run discovery + parsing + broken run records
 - [ ] PR-02: run id resolution (exact + unique prefix)
-- [ ] PR-03: derived status computation
+- [x] PR-03: derived status computation (pure)
 - [ ] PR-04: `agency ls` command
 - [ ] PR-05: `agency show` command
 - [ ] PR-06: transcript capture + events.jsonl
@@ -307,6 +307,7 @@ agency/
 │   ├── repo/             # repo safety checks + CheckRepoSafe API
 │   ├── runservice/       # concrete RunService implementation (wires all steps, setup execution)
 │   ├── scaffold/         # agency.json template + stub script creation
+│   ├── status/           # pure status derivation from meta + local snapshot
 │   ├── store/            # repo_index.json + repo.json + run meta.json + run scanning
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
