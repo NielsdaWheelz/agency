@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 in progress.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -15,7 +15,10 @@ slice 0 progress:
 - [x] PR-05: `agency doctor` command
 - [x] PR-06: docs + cleanup
 
-next: slice 1 (run + worktrees + tmux)
+slice 1 progress:
+- [x] PR-01: core utilities + errors + subprocess + atomic json
+
+next: slice 1 PR-02 (repo detection + gates)
 
 ## installation
 
@@ -186,9 +189,10 @@ agency/
 │   ├── cli/              # command dispatcher (stdlib flag)
 │   ├── commands/         # command implementations (init, doctor, etc.)
 │   ├── config/           # agency.json loading + validation
-│   ├── errors/           # stable error codes
-│   ├── exec/             # CommandRunner interface for external commands
-│   ├── fs/               # FS interface + atomic write
+│   ├── core/             # run id generation, slugify, branch naming, shell escaping
+│   ├── errors/           # stable error codes + AgencyError type
+│   ├── exec/             # CommandRunner interface + RunScript with timeout
+│   ├── fs/               # FS interface + atomic write + WriteJSONAtomic
 │   ├── git/              # repo discovery + origin info
 │   ├── identity/         # repo_key + repo_id derivation
 │   ├── paths/            # XDG directory resolution
@@ -202,9 +206,10 @@ agency/
 
 - [constitution](docs/v1/constitution.md) — full v1 specification
 - [slice roadmap](docs/v1/slice_roadmap.md) — implementation plan
-- [slice 0 bootstrap](docs/v1/slices/slice-00_bootstrap.md) — bootstrap slice (complete)
 - [slice 0 spec](docs/v1/s0/s0_spec.md) — bootstrap slice detailed spec
-- [slice 0 PRs](docs/v1/s0/s0_prs.md) — PR breakdown
+- [slice 0 PRs](docs/v1/s0/s0_prs.md) — slice 0 PR breakdown
+- [slice 1 spec](docs/v1/s1/s1_spec.md) — run workspace slice detailed spec
+- [slice 1 PRs](docs/v1/s1/s1_prs.md) — slice 1 PR breakdown
 
 ## license
 

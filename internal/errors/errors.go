@@ -32,13 +32,27 @@ const (
 	EScriptNotExecutable Code = "E_SCRIPT_NOT_EXECUTABLE"
 	EPersistFailed       Code = "E_PERSIST_FAILED"
 	EInternal            Code = "E_INTERNAL"
+
+	// Slice 1 error codes
+	EEmptyRepo            Code = "E_EMPTY_REPO"
+	EParentDirty          Code = "E_PARENT_DIRTY"
+	EParentBranchNotFound Code = "E_PARENT_BRANCH_NOT_FOUND"
+	EWorktreeCreateFailed Code = "E_WORKTREE_CREATE_FAILED"
+	ETmuxSessionExists    Code = "E_TMUX_SESSION_EXISTS"
+	ETmuxFailed           Code = "E_TMUX_FAILED"
+	ETmuxSessionMissing   Code = "E_TMUX_SESSION_MISSING"
+	ERunNotFound          Code = "E_RUN_NOT_FOUND"
+	ERunRepoMismatch      Code = "E_RUN_REPO_MISMATCH"
+	EScriptTimeout        Code = "E_SCRIPT_TIMEOUT"
+	EScriptFailed         Code = "E_SCRIPT_FAILED"
 )
 
 // AgencyError is the standard error type for agency errors.
 type AgencyError struct {
-	Code  Code
-	Msg   string
-	Cause error
+	Code    Code
+	Msg     string
+	Cause   error
+	Details map[string]string // optional structured context
 }
 
 // Error returns the stable error format: "CODE: message".
@@ -56,9 +70,21 @@ func New(code Code, msg string) error {
 	return &AgencyError{Code: code, Msg: msg}
 }
 
+// NewWithDetails creates a new AgencyError with code, message, and details.
+// Details map is defensively copied (nil if empty).
+func NewWithDetails(code Code, msg string, details map[string]string) error {
+	return &AgencyError{Code: code, Msg: msg, Details: copyDetails(details)}
+}
+
 // Wrap creates a new AgencyError wrapping an underlying error.
 func Wrap(code Code, msg string, err error) error {
 	return &AgencyError{Code: code, Msg: msg, Cause: err}
+}
+
+// WrapWithDetails creates a new AgencyError wrapping an underlying error with details.
+// Details map is defensively copied (nil if empty).
+func WrapWithDetails(code Code, msg string, err error, details map[string]string) error {
+	return &AgencyError{Code: code, Msg: msg, Cause: err, Details: copyDetails(details)}
 }
 
 // GetCode extracts the error code from an error, or empty string if not an AgencyError.
@@ -68,6 +94,27 @@ func GetCode(err error) Code {
 		return ae.Code
 	}
 	return ""
+}
+
+// AsAgencyError returns (*AgencyError, true) if err is or wraps an AgencyError.
+func AsAgencyError(err error) (*AgencyError, bool) {
+	var ae *AgencyError
+	if errors.As(err, &ae) {
+		return ae, true
+	}
+	return nil, false
+}
+
+// copyDetails returns a defensive copy of the details map, or nil if empty/nil.
+func copyDetails(details map[string]string) map[string]string {
+	if len(details) == 0 {
+		return nil
+	}
+	cp := make(map[string]string, len(details))
+	for k, v := range details {
+		cp[k] = v
+	}
+	return cp
 }
 
 // ExitCode returns the appropriate exit code for an error.

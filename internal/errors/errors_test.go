@@ -108,3 +108,104 @@ func TestErrorFormatStability(t *testing.T) {
 		t.Errorf("error format changed: got %q, want %q", err.Error(), expected)
 	}
 }
+
+func TestNewWithDetails(t *testing.T) {
+	details := map[string]string{"key": "value"}
+	err := NewWithDetails(EUsage, "test message", details)
+
+	var ae *AgencyError
+	if !errors.As(err, &ae) {
+		t.Fatal("errors.As failed")
+	}
+
+	if ae.Code != EUsage {
+		t.Errorf("Code = %q, want %q", ae.Code, EUsage)
+	}
+	if ae.Msg != "test message" {
+		t.Errorf("Msg = %q, want %q", ae.Msg, "test message")
+	}
+	if ae.Details["key"] != "value" {
+		t.Errorf("Details[key] = %q, want %q", ae.Details["key"], "value")
+	}
+}
+
+func TestNewWithDetails_NilDetails(t *testing.T) {
+	err := NewWithDetails(EUsage, "test", nil)
+
+	var ae *AgencyError
+	if !errors.As(err, &ae) {
+		t.Fatal("errors.As failed")
+	}
+	if ae.Details != nil {
+		t.Errorf("Details should be nil, got %v", ae.Details)
+	}
+}
+
+func TestNewWithDetails_DefensiveCopy(t *testing.T) {
+	details := map[string]string{"key": "value"}
+	err := NewWithDetails(EUsage, "test", details)
+
+	// Modify the original map
+	details["key"] = "modified"
+
+	var ae *AgencyError
+	if !errors.As(err, &ae) {
+		t.Fatal("errors.As failed")
+	}
+	// The error's details should not be affected
+	if ae.Details["key"] != "value" {
+		t.Errorf("Details should be defensively copied")
+	}
+}
+
+func TestWrapWithDetails(t *testing.T) {
+	cause := errors.New("underlying")
+	details := map[string]string{"file": "test.go"}
+	err := WrapWithDetails(EUsage, "wrapped", cause, details)
+
+	var ae *AgencyError
+	if !errors.As(err, &ae) {
+		t.Fatal("errors.As failed")
+	}
+
+	if ae.Cause != cause {
+		t.Error("Cause not set")
+	}
+	if ae.Details["file"] != "test.go" {
+		t.Errorf("Details[file] = %q, want %q", ae.Details["file"], "test.go")
+	}
+}
+
+func TestAsAgencyError(t *testing.T) {
+	t.Run("direct AgencyError", func(t *testing.T) {
+		err := New(EUsage, "test")
+		ae, ok := AsAgencyError(err)
+		if !ok {
+			t.Error("should return true for AgencyError")
+		}
+		if ae.Code != EUsage {
+			t.Errorf("Code = %q, want %q", ae.Code, EUsage)
+		}
+	})
+
+	t.Run("non AgencyError", func(t *testing.T) {
+		err := errors.New("regular error")
+		ae, ok := AsAgencyError(err)
+		if ok {
+			t.Error("should return false for non-AgencyError")
+		}
+		if ae != nil {
+			t.Error("should return nil for non-AgencyError")
+		}
+	})
+
+	t.Run("nil error", func(t *testing.T) {
+		ae, ok := AsAgencyError(nil)
+		if ok {
+			t.Error("should return false for nil")
+		}
+		if ae != nil {
+			t.Error("should return nil for nil")
+		}
+	})
+}
