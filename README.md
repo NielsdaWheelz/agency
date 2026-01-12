@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 in progress.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -33,9 +33,9 @@ slice 2 progress:
 - [x] PR-03: derived status computation (pure)
 - [x] PR-04: `agency ls` command
 - [x] PR-05: `agency show` command
-- [ ] PR-06: transcript capture + events.jsonl
+- [x] PR-06: transcript capture + events.jsonl
 
-next: slice 2 PR-06 (transcript capture + events.jsonl)
+next: slice 3 (push + PR management)
 
 ## installation
 
@@ -317,7 +317,7 @@ shows detailed information about a single run.
 
 **usage:**
 ```bash
-agency show <run_id> [--json] [--path]
+agency show <run_id> [--json] [--path] [--capture]
 ```
 
 **arguments:**
@@ -326,6 +326,7 @@ agency show <run_id> [--json] [--path]
 **flags:**
 - `--json`: output as JSON (stable format)
 - `--path`: output only resolved filesystem paths
+- `--capture`: capture tmux scrollback to transcript files (mutating mode)
 
 **behavior:**
 - resolves run_id globally (works from anywhere, not just inside a repo)
@@ -398,12 +399,32 @@ report_path: /path/to/worktree/.agency/report.md
 - `--json` still outputs envelope with `broken=true` and `meta=null`
 - `--path` outputs best-effort paths and exits non-zero
 
+**`--capture` behavior:**
+- takes repo lock (mutating mode)
+- emits `cmd_start` and `cmd_end` events to `events.jsonl`
+- captures full tmux scrollback from the session's primary pane
+- strips ANSI escape codes from captured text
+- rotates `transcript.txt` to `transcript.prev.txt` (single backup)
+- writes new `transcript.txt` atomically
+- if session is missing: warns and continues without transcript
+- capture failures never block `show` output
+
+**transcript files:**
+- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/transcript.txt`
+- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/transcript.prev.txt`
+
+**events file:**
+- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/events.jsonl`
+- append-only JSONL format
+- each line contains: `schema_version`, `timestamp`, `repo_id`, `run_id`, `event`, `data`
+
 **examples:**
 ```bash
 agency show 20260110120000-a3f2           # show run details
 agency show 20260110                       # unique prefix resolution
 agency show 20260110120000-a3f2 --json    # machine-readable output
 agency show 20260110120000-a3f2 --path    # print paths only
+agency show 20260110120000-a3f2 --capture # capture transcript + show
 agency show 20260110120000-a3f2 --json | jq '.data.derived.derived_status'
 ```
 
@@ -467,10 +488,11 @@ agency/
 ├── cmd/agency/           # main entry point
 ├── internal/
 │   ├── cli/              # command dispatcher (stdlib flag)
-│   ├── commands/         # command implementations (init, doctor, run, ls, attach)
+│   ├── commands/         # command implementations (init, doctor, run, ls, show, attach)
 │   ├── config/           # agency.json loading + validation (LoadAndValidate, ValidateForS1)
 │   ├── core/             # run id generation, slugify, branch naming, shell escaping
 │   ├── errors/           # stable error codes + AgencyError type
+│   ├── events/           # per-run event logging (events.jsonl append)
 │   ├── exec/             # CommandRunner interface + RunScript with timeout
 │   ├── fs/               # FS interface + atomic write + WriteJSONAtomic
 │   ├── git/              # repo discovery + origin info + safety gates
@@ -485,6 +507,7 @@ agency/
 │   ├── scaffold/         # agency.json template + stub script creation
 │   ├── status/           # pure status derivation from meta + local snapshot
 │   ├── store/            # repo_index.json + repo.json + run meta.json + run scanning
+│   ├── tmux/             # tmux session detection, scrollback capture, ANSI stripping
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
 └── docs/                 # specifications

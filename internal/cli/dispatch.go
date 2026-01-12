@@ -117,6 +117,7 @@ arguments:
 options:
   --json          output as JSON (stable format)
   --path          output only resolved filesystem paths
+  --capture       capture tmux scrollback to transcript files (mutating mode)
   -h, --help      show this help
 
 examples:
@@ -124,6 +125,7 @@ examples:
   agency show 20260110                       # unique prefix resolution
   agency show 20260110120000-a3f2 --json    # machine-readable output
   agency show 20260110120000-a3f2 --path    # print paths only
+  agency show 20260110120000-a3f2 --capture # capture transcript + show details
 `
 
 // Run parses arguments and dispatches to the appropriate subcommand.
@@ -322,6 +324,7 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 
 	jsonOutput := flagSet.Bool("json", false, "output as JSON")
 	pathOutput := flagSet.Bool("path", false, "output only resolved paths")
+	capture := flagSet.Bool("capture", false, "capture tmux scrollback to transcript files")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -355,9 +358,11 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.ShowOpts{
-		RunID: runID,
-		JSON:  *jsonOutput,
-		Path:  *pathOutput,
+		RunID:   runID,
+		JSON:    *jsonOutput,
+		Path:    *pathOutput,
+		Capture: *capture,
+		Args:    args,
 	}
 
 	return commands.Show(ctx, cr, fsys, cwd, opts, stdout, stderr)
