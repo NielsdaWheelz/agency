@@ -110,6 +110,9 @@ type RunDetail struct {
 
 	// Broken indicates whether meta.json is unreadable/invalid.
 	Broken bool `json:"broken"`
+
+	// Capture contains capture result info (only present when --capture is used).
+	Capture *CaptureJSON `json:"capture,omitempty"`
 }
 
 // DerivedJSON contains derived status and presence fields for show --json.
@@ -170,6 +173,18 @@ type PathsJSON struct {
 
 	// TranscriptPath is the path to transcript.txt.
 	TranscriptPath string `json:"transcript_path"`
+}
+
+// CaptureJSON contains capture result info for show --json when --capture is used.
+type CaptureJSON struct {
+	// CaptureOk is true if transcript capture succeeded.
+	CaptureOk bool `json:"capture_ok"`
+
+	// CaptureStage is the stage where capture failed (only if not ok).
+	CaptureStage string `json:"capture_stage,omitempty"`
+
+	// CaptureError is the error message (only if not ok).
+	CaptureError string `json:"capture_error,omitempty"`
 }
 
 // ShowJSONEnvelope is the stable JSON output format for show --json.

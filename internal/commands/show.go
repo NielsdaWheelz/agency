@@ -2,20 +2,25 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/events"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/ids"
+	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/status"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // ShowOpts holds options for the show command.
@@ -28,11 +33,26 @@ type ShowOpts struct {
 
 	// Path outputs only resolved filesystem paths.
 	Path bool
+
+	// Capture captures tmux scrollback to transcript files.
+	// This is a mutating mode: takes repo lock and emits events.
+	Capture bool
+
+	// Args is the raw args slice for event logging.
+	Args []string
+}
+
+// captureResult holds the result of a transcript capture attempt.
+type captureResult struct {
+	ok       bool
+	stage    string // "has_session", "capture_pane", "strip_ansi", "rotate", "write"
+	errorMsg string
 }
 
 // Show executes the agency show command.
 // Inspects a single run by exact or unique-prefix ID resolution.
-// This is a read-only command: no state files are mutated.
+// Without --capture, this is a read-only command: no state files are mutated.
+// With --capture, it takes the repo lock and emits events.
 func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts ShowOpts, stdout, stderr io.Writer) error {
 	// Validate run_id provided
 	if opts.RunID == "" {
@@ -94,6 +114,16 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 		return handleBrokenRun(record, runDir, logsDir, eventsPath, transcriptPath, setupLogPath, verifyLogPath, archiveLogPath, opts, stdout, stderr)
 	}
 
+	// If --capture is set, perform capture flow (mutating mode)
+	var captureRes *captureResult
+	if opts.Capture {
+		captureRes, err = performCapture(ctx, cr, dataDir, record, runDir, eventsPath, transcriptPath, opts, stderr)
+		if err != nil {
+			// E_REPO_LOCKED should propagate up
+			return err
+		}
+	}
+
 	// Get tmux session set (single call for efficiency)
 	tmuxSessions := getTmuxSessions(ctx, cr)
 	tmuxUnavailable := false // we don't know if tmux is unavailable, just that no sessions exist
@@ -136,17 +166,159 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	repoNotFoundWarning := repoRoot == nil && record.Repo != nil
 	worktreeMissingWarning := !worktreePresent
 
+	// Print capture warnings (only for human mode, to stderr)
+	if opts.Capture && captureRes != nil && !captureRes.ok && !opts.JSON && !opts.Path {
+		fmt.Fprintf(stderr, "warning: capture failed at stage '%s': %s\n", captureRes.stage, captureRes.errorMsg)
+	}
+
 	// Build output based on mode
 	if opts.Path {
 		return outputShowPaths(stdout, repoRoot, worktreePath, runDir, logsDir, eventsPath, transcriptPath, reportPath)
 	}
 
 	if opts.JSON {
-		return outputShowJSON(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath)
+		return outputShowJSONWithCapture(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, captureRes)
 	}
 
 	// Human output
 	return outputShowHuman(stdout, record, repoRoot, runDir, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable)
+}
+
+// performCapture executes the capture flow: acquire lock, emit events, capture transcript.
+// Returns captureResult and error. Error is only returned for E_REPO_LOCKED.
+func performCapture(ctx context.Context, cr agencyexec.CommandRunner, dataDir string, record *store.RunRecord, runDir, eventsPath, transcriptPath string, opts ShowOpts, stderr io.Writer) (*captureResult, error) {
+	startTime := time.Now()
+
+	// Create repo lock
+	repoLock := lock.NewRepoLock(dataDir)
+
+	// Acquire lock
+	unlock, err := repoLock.Lock(record.RepoID, "show --capture")
+	if err != nil {
+		// Check if it's a lock contention error
+		if _, ok := err.(*lock.ErrLocked); ok {
+			return nil, errors.New(errors.ERepoLocked, "repo is locked by another agency process")
+		}
+		// Other lock errors are treated as capture failures
+		return &captureResult{ok: false, stage: "lock", errorMsg: err.Error()}, nil
+	}
+	defer unlock()
+
+	// Emit cmd_start event (best-effort)
+	cmdStartEvent := events.Event{
+		SchemaVersion: "1.0",
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		RepoID:        record.RepoID,
+		RunID:         record.RunID,
+		Event:         "cmd_start",
+		Data:          events.CmdStartData("show", opts.Args),
+	}
+	_ = events.AppendEvent(eventsPath, cmdStartEvent)
+
+	// Perform capture
+	captureRes := doCapture(record.RunID, runDir, transcriptPath, stderr)
+
+	// Emit cmd_end event (best-effort)
+	duration := time.Since(startTime).Milliseconds()
+	cmdEndData := events.CmdEndData("show", 0, duration, nil)
+	// Add capture result data
+	for k, v := range events.CaptureResultData(captureRes.ok, captureRes.stage, captureRes.errorMsg) {
+		cmdEndData[k] = v
+	}
+	cmdEndEvent := events.Event{
+		SchemaVersion: "1.0",
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		RepoID:        record.RepoID,
+		RunID:         record.RunID,
+		Event:         "cmd_end",
+		Data:          cmdEndData,
+	}
+	_ = events.AppendEvent(eventsPath, cmdEndEvent)
+
+	return captureRes, nil
+}
+
+// doCapture performs the actual transcript capture.
+func doCapture(runID, runDir, transcriptPath string, stderr io.Writer) *captureResult {
+	executor := tmux.NewRealExecutor()
+
+	// Construct session name and target
+	sessionName := tmux.SessionName(runID)
+	target := tmux.SessionTarget(runID)
+
+	// Check if session exists
+	if !tmux.HasSession(executor, sessionName) {
+		fmt.Fprintln(stderr, "warning: no tmux session; transcript not captured")
+		return &captureResult{ok: false, stage: "has_session", errorMsg: "tmux session does not exist"}
+	}
+
+	// Capture scrollback
+	rawText, err := tmux.CaptureScrollback(executor, target)
+	if err != nil {
+		return &captureResult{ok: false, stage: "capture_pane", errorMsg: err.Error()}
+	}
+
+	// Strip ANSI codes (this is a pure function that never panics per spec)
+	strippedText := tmux.StripANSI(rawText)
+
+	// Rotate transcript files
+	err = rotateTranscript(runDir, transcriptPath)
+	if err != nil {
+		return &captureResult{ok: false, stage: "rotate", errorMsg: err.Error()}
+	}
+
+	// Write new transcript atomically
+	err = writeTranscriptAtomic(transcriptPath, strippedText)
+	if err != nil {
+		return &captureResult{ok: false, stage: "write", errorMsg: err.Error()}
+	}
+
+	return &captureResult{ok: true}
+}
+
+// rotateTranscript moves transcript.txt to transcript.prev.txt if it exists.
+func rotateTranscript(runDir, transcriptPath string) error {
+	prevPath := filepath.Join(runDir, "transcript.prev.txt")
+
+	// Check if current transcript exists
+	if _, err := os.Stat(transcriptPath); err != nil {
+		if os.IsNotExist(err) {
+			// No existing transcript to rotate
+			return nil
+		}
+		return err
+	}
+
+	// Best-effort move to prev (overwrite if exists)
+	if err := os.Rename(transcriptPath, prevPath); err != nil {
+		// If rename fails, try to remove prev and retry
+		_ = os.Remove(prevPath)
+		if err := os.Rename(transcriptPath, prevPath); err != nil {
+			// Give up on rotation, continue anyway
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// writeTranscriptAtomic writes the transcript atomically.
+func writeTranscriptAtomic(transcriptPath, content string) error {
+	dir := filepath.Dir(transcriptPath)
+	tmpPath := filepath.Join(dir, ".transcript.txt.tmp")
+
+	// Write to temp file
+	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+		return err
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, transcriptPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	return nil
 }
 
 // handleResolveError handles ID resolution errors and outputs appropriate error.
@@ -318,6 +490,11 @@ func outputShowPaths(stdout io.Writer, repoRoot *string, worktreePath, runDir, l
 
 // outputShowJSON writes the --json output.
 func outputShowJSON(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir, eventsPath, transcriptPath string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string) error {
+	return outputShowJSONWithCapture(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, nil)
+}
+
+// outputShowJSONWithCapture writes the --json output, optionally including capture result.
+func outputShowJSONWithCapture(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir, eventsPath, transcriptPath string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string, captureRes *captureResult) error {
 	detail := &render.RunDetail{
 		Meta:     record.Meta,
 		RepoID:   record.RepoID,
@@ -351,6 +528,15 @@ func outputShowJSON(stdout io.Writer, record *store.RunRecord, repoRoot *string,
 	if record.Repo != nil {
 		detail.RepoKey = &record.Repo.RepoKey
 		detail.OriginURL = record.Repo.OriginURL
+	}
+
+	// Add capture info if provided
+	if captureRes != nil {
+		detail.Capture = &render.CaptureJSON{
+			CaptureOk:    captureRes.ok,
+			CaptureStage: captureRes.stage,
+			CaptureError: captureRes.errorMsg,
+		}
 	}
 
 	return render.WriteShowJSON(stdout, detail)

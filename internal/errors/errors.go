@@ -57,6 +57,7 @@ const (
 	// Slice 2 observability error codes
 	ERunIDAmbiguous Code = "E_RUN_ID_AMBIGUOUS" // id prefix matches >1 run
 	ERunBroken      Code = "E_RUN_BROKEN"       // run exists but meta.json is unreadable/invalid
+	ERepoLocked     Code = "E_REPO_LOCKED"      // another agency process holds the lock
 )
 
 // AgencyError is the standard error type for agency errors.
