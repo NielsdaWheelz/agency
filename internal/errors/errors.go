@@ -58,6 +58,18 @@ const (
 	ERunIDAmbiguous Code = "E_RUN_ID_AMBIGUOUS" // id prefix matches >1 run
 	ERunBroken      Code = "E_RUN_BROKEN"       // run exists but meta.json is unreadable/invalid
 	ERepoLocked     Code = "E_REPO_LOCKED"      // another agency process holds the lock
+
+	// Slice 3 push/PR error codes
+	EUnsupportedOriginHost Code = "E_UNSUPPORTED_ORIGIN_HOST" // origin is not github.com
+	ENoOrigin              Code = "E_NO_ORIGIN"               // no origin remote configured
+	EParentNotFound        Code = "E_PARENT_NOT_FOUND"        // parent branch ref not found locally or on origin
+	EGitPushFailed         Code = "E_GIT_PUSH_FAILED"         // git push non-zero exit
+	EGHPRCreateFailed      Code = "E_GH_PR_CREATE_FAILED"     // gh pr create non-zero exit
+	EGHPREditFailed        Code = "E_GH_PR_EDIT_FAILED"       // gh pr edit non-zero exit
+	EGHPRViewFailed        Code = "E_GH_PR_VIEW_FAILED"       // gh pr view failed after create retries
+	EPRNotOpen             Code = "E_PR_NOT_OPEN"             // PR exists but is not open (CLOSED or MERGED)
+	EReportInvalid         Code = "E_REPORT_INVALID"          // report missing/empty without --force
+	EEmptyDiff             Code = "E_EMPTY_DIFF"              // no commits ahead of parent branch
 )
 
 // AgencyError is the standard error type for agency errors.

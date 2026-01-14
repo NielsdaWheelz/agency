@@ -64,6 +64,12 @@ type RunMeta struct {
 	// LastVerifyAt is the timestamp of the last verify (set by merge, not in PR-06).
 	LastVerifyAt string `json:"last_verify_at,omitempty"`
 
+	// LastReportSyncAt is the timestamp of the last report sync to PR body (set by push).
+	LastReportSyncAt string `json:"last_report_sync_at,omitempty"`
+
+	// LastReportHash is the sha256 hash of the report file at last sync (lowercase hex).
+	LastReportHash string `json:"last_report_hash,omitempty"`
+
 	// Archive contains archive-related fields (set by merge/clean, not in PR-06).
 	Archive *RunMetaArchive `json:"archive,omitempty"`
 }

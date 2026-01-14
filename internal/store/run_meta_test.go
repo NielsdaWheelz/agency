@@ -401,12 +401,123 @@ func TestJSONOmitEmptyFields(t *testing.T) {
 		`"pr_url"`,
 		`"last_push_at"`,
 		`"last_verify_at"`,
+		`"last_report_sync_at"`,
+		`"last_report_hash"`,
 		`"archive"`,
 	}
 
 	for _, field := range shouldBeAbsent {
 		if strings.Contains(content, field) {
 			t.Errorf("field %s should be omitted when empty, but found in JSON", field)
+		}
+	}
+}
+
+// TestMetaSlice3PushFields verifies slice 03 push fields roundtrip correctly.
+func TestMetaSlice3PushFields(t *testing.T) {
+	dataDir := t.TempDir()
+	realFS := fs.NewRealFS()
+	now := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	s := NewStore(realFS, dataDir, fixedTime(now))
+
+	// Create run directory
+	_, err := s.EnsureRunDir("repo123", "run456")
+	if err != nil {
+		t.Fatalf("EnsureRunDir() error = %v", err)
+	}
+
+	// Write initial meta
+	meta := NewRunMeta("run456", "repo123", "Test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
+	err = s.WriteInitialMeta("repo123", "run456", meta)
+	if err != nil {
+		t.Fatalf("WriteInitialMeta() error = %v", err)
+	}
+
+	// Update with slice 03 push fields
+	pushTime := "2026-01-10T14:00:00Z"
+	reportSyncTime := "2026-01-10T14:00:05Z"
+	reportHash := "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+
+	err = s.UpdateMeta("repo123", "run456", func(m *RunMeta) {
+		m.PRNumber = 42
+		m.PRURL = "https://github.com/owner/repo/pull/42"
+		m.LastPushAt = pushTime
+		m.LastReportSyncAt = reportSyncTime
+		m.LastReportHash = reportHash
+	})
+	if err != nil {
+		t.Fatalf("UpdateMeta() error = %v", err)
+	}
+
+	// Read and verify
+	loaded, err := s.ReadMeta("repo123", "run456")
+	if err != nil {
+		t.Fatalf("ReadMeta() error = %v", err)
+	}
+
+	if loaded.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want %d", loaded.PRNumber, 42)
+	}
+	if loaded.PRURL != "https://github.com/owner/repo/pull/42" {
+		t.Errorf("PRURL = %q, want %q", loaded.PRURL, "https://github.com/owner/repo/pull/42")
+	}
+	if loaded.LastPushAt != pushTime {
+		t.Errorf("LastPushAt = %q, want %q", loaded.LastPushAt, pushTime)
+	}
+	if loaded.LastReportSyncAt != reportSyncTime {
+		t.Errorf("LastReportSyncAt = %q, want %q", loaded.LastReportSyncAt, reportSyncTime)
+	}
+	if loaded.LastReportHash != reportHash {
+		t.Errorf("LastReportHash = %q, want %q", loaded.LastReportHash, reportHash)
+	}
+
+	// Verify original fields preserved
+	if loaded.Title != "Test" {
+		t.Errorf("Title = %q, want %q", loaded.Title, "Test")
+	}
+}
+
+// TestMetaSlice3FieldsInJSON verifies new fields appear correctly in JSON when set.
+func TestMetaSlice3FieldsInJSON(t *testing.T) {
+	dataDir := t.TempDir()
+	realFS := fs.NewRealFS()
+	now := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	s := NewStore(realFS, dataDir, fixedTime(now))
+
+	// Create run directory
+	_, err := s.EnsureRunDir("repo123", "run456")
+	if err != nil {
+		t.Fatalf("EnsureRunDir() error = %v", err)
+	}
+
+	// Write meta with all push fields set
+	meta := NewRunMeta("run456", "repo123", "Test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
+	meta.LastReportSyncAt = "2026-01-10T14:00:00Z"
+	meta.LastReportHash = "abc123"
+
+	err = s.WriteInitialMeta("repo123", "run456", meta)
+	if err != nil {
+		t.Fatalf("WriteInitialMeta() error = %v", err)
+	}
+
+	// Read raw JSON
+	metaPath := s.RunMetaPath("repo123", "run456")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := string(data)
+
+	// These fields should be present when set
+	shouldBePresent := []string{
+		`"last_report_sync_at"`,
+		`"last_report_hash"`,
+	}
+
+	for _, field := range shouldBePresent {
+		if !strings.Contains(content, field) {
+			t.Errorf("field %s should be present when set, but not found in JSON", field)
 		}
 	}
 }

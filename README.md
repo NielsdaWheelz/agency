@@ -35,7 +35,13 @@ slice 2 progress:
 - [x] PR-05: `agency show` command
 - [x] PR-06: transcript capture + events.jsonl
 
-next: slice 3 (push + PR management)
+slice 3 progress:
+- [x] PR-01: core plumbing for push (error codes, meta fields)
+- [ ] PR-02: preflight + git fetch/ahead/push + report gating
+- [ ] PR-03: gh PR idempotency + create + body sync + metadata persistence
+- [ ] PR-04: polish + docs sync
+
+next: slice 3 PR-02 (push preflight + git push)
 
 ## installation
 
@@ -523,6 +529,8 @@ agency/
 - [slice 1 PRs](docs/v1/s1/s1_prs.md) — slice 1 PR breakdown
 - [slice 2 spec](docs/v1/s2/s2_spec.md) — observability slice detailed spec
 - [slice 2 PRs](docs/v1/s2/s2_prs.md) — slice 2 PR breakdown
+- [slice 3 spec](docs/v1/s3/s3_spec.md) — push + PR slice detailed spec
+- [slice 3 PRs](docs/v1/s3/s3_prs.md) — slice 3 PR breakdown
 
 ## license
 
