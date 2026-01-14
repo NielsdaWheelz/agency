@@ -328,27 +328,32 @@ func TestWriteShowPaths_BrokenRun(t *testing.T) {
 
 func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	data := render.ShowHumanData{
-		RunID:           "20260110-a3f2",
-		Title:           "test run",
-		Runner:          "claude",
-		CreatedAt:       "2026-01-10T12:00:00Z",
-		RepoID:          "abc123",
-		RepoKey:         "github:owner/repo",
-		OriginURL:       "git@github.com:owner/repo.git",
-		ParentBranch:    "main",
-		Branch:          "agency/test-a3f2",
-		WorktreePath:    "/path/to/worktree",
-		WorktreePresent: true,
-		TmuxSessionName: "agency_20260110-a3f2",
-		TmuxActive:      true,
-		ReportPath:      "/path/to/worktree/.agency/report.md",
-		ReportExists:    true,
-		ReportBytes:     256,
-		SetupLogPath:    "/path/to/logs/setup.log",
-		VerifyLogPath:   "/path/to/logs/verify.log",
-		ArchiveLogPath:  "/path/to/logs/archive.log",
-		DerivedStatus:   "active",
-		Archived:        false,
+		RunID:            "20260110-a3f2",
+		Title:            "test run",
+		Runner:           "claude",
+		CreatedAt:        "2026-01-10T12:00:00Z",
+		RepoID:           "abc123",
+		RepoKey:          "github:owner/repo",
+		OriginURL:        "git@github.com:owner/repo.git",
+		ParentBranch:     "main",
+		Branch:           "agency/test-a3f2",
+		WorktreePath:     "/path/to/worktree",
+		WorktreePresent:  true,
+		TmuxSessionName:  "agency_20260110-a3f2",
+		TmuxActive:       true,
+		PRNumber:         123,
+		PRURL:            "https://github.com/owner/repo/pull/123",
+		LastPushAt:       "2026-01-10T14:00:00Z",
+		LastReportSyncAt: "2026-01-10T14:00:00Z",
+		LastReportHash:   "abc123def456",
+		ReportPath:       "/path/to/worktree/.agency/report.md",
+		ReportExists:     true,
+		ReportBytes:      256,
+		SetupLogPath:     "/path/to/logs/setup.log",
+		VerifyLogPath:    "/path/to/logs/verify.log",
+		ArchiveLogPath:   "/path/to/logs/archive.log",
+		DerivedStatus:    "active",
+		Archived:         false,
 	}
 
 	var buf bytes.Buffer
@@ -358,32 +363,52 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 
 	output := buf.String()
 
-	// Check sections exist
-	if !strings.Contains(output, "=== run ===") {
-		t.Error("missing run section")
-	}
-	if !strings.Contains(output, "=== workspace ===") {
-		t.Error("missing workspace section")
-	}
-	if !strings.Contains(output, "=== report ===") {
-		t.Error("missing report section")
-	}
-	if !strings.Contains(output, "=== logs ===") {
-		t.Error("missing logs section")
-	}
-	if !strings.Contains(output, "=== status ===") {
-		t.Error("missing status section")
-	}
-
-	// Check key fields
-	if !strings.Contains(output, "run_id: 20260110-a3f2") {
-		t.Error("missing run_id")
+	// Check spec-required fields exist in order
+	if !strings.Contains(output, "run: 20260110-a3f2") {
+		t.Error("missing run field")
 	}
 	if !strings.Contains(output, "title: test run") {
-		t.Error("missing title")
+		t.Error("missing title field")
 	}
-	if !strings.Contains(output, "derived_status: active") {
-		t.Error("missing derived_status")
+	if !strings.Contains(output, "repo: abc123") {
+		t.Error("missing repo field")
+	}
+	if !strings.Contains(output, "runner: claude") {
+		t.Error("missing runner field")
+	}
+	if !strings.Contains(output, "parent: main") {
+		t.Error("missing parent field")
+	}
+	if !strings.Contains(output, "branch: agency/test-a3f2") {
+		t.Error("missing branch field")
+	}
+	if !strings.Contains(output, "worktree: /path/to/worktree") {
+		t.Error("missing worktree field")
+	}
+	if !strings.Contains(output, "tmux: agency_20260110-a3f2") {
+		t.Error("missing tmux field")
+	}
+	if !strings.Contains(output, "pr: https://github.com/owner/repo/pull/123 (#123)") {
+		t.Error("missing pr field with correct format")
+	}
+	if !strings.Contains(output, "status: active") {
+		t.Error("missing status field")
+	}
+
+	// Check blank line between worktree and tmux
+	lines := strings.Split(output, "\n")
+	worktreeIdx := -1
+	tmuxIdx := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "worktree: ") {
+			worktreeIdx = i
+		}
+		if strings.HasPrefix(line, "tmux: ") {
+			tmuxIdx = i
+		}
+	}
+	if worktreeIdx >= 0 && tmuxIdx >= 0 && tmuxIdx-worktreeIdx != 2 {
+		t.Errorf("expected blank line between worktree and tmux, got worktree at %d, tmux at %d", worktreeIdx, tmuxIdx)
 	}
 }
 
@@ -398,6 +423,7 @@ func TestWriteShowHuman_UntitledRun(t *testing.T) {
 		Branch:          "agency/test-a3f2",
 		WorktreePath:    "/path/to/worktree",
 		WorktreePresent: true,
+		TmuxSessionName: "agency_20260110-a3f2",
 		DerivedStatus:   "idle",
 		Archived:        false,
 	}
@@ -424,6 +450,7 @@ func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 		Branch:          "agency/test-a3f2",
 		WorktreePath:    "/path/to/worktree",
 		WorktreePresent: false, // missing worktree
+		TmuxSessionName: "agency_20260110-a3f2",
 		DerivedStatus:   "idle",
 		Archived:        true,
 	}
@@ -435,12 +462,57 @@ func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 
 	output := buf.String()
 	// Status should include archived suffix
-	if !strings.Contains(output, "derived_status: idle (archived)") {
+	if !strings.Contains(output, "status: idle (archived)") {
 		t.Errorf("expected archived suffix in status, got: %s", output)
 	}
 }
 
 func TestWriteShowHuman_WithPR(t *testing.T) {
+	data := render.ShowHumanData{
+		RunID:            "20260110-a3f2",
+		Title:            "test run",
+		Runner:           "claude",
+		CreatedAt:        "2026-01-10T12:00:00Z",
+		RepoID:           "abc123",
+		ParentBranch:     "main",
+		Branch:           "agency/test-a3f2",
+		WorktreePath:     "/path/to/worktree",
+		WorktreePresent:  true,
+		TmuxSessionName:  "agency_20260110-a3f2",
+		TmuxActive:       true,
+		PRNumber:         123,
+		PRURL:            "https://github.com/owner/repo/pull/123",
+		LastPushAt:       "2026-01-10T14:00:00Z",
+		LastReportSyncAt: "2026-01-10T14:00:00Z",
+		LastReportHash:   "abc123def456",
+		DerivedStatus:    "ready for review",
+		Archived:         false,
+	}
+
+	var buf bytes.Buffer
+	if err := render.WriteShowHuman(&buf, data); err != nil {
+		t.Fatalf("WriteShowHuman() error = %v", err)
+	}
+
+	output := buf.String()
+
+	// PR should be displayed in spec format: pr: <url> (#<number>)
+	if !strings.Contains(output, "pr: https://github.com/owner/repo/pull/123 (#123)") {
+		t.Errorf("expected pr field in spec format, got: %s", output)
+	}
+	if !strings.Contains(output, "last_push_at: 2026-01-10T14:00:00Z") {
+		t.Error("missing last_push_at")
+	}
+	if !strings.Contains(output, "last_report_sync_at: 2026-01-10T14:00:00Z") {
+		t.Error("missing last_report_sync_at")
+	}
+	if !strings.Contains(output, "report_hash: abc123def456") {
+		t.Error("missing report_hash")
+	}
+}
+
+func TestWriteShowHuman_NoPR(t *testing.T) {
+	// Test that when PR fields are missing, the output shows "none" and "-"
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
 		Title:           "test run",
@@ -451,10 +523,11 @@ func TestWriteShowHuman_WithPR(t *testing.T) {
 		Branch:          "agency/test-a3f2",
 		WorktreePath:    "/path/to/worktree",
 		WorktreePresent: true,
-		PRNumber:        123,
-		PRURL:           "https://github.com/owner/repo/pull/123",
-		LastPushAt:      "2026-01-10T14:00:00Z",
-		DerivedStatus:   "ready for review",
+		TmuxSessionName: "agency_20260110-a3f2",
+		TmuxActive:      true,
+		PRNumber:        0,  // no PR
+		PRURL:           "", // no PR
+		DerivedStatus:   "active",
 		Archived:        false,
 	}
 
@@ -465,51 +538,15 @@ func TestWriteShowHuman_WithPR(t *testing.T) {
 
 	output := buf.String()
 
-	// PR section should exist
-	if !strings.Contains(output, "=== pr ===") {
-		t.Error("missing pr section")
+	// When no PR: pr: none (#-)
+	if !strings.Contains(output, "pr: none (#-)") {
+		t.Errorf("expected 'pr: none (#-)' for missing PR, got: %s", output)
 	}
-	if !strings.Contains(output, "pr_number: 123") {
-		t.Error("missing pr_number")
+	if !strings.Contains(output, "last_push_at: none") {
+		t.Error("expected 'last_push_at: none' for missing timestamp")
 	}
-	if !strings.Contains(output, "pr_url: https://github.com/owner/repo/pull/123") {
-		t.Error("missing pr_url")
-	}
-}
-
-func TestWriteShowHuman_WithWarnings(t *testing.T) {
-	data := render.ShowHumanData{
-		RunID:                  "20260110-a3f2",
-		Title:                  "test run",
-		Runner:                 "claude",
-		CreatedAt:              "2026-01-10T12:00:00Z",
-		RepoID:                 "abc123",
-		ParentBranch:           "main",
-		Branch:                 "agency/test-a3f2",
-		WorktreePath:           "/path/to/worktree",
-		WorktreePresent:        false,
-		DerivedStatus:          "idle",
-		Archived:               true,
-		RepoNotFoundWarning:    true,
-		WorktreeMissingWarning: true,
-	}
-
-	var buf bytes.Buffer
-	if err := render.WriteShowHuman(&buf, data); err != nil {
-		t.Fatalf("WriteShowHuman() error = %v", err)
-	}
-
-	output := buf.String()
-
-	// Warnings section should exist
-	if !strings.Contains(output, "=== warnings ===") {
-		t.Error("missing warnings section")
-	}
-	if !strings.Contains(output, "warning: repo not found on disk") {
-		t.Error("missing repo not found warning")
-	}
-	if !strings.Contains(output, "warning: worktree archived/missing") {
-		t.Error("missing worktree missing warning")
+	if !strings.Contains(output, "report_hash: none") {
+		t.Error("expected 'report_hash: none' for missing hash")
 	}
 }
 

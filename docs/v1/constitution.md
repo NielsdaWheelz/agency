@@ -366,6 +366,8 @@ Optional fields:
 - `pr_number`
 - `pr_url`
 - `last_push_at`
+- `last_report_sync_at` — set when PR body updated from report
+- `last_report_hash` — sha256 of report contents when synced
 - `last_verify_at`
 - `flags.needs_attention`
 - `flags.setup_failed`

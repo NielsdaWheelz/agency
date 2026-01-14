@@ -122,17 +122,17 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 	defer unlock()
 
-	// Step 4: Ensure origin exists
+	// Step 4: Ensure origin exists (spec: exact error message)
 	originURL := git.GetOriginURL(ctx, cr, meta.WorktreePath)
 	if originURL == "" {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
 			"error_code": string(errors.ENoOrigin),
 			"step":       "origin_check",
 		})
-		return errors.New(errors.ENoOrigin, "no origin remote configured; run `git remote add origin <url>` first")
+		return errors.New(errors.ENoOrigin, "git remote 'origin' not configured")
 	}
 
-	// Step 5: Ensure origin host is exactly github.com
+	// Step 5: Ensure origin host is exactly github.com (spec: exact error message)
 	originHost := git.ParseOriginHost(originURL)
 	if originHost != "github.com" {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
@@ -141,15 +141,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 			"origin_url": originURL,
 			"host":       originHost,
 		})
-		hint := "agency push requires a github.com origin in v1"
-		if originHost == "" {
-			hint = "could not parse hostname from origin URL; expected github.com"
-		}
-		return errors.NewWithDetails(
-			errors.EUnsupportedOriginHost,
-			fmt.Sprintf("origin host %q is not supported; must be github.com", originHost),
-			map[string]string{"hint": hint, "origin_url": originURL},
-		)
+		return errors.New(errors.EUnsupportedOriginHost, "origin host must be github.com")
 	}
 
 	// Step 6: Report gating
@@ -166,23 +158,20 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 			"error_code": string(errors.EReportInvalid),
 			"step":       "report_gate",
 		})
-		return errors.NewWithDetails(
-			errors.EReportInvalid,
-			"report is missing or effectively empty; use --force to push anyway",
-			map[string]string{"report_path": reportPath},
-		)
+		// spec: exact error message
+		return errors.New(errors.EReportInvalid, "report missing or empty; use --force to push anyway")
 	}
 
 	if reportEmpty && opts.Force {
-		fmt.Fprintf(stderr, "warning: report is missing or effectively empty (proceeding with --force)\n")
+		fmt.Fprintf(stderr, "warning: report missing or empty; proceeding due to --force\n")
 	}
 
-	// Step 7: Dirty worktree warning
+	// Step 7: Dirty worktree warning (spec: exact string)
 	isClean, err := git.IsClean(ctx, cr, meta.WorktreePath)
 	if err != nil {
 		fmt.Fprintf(stderr, "warning: failed to check worktree status: %v\n", err)
 	} else if !isClean {
-		fmt.Fprintf(stderr, "warning: worktree has uncommitted changes; only committed changes will be pushed\n")
+		fmt.Fprintf(stderr, "warning: worktree has uncommitted changes; pushing commits anyway\n")
 	}
 
 	// Step 8: gh auth check
@@ -235,14 +224,8 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 			"error_code": string(errors.EEmptyDiff),
 			"step":       "ahead_check",
 		})
-		return errors.NewWithDetails(
-			errors.EEmptyDiff,
-			"no commits ahead of parent branch; make at least one commit",
-			map[string]string{
-				"parent_ref":       parentRef,
-				"workspace_branch": meta.Branch,
-			},
-		)
+		// spec: exact error message
+		return errors.New(errors.EEmptyDiff, "no commits ahead of parent; make at least one commit")
 	}
 
 	// Step 12: git push -u origin <workspace_branch>
@@ -290,12 +273,8 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		"pr_action": prResult.Action,
 	})
 
-	// Print success output
-	if prResult.Action == "created" {
-		fmt.Fprintf(stdout, "pr created: %s\n", prResult.URL)
-	} else {
-		fmt.Fprintf(stdout, "pr updated: %s\n", prResult.URL)
-	}
+	// Print success output (spec: exactly one stdout line)
+	fmt.Fprintf(stdout, "pr: %s\n", prResult.URL)
 
 	_ = runRef // silence unused variable warning
 	return nil
