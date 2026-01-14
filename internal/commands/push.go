@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -25,6 +26,25 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
+// Sleeper is an interface for injectable sleep (for testing).
+type Sleeper interface {
+	Sleep(d time.Duration)
+}
+
+// realSleeper is the production implementation of Sleeper.
+type realSleeper struct{}
+
+func (realSleeper) Sleep(d time.Duration) {
+	time.Sleep(d)
+}
+
+// ghPRView represents the JSON output of gh pr view --json number,url,state.
+type ghPRView struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+	State  string `json:"state"` // OPEN, CLOSED, MERGED
+}
+
 // PushOpts holds options for the push command.
 type PushOpts struct {
 	// RunID is the run identifier (exact or unique prefix).
@@ -33,6 +53,9 @@ type PushOpts struct {
 	// Force allows pushing with missing/empty report.
 	// Does NOT bypass E_EMPTY_DIFF.
 	Force bool
+
+	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
+	Sleeper Sleeper
 }
 
 // nonInteractiveEnv returns the environment overlay for non-interactive git/gh execution.
@@ -236,7 +259,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		"duration_ms": pushDurationMs,
 	})
 
-	// Step 13: Update meta.json with last_push_at
+	// Step 13: Update last_push_at immediately after git push
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
 		m.LastPushAt = now
@@ -245,11 +268,34 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		fmt.Fprintf(stderr, "warning: failed to update meta.json: %v\n", err)
 	}
 
+	// Step 14: PR lookup / create / update
+	sleeper := opts.Sleeper
+	if sleeper == nil {
+		sleeper = realSleeper{}
+	}
+
+	prResult, err := handlePR(ctx, cr, fsys, st, meta, repoID, reportPath, reportEmpty, opts.Force, sleeper, eventsPath, stderr)
+	if err != nil {
+		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
+			"error_code": string(errors.GetCode(err)),
+			"step":       "pr",
+		})
+		return err
+	}
+
 	// Append push_finished event
-	appendPushEvent(eventsPath, repoID, meta.RunID, "push_finished", nil)
+	appendPushEvent(eventsPath, repoID, meta.RunID, "push_finished", map[string]any{
+		"pr_number": prResult.Number,
+		"pr_url":    prResult.URL,
+		"pr_action": prResult.Action,
+	})
 
 	// Print success output
-	fmt.Fprintf(stdout, "pushed %s to origin\n", meta.Branch)
+	if prResult.Action == "created" {
+		fmt.Fprintf(stdout, "pr created: %s\n", prResult.URL)
+	} else {
+		fmt.Fprintf(stdout, "pr updated: %s\n", prResult.URL)
+	}
 
 	_ = runRef // silence unused variable warning
 	return nil
@@ -496,6 +542,361 @@ func computeReportHash(fsys fs.FS, reportPath string) string {
 	}
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+// prResult holds the result of PR operations.
+type prResult struct {
+	Number int
+	URL    string
+	Action string // "created" or "updated"
+}
+
+// handlePR handles PR lookup, creation, and body sync.
+// Returns PR info on success.
+func handlePR(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	fsys fs.FS,
+	st *store.Store,
+	meta *store.RunMeta,
+	repoID string,
+	reportPath string,
+	reportEmpty bool,
+	force bool,
+	sleeper Sleeper,
+	eventsPath string,
+	stderr io.Writer,
+) (*prResult, error) {
+	workDir := meta.WorktreePath
+
+	// Step 1: Look up existing PR
+	pr, prState, err := lookupPR(ctx, cr, workDir, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if PR exists but is not open
+	if pr != nil && prState != "OPEN" {
+		return nil, errors.NewWithDetails(
+			errors.EPRNotOpen,
+			fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, prState),
+			map[string]string{
+				"pr_number": fmt.Sprintf("%d", pr.Number),
+				"state":     prState,
+				"hint":      "close the existing PR or clear meta.pr_number and try again",
+			},
+		)
+	}
+
+	// Step 2: Create PR if not found
+	prCreated := false
+	if pr == nil {
+		createdPR, err := createPR(ctx, cr, fsys, meta, reportPath, reportEmpty, force, sleeper, workDir)
+		if err != nil {
+			return nil, err
+		}
+		pr = createdPR
+		prCreated = true
+
+		// Append pr_created event
+		appendPushEvent(eventsPath, repoID, meta.RunID, "pr_created", map[string]any{
+			"pr_number": pr.Number,
+			"pr_url":    pr.URL,
+		})
+	}
+
+	// Step 3: Persist PR metadata to meta.json
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
+		m.PRNumber = pr.Number
+		m.PRURL = pr.URL
+	}); err != nil {
+		fmt.Fprintf(stderr, "warning: failed to update meta.json with PR info: %v\n", err)
+	}
+
+	// Step 4: Sync report body (if PR exists and report is non-empty)
+	action := "updated"
+	if prCreated {
+		action = "created"
+		// If we just created with --body-file, we already synced the body
+		if !reportEmpty {
+			reportHash := computeReportHash(fsys, reportPath)
+			if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
+				m.LastReportSyncAt = now
+				m.LastReportHash = reportHash
+			}); err != nil {
+				fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
+			}
+		}
+	} else {
+		// PR existed, potentially sync body
+		if !reportEmpty {
+			bodySynced, err := syncPRBody(ctx, cr, fsys, st, meta, repoID, reportPath, pr.Number, eventsPath, stderr)
+			if err != nil {
+				return nil, err
+			}
+			if bodySynced {
+				appendPushEvent(eventsPath, repoID, meta.RunID, "pr_body_synced", map[string]any{
+					"pr_number": pr.Number,
+				})
+			}
+		}
+	}
+
+	return &prResult{
+		Number: pr.Number,
+		URL:    pr.URL,
+		Action: action,
+	}, nil
+}
+
+// lookupPR looks up an existing PR by number (from meta) or by branch.
+// Returns (nil, "", nil) if no PR found.
+// Returns (pr, state, nil) if PR found.
+// Returns (nil, "", error) on lookup failure.
+func lookupPR(ctx context.Context, cr exec.CommandRunner, workDir string, meta *store.RunMeta) (*ghPRView, string, error) {
+	// Step 1: If meta has pr_number, try that first
+	if meta.PRNumber != 0 {
+		pr, err := viewPRByNumber(ctx, cr, workDir, meta.PRNumber)
+		if err == nil {
+			return pr, pr.State, nil
+		}
+		// Fallthrough to branch lookup on error
+	}
+
+	// Step 2: Try branch lookup
+	pr, err := viewPRByBranch(ctx, cr, workDir, meta.Branch)
+	if err != nil {
+		// No PR found
+		return nil, "", nil
+	}
+
+	return pr, pr.State, nil
+}
+
+// viewPRByNumber runs: gh pr view <number> --json number,url,state
+func viewPRByNumber(ctx context.Context, cr exec.CommandRunner, workDir string, prNumber int) (*ghPRView, error) {
+	result, err := cr.Run(ctx, "gh", []string{
+		"pr", "view", fmt.Sprintf("%d", prNumber),
+		"--json", "number,url,state",
+	}, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("gh pr view exited with code %d: %s", result.ExitCode, result.Stderr)
+	}
+
+	var pr ghPRView
+	if err := json.Unmarshal([]byte(result.Stdout), &pr); err != nil {
+		return nil, fmt.Errorf("failed to parse gh pr view output: %w", err)
+	}
+
+	return &pr, nil
+}
+
+// viewPRByBranch runs: gh pr view --head <branch> --json number,url,state
+func viewPRByBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch string) (*ghPRView, error) {
+	result, err := cr.Run(ctx, "gh", []string{
+		"pr", "view",
+		"--head", branch,
+		"--json", "number,url,state",
+	}, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("gh pr view exited with code %d: %s", result.ExitCode, result.Stderr)
+	}
+
+	var pr ghPRView
+	if err := json.Unmarshal([]byte(result.Stdout), &pr); err != nil {
+		return nil, fmt.Errorf("failed to parse gh pr view output: %w", err)
+	}
+
+	return &pr, nil
+}
+
+// createPR creates a new PR and returns its info.
+// Uses --body-file if report is non-empty, otherwise placeholder body (with --force).
+func createPR(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	fsys fs.FS,
+	meta *store.RunMeta,
+	reportPath string,
+	reportEmpty bool,
+	force bool,
+	sleeper Sleeper,
+	workDir string,
+) (*ghPRView, error) {
+	// Build title
+	title := "[agency] " + meta.Title
+	if meta.Title == "" {
+		title = "[agency] " + meta.Branch
+	}
+
+	// Build args
+	args := []string{
+		"pr", "create",
+		"--base", meta.ParentBranch,
+		"--head", meta.Branch,
+		"--title", title,
+	}
+
+	// Body: use --body-file if report exists and non-empty, else placeholder
+	if !reportEmpty {
+		args = append(args, "--body-file", reportPath)
+	} else {
+		// Only allowed with --force (already validated in preflight)
+		placeholder := fmt.Sprintf(
+			"agency: report missing/empty (run_id=%s, branch=%s). see workspace .agency/report.md",
+			meta.RunID, meta.Branch,
+		)
+		args = append(args, "--body", placeholder)
+	}
+
+	// Run gh pr create
+	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		return nil, errors.Wrap(errors.EGHPRCreateFailed, "gh pr create failed to start", err)
+	}
+	if result.ExitCode != 0 {
+		return nil, errors.NewWithDetails(
+			errors.EGHPRCreateFailed,
+			fmt.Sprintf("gh pr create failed: %s", strings.TrimSpace(result.Stderr)),
+			map[string]string{
+				"exit_code": fmt.Sprintf("%d", result.ExitCode),
+				"stderr":    result.Stderr,
+			},
+		)
+	}
+
+	// Do NOT parse stdout from gh pr create. Instead, look up the PR by branch.
+	// Retry with backoff per spec.
+	pr, err := viewPRWithRetry(ctx, cr, workDir, meta.Branch, sleeper)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify state is OPEN
+	if pr.State != "OPEN" {
+		return nil, errors.NewWithDetails(
+			errors.EPRNotOpen,
+			fmt.Sprintf("PR #%d was created but state is %s (expected OPEN)", pr.Number, pr.State),
+			map[string]string{
+				"pr_number": fmt.Sprintf("%d", pr.Number),
+				"state":     pr.State,
+			},
+		)
+	}
+
+	return pr, nil
+}
+
+// viewPRWithRetry attempts to view a PR by branch with retries.
+// Per spec: try 3 times with delays of 0, 500ms, 1500ms.
+func viewPRWithRetry(ctx context.Context, cr exec.CommandRunner, workDir, branch string, sleeper Sleeper) (*ghPRView, error) {
+	delays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
+	var lastErr error
+
+	for i, delay := range delays {
+		if delay > 0 {
+			sleeper.Sleep(delay)
+		}
+
+		pr, err := viewPRByBranch(ctx, cr, workDir, branch)
+		if err == nil {
+			return pr, nil
+		}
+		lastErr = err
+
+		// Log retry attempt
+		if i < len(delays)-1 {
+			// Will retry
+		}
+	}
+
+	return nil, errors.NewWithDetails(
+		errors.EGHPRViewFailed,
+		"failed to view PR after create (retries exhausted)",
+		map[string]string{
+			"branch":    branch,
+			"last_error": lastErr.Error(),
+		},
+	)
+}
+
+// syncPRBody syncs the report to the PR body if the hash has changed.
+// Returns true if body was synced, false if skipped.
+func syncPRBody(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	fsys fs.FS,
+	st *store.Store,
+	meta *store.RunMeta,
+	repoID string,
+	reportPath string,
+	prNumber int,
+	eventsPath string,
+	stderr io.Writer,
+) (bool, error) {
+	// Compute current report hash
+	reportHash := computeReportHash(fsys, reportPath)
+	if reportHash == "" {
+		// Report doesn't exist or can't be read; skip sync
+		return false, nil
+	}
+
+	// Check if hash matches meta.last_report_hash
+	if reportHash == meta.LastReportHash {
+		// No change, skip edit
+		return false, nil
+	}
+
+	// Run gh pr edit
+	workDir := meta.WorktreePath
+	result, err := cr.Run(ctx, "gh", []string{
+		"pr", "edit", fmt.Sprintf("%d", prNumber),
+		"--body-file", reportPath,
+	}, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		return false, errors.Wrap(errors.EGHPREditFailed, "gh pr edit failed to start", err)
+	}
+	if result.ExitCode != 0 {
+		return false, errors.NewWithDetails(
+			errors.EGHPREditFailed,
+			fmt.Sprintf("gh pr edit failed: %s", strings.TrimSpace(result.Stderr)),
+			map[string]string{
+				"exit_code": fmt.Sprintf("%d", result.ExitCode),
+				"pr_number": fmt.Sprintf("%d", prNumber),
+				"stderr":    result.Stderr,
+			},
+		)
+	}
+
+	// Update meta with sync info
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
+		m.LastReportSyncAt = now
+		m.LastReportHash = reportHash
+	}); err != nil {
+		fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
+	}
+
+	return true, nil
 }
 
 // ResolveRepoIdentity resolves the repo identity from cwd.

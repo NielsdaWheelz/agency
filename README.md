@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -38,10 +38,10 @@ slice 2 progress:
 slice 3 progress:
 - [x] PR-01: core plumbing for push (error codes, meta fields)
 - [x] PR-02: preflight + git fetch/ahead/push + report gating
-- [ ] PR-03: gh PR idempotency + create + body sync + metadata persistence
+- [x] PR-03: gh PR idempotency + create + body sync + metadata persistence
 - [ ] PR-04: polish + docs sync
 
-next: slice 3 PR-03 (gh PR idempotency + create + body sync)
+next: slice 3 PR-04 (polish + docs sync)
 
 ## installation
 
@@ -467,7 +467,7 @@ if the run exists but the tmux session has been killed (e.g., system restarted),
 
 ### `agency push`
 
-pushes the run branch to origin and prepares for PR creation.
+pushes the run branch to origin and creates/updates a GitHub PR.
 
 **usage:**
 ```bash
@@ -497,14 +497,39 @@ agency push <run_id> [--force]
 4. refuse if ahead == 0 (`--force` does NOT bypass this)
 5. `git push -u origin <branch>` (no force push)
 
+**pr operations (after git push succeeds):**
+1. look up existing PR:
+   - first by stored `pr_number` in meta.json
+   - fallback to `gh pr view --head <branch>`
+2. if PR exists but not OPEN (CLOSED or MERGED): fail with `E_PR_NOT_OPEN`
+3. if no PR exists: create via `gh pr create`
+   - title: `[agency] <run_title>` (or branch name if untitled)
+   - body: contents of `.agency/report.md` (or placeholder with `--force`)
+4. sync report to PR body:
+   - compute sha256 hash of report
+   - if hash unchanged from `last_report_hash`: skip sync
+   - else: update PR body via `gh pr edit --body-file`
+
 **success output:**
 ```
-pushed agency/my-feature-a3f2 to origin
+pr created: https://github.com/owner/repo/pull/123
+```
+or:
+```
+pr updated: https://github.com/owner/repo/pull/123
 ```
 
 **metadata persistence:**
-- updates `meta.json` with `last_push_at` timestamp
-- appends events to `events.jsonl`: `push_started`, `git_fetch_finished`, `git_push_finished`, `push_finished`
+- updates `meta.json` with:
+  - `last_push_at` timestamp
+  - `pr_number` and `pr_url`
+  - `last_report_sync_at` and `last_report_hash` (when report synced)
+- appends events to `events.jsonl`:
+  - `push_started`, `git_fetch_finished`, `git_push_finished`
+  - `pr_created` (if created)
+  - `pr_body_synced` (if body updated)
+  - `push_finished` (on success)
+  - `push_failed` (on failure)
 
 **error codes:**
 - `E_RUN_NOT_FOUND` — run not found
@@ -519,18 +544,24 @@ pushed agency/my-feature-a3f2 to origin
 - `E_PARENT_NOT_FOUND` — parent branch not found locally or on origin
 - `E_EMPTY_DIFF` — no commits ahead of parent branch
 - `E_GIT_PUSH_FAILED` — git push failed
+- `E_GH_PR_CREATE_FAILED` — gh pr create failed
+- `E_GH_PR_EDIT_FAILED` — gh pr edit failed
+- `E_GH_PR_VIEW_FAILED` — gh pr view failed after create (retries exhausted)
+- `E_PR_NOT_OPEN` — PR exists but is not OPEN (CLOSED or MERGED)
 
 **notes:**
 - all git/gh subprocesses run with non-interactive environment:
   - `GIT_TERMINAL_PROMPT=0`
   - `GH_PROMPT_DISABLED=1`
   - `CI=1`
-- PR creation/update is implemented in slice 3 PR-03
+- PR creation uses `--body-file` to preserve markdown formatting
+- PR title is NOT updated after creation (v1)
+- `--force` does NOT bypass `E_EMPTY_DIFF` (must have commits)
 
 **examples:**
 ```bash
-agency push 20260110120000-a3f2           # push branch
-agency push 20260110120000-a3f2 --force   # push with empty report
+agency push 20260110120000-a3f2           # push branch + create/update PR
+agency push 20260110120000-a3f2 --force   # push with empty report (placeholder body)
 agency push 20260110                       # unique prefix resolution
 ```
 

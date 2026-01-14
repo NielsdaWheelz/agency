@@ -39,9 +39,11 @@ type ShowHumanData struct {
 	TmuxActive      bool
 
 	// PR (may be zero values)
-	PRNumber   int
-	PRURL      string
-	LastPushAt string // RFC3339
+	PRNumber         int
+	PRURL            string
+	LastPushAt       string // RFC3339
+	LastReportSyncAt string // RFC3339
+	LastReportHash   string // sha256 hex
 
 	// Report
 	ReportPath   string
@@ -147,6 +149,12 @@ func WriteShowHuman(w io.Writer, data ShowHumanData) error {
 		}
 		if data.LastPushAt != "" {
 			fmt.Fprintf(w, "last_push_at: %s\n", optStr(data.LastPushAt))
+		}
+		if data.LastReportSyncAt != "" {
+			fmt.Fprintf(w, "last_report_sync_at: %s\n", optStr(data.LastReportSyncAt))
+		}
+		if data.LastReportHash != "" {
+			fmt.Fprintf(w, "last_report_hash: %s\n", optStr(data.LastReportHash))
 		}
 	}
 

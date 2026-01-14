@@ -563,9 +563,11 @@ func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string
 		TmuxActive:      tmuxActive,
 
 		// PR
-		PRNumber:   meta.PRNumber,
-		PRURL:      meta.PRURL,
-		LastPushAt: meta.LastPushAt,
+		PRNumber:         meta.PRNumber,
+		PRURL:            meta.PRURL,
+		LastPushAt:       meta.LastPushAt,
+		LastReportSyncAt: meta.LastReportSyncAt,
+		LastReportHash:   meta.LastReportHash,
 
 		// Report
 		ReportPath:   reportPath,
