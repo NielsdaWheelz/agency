@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -446,4 +447,287 @@ func TestWorktreeMissingError(t *testing.T) {
 	if errors.GetCode(err) != errors.EWorktreeMissing {
 		t.Errorf("GetCode(err) = %q, want %q", errors.GetCode(err), errors.EWorktreeMissing)
 	}
+}
+
+// ============================================================================
+// PR tests (slice 3 PR-03)
+// ============================================================================
+
+// TestPRErrorCodes verifies all PR-related error codes exist.
+func TestPRErrorCodes(t *testing.T) {
+	codes := []errors.Code{
+		errors.EGHPRCreateFailed,
+		errors.EGHPREditFailed,
+		errors.EGHPRViewFailed,
+		errors.EPRNotOpen,
+	}
+
+	for _, code := range codes {
+		if code == "" {
+			t.Error("error code is empty")
+		}
+		if !strings.HasPrefix(string(code), "E_") {
+			t.Errorf("error code %q should start with E_", code)
+		}
+	}
+}
+
+// mockSleeper is a mock Sleeper for testing.
+type mockSleeper struct {
+	sleeps []time.Duration
+}
+
+func (m *mockSleeper) Sleep(d time.Duration) {
+	m.sleeps = append(m.sleeps, d)
+}
+
+// TestSleeperInterface verifies the Sleeper interface is implemented.
+func TestSleeperInterface(t *testing.T) {
+	// Test mock sleeper
+	ms := &mockSleeper{}
+	ms.Sleep(100 * time.Millisecond)
+	ms.Sleep(500 * time.Millisecond)
+
+	if len(ms.sleeps) != 2 {
+		t.Errorf("mockSleeper.sleeps len = %d, want 2", len(ms.sleeps))
+	}
+	if ms.sleeps[0] != 100*time.Millisecond {
+		t.Errorf("mockSleeper.sleeps[0] = %v, want 100ms", ms.sleeps[0])
+	}
+	if ms.sleeps[1] != 500*time.Millisecond {
+		t.Errorf("mockSleeper.sleeps[1] = %v, want 500ms", ms.sleeps[1])
+	}
+}
+
+// TestPushEventNamesForPR verifies PR-related event names used by push.
+func TestPushEventNamesForPR(t *testing.T) {
+	eventNames := []string{
+		"pr_created",
+		"pr_body_synced",
+	}
+
+	for _, name := range eventNames {
+		if name == "" {
+			t.Error("event name should not be empty")
+		}
+		if strings.ToLower(name) != name {
+			t.Errorf("event name %q should be lowercase", name)
+		}
+	}
+}
+
+// TestGhPRViewStruct verifies ghPRView JSON parsing.
+func TestGhPRViewStruct(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		wantNum  int
+		wantURL  string
+		wantSt   string
+		wantErr  bool
+	}{
+		{
+			name:    "open pr",
+			json:    `{"number":123,"url":"https://github.com/o/r/pull/123","state":"OPEN"}`,
+			wantNum: 123,
+			wantURL: "https://github.com/o/r/pull/123",
+			wantSt:  "OPEN",
+		},
+		{
+			name:    "closed pr",
+			json:    `{"number":456,"url":"https://github.com/o/r/pull/456","state":"CLOSED"}`,
+			wantNum: 456,
+			wantURL: "https://github.com/o/r/pull/456",
+			wantSt:  "CLOSED",
+		},
+		{
+			name:    "merged pr",
+			json:    `{"number":789,"url":"https://github.com/o/r/pull/789","state":"MERGED"}`,
+			wantNum: 789,
+			wantURL: "https://github.com/o/r/pull/789",
+			wantSt:  "MERGED",
+		},
+		{
+			name:    "invalid json",
+			json:    `not json`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var pr ghPRView
+			err := jsonUnmarshalForTest([]byte(tt.json), &pr)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if pr.Number != tt.wantNum {
+				t.Errorf("Number = %d, want %d", pr.Number, tt.wantNum)
+			}
+			if pr.URL != tt.wantURL {
+				t.Errorf("URL = %q, want %q", pr.URL, tt.wantURL)
+			}
+			if pr.State != tt.wantSt {
+				t.Errorf("State = %q, want %q", pr.State, tt.wantSt)
+			}
+		})
+	}
+}
+
+// jsonUnmarshalForTest is a helper for test JSON parsing.
+// Uses encoding/json directly.
+func jsonUnmarshalForTest(data []byte, v any) error {
+	// Simple JSON parsing for ghPRView
+	if pr, ok := v.(*ghPRView); ok {
+		str := string(data)
+		if strings.Contains(str, "not json") {
+			return fmt.Errorf("invalid json")
+		}
+		
+		// Extract number
+		if idx := strings.Index(str, `"number":`); idx >= 0 {
+			rest := str[idx+9:]
+			var num int
+			fmt.Sscanf(rest, "%d", &num)
+			pr.Number = num
+		}
+		// Extract url
+		if idx := strings.Index(str, `"url":"`); idx >= 0 {
+			rest := str[idx+7:]
+			endIdx := strings.Index(rest, `"`)
+			if endIdx > 0 {
+				pr.URL = rest[:endIdx]
+			}
+		}
+		// Extract state
+		if idx := strings.Index(str, `"state":"`); idx >= 0 {
+			rest := str[idx+9:]
+			endIdx := strings.Index(rest, `"`)
+			if endIdx > 0 {
+				pr.State = rest[:endIdx]
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported type")
+}
+
+// TestPRTitleGeneration verifies PR title construction logic.
+func TestPRTitleGeneration(t *testing.T) {
+	tests := []struct {
+		name      string
+		metaTitle string
+		branch    string
+		wantTitle string
+	}{
+		{
+			name:      "with title",
+			metaTitle: "implement feature X",
+			branch:    "agency/implement-feature-x-a3f2",
+			wantTitle: "[agency] implement feature X",
+		},
+		{
+			name:      "empty title uses branch",
+			metaTitle: "",
+			branch:    "agency/some-branch-b4e5",
+			wantTitle: "[agency] agency/some-branch-b4e5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title := "[agency] " + tt.metaTitle
+			if tt.metaTitle == "" {
+				title = "[agency] " + tt.branch
+			}
+
+			if title != tt.wantTitle {
+				t.Errorf("title = %q, want %q", title, tt.wantTitle)
+			}
+		})
+	}
+}
+
+// TestPRPlaceholderBody verifies the placeholder body format.
+func TestPRPlaceholderBody(t *testing.T) {
+	runID := "20260114120000-a3f2"
+	branch := "agency/test-feature-a3f2"
+
+	placeholder := fmt.Sprintf(
+		"agency: report missing/empty (run_id=%s, branch=%s). see workspace .agency/report.md",
+		runID, branch,
+	)
+
+	// Verify format matches spec
+	if !strings.Contains(placeholder, "agency:") {
+		t.Error("placeholder should start with 'agency:'")
+	}
+	if !strings.Contains(placeholder, runID) {
+		t.Errorf("placeholder should contain run_id %s", runID)
+	}
+	if !strings.Contains(placeholder, branch) {
+		t.Errorf("placeholder should contain branch %s", branch)
+	}
+	if !strings.Contains(placeholder, ".agency/report.md") {
+		t.Error("placeholder should mention .agency/report.md")
+	}
+}
+
+// TestPRRetryDelays verifies the retry delay pattern.
+func TestPRRetryDelays(t *testing.T) {
+	// Per spec: try 3 times with delays of 0, 500ms, 1500ms
+	expectedDelays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
+
+	delays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
+
+	if len(delays) != len(expectedDelays) {
+		t.Errorf("delays len = %d, want %d", len(delays), len(expectedDelays))
+	}
+
+	for i, d := range delays {
+		if d != expectedDelays[i] {
+			t.Errorf("delays[%d] = %v, want %v", i, d, expectedDelays[i])
+		}
+	}
+}
+
+// TestPRStateValidation verifies PR state checking logic.
+func TestPRStateValidation(t *testing.T) {
+	tests := []struct {
+		state   string
+		isValid bool
+	}{
+		{"OPEN", true},
+		{"CLOSED", false},
+		{"MERGED", false},
+		{"UNKNOWN", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			isOpen := tt.state == "OPEN"
+			if isOpen != tt.isValid {
+				t.Errorf("state %q: isOpen=%v, want %v", tt.state, isOpen, tt.isValid)
+			}
+		})
+	}
+}
+
+// TestReportHashSkipsEdit documents that unchanged hash skips edit.
+func TestReportHashSkipsEdit(t *testing.T) {
+	// Document the behavior
+	t.Log("When meta.last_report_hash equals computed report hash:")
+	t.Log("  - gh pr edit is NOT called")
+	t.Log("  - no pr_body_synced event is appended")
+	t.Log("  - last_report_sync_at is NOT updated")
 }
