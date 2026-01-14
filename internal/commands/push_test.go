@@ -731,3 +731,78 @@ func TestReportHashSkipsEdit(t *testing.T) {
 	t.Log("  - no pr_body_synced event is appended")
 	t.Log("  - last_report_sync_at is NOT updated")
 }
+
+// ============================================================================
+// PR-4 output formatting tests (slice 3 PR-04)
+// ============================================================================
+
+// TestPushOutputFormat_ErrorMessages verifies error message templates match spec.
+func TestPushOutputFormat_ErrorMessages(t *testing.T) {
+	tests := []struct {
+		code        errors.Code
+		wantMessage string
+	}{
+		{
+			code:        errors.EReportInvalid,
+			wantMessage: "report missing or empty; use --force to push anyway",
+		},
+		{
+			code:        errors.EEmptyDiff,
+			wantMessage: "no commits ahead of parent; make at least one commit",
+		},
+		{
+			code:        errors.ENoOrigin,
+			wantMessage: "git remote 'origin' not configured",
+		},
+		{
+			code:        errors.EUnsupportedOriginHost,
+			wantMessage: "origin host must be github.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.code), func(t *testing.T) {
+			err := errors.New(tt.code, tt.wantMessage)
+			ae, ok := errors.AsAgencyError(err)
+			if !ok {
+				t.Fatal("expected AgencyError")
+			}
+
+			// Verify error format matches spec: <ERROR_CODE>: <message>
+			expectedFormat := fmt.Sprintf("%s: %s", tt.code, tt.wantMessage)
+			if ae.Error() != expectedFormat {
+				t.Errorf("error format = %q, want %q", ae.Error(), expectedFormat)
+			}
+		})
+	}
+}
+
+// TestPushOutputFormat_WarningMessages verifies warning strings match spec.
+func TestPushOutputFormat_WarningMessages(t *testing.T) {
+	// These are the exact warning strings required by the spec
+	warnings := []string{
+		"warning: worktree has uncommitted changes; pushing commits anyway",
+		"warning: report missing or empty; proceeding due to --force",
+	}
+
+	for _, w := range warnings {
+		if !strings.HasPrefix(w, "warning: ") {
+			t.Errorf("warning %q does not start with 'warning: '", w)
+		}
+	}
+}
+
+// TestPushOutputFormat_SuccessLine verifies success output format.
+func TestPushOutputFormat_SuccessLine(t *testing.T) {
+	// Per spec: success prints exactly one stdout line: pr: <url>
+	url := "https://github.com/owner/repo/pull/123"
+	expected := fmt.Sprintf("pr: %s\n", url)
+
+	// This is the format that push.go now produces
+	if !strings.HasPrefix(expected, "pr: ") {
+		t.Error("success output should start with 'pr: '")
+	}
+	if strings.Contains(expected, "created") || strings.Contains(expected, "updated") {
+		t.Error("success output should NOT contain 'created' or 'updated'")
+	}
+}

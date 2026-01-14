@@ -89,110 +89,68 @@ func WriteShowPaths(w io.Writer, data ShowPathsData) error {
 	return nil
 }
 
-// WriteShowHuman writes human-readable show output.
+// WriteShowHuman writes human-readable show output in the spec-defined format.
+// Per PR-4 spec, output is plain key/value lines in exact order.
 func WriteShowHuman(w io.Writer, data ShowHumanData) error {
-	// Helper for yes/no booleans
-	yesNo := func(b bool) string {
-		if b {
-			return "yes"
-		}
-		return "no"
-	}
-
-	// Helper for optional string
-	optStr := func(s string) string {
-		if s == "" {
-			return ""
-		}
-		return s
-	}
-
 	// Format title for display
 	displayTitle := data.Title
 	if displayTitle == "" {
 		displayTitle = TitleUntitled
 	}
 
-	// === HEADER / CORE ===
-	fmt.Fprintln(w, "=== run ===")
-	fmt.Fprintf(w, "run_id: %s\n", data.RunID)
-	fmt.Fprintf(w, "title: %s\n", displayTitle)
-	fmt.Fprintf(w, "runner: %s\n", data.Runner)
-	fmt.Fprintf(w, "created_at: %s\n", data.CreatedAt)
-	fmt.Fprintf(w, "repo_id: %s\n", data.RepoID)
-	if data.RepoKey != "" {
-		fmt.Fprintf(w, "repo_key: %s\n", data.RepoKey)
-	}
-	if data.OriginURL != "" {
-		fmt.Fprintf(w, "origin_url: %s\n", data.OriginURL)
-	}
-
-	// === GIT/WORKSPACE ===
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "=== workspace ===")
-	fmt.Fprintf(w, "parent_branch: %s\n", data.ParentBranch)
-	fmt.Fprintf(w, "branch: %s\n", data.Branch)
-	fmt.Fprintf(w, "worktree_path: %s\n", data.WorktreePath)
-	fmt.Fprintf(w, "worktree_present: %s\n", yesNo(data.WorktreePresent))
-	fmt.Fprintf(w, "tmux_session_name: %s\n", data.TmuxSessionName)
-	fmt.Fprintf(w, "tmux_active: %s\n", yesNo(data.TmuxActive))
-
-	// === PR (if present) ===
-	if data.PRNumber != 0 || data.PRURL != "" {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "=== pr ===")
-		if data.PRNumber != 0 {
-			fmt.Fprintf(w, "pr_number: %d\n", data.PRNumber)
-		}
-		if data.PRURL != "" {
-			fmt.Fprintf(w, "pr_url: %s\n", data.PRURL)
-		}
-		if data.LastPushAt != "" {
-			fmt.Fprintf(w, "last_push_at: %s\n", optStr(data.LastPushAt))
-		}
-		if data.LastReportSyncAt != "" {
-			fmt.Fprintf(w, "last_report_sync_at: %s\n", optStr(data.LastReportSyncAt))
-		}
-		if data.LastReportHash != "" {
-			fmt.Fprintf(w, "last_report_hash: %s\n", optStr(data.LastReportHash))
+	// Format tmux session display
+	tmuxDisplay := data.TmuxSessionName
+	if tmuxDisplay == "" || !data.TmuxActive {
+		if data.TmuxSessionName == "" {
+			tmuxDisplay = "none"
 		}
 	}
 
-	// === REPORT ===
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "=== report ===")
-	fmt.Fprintf(w, "report_path: %s\n", data.ReportPath)
-	fmt.Fprintf(w, "report_exists: %s\n", yesNo(data.ReportExists))
-	fmt.Fprintf(w, "report_bytes: %d\n", data.ReportBytes)
+	// Format PR display per spec: pr: <url|none> (#<number|->)
+	prURLDisplay := data.PRURL
+	if prURLDisplay == "" {
+		prURLDisplay = "none"
+	}
+	prNumberDisplay := "-"
+	if data.PRNumber != 0 {
+		prNumberDisplay = fmt.Sprintf("%d", data.PRNumber)
+	}
 
-	// === LOGS ===
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "=== logs ===")
-	fmt.Fprintf(w, "setup_log: %s\n", data.SetupLogPath)
-	fmt.Fprintf(w, "verify_log: %s\n", data.VerifyLogPath)
-	fmt.Fprintf(w, "archive_log: %s\n", data.ArchiveLogPath)
+	// Format timestamps (none if empty)
+	lastPushDisplay := data.LastPushAt
+	if lastPushDisplay == "" {
+		lastPushDisplay = "none"
+	}
+	lastReportSyncDisplay := data.LastReportSyncAt
+	if lastReportSyncDisplay == "" {
+		lastReportSyncDisplay = "none"
+	}
+	reportHashDisplay := data.LastReportHash
+	if reportHashDisplay == "" {
+		reportHashDisplay = "none"
+	}
 
-	// === DERIVED ===
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "=== status ===")
+	// Format status with archived suffix if applicable
 	statusDisplay := formatStatus(data.DerivedStatus, data.Archived)
-	fmt.Fprintf(w, "derived_status: %s\n", statusDisplay)
-	fmt.Fprintf(w, "archived: %s\n", yesNo(data.Archived))
 
-	// === WARNINGS ===
-	if data.RepoNotFoundWarning || data.WorktreeMissingWarning || data.TmuxUnavailableWarning {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "=== warnings ===")
-		if data.RepoNotFoundWarning {
-			fmt.Fprintln(w, "warning: repo not found on disk")
-		}
-		if data.WorktreeMissingWarning {
-			fmt.Fprintln(w, "warning: worktree archived/missing")
-		}
-		if data.TmuxUnavailableWarning {
-			fmt.Fprintln(w, "warning: tmux unavailable; tmux_active=false")
-		}
-	}
+	// Output in spec-defined order with blank line between worktree and tmux
+	fmt.Fprintf(w, "run: %s\n", data.RunID)
+	fmt.Fprintf(w, "title: %s\n", displayTitle)
+	fmt.Fprintf(w, "repo: %s\n", data.RepoID)
+	fmt.Fprintf(w, "runner: %s\n", data.Runner)
+	fmt.Fprintf(w, "parent: %s\n", data.ParentBranch)
+	fmt.Fprintf(w, "branch: %s\n", data.Branch)
+	fmt.Fprintf(w, "worktree: %s\n", data.WorktreePath)
+
+	// Blank line between worktree and tmux (per spec)
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "tmux: %s\n", tmuxDisplay)
+	fmt.Fprintf(w, "pr: %s (#%s)\n", prURLDisplay, prNumberDisplay)
+	fmt.Fprintf(w, "last_push_at: %s\n", lastPushDisplay)
+	fmt.Fprintf(w, "last_report_sync_at: %s\n", lastReportSyncDisplay)
+	fmt.Fprintf(w, "report_hash: %s\n", reportHashDisplay)
+	fmt.Fprintf(w, "status: %s\n", statusDisplay)
 
 	return nil
 }

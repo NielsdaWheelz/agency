@@ -39,9 +39,9 @@ slice 3 progress:
 - [x] PR-01: core plumbing for push (error codes, meta fields)
 - [x] PR-02: preflight + git fetch/ahead/push + report gating
 - [x] PR-03: gh PR idempotency + create + body sync + metadata persistence
-- [ ] PR-04: polish + docs sync
+- [x] PR-04: polish + docs sync
 
-next: slice 3 PR-04 (polish + docs sync)
+next: slice 4 (lifecycle control: stop/kill/resume + flags)
 
 ## installation
 
@@ -345,14 +345,28 @@ agency show <run_id> [--json] [--path] [--capture]
 - multiple matches: fails with `E_RUN_ID_AMBIGUOUS` and lists candidates
 - no matches: fails with `E_RUN_NOT_FOUND`
 
-**human output sections:**
-- **run**: core metadata (run_id, title, runner, created_at, repo identity)
-- **workspace**: git/workspace info (branches, worktree, tmux session)
-- **pr**: PR info if present (pr_number, pr_url, last_push_at)
-- **report**: report file info (exists, bytes, path)
-- **logs**: script log paths
-- **status**: derived status and archived state
-- **warnings**: contextual warnings (repo not found, worktree missing)
+**human output:**
+```
+run: 20260110120000-a3f2
+title: implement feature X
+repo: abc123
+runner: claude
+parent: main
+branch: agency/implement-feature-x-a3f2
+worktree: ~/Library/Application Support/agency/repos/abc123/worktrees/20260110120000-a3f2
+
+tmux: agency_20260110120000-a3f2
+pr: https://github.com/owner/repo/pull/123 (#123)
+last_push_at: 2026-01-10T14:00:00Z
+last_report_sync_at: 2026-01-10T14:00:00Z
+report_hash: abc123def456...
+status: ready for review
+```
+
+note: there is a blank line between `worktree:` and `tmux:`.
+
+when PR is missing: `pr: none (#-)`
+when timestamps are missing: `last_push_at: none`
 
 **json output:**
 ```json
@@ -512,11 +526,7 @@ agency push <run_id> [--force]
 
 **success output:**
 ```
-pr created: https://github.com/owner/repo/pull/123
-```
-or:
-```
-pr updated: https://github.com/owner/repo/pull/123
+pr: https://github.com/owner/repo/pull/123
 ```
 
 **metadata persistence:**
