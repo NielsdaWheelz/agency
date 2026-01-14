@@ -26,6 +26,7 @@ commands:
   ls          list runs and their statuses
   show        show run details
   attach      attach to a tmux session for an existing run
+  push        push branch to origin (GitHub PR creation in future PR)
 
 options:
   -h, --help      show this help
@@ -84,6 +85,29 @@ options:
 
 examples:
   agency attach 20260110120000-a3f2
+`
+
+const pushUsageText = `usage: agency push <run_id> [options]
+
+push the run branch to origin.
+creates/updates GitHub PR in future PRs (slice 3 PR-03).
+
+arguments:
+  run_id        the run identifier (exact or unique prefix)
+
+options:
+  --force       proceed even if .agency/report.md is missing/empty
+  -h, --help    show this help
+
+notes:
+  - requires origin to be a github.com remote
+  - requires gh to be authenticated
+  - does NOT bypass E_EMPTY_DIFF (at least one commit required)
+  - warns if worktree has uncommitted changes
+
+examples:
+  agency push 20260110120000-a3f2           # push branch
+  agency push 20260110120000-a3f2 --force   # push with empty report
 `
 
 const lsUsageText = `usage: agency ls [options]
@@ -162,6 +186,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runShow(cmdArgs, stdout, stderr)
 	case "attach":
 		return runAttach(cmdArgs, stdout, stderr)
+	case "push":
+		return runPush(cmdArgs, stdout, stderr)
 	default:
 		fmt.Fprint(stdout, usageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("unknown command: %s", cmd))
@@ -427,4 +453,49 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	return err
+}
+
+func runPush(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("push", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	force := flagSet.Bool("force", false, "proceed even if report is missing/empty")
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, pushUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, pushUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.PushOpts{
+		RunID: runID,
+		Force: *force,
+	}
+
+	return commands.Push(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }

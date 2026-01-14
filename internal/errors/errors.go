@@ -70,6 +70,7 @@ const (
 	EPRNotOpen             Code = "E_PR_NOT_OPEN"             // PR exists but is not open (CLOSED or MERGED)
 	EReportInvalid         Code = "E_REPORT_INVALID"          // report missing/empty without --force
 	EEmptyDiff             Code = "E_EMPTY_DIFF"              // no commits ahead of parent branch
+	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
 )
 
 // AgencyError is the standard error type for agency errors.

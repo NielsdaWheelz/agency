@@ -37,11 +37,11 @@ slice 2 progress:
 
 slice 3 progress:
 - [x] PR-01: core plumbing for push (error codes, meta fields)
-- [ ] PR-02: preflight + git fetch/ahead/push + report gating
+- [x] PR-02: preflight + git fetch/ahead/push + report gating
 - [ ] PR-03: gh PR idempotency + create + body sync + metadata persistence
 - [ ] PR-04: polish + docs sync
 
-next: slice 3 PR-02 (push preflight + git push)
+next: slice 3 PR-03 (gh PR idempotency + create + body sync)
 
 ## installation
 
@@ -464,6 +464,75 @@ if the run exists but the tmux session has been killed (e.g., system restarted),
 - worktree path
 - runner command
 - suggested manual command to restart the runner
+
+### `agency push`
+
+pushes the run branch to origin and prepares for PR creation.
+
+**usage:**
+```bash
+agency push <run_id> [--force]
+```
+
+**arguments:**
+- `run_id`: the run identifier (exact or unique prefix)
+
+**flags:**
+- `--force`: proceed even if `.agency/report.md` is missing or effectively empty (< 20 chars)
+
+**preflight checks (in order):**
+1. resolve run_id and load metadata
+2. verify worktree exists on disk
+3. acquire repo lock (mutating command)
+4. verify `origin` remote exists
+5. verify origin host is exactly `github.com`
+6. report gating (missing/empty report requires `--force`)
+7. warn if worktree has uncommitted changes
+8. verify `gh auth status` succeeds
+
+**git operations (after preflight passes):**
+1. `git fetch origin` (non-destructive)
+2. resolve parent ref (local branch preferred, else `origin/<parent_branch>`)
+3. compute commits ahead via `git rev-list --count <parent_ref>..<branch>`
+4. refuse if ahead == 0 (`--force` does NOT bypass this)
+5. `git push -u origin <branch>` (no force push)
+
+**success output:**
+```
+pushed agency/my-feature-a3f2 to origin
+```
+
+**metadata persistence:**
+- updates `meta.json` with `last_push_at` timestamp
+- appends events to `events.jsonl`: `push_started`, `git_fetch_finished`, `git_push_finished`, `push_finished`
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_RUN_ID_AMBIGUOUS` — prefix matches multiple runs
+- `E_WORKTREE_MISSING` — run worktree path is missing on disk
+- `E_REPO_LOCKED` — another agency process holds the lock
+- `E_NO_ORIGIN` — no origin remote configured
+- `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
+- `E_REPORT_INVALID` — report missing/empty without `--force`
+- `E_GH_NOT_INSTALLED` — gh CLI not found
+- `E_GH_NOT_AUTHENTICATED` — gh not authenticated
+- `E_PARENT_NOT_FOUND` — parent branch not found locally or on origin
+- `E_EMPTY_DIFF` — no commits ahead of parent branch
+- `E_GIT_PUSH_FAILED` — git push failed
+
+**notes:**
+- all git/gh subprocesses run with non-interactive environment:
+  - `GIT_TERMINAL_PROMPT=0`
+  - `GH_PROMPT_DISABLED=1`
+  - `CI=1`
+- PR creation/update is implemented in slice 3 PR-03
+
+**examples:**
+```bash
+agency push 20260110120000-a3f2           # push branch
+agency push 20260110120000-a3f2 --force   # push with empty report
+agency push 20260110                       # unique prefix resolution
+```
 
 ## development
 
