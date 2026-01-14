@@ -471,8 +471,8 @@ Status is **composable**, not a flat enum:
 2. check commits ahead: `git rev-list --count <parent_branch>..<workspace_branch> > 0`
 3. `git push -u origin <workspace_branch>`
 4. if no PR exists and commits ahead > 0: create PR via `gh pr create`
-5. PR identity: repo + head branch in origin (`gh pr view --head <workspace_branch>`)
-6. on update, prefer stored PR number; fallback to `--head`
+5. PR identity: repo + head branch in origin (`gh pr view --head <workspace_branch> --json number,url`)
+6. on update, prefer stored PR number; fallback to branch lookup
 7. if `.agency/report.md` exists and non-empty: sync to PR body
 8. store PR url/number in metadata
 
@@ -665,11 +665,20 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 ### Run/workflow errors (slice 1+)
 - `E_PARENT_DIRTY` — parent working tree is not clean
 - `E_EMPTY_DIFF` — no commits ahead of parent branch
+- `E_PARENT_NOT_FOUND` — parent branch ref not found locally or on origin
 - `E_PR_NOT_MERGEABLE` — PR cannot be merged
+- `E_GIT_PUSH_FAILED` — git push failed
+- `E_GH_PR_CREATE_FAILED` — gh pr create failed
+- `E_GH_PR_EDIT_FAILED` — gh pr edit failed
+- `E_GH_PR_VIEW_FAILED` — gh pr view failed after create retries
+- `E_PR_NOT_OPEN` — PR exists but is not open (CLOSED or MERGED)
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
+- `E_NO_ORIGIN` — origin remote not configured
 - `E_REPO_LOCKED` — another agency process holds the lock
 - `E_RUN_NOT_FOUND` — specified run does not exist
+- `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_NO_PR` — no PR exists for the run
+- `E_REPORT_INVALID` — report missing/empty without `--force`
 
 ### Error output format (v1)
 - on non-zero exit, print `error_code: E_...` as the first line on stderr

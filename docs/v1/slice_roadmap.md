@@ -95,15 +95,15 @@ agency show <id> --path
   - `git fetch origin` (no rebases/resets).
   - Check `ahead_by_commits = rev-list --count parent..head > 0` else refuse `E_EMPTY_DIFF`.
   - `git push -u origin <branch>`.
-  - Create PR via `gh pr create` if missing; else update body/title as needed.
-  - PR identity: repo + head branch in origin (`gh pr view --head <branch>`).
-  - Store PR url/number in run metadata; on update, prefer stored PR number, fallback to `--head`.
+  - Create PR via `gh pr create` if missing; else update body as needed (no title updates in v1).
+  - PR identity: repo + head branch in origin (`gh pr view --head <branch> --json number,url`).
+  - Store PR url/number in run metadata; on update, prefer stored PR number, fallback to branch lookup.
   - PR body source: `<worktree>/.agency/report.md` (warn if missing/empty; `--force` bypass).
 - Non-scope: merge, verify gating, PR checks parsing, auto-close, auto-rebase.
 - Dependencies: Slice 2.
 - Acceptance: repeated pushes do not create duplicate PRs; report changes propagate to PR body.
 - Failure modes: gh not authenticated; origin missing or not github.com -> error; push rejected -> surface stderr, keep run intact.
-- Risks/spikes: robust mapping from branch -> existing PR (`gh pr view --head <branch>`).
+- Risks/spikes: robust mapping from branch -> existing PR (`gh pr view --head <branch> --json number,url`).
 
 ## Slice 4: Lifecycle control (stop/kill/resume + flags)
 
