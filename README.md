@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) complete, slice 5 (verify recording) complete, slice 6 (merge + archive) in progress.
+**v1 MVP complete** — all slices implemented: slice 0 (bootstrap), slice 1 (run), slice 2 (observability), slice 3 (push + PR), slice 4 (lifecycle control), slice 5 (verify recording), slice 6 (merge + archive).
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -54,8 +54,9 @@ slice 5 progress:
 slice 6 progress:
 - [x] PR-01: archive pipeline + `agency clean` command
 - [x] PR-02: verify runner + merge prechecks (no gh merge yet)
+- [x] PR-03: gh merge + full merge flow + idempotency
 
-next: slice 6 PR-03 (gh merge + full merge flow + idempotency)
+next: v1 complete
 
 ## installation
 
@@ -840,8 +841,9 @@ confirm: type 'merge' to proceed:
 
 **success output:**
 ```
-merged: https://github.com/owner/repo/pull/123
-archived: 20260110120000-a3f2
+merged: 20260110120000-a3f2
+pr: https://github.com/owner/repo/pull/123
+log: /path/to/logs/archive.log
 ```
 
 **events:**
@@ -880,8 +882,10 @@ archived: 20260110120000-a3f2
 **notes:**
 - `--force` does NOT bypass: missing PR, non-mergeable PR, gh auth failure, remote out-of-date
 - at most one of `--squash`/`--merge`/`--rebase` may be specified
-- if already merged (idempotent): skips merge, archives workspace
+- if already merged (idempotent): skips verify/mergeability checks, prompts for confirmation, archives workspace
 - PR must exist before merge; agency does NOT call `push` implicitly
+- gh merge output is captured to `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/merge.log`
+- post-merge confirmation: agency verifies PR reached `MERGED` state with retries (250ms, 750ms, 1500ms backoff)
 
 **examples:**
 ```bash

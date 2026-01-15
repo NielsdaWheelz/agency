@@ -121,6 +121,53 @@ func ResumeFailedData(sessionName, reason string) map[string]any {
 	}
 }
 
+// MergeConfirmPromptedData returns the data map for a merge_confirm_prompted event.
+func MergeConfirmPromptedData() map[string]any {
+	return map[string]any{}
+}
+
+// MergeConfirmedData returns the data map for a merge_confirmed event.
+func MergeConfirmedData() map[string]any {
+	return map[string]any{}
+}
+
+// GHMergeStartedData returns the data map for a gh_merge_started event.
+func GHMergeStartedData(prNumber int, prURL, strategy string) map[string]any {
+	return map[string]any{
+		"pr_number": prNumber,
+		"pr_url":    prURL,
+		"strategy":  strategy,
+	}
+}
+
+// GHMergeFinishedData returns the data map for a gh_merge_finished event.
+func GHMergeFinishedData(ok bool, prNumber int, prURL string) map[string]any {
+	return map[string]any{
+		"ok":        ok,
+		"pr_number": prNumber,
+		"pr_url":    prURL,
+	}
+}
+
+// MergeAlreadyMergedData returns the data map for a merge_already_merged event.
+func MergeAlreadyMergedData(prNumber int, prURL string) map[string]any {
+	return map[string]any{
+		"pr_number": prNumber,
+		"pr_url":    prURL,
+	}
+}
+
+// MergeFinishedData returns the data map for a merge_finished event.
+func MergeFinishedData(ok bool, errorCode string) map[string]any {
+	data := map[string]any{
+		"ok": ok,
+	}
+	if errorCode != "" {
+		data["error_code"] = errorCode
+	}
+	return data
+}
+
 // VerifyStartedData returns the data map for a verify_started event.
 func VerifyStartedData(timeoutMS int64, logPath string, verifyJSONPath string) map[string]any {
 	data := map[string]any{
