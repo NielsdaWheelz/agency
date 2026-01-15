@@ -33,6 +33,7 @@ commands:
   kill        kill tmux session (workspace remains)
   push        push branch to origin and create/update GitHub PR
   verify      run scripts.verify and record results
+  clean       archive without merging (abandon run)
 
 options:
   -h, --help      show this help
@@ -198,6 +199,32 @@ examples:
   agency verify 20260110120000-a3f2 --timeout 10m
 `
 
+const cleanUsageText = `usage: agency clean <run_id>
+
+archive a run without merging (abandon).
+requires cwd to be inside the target repo.
+requires an interactive terminal for confirmation.
+
+arguments:
+  run_id        the run identifier (e.g., 20260110120000-a3f2)
+
+behavior:
+  - runs scripts.archive (timeout: 5m)
+  - kills tmux session if exists
+  - deletes worktree
+  - retains metadata and logs
+  - marks run as abandoned
+
+confirmation:
+  you must type 'clean' to confirm the operation.
+
+options:
+  -h, --help    show this help
+
+examples:
+  agency clean 20260110120000-a3f2
+`
+
 const lsUsageText = `usage: agency ls [options]
 
 list runs and their statuses.
@@ -284,6 +311,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runPush(cmdArgs, stdout, stderr)
 	case "verify":
 		return runVerify(cmdArgs, stdout, stderr)
+	case "clean":
+		return runClean(cmdArgs, stdout, stderr)
 	default:
 		fmt.Fprint(stdout, usageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("unknown command: %s", cmd))
@@ -779,4 +808,46 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Verify(ctx, fsys, opts, stdout, stderr)
+}
+
+func runClean(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("clean", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, cleanUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, cleanUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.CleanOpts{
+		RunID: runID,
+	}
+
+	return commands.Clean(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
 }

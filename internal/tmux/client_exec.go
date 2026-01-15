@@ -132,3 +132,21 @@ func (c *ExecClient) formatError(subcmd string, exitCode int, stderr string) err
 	}
 	return fmt.Errorf("tmux %s failed (exit=%d): %s", subcmd, exitCode, trimmed)
 }
+
+// IsNoSessionErr returns true if the error indicates a tmux session does not exist.
+// This is used to treat "session missing" as a non-error condition for archive cleanup.
+//
+// Per S6 spec, "no session" is defined as exit code 1 with stderr containing any of:
+//   - "no server running"
+//   - "can't find session"
+//   - "no sessions"
+func IsNoSessionErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "no server running") ||
+		strings.Contains(errStr, "can't find session") ||
+		strings.Contains(errStr, "no sessions") ||
+		strings.Contains(errStr, "session not found")
+}
