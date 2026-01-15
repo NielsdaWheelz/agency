@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -29,7 +31,8 @@ commands:
   resume      attach to tmux session (create if missing)
   stop        send C-c to runner (best-effort interrupt)
   kill        kill tmux session (workspace remains)
-  push        push branch to origin (GitHub PR creation in future PR)
+  push        push branch to origin and create/update GitHub PR
+  verify      run scripts.verify and record results
 
 options:
   -h, --help      show this help
@@ -173,6 +176,28 @@ examples:
   agency push 20260110120000-a3f2 --force   # push with empty report
 `
 
+const verifyUsageText = `usage: agency verify <run_id> [options]
+
+run the repo's scripts.verify for a run and record results.
+does not require being in the repo directory.
+
+arguments:
+  run_id        the run identifier (exact or unique prefix)
+
+options:
+  --timeout <dur>   script timeout (default: 30m, Go duration format)
+  -h, --help        show this help
+
+behavior:
+  - writes verify_record.json and verify.log
+  - updates run flags (needs_attention on failure)
+  - does NOT affect push or merge behavior
+
+examples:
+  agency verify 20260110120000-a3f2             # run verify
+  agency verify 20260110120000-a3f2 --timeout 10m
+`
+
 const lsUsageText = `usage: agency ls [options]
 
 list runs and their statuses.
@@ -257,6 +282,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runResume(cmdArgs, stdout, stderr)
 	case "push":
 		return runPush(cmdArgs, stdout, stderr)
+	case "verify":
+		return runVerify(cmdArgs, stdout, stderr)
 	default:
 		fmt.Fprint(stdout, usageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("unknown command: %s", cmd))
@@ -692,4 +719,64 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Push(ctx, cr, fsys, cwd, opts, stdout, stderr)
+}
+
+func runVerify(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("verify", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	timeoutStr := flagSet.String("timeout", "30m", "script timeout (Go duration format)")
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, verifyUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, verifyUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Parse timeout
+	timeout, err := time.ParseDuration(*timeoutStr)
+	if err != nil {
+		fmt.Fprint(stderr, verifyUsageText)
+		return errors.New(errors.EUsage, fmt.Sprintf("invalid timeout: %s", *timeoutStr))
+	}
+	if timeout <= 0 {
+		fmt.Fprint(stderr, verifyUsageText)
+		return errors.New(errors.EUsage, "timeout must be positive")
+	}
+
+	// Create real implementations
+	fsys := fs.NewRealFS()
+
+	// Set up cancellation context for user SIGINT
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle SIGINT for cancellation
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		<-sigCh
+		cancel()
+	}()
+
+	opts := commands.VerifyOpts{
+		RunID:   runID,
+		Timeout: timeout,
+	}
+
+	return commands.Verify(ctx, fsys, opts, stdout, stderr)
 }

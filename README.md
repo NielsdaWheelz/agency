@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) complete, slice 5 (verify recording) in progress.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) complete, slice 5 (verify recording) complete.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -49,9 +49,9 @@ slice 4 progress:
 slice 5 progress:
 - [x] PR-01: verify runner core (process + record + precedence)
 - [x] PR-02: meta + flags + events integration (+ new error code)
-- [ ] PR-03: CLI command `agency verify` + UX output
+- [x] PR-03: CLI command `agency verify` + UX output
 
-next: slice 5 PR 3, then slice 6 (merge + archive)
+next: slice 6 (merge + archive)
 
 ## installation
 
@@ -109,6 +109,7 @@ agency resume <id> [--detached] [--restart]
 agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
 agency push <id> [--force]        push + create/update PR
+agency verify <id> [--timeout]    run verify script and record results
 agency merge <id> [--force]       verify, confirm, merge, archive
 agency clean <id>                 archive without merging
 agency doctor                     check prerequisites + show paths
@@ -705,6 +706,90 @@ pr: https://github.com/owner/repo/pull/123
 agency push 20260110120000-a3f2           # push branch + create/update PR
 agency push 20260110120000-a3f2 --force   # push with empty report (placeholder body)
 agency push 20260110                       # unique prefix resolution
+```
+
+### `agency verify`
+
+runs the repo's `scripts.verify` for a run and records deterministic verification evidence.
+
+**usage:**
+```bash
+agency verify <run_id> [--timeout <dur>]
+```
+
+**arguments:**
+- `run_id`: the run identifier (exact or unique prefix)
+
+**flags:**
+- `--timeout`: script timeout (default: `30m`, Go duration format like `10m`, `90s`)
+
+**behavior:**
+1. resolve run_id globally (works from anywhere, not just inside a repo)
+2. validate workspace exists (not archived)
+3. acquire repo lock for the duration of verification
+4. run `scripts.verify` with L0 environment variables (timeout: 30m default)
+5. read optional `.agency/out/verify.json` structured output
+6. write canonical `verify_record.json` with full evidence
+7. update `meta.json` with `last_verify_at` and `flags.needs_attention`
+8. append `verify_started` and `verify_finished` events to `events.jsonl`
+
+**verify_record.json:**
+
+canonical evidence record written to `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/verify_record.json`:
+- `schema_version`: always `"1.0"`
+- `repo_id`, `run_id`: identifiers
+- `script_path`: exact script string from agency.json
+- `started_at`, `finished_at`: RFC3339Nano timestamps
+- `duration_ms`, `timeout_ms`: timing info
+- `exit_code`: integer or null (null if signal-terminated)
+- `signal`: signal name if terminated (e.g., `"SIGKILL"`)
+- `timed_out`, `cancelled`: boolean flags (mutually exclusive)
+- `ok`: final result after precedence rules
+- `summary`: human-readable summary
+- `error`: internal errors only (not script failures)
+
+**ok derivation precedence:**
+1. if `timed_out` or `cancelled` => `ok=false`
+2. else if `exit_code` is null => `ok=false`
+3. else if `exit_code != 0` => `ok=false`
+4. else if `verify.json` valid => `ok = verify.json.ok`
+5. else => `ok=true`
+
+**needs_attention rules:**
+- verify ok clears `needs_attention` **only if** reason was `verify_failed`
+- verify fail sets `needs_attention=true` with reason `verify_failed`
+- verify ok does **not** clear attention for other reasons (e.g., `stop_requested`)
+
+**success output:**
+```
+ok verify 20260110120000-a3f2 record=/path/to/verify_record.json log=/path/to/verify.log
+```
+
+**failure output:**
+```
+E_SCRIPT_FAILED: verify failed (exit 1) record=/path/to/verify_record.json log=/path/to/verify.log
+```
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_RUN_ID_AMBIGUOUS` — prefix matches multiple runs
+- `E_WORKSPACE_ARCHIVED` — run exists but worktree missing or archived
+- `E_REPO_LOCKED` — another agency process holds the lock
+- `E_SCRIPT_FAILED` — verify script exited non-zero
+- `E_SCRIPT_TIMEOUT` — verify script timed out
+
+**notes:**
+- does **not** affect `agency push` behavior (push does not run verify)
+- does **not** require being in the repo directory
+- logs are written to `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/verify.log`
+- logs are overwritten per verify run (not appended)
+- user cancellation (Ctrl-C) is recorded as `cancelled=true`
+
+**examples:**
+```bash
+agency verify 20260110120000-a3f2              # run verify with 30m timeout
+agency verify 20260110120000-a3f2 --timeout 10m  # custom timeout
+agency verify 20260110                          # unique prefix resolution
 ```
 
 ## development
