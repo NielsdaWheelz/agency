@@ -156,7 +156,8 @@ func TestRepoLock_StaleByDeadPIDSteals(t *testing.T) {
 	}
 }
 
-func TestRepoLock_StaleByAgeSteals(t *testing.T) {
+func TestRepoLock_PIDOnlyStaleness_AgeDoesNotSteal(t *testing.T) {
+	// Per S5 spec: stale detection is pid-only. Age alone never steals the lock.
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 	staleAfter := 2 * time.Hour
@@ -182,15 +183,22 @@ func TestRepoLock_StaleByAgeSteals(t *testing.T) {
 		DataDir:    dataDir,
 		StaleAfter: staleAfter,
 		Now:        stubNow(now),
-		IsPIDAlive: stubPIDAlive(true), // PID is alive but lock is old
+		IsPIDAlive: stubPIDAlive(true), // PID is alive, so lock should NOT be stolen
 	}
 
-	// Lock acquisition should succeed
-	unlock, err := l.Lock("old-repo", "new-cmd")
-	if err != nil {
-		t.Fatalf("Lock() failed (should steal stale-by-age lock): %v", err)
+	// Lock acquisition should FAIL because pid-only staleness means age doesn't matter
+	_, err := l.Lock("old-repo", "new-cmd")
+	if err == nil {
+		t.Fatal("Lock() should have failed (pid is alive, age alone should not steal lock)")
 	}
-	defer unlock()
+
+	errLocked, ok := err.(*ErrLocked)
+	if !ok {
+		t.Fatalf("expected *ErrLocked, got %T: %v", err, err)
+	}
+	if errLocked.Info == nil || errLocked.Info.Cmd != "old-cmd" {
+		t.Errorf("expected lock info with Cmd='old-cmd', got %+v", errLocked.Info)
+	}
 }
 
 func TestRepoLock_UnreadableLockFile_MtimeFallback(t *testing.T) {

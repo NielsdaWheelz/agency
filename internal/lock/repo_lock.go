@@ -159,16 +159,11 @@ func (l RepoLock) readLockInfo(path string) (*LockInfo, error) {
 }
 
 // isStale returns true if the lock should be considered stale.
+// Per S5 spec: stale detection is pid-only. A lock is stale only if the
+// owning pid is not alive. Age alone never steals the lock.
 func (l RepoLock) isStale(info *LockInfo) bool {
-	// Stale if pid is not alive
-	if !l.IsPIDAlive(info.PID) {
-		return true
-	}
-	// Stale if created_at is older than stale_after
-	if l.Now().Sub(info.CreatedAt) > l.StaleAfter {
-		return true
-	}
-	return false
+	// Stale only if pid is not alive (pid-only staleness per spec)
+	return !l.IsPIDAlive(info.PID)
 }
 
 // isPIDAlive checks if a process with the given pid is alive.

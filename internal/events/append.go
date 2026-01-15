@@ -120,3 +120,34 @@ func ResumeFailedData(sessionName, reason string) map[string]any {
 		"reason":       reason,
 	}
 }
+
+// VerifyStartedData returns the data map for a verify_started event.
+func VerifyStartedData(timeoutMS int64, logPath string, verifyJSONPath string) map[string]any {
+	data := map[string]any{
+		"timeout_ms": timeoutMS,
+		"log_path":   logPath,
+	}
+	if verifyJSONPath != "" {
+		data["verify_json_path"] = verifyJSONPath
+	}
+	return data
+}
+
+// VerifyFinishedData returns the data map for a verify_finished event.
+func VerifyFinishedData(ok bool, exitCode *int, timedOut, cancelled bool, durationMS int64, verifyJSONPath, logPath, verifyRecordPath string) map[string]any {
+	data := map[string]any{
+		"ok":                 ok,
+		"timed_out":          timedOut,
+		"cancelled":          cancelled,
+		"duration_ms":        durationMS,
+		"log_path":           logPath,
+		"verify_record_path": verifyRecordPath,
+	}
+	if exitCode != nil {
+		data["exit_code"] = *exitCode
+	}
+	if verifyJSONPath != "" {
+		data["verify_json_path"] = verifyJSONPath
+	}
+	return data
+}

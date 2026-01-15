@@ -2,6 +2,7 @@
 package fs
 
 import (
+	"encoding/json"
 	"io"
 	iofs "io/fs"
 	"os"
@@ -64,4 +65,10 @@ func (r *RealFS) CreateTemp(dir, pattern string) (string, io.WriteCloser, error)
 		return "", nil, err
 	}
 	return f.Name(), f, nil
+}
+
+// UnmarshalJSON is a simple wrapper around json.Unmarshal.
+// Provided for consistency with other fs-level helpers.
+func UnmarshalJSON(data []byte, v any) error {
+	return json.Unmarshal(data, v)
 }

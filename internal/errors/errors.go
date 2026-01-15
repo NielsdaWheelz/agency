@@ -75,6 +75,9 @@ const (
 	// Slice 4 lifecycle control error codes
 	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"      // attach when tmux session is missing; suggests resume
 	EConfirmationRequired Code = "E_CONFIRMATION_REQUIRED" // restart attempted without confirmation in non-interactive mode
+
+	// Slice 5 verify error codes
+	EWorkspaceArchived Code = "E_WORKSPACE_ARCHIVED" // run exists but worktree missing or archived; cannot verify
 )
 
 // AgencyError is the standard error type for agency errors.
