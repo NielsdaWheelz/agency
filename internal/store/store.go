@@ -63,3 +63,15 @@ func (s *Store) RunMetaPath(repoID, runID string) string {
 func (s *Store) RunLogsDir(repoID, runID string) string {
 	return filepath.Join(s.RunDir(repoID, runID), "logs")
 }
+
+// VerifyRecordPath returns the path to a run's verify_record.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/verify_record.json
+func (s *Store) VerifyRecordPath(repoID, runID string) string {
+	return filepath.Join(s.RunDir(repoID, runID), "verify_record.json")
+}
+
+// EventsPath returns the path to a run's events.jsonl.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/events.jsonl
+func (s *Store) EventsPath(repoID, runID string) string {
+	return filepath.Join(s.RunDir(repoID, runID), "events.jsonl")
+}

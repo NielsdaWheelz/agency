@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) in progress.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) complete, slice 5 (verify recording) in progress.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -46,7 +46,12 @@ slice 4 progress:
 - [x] PR-04b: attach + stop + kill
 - [x] PR-04c: resume (create/attach/restart/detached) + worktree missing + locking
 
-next: slice 5 (merge + archive)
+slice 5 progress:
+- [x] PR-01: verify runner core (process + record + precedence)
+- [ ] PR-02: meta + flags + events integration (+ new error code)
+- [ ] PR-03: CLI command `agency verify` + UX output
+
+next: slice 5 PRs 2-3, then slice 6 (merge + archive)
 
 ## installation
 
@@ -752,6 +757,7 @@ agency/
 │   ├── store/            # repo_index.json + repo.json + run meta.json + run scanning
 │   ├── tmux/             # tmux Client interface, exec-backed impl, session detection, scrollback capture, ANSI stripping
 │   ├── tty/              # TTY detection helpers for interactive prompts
+│   ├── verify/           # verify script execution engine + evidence recording
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
 └── docs/                 # specifications
@@ -771,6 +777,8 @@ agency/
 - [slice 3 PRs](docs/v1/s3/s3_prs.md) — slice 3 PR breakdown
 - [slice 4 spec](docs/v1/s4/s4_spec.md) — lifecycle control slice detailed spec
 - [slice 4 PRs](docs/v1/s4/s4_prs.md) — slice 4 PR breakdown
+- [slice 5 spec](docs/v1/s5/s5_spec.md) — verify recording slice detailed spec
+- [slice 5 PRs](docs/v1/s5/s5_prs.md) — slice 5 PR breakdown
 
 ## license
 
