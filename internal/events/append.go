@@ -87,3 +87,18 @@ func CaptureResultData(captureOk bool, captureStage string, captureError string)
 	}
 	return data
 }
+
+// StopData returns the data map for a stop event.
+func StopData(sessionName string, keys []string) map[string]any {
+	return map[string]any{
+		"session_name": sessionName,
+		"keys":         keys,
+	}
+}
+
+// KillSessionData returns the data map for a kill_session event.
+func KillSessionData(sessionName string) map[string]any {
+	return map[string]any{
+		"session_name": sessionName,
+	}
+}

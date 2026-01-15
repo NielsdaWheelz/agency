@@ -16,6 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/runservice"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // AttachOpts holds options for the attach command.
@@ -27,6 +28,14 @@ type AttachOpts struct {
 // Attach attaches to an existing tmux session for a run.
 // Requires cwd to be inside the target repo.
 func Attach(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts AttachOpts, stdout, stderr io.Writer) error {
+	// Create real tmux client
+	tmuxClient := tmux.NewExecClient(cr)
+	return AttachWithTmux(ctx, cr, fsys, tmuxClient, cwd, opts, stdout, stderr)
+}
+
+// AttachWithTmux attaches to an existing tmux session for a run using the provided tmux client.
+// This variant is used for testing with a fake tmux client.
+func AttachWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, tmuxClient tmux.Client, cwd string, opts AttachOpts, stdout, stderr io.Writer) error {
 	// Validate run_id provided
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
@@ -55,52 +64,39 @@ func Attach(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoID := repoIdentity.RepoID
 
-	// Create store and look up the run
+	// Create store and look up the run (verify it exists)
 	st := store.NewStore(fsys, dataDir, nil)
-	meta, err := st.ReadMeta(repoID, opts.RunID)
+	_, err = st.ReadMeta(repoID, opts.RunID)
 	if err != nil {
 		// E_RUN_NOT_FOUND is already the right error code from ReadMeta
 		return err
 	}
 
-	// Verify tmux_session_name is set
-	if meta.TmuxSessionName == "" {
-		// Run exists but no tmux session was ever started (setup failed or tmux failed)
-		return errors.NewWithDetails(
-			errors.ETmuxSessionMissing,
-			"tmux session not found for this run",
-			map[string]string{
-				"run_id":        opts.RunID,
-				"worktree_path": meta.WorktreePath,
-				"runner_cmd":    meta.RunnerCmd,
-				"hint":          fmt.Sprintf("cd %q && %s", meta.WorktreePath, meta.RunnerCmd),
-			},
-		)
-	}
+	// Compute session name from run_id (source of truth from tmux.SessionName)
+	sessionName := tmux.SessionName(opts.RunID)
 
-	// Check if tmux session actually exists
-	hasSessionResult, err := cr.Run(ctx, "tmux", []string{"has-session", "-t", meta.TmuxSessionName}, agencyexec.RunOpts{})
+	// Check if tmux session actually exists using the TmuxClient
+	exists, err := tmuxClient.HasSession(ctx, sessionName)
 	if err != nil {
 		return errors.Wrap(errors.ETmuxNotInstalled, "failed to check tmux session", err)
 	}
-	if hasSessionResult.ExitCode != 0 {
+	if !exists {
 		// Session doesn't exist (was killed, system restarted, etc.)
+		// Return E_SESSION_NOT_FOUND with suggestion to use resume
 		return errors.NewWithDetails(
-			errors.ETmuxSessionMissing,
-			"tmux session '"+meta.TmuxSessionName+"' does not exist",
+			errors.ESessionNotFound,
+			fmt.Sprintf("tmux session '%s' does not exist", sessionName),
 			map[string]string{
-				"run_id":        opts.RunID,
-				"session":       meta.TmuxSessionName,
-				"worktree_path": meta.WorktreePath,
-				"runner_cmd":    meta.RunnerCmd,
-				"hint":          fmt.Sprintf("cd %q && %s", meta.WorktreePath, meta.RunnerCmd),
+				"run_id":     opts.RunID,
+				"session":    sessionName,
+				"suggestion": fmt.Sprintf("try: agency resume %s", opts.RunID),
 			},
 		)
 	}
 
 	// Attach to the tmux session
-	// We need to use exec.Command directly for interactive attach
-	return attachToTmuxSession(meta.TmuxSessionName, stdout, stderr)
+	// We need to use exec.Command directly for interactive attach (bypass tmuxClient)
+	return attachToTmuxSession(sessionName, stdout, stderr)
 }
 
 // attachToTmuxSession attaches to a tmux session interactively.
