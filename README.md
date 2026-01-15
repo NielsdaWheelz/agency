@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) complete, slice 5 (verify recording) complete.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) complete, slice 5 (verify recording) complete, slice 6 (merge + archive) in progress.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -51,7 +51,10 @@ slice 5 progress:
 - [x] PR-02: meta + flags + events integration (+ new error code)
 - [x] PR-03: CLI command `agency verify` + UX output
 
-next: slice 6 (merge + archive)
+slice 6 progress:
+- [x] PR-01: archive pipeline + `agency clean` command
+
+next: slice 6 PR-02 (verify runner + merge prechecks)
 
 ## installation
 
@@ -110,8 +113,7 @@ agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
 agency push <id> [--force]        push + create/update PR
 agency verify <id> [--timeout]    run verify script and record results
-agency merge <id> [--force]       verify, confirm, merge, archive
-agency clean <id>                 archive without merging
+agency clean <id>                 archive without merging (abandon run)
 agency doctor                     check prerequisites + show paths
 ```
 
@@ -792,6 +794,72 @@ agency verify 20260110120000-a3f2 --timeout 10m  # custom timeout
 agency verify 20260110                          # unique prefix resolution
 ```
 
+### `agency clean`
+
+archives a run without merging (abandons the run).
+requires cwd to be inside the target repo.
+requires an interactive terminal for confirmation.
+
+**usage:**
+```bash
+agency clean <run_id>
+```
+
+**arguments:**
+- `run_id`: the run identifier (e.g., `20260110120000-a3f2`)
+
+**behavior:**
+1. acquires repo lock
+2. prompts for confirmation (must type `clean`)
+3. runs `scripts.archive` (timeout: 5 minutes)
+4. kills tmux session if exists
+5. deletes worktree (git worktree remove, fallback to safe rm -rf)
+6. retains metadata and logs in `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/`
+7. marks run as abandoned (`flags.abandoned=true`, `archive.archived_at` set)
+
+**confirmation prompt:**
+```
+confirm: type 'clean' to proceed:
+```
+
+**success output:**
+```
+cleaned: 20260110120000-a3f2
+log: /path/to/logs/archive.log
+```
+
+**archive failure handling:**
+- archive is best-effort: all steps are attempted even if earlier steps fail
+- if any step fails: returns `E_ARCHIVE_FAILED` but does not set `archive.archived_at`
+- worktree deletion fallback (rm -rf) is only allowed if path is under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/`
+
+**idempotency:**
+- if run is already archived: prints `already archived` and exits 0
+
+**events:**
+- `clean_started`, `archive_started`
+- `archive_finished` (on success) or `archive_failed` (on any failure)
+- `clean_finished`
+
+**error codes:**
+- `E_NO_REPO` — not inside a git repository
+- `E_RUN_NOT_FOUND` — run not found
+- `E_WORKTREE_MISSING` — run worktree path is missing on disk
+- `E_REPO_LOCKED` — another agency process holds the lock
+- `E_NOT_INTERACTIVE` — not running in an interactive terminal
+- `E_ABORTED` — user declined confirmation or typed wrong token
+- `E_ARCHIVE_FAILED` — archive step failed (script, tmux, or delete failure)
+
+**notes:**
+- does **not** merge any PR (use `agency merge` for that)
+- does **not** delete git branches (local or remote)
+- worktree and tmux session are deleted; metadata and logs are retained
+
+**examples:**
+```bash
+agency clean 20260110120000-a3f2    # archive without merging
+```
+
 ## development
 
 ### build
@@ -820,14 +888,15 @@ go run ./cmd/agency doctor --help
 agency/
 ├── cmd/agency/           # main entry point
 ├── internal/
+│   ├── archive/          # archive pipeline (S6) - script execution, tmux kill, worktree deletion
 │   ├── cli/              # command dispatcher (stdlib flag)
-│   ├── commands/         # command implementations (init, doctor, run, ls, show, attach)
+│   ├── commands/         # command implementations (init, doctor, run, ls, show, attach, clean, etc.)
 │   ├── config/           # agency.json loading + validation (LoadAndValidate, ValidateForS1)
 │   ├── core/             # run id generation, slugify, branch naming, shell escaping
 │   ├── errors/           # stable error codes + AgencyError type
 │   ├── events/           # per-run event logging (events.jsonl append)
 │   ├── exec/             # CommandRunner interface + RunScript with timeout
-│   ├── fs/               # FS interface + atomic write + WriteJSONAtomic
+│   ├── fs/               # FS interface + atomic write + WriteJSONAtomic + SafeRemoveAll
 │   ├── git/              # repo discovery + origin info + safety gates
 │   ├── identity/         # repo_key + repo_id derivation
 │   ├── ids/              # run id resolution (exact + unique prefix)
@@ -845,7 +914,7 @@ agency/
 │   ├── verify/           # verify script execution engine + evidence recording
 │   ├── verifyservice/    # verify pipeline entrypoint (S5) + meta/events integration
 │   ├── version/          # build version
-│   └── worktree/         # git worktree creation + workspace scaffolding
+│   └── worktree/         # git worktree creation + workspace scaffolding + removal
 └── docs/                 # specifications
 ```
 
@@ -865,6 +934,8 @@ agency/
 - [slice 4 PRs](docs/v1/s4/s4_prs.md) — slice 4 PR breakdown
 - [slice 5 spec](docs/v1/s5/s5_spec.md) — verify recording slice detailed spec
 - [slice 5 PRs](docs/v1/s5/s5_prs.md) — slice 5 PR breakdown
+- [slice 6 spec](docs/v1/s6/s6_spec.md) — merge + archive slice detailed spec
+- [slice 6 PRs](docs/v1/s6/s6_prs.md) — slice 6 PR breakdown
 
 ## license
 

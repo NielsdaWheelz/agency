@@ -151,3 +151,63 @@ func VerifyFinishedData(ok bool, exitCode *int, timedOut, cancelled bool, durati
 	}
 	return data
 }
+
+// CleanStartedData returns the data map for a clean_started event.
+func CleanStartedData(runID string) map[string]any {
+	return map[string]any{
+		"run_id": runID,
+	}
+}
+
+// CleanFinishedData returns the data map for a clean_finished event.
+func CleanFinishedData(ok bool) map[string]any {
+	return map[string]any{
+		"ok": ok,
+	}
+}
+
+// ArchiveStartedData returns the data map for an archive_started event.
+func ArchiveStartedData(runID string) map[string]any {
+	return map[string]any{
+		"run_id": runID,
+	}
+}
+
+// ArchiveFinishedData returns the data map for an archive_finished event.
+func ArchiveFinishedData(ok bool) map[string]any {
+	return map[string]any{
+		"ok": ok,
+	}
+}
+
+// ArchiveFailedData returns the data map for an archive_failed event.
+// Includes details about which sub-steps succeeded or failed.
+// Reason strings are bounded to 512 bytes max.
+func ArchiveFailedData(scriptOK, tmuxOK, deleteOK bool, scriptReason, tmuxReason, deleteReason string) map[string]any {
+	const maxReasonLen = 512
+
+	truncate := func(s string) string {
+		if len(s) > maxReasonLen {
+			return s[:maxReasonLen]
+		}
+		return s
+	}
+
+	data := map[string]any{
+		"script_ok": scriptOK,
+		"tmux_ok":   tmuxOK,
+		"delete_ok": deleteOK,
+	}
+
+	if scriptReason != "" {
+		data["script_reason"] = truncate(scriptReason)
+	}
+	if tmuxReason != "" {
+		data["tmux_reason"] = truncate(tmuxReason)
+	}
+	if deleteReason != "" {
+		data["delete_reason"] = truncate(deleteReason)
+	}
+
+	return data
+}
