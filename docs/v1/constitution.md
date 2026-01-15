@@ -418,7 +418,7 @@ Status is **composable**, not a flat enum:
 - `archived` — worktree deleted (clean/archive)
 
 ### Runtime (only if workspace present)
-- `active` — tmux session `agency:<run_id>` exists
+- `active` — tmux session `tmux.SessionName(<run_id>)` exists
 - `idle` — no tmux session
 
 ### Flags (can be combined)
@@ -585,7 +585,7 @@ Stub scripts:
 
 `agency resume <id>`:
 1. if tmux session exists: attach unless `--detached`
-2. if tmux session missing: create `agency:<run_id>` with `cwd=worktree`, run runner, then attach unless `--detached`
+2. if tmux session missing: create `tmux.SessionName(<run_id>)` with `cwd=worktree`, run runner, then attach unless `--detached`
 
 `agency resume <id> --restart`:
 1. kill session (if exists)
@@ -596,14 +596,14 @@ no idle detection in v1; tmux session existence is the only signal.
 ### Stop semantics
 
 `agency stop <id>`:
-1. `tmux send-keys -t agency:<run_id> C-c` (best-effort interrupt)
+1. `tmux send-keys -t tmux.SessionName(<run_id>) C-c` (best-effort interrupt)
 2. sets `needs_attention` flag regardless of whether interrupt succeeded
 3. tmux session stays alive; use `agency resume --restart` to guarantee a fresh runner
 
 stop is best-effort: C-c may cancel an in-tool operation, exit the tool, or do nothing. it may not interrupt model work and can leave the tool in an inconsistent state; v1 accepts this risk.
 
 `agency kill <id>`:
-- `tmux kill-session -t agency:<run_id>`
+- `tmux kill-session -t tmux.SessionName(<run_id>)`
 - workspace persists
 
 ---
