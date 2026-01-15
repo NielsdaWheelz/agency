@@ -33,6 +33,7 @@ commands:
   kill        kill tmux session (workspace remains)
   push        push branch to origin and create/update GitHub PR
   verify      run scripts.verify and record results
+  merge       verify, confirm, merge PR, and archive workspace
   clean       archive without merging (abandon run)
 
 options:
@@ -199,6 +200,41 @@ examples:
   agency verify 20260110120000-a3f2 --timeout 10m
 `
 
+const mergeUsageText = `usage: agency merge <run_id> [options]
+
+verify, confirm, merge PR, and archive workspace.
+requires cwd to be inside the target repo.
+requires an interactive terminal for confirmation.
+
+arguments:
+  run_id        the run identifier (e.g., 20260110120000-a3f2)
+
+options:
+  --squash      use squash merge strategy (default)
+  --merge       use regular merge strategy
+  --rebase      use rebase merge strategy
+  --force       bypass verify-failed prompt (still runs verify)
+  -h, --help    show this help
+
+behavior:
+  1. runs prechecks (origin, gh auth, PR exists, mergeable, etc.)
+  2. runs scripts.verify (timeout: 30m)
+  3. if verify fails: prompts to continue (unless --force)
+  4. prompts for typed confirmation (must type 'merge')
+  5. merges PR via gh pr merge
+  6. archives workspace (runs archive script, kills tmux, deletes worktree)
+
+notes:
+  - PR must already exist (run 'agency push' first)
+  - --force does NOT bypass: missing PR, non-mergeable PR, gh auth failure
+  - at most one of --squash/--merge/--rebase may be set
+
+examples:
+  agency merge 20260110120000-a3f2              # squash merge (default)
+  agency merge 20260110120000-a3f2 --merge      # regular merge
+  agency merge 20260110120000-a3f2 --force      # skip verify-fail prompt
+`
+
 const cleanUsageText = `usage: agency clean <run_id>
 
 archive a run without merging (abandon).
@@ -311,6 +347,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runPush(cmdArgs, stdout, stderr)
 	case "verify":
 		return runVerify(cmdArgs, stdout, stderr)
+	case "merge":
+		return runMerge(cmdArgs, stdout, stderr)
 	case "clean":
 		return runClean(cmdArgs, stdout, stderr)
 	default:
@@ -808,6 +846,78 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Verify(ctx, fsys, opts, stdout, stderr)
+}
+
+func runMerge(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("merge", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	squash := flagSet.Bool("squash", false, "use squash merge strategy (default)")
+	merge := flagSet.Bool("merge", false, "use regular merge strategy")
+	rebase := flagSet.Bool("rebase", false, "use rebase merge strategy")
+	force := flagSet.Bool("force", false, "bypass verify-failed prompt")
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, mergeUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, mergeUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Validate merge strategy flags (at most one)
+	strategyCount := 0
+	var strategy commands.MergeStrategy
+	if *squash {
+		strategyCount++
+		strategy = commands.MergeStrategySquash
+	}
+	if *merge {
+		strategyCount++
+		strategy = commands.MergeStrategyMerge
+	}
+	if *rebase {
+		strategyCount++
+		strategy = commands.MergeStrategyRebase
+	}
+
+	if strategyCount > 1 {
+		return errors.New(errors.EUsage, "at most one of --squash, --merge, --rebase may be specified")
+	}
+	if strategyCount == 0 {
+		strategy = commands.MergeStrategySquash // default
+	}
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.MergeOpts{
+		RunID:    runID,
+		Strategy: strategy,
+		Force:    *force,
+	}
+
+	return commands.Merge(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
 }
 
 func runClean(args []string, stdout, stderr io.Writer) error {
