@@ -220,7 +220,7 @@ supported files (v1):
 - `.agency/out/verify.json`
 - `.agency/out/archive.json`
 
-If present, agency uses `ok` field; if absent, uses exit code only.
+If present, agency uses `ok` only when the script exits 0; verify.json may downgrade success but never upgrade failure. If absent, uses exit code only.
 
 ---
 

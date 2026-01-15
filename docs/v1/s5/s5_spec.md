@@ -107,8 +107,8 @@ Schema (v1):
   "repo_id": "string",
   "run_id": "string",
   "script_path": "string",
-  "started_at": "RFC3339 string",
-  "finished_at": "RFC3339 string",
+  "started_at": "RFC3339Nano string",
+  "finished_at": "RFC3339Nano string",
   "duration_ms": 12345,
   "timeout_ms": 1800000,
   "timed_out": false,
@@ -133,6 +133,7 @@ Notes:
 	•	summary is derived for human display:
 	•	prefer verify.json.summary if present/valid
 	•	else a generic message (e.g., "verify succeeded" / "verify failed (exit 1)" / "verify timed out")
+	•	if verify.json is invalid, record the parse/validation message in error (not summary)
 	•	script_path is the resolved value from agency.json (exact string executed), not a realpath.
 
 events.jsonl (UPDATED)
@@ -199,7 +200,8 @@ given verify.json exists but is invalid JSON or missing required keys
 when agency verify <id> runs
 then
 	•	treat verify.json as absent for ok derivation
-	•	set verify_json_path to the file path for transparency, but mark summary accordingly (e.g., "verify.json invalid; used exit code")
+	•	set verify_json_path to the file path for transparency
+	•	record a parse/validation error message in verify_record.json.error
 
 5) timeout overrides all
 
@@ -250,13 +252,14 @@ writes
 	•	verify_record.json written atomically (write temp + rename)
 	•	meta.json updated atomically
 	•	events.jsonl appended (best-effort; failure to append should not lose verify_record/meta updates)
-	•	if events.jsonl append fails, emit a warning to stderr and include it in verify_record.json.summary
+	•	if events.jsonl append fails, emit a warning to stderr and include it in verify_record.json.error
 	•	last_verify_at updates only if verify actually started
 
 log file policy
 	•	${...}/logs/verify.log:
 	•	v1 recommendation: overwrite per verify run (simpler, avoids unbounded growth)
 	•	record started_at in verify_record.json; logs are overwritten
+	•	write a short header (timestamp + command + cwd) matching setup.log style
 
 ⸻
 
