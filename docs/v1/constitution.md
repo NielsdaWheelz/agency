@@ -235,6 +235,7 @@ ${AGENCY_DATA_DIR}/
     repo.json
     runs/<run_id>/
       meta.json           # run metadata (retained on archive)
+      events.jsonl        # append-only event log
       logs/               # script stdout/stderr
     worktrees/<run_id>/   # git worktree (deleted on archive)
 ```
@@ -464,7 +465,9 @@ Status is **composable**, not a flat enum:
 
 **remote requirement (v1)**: `origin` must exist and point to `github.com` (ssh or https) for `agency push`/`agency merge`. `repo_key` may still fall back to a path-based key for indexing, but GitHub PR flows require the GitHub origin. if hostname != `github.com`: `E_UNSUPPORTED_ORIGIN_HOST`.
 
-**command cwd**: all git/gh operations run with `-C <worktree_path>` (or `cwd=worktree`) except the parent working tree cleanliness check, which runs in the repo root.
+**command cwd**: all git/gh operations run with `-C <worktree_path>` (or `cwd=worktree`) except:
+- the parent working tree cleanliness check (repo root)
+- `git worktree remove` (repo root)
 
 ### Push behavior
 
@@ -484,8 +487,8 @@ Status is **composable**, not a flat enum:
 2. check `gh pr view --json mergeable`
 3. run `scripts.verify`, record result
 4. if verify failed: prompt "continue anyway?" (skip with `--force`)
-5. prompt for human confirmation
-6. `gh pr merge`
+5. prompt for human confirmation (accept `strings.TrimSpace(input) == "merge"`)
+6. `gh pr merge` with exactly one strategy flag; if none provided default to `--squash` (more than one -> `E_USAGE`)
 7. archive workspace
 
 if not mergeable: `E_PR_NOT_MERGEABLE`. no auto-rebase.
@@ -551,7 +554,8 @@ agency resume <id> [--detached] [--restart]
 agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
 agency push <id> [--force]        push + create/update PR
-agency merge <id> [--force]       verify, confirm, merge, archive
+agency merge <id> [--squash|--merge|--rebase] [--force]
+                                  verify, confirm, merge, archive
 agency clean <id>                 archive without merging
 agency doctor                     check prerequisites + show paths
 ```
@@ -672,7 +676,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_GIT_PUSH_FAILED` — git push failed
 - `E_GH_PR_CREATE_FAILED` — gh pr create failed
 - `E_GH_PR_EDIT_FAILED` — gh pr edit failed
-- `E_GH_PR_VIEW_FAILED` — gh pr view failed after create retries
+- `E_GH_PR_VIEW_FAILED` — gh pr view failed or returned invalid/unsupported schema
 - `E_PR_NOT_OPEN` — PR exists but is not open (CLOSED or MERGED)
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
 - `E_NO_ORIGIN` — origin remote not configured
@@ -681,6 +685,14 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_NO_PR` — no PR exists for the run
 - `E_REPORT_INVALID` — report missing/empty without `--force`
+- `E_GIT_FETCH_FAILED` — git fetch failed
+- `E_PR_MISMATCH` — resolved PR does not match expected branch
+- `E_GH_REPO_PARSE_FAILED` — failed to parse owner/repo from origin
+- `E_PR_MERGEABILITY_UNKNOWN` — gh reports mergeable as UNKNOWN after retries
+- `E_GH_PR_MERGE_FAILED` — gh merge failed or merge state could not be confirmed
+- `E_ARCHIVE_FAILED` — archive step failed
+- `E_ABORTED` — user declined confirmation / wrong token
+- `E_NOT_INTERACTIVE` — command requires an interactive TTY
 
 ### Error output format (v1)
 - on non-zero exit, print `error_code: E_...` as the first line on stderr

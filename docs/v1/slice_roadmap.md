@@ -148,7 +148,7 @@ agency kill <id> # kill tmux only
 - Non-scope: interactive TUI, auto-resolving conflicts, PR checks enforcement, retention GC.
 - Dependencies: Slice 5.
 - Acceptance: merge performs verify + explicit prompt + merges PR + deletes worktree + removes tmux session; run remains in history as merged/archived.
-- Failure modes: verify fails -> user can abort or `--force`; merge conflicts/not mergeable -> fail with `E_PR_NOT_MERGEABLE`; archive script fails -> warn and continue best-effort cleanup.
+- Failure modes: verify fails -> user can abort or `--force`; merge conflicts/not mergeable -> fail with `E_PR_NOT_MERGEABLE`; archive failure returns `E_ARCHIVE_FAILED` after best-effort cleanup.
 
 ## Gold-standard decisions (v1)
 
