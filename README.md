@@ -53,8 +53,9 @@ slice 5 progress:
 
 slice 6 progress:
 - [x] PR-01: archive pipeline + `agency clean` command
+- [x] PR-02: verify runner + merge prechecks (no gh merge yet)
 
-next: slice 6 PR-02 (verify runner + merge prechecks)
+next: slice 6 PR-03 (gh merge + full merge flow + idempotency)
 
 ## installation
 
@@ -113,6 +114,8 @@ agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
 agency push <id> [--force]        push + create/update PR
 agency verify <id> [--timeout]    run verify script and record results
+agency merge <id> [--squash|--merge|--rebase] [--force]
+                                  verify, confirm, merge PR, archive
 agency clean <id>                 archive without merging (abandon run)
 agency doctor                     check prerequisites + show paths
 ```
@@ -792,6 +795,100 @@ E_SCRIPT_FAILED: verify failed (exit 1) record=/path/to/verify_record.json log=/
 agency verify 20260110120000-a3f2              # run verify with 30m timeout
 agency verify 20260110120000-a3f2 --timeout 10m  # custom timeout
 agency verify 20260110                          # unique prefix resolution
+```
+
+### `agency merge`
+
+verifies, confirms, merges a GitHub PR, and archives the workspace.
+requires cwd to be inside the target repo.
+requires an interactive terminal for confirmation.
+
+**usage:**
+```bash
+agency merge <run_id> [--squash|--merge|--rebase] [--force]
+```
+
+**arguments:**
+- `run_id`: the run identifier (e.g., `20260110120000-a3f2`)
+
+**flags:**
+- `--squash`: use squash merge strategy (default)
+- `--merge`: use regular merge strategy
+- `--rebase`: use rebase merge strategy
+- `--force`: bypass verify-failed prompt (still runs verify, still records failure)
+
+**behavior:**
+1. runs prechecks:
+   - run exists, worktree present
+   - origin remote exists and is github.com
+   - gh is authenticated
+   - PR exists (must run `agency push` first)
+   - PR is open, not a draft
+   - PR is mergeable (not conflicting)
+   - local head matches origin (up-to-date)
+2. runs `scripts.verify` (timeout: 30 minutes)
+3. if verify fails and no `--force`: prompts to continue (`[y/N]`)
+4. prompts for typed confirmation (must type `merge`)
+5. merges PR via `gh pr merge` with strategy flag
+6. archives workspace (runs archive script, kills tmux, deletes worktree)
+
+**confirmation prompts:**
+```
+verify failed. continue anyway? [y/N]
+confirm: type 'merge' to proceed:
+```
+
+**success output:**
+```
+merged: https://github.com/owner/repo/pull/123
+archived: 20260110120000-a3f2
+```
+
+**events:**
+- `merge_started`, `merge_prechecks_passed`
+- `verify_started`, `verify_finished`
+- `verify_continue_prompted`, `verify_continue_accepted|rejected` (if verify failed)
+- `merge_confirm_prompted`, `merge_confirmed`
+- `gh_merge_started`, `gh_merge_finished`
+- `archive_started`, `archive_finished|archive_failed`
+- `merge_finished`
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_WORKTREE_MISSING` — run worktree path is missing on disk
+- `E_REPO_LOCKED` — another agency process holds the lock
+- `E_NOT_INTERACTIVE` — not running in an interactive terminal
+- `E_NO_ORIGIN` — no origin remote configured
+- `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
+- `E_GH_NOT_AUTHENTICATED` — gh not authenticated
+- `E_GH_REPO_PARSE_FAILED` — failed to parse owner/repo from origin URL
+- `E_NO_PR` — no PR exists for the run (run `agency push` first)
+- `E_GH_PR_VIEW_FAILED` — gh pr view failed or returned invalid schema
+- `E_PR_NOT_OPEN` — PR is CLOSED or already MERGED
+- `E_PR_DRAFT` — PR is a draft
+- `E_PR_MISMATCH` — PR head branch doesn't match expected branch
+- `E_PR_NOT_MERGEABLE` — PR has conflicts
+- `E_PR_MERGEABILITY_UNKNOWN` — GitHub couldn't determine mergeability
+- `E_GIT_FETCH_FAILED` — git fetch failed
+- `E_REMOTE_OUT_OF_DATE` — local head differs from origin (run `agency push`)
+- `E_SCRIPT_FAILED` — verify script exited non-zero
+- `E_SCRIPT_TIMEOUT` — verify script timed out
+- `E_ABORTED` — user declined confirmation or typed wrong token
+- `E_GH_PR_MERGE_FAILED` — gh pr merge failed
+- `E_ARCHIVE_FAILED` — archive step failed
+
+**notes:**
+- `--force` does NOT bypass: missing PR, non-mergeable PR, gh auth failure, remote out-of-date
+- at most one of `--squash`/`--merge`/`--rebase` may be specified
+- if already merged (idempotent): skips merge, archives workspace
+- PR must exist before merge; agency does NOT call `push` implicitly
+
+**examples:**
+```bash
+agency merge 20260110120000-a3f2              # squash merge (default)
+agency merge 20260110120000-a3f2 --merge      # regular merge
+agency merge 20260110120000-a3f2 --rebase     # rebase merge
+agency merge 20260110120000-a3f2 --force      # skip verify-fail prompt
 ```
 
 ### `agency clean`
