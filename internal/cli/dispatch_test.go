@@ -253,3 +253,63 @@ func TestRun_AttachMissingRunID(t *testing.T) {
 		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.EUsage)
 	}
 }
+
+func TestRun_VerifyHelp(t *testing.T) {
+	tests := []string{"-h", "--help"}
+	for _, arg := range tests {
+		t.Run(arg, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := Run([]string{"verify", arg}, &stdout, &stderr)
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(stdout.String(), "agency verify") {
+				t.Error("expected verify usage in stdout")
+			}
+			// Verify flags are documented
+			if !strings.Contains(stdout.String(), "--timeout") {
+				t.Error("expected --timeout in verify usage")
+			}
+		})
+	}
+}
+
+func TestRun_VerifyMissingRunID(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"verify"}, &stdout, &stderr)
+
+	if err == nil {
+		t.Fatal("expected error when run_id is missing")
+	}
+	if errors.GetCode(err) != errors.EUsage {
+		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.EUsage)
+	}
+}
+
+func TestRun_VerifyInvalidTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+	}{
+		{"invalid format", "not-a-duration"},
+		{"zero", "0s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			// Put flags before positional argument (Go flag package stops at first non-flag)
+			err := Run([]string{"verify", "--timeout", tt.timeout, "some-run-id"}, &stdout, &stderr)
+
+			if err == nil {
+				t.Fatal("expected error for invalid timeout")
+			}
+			if errors.GetCode(err) != errors.EUsage {
+				t.Errorf("code = %q, want %q", errors.GetCode(err), errors.EUsage)
+			}
+		})
+	}
+}
+
+// Note: Negative timeout like "-30m" can't be easily tested because it looks like a flag to the parser.
