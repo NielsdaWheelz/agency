@@ -57,3 +57,54 @@ you keep saying “tui optional” but you also say “essential this functions 
 right now, v1 is a cli tool with tmux sessions for runners. that’s fine. a full-screen agency tui can come later. don’t pretend it’s v1-critical if it isn’t.
 
 if you truly need the agency tui in v1, add it as slice 7 and make it explicitly “thin wrapper” (no new logic).
+
+
+10) Reviewing Changes in a Worktree                                                  
+how do i review changes in a worktree? can i easily open my ide in a runner (e.g. `agency <run-id> code`)?
+Option A: Use agency show to get the path, then cd there                            
+                                                                                    
+agency show <run_id> --path                                                         
+# Output:                                                                           
+# worktree_root: /Users/you/Library/Application                                     
+Support/agency/repos/.../worktrees/...                                              
+                                                                                    
+cd "$(agency show <run_id> --path | grep worktree_root | cut -d' ' -f2)"            
+git diff                                                                            
+git log --oneline main..HEAD                                                        
+                                                                                    
+Option B: Open your IDE directly (see next section)                                 
+                                                                                    
+Option C: Review via the GitHub PR                                                  
+                                                                                    
+agency push <run_id>    # creates PR                                                
+# Then review on GitHub                                                             
+                                                                                    
+Agency doesn't have a built-in agency code <run_id> command
+
+11) simple, clear run names (easier to type, tab-able)
+
+12) customize script timeouts
+
+
+
+what i need from your codebase
+	•	current file layout and whether you already have a “run directory” abstraction
+	•	how you record events today (is events.jsonl consistent and complete?)
+	•	where you store “workspace-local” vs “global” and how you load it
+	•	whether you can currently capture runner input/output at all (tmux capture? file logging?)
+	•	whether you plan to add a wrapper around runner invocation (pty logger). if no, don’t pretend you can do “per-message.”
+	•	do you allow uncommitted changes in the worktree? (runner will create them)
+	•	do you have a rule like “runner must commit before push”? currently you allow any. that affects checkpoint reliability.
+	•	are your .agency/* files small and stable? what will verify.json size look like?
+	•	do you track last_push_at and can you detect “pushed” reliably? (yes via git rev-parse @{u} / compare to origin)
+	•	do you ever allow PRs from forks? (probably no)
+	•	do you want a new config key in agency.json for force policy? (probably yes)
+	•	what “workspace clean” means for you: do you allow untracked files? ignored files? (define now)
+	•	what repos are you targeting (node, python, go)? verify script needs to handle anything.
+	•	do you want multiple checks or a single command? (schema supports both; decide)
+	•	do you want the runner to be instructed to update todos? (system prompt policy)
+	•	do you want a command surface (agency todo add/done/ls)? (likely v1.5)
+	•	evidence from conductor docs on how spotlight works (so we’re not inventing parity goals)
+	•	what languages/repos you care about; some toolchains embed paths in build artifacts
+	•	where you compute status today (single function?) and how you store derived state
+	•	whether you’re ok adding state to meta.json (schema bump)

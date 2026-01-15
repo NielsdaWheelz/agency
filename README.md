@@ -2,62 +2,6 @@
 
 local-first runner manager: creates isolated git workspaces, launches `claude`/`codex` TUIs in tmux, opens GitHub PRs via `gh`.
 
-## status
-
-**v1 MVP complete** — all slices implemented: slice 0 (bootstrap), slice 1 (run), slice 2 (observability), slice 3 (push + PR), slice 4 (lifecycle control), slice 5 (verify recording), slice 6 (merge + archive).
-
-slice 0 progress:
-- [x] PR-00: project skeleton + shared contracts
-- [x] PR-01: directory resolution + repo discovery + origin parsing
-- [x] PR-02: agency.json schema + validation
-- [x] PR-03: persistence schemas + repo store
-- [x] PR-04: `agency init` command
-- [x] PR-05: `agency doctor` command
-- [x] PR-06: docs + cleanup
-
-slice 1 progress:
-- [x] PR-01: core utilities + errors + subprocess + atomic json
-- [x] PR-02: repo detection + safety gates + repo.json update
-- [x] PR-03: agency.json load + runner resolution for S1
-- [x] PR-04: run pipeline orchestration (internal API)
-- [x] PR-05: worktree + scaffolding + collision handling
-- [x] PR-06: meta.json writer + run dir creation
-- [x] PR-07: setup script execution + logging
-- [x] PR-08: tmux session creation + attach command
-- [x] PR-09: wire agency run end-to-end + --attach UX
-
-slice 2 progress:
-- [x] PR-00: repo lock helper
-- [x] PR-01: run discovery + parsing + broken run records
-- [x] PR-02: run id resolution (exact + unique prefix)
-- [x] PR-03: derived status computation (pure)
-- [x] PR-04: `agency ls` command
-- [x] PR-05: `agency show` command
-- [x] PR-06: transcript capture + events.jsonl
-
-slice 3 progress:
-- [x] PR-01: core plumbing for push (error codes, meta fields)
-- [x] PR-02: preflight + git fetch/ahead/push + report gating
-- [x] PR-03: gh PR idempotency + create + body sync + metadata persistence
-- [x] PR-04: polish + docs sync
-
-slice 4 progress:
-- [x] PR-04a: tmux client interface + exec implementation + fakes
-- [x] PR-04b: attach + stop + kill
-- [x] PR-04c: resume (create/attach/restart/detached) + worktree missing + locking
-
-slice 5 progress:
-- [x] PR-01: verify runner core (process + record + precedence)
-- [x] PR-02: meta + flags + events integration (+ new error code)
-- [x] PR-03: CLI command `agency verify` + UX output
-
-slice 6 progress:
-- [x] PR-01: archive pipeline + `agency clean` command
-- [x] PR-02: verify runner + merge prechecks (no gh merge yet)
-- [x] PR-03: gh merge + full merge flow + idempotency
-
-next: v1 complete
-
 ## installation
 
 ### from source (development)
@@ -98,6 +42,391 @@ agency attach <id>
 agency push <id>
 agency merge <id>
 ```
+
+## complete guide
+
+this section walks through agency from setup to merge.
+
+### how agency works
+
+agency creates isolated workspaces for AI coding sessions. each run gets:
+- a git worktree (separate directory with its own branch)
+- a tmux session running your AI runner (claude/codex)
+- metadata tracking the run's lifecycle
+
+```
+YOUR REPO                           AGENCY DATA DIR
+/projects/myapp/                    ~/Library/Application Support/agency/
+├── agency.json                     └── repos/<repo_id>/
+├── scripts/                            ├── runs/<run_id>/
+│   ├── agency_setup.sh                 │   ├── meta.json
+│   ├── agency_verify.sh                │   └── logs/
+│   └── agency_archive.sh               └── worktrees/<run_id>/  ◄── ISOLATED
+└── src/...                                 ├── .agency/report.md
+                                            └── src/... (copy of your code)
+
+LIFECYCLE:
+
+  ┌──────────┐    ┌──────────────┐    ┌───────────┐    ┌──────────────┐
+  │agency run│───►│agency attach │───►│agency push│───►│agency merge  │
+  └────┬─────┘    └──────┬───────┘    └─────┬─────┘    └──────┬───────┘
+       │                 │                  │                 │
+       ▼                 ▼                  ▼                 ▼
+   creates           you enter          pushes to        runs verify,
+   worktree,         tmux with          GitHub +         merges PR,
+   runs setup        claude             creates PR       cleans up
+
+  DETACH FROM TMUX: press Ctrl+b, then d (session keeps running)
+```
+
+### step 1: initialize your repo
+
+```bash
+cd /path/to/your/repo
+agency init
+```
+
+this creates:
+```
+your-repo/
+├── agency.json                    # configuration
+└── scripts/
+    ├── agency_setup.sh            # runs BEFORE ai starts (install deps)
+    ├── agency_verify.sh           # runs to check work (tests/lint)
+    └── agency_archive.sh          # runs on cleanup
+```
+
+### step 2: configure agency.json
+
+the default `agency.json` works for most repos:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "parent_branch": "main",
+    "runner": "claude"
+  },
+  "scripts": {
+    "setup": "scripts/agency_setup.sh",
+    "verify": "scripts/agency_verify.sh",
+    "archive": "scripts/agency_archive.sh"
+  },
+  "runners": {
+    "claude": "claude",
+    "codex": "codex"
+  }
+}
+```
+
+**customize if needed:**
+- change `parent_branch` to `master` or `dev` if that's your default
+- change `runner` to `codex` if you prefer OpenAI Codex
+
+### step 3: configure scripts
+
+the stub scripts created by `agency init` need to be customized for your project.
+
+#### example: node.js project
+
+**scripts/agency_setup.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# copy env files from parent repo to worktree
+# AGENCY_REPO_ROOT = your original repo
+# AGENCY_WORKSPACE_ROOT = the isolated worktree
+if [ -f "$AGENCY_REPO_ROOT/.env" ]; then
+  cp "$AGENCY_REPO_ROOT/.env" "$AGENCY_WORKSPACE_ROOT/.env"
+fi
+if [ -f "$AGENCY_REPO_ROOT/.env.local" ]; then
+  cp "$AGENCY_REPO_ROOT/.env.local" "$AGENCY_WORKSPACE_ROOT/.env.local"
+fi
+
+# install dependencies
+npm ci
+```
+
+**scripts/agency_verify.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# lint
+npm run lint
+
+# type check (if using typescript)
+npm run typecheck 2>/dev/null || true
+
+# run tests
+npm test
+
+# build (catches compile errors)
+npm run build
+```
+
+**scripts/agency_archive.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# nothing needed for most node projects
+# add cleanup if you start background processes in setup
+exit 0
+```
+
+#### example: python project
+
+**scripts/agency_setup.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# copy env files
+if [ -f "$AGENCY_REPO_ROOT/.env" ]; then
+  cp "$AGENCY_REPO_ROOT/.env" "$AGENCY_WORKSPACE_ROOT/.env"
+fi
+
+# create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# install dependencies
+pip install -r requirements.txt
+pip install -r requirements-dev.txt 2>/dev/null || true
+```
+
+**scripts/agency_verify.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# activate virtual environment
+source .venv/bin/activate
+
+# lint
+ruff check . || flake8 .
+
+# type check
+mypy . 2>/dev/null || true
+
+# run tests
+pytest
+```
+
+**scripts/agency_archive.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+```
+
+### step 4: verify setup
+
+```bash
+agency doctor
+```
+
+expected output:
+```
+repo_root: /path/to/your/repo
+agency_data_dir: ~/Library/Application Support/agency
+...
+runner_cmd: claude
+script_setup: /path/to/your/repo/scripts/agency_setup.sh
+script_verify: /path/to/your/repo/scripts/agency_verify.sh
+script_archive: /path/to/your/repo/scripts/agency_archive.sh
+status: ok
+```
+
+if you see errors, fix them before continuing.
+
+### step 5: start an ai coding session
+
+```bash
+agency run --title "add user authentication"
+```
+
+output:
+```
+run_id: 20260115143022-a3f2
+title: add user authentication
+runner: claude
+parent: main
+branch: agency/add-user-authentication-a3f2
+worktree: ~/Library/Application Support/agency/repos/.../worktrees/20260115143022-a3f2
+tmux: agency_20260115143022-a3f2
+next: agency attach 20260115143022-a3f2
+```
+
+**what just happened:**
+1. agency verified your repo is clean (no uncommitted changes)
+2. created a git worktree with a new branch `agency/add-user-authentication-a3f2`
+3. ran `scripts/agency_setup.sh` (installed deps, copied env files)
+4. started a tmux session with claude running inside the worktree
+
+### step 6: work with the ai
+
+```bash
+# enter the tmux session
+agency attach 20260115143022-a3f2
+```
+
+you're now in a terminal with claude running. give it instructions:
+
+```
+> please implement JWT-based user authentication with login and logout endpoints
+```
+
+claude will write code, make commits, etc.
+
+**to leave (but keep claude running):** press `Ctrl+b` then `d`
+
+**other session commands:**
+```bash
+agency ls                              # list all runs
+agency show 2026                       # show run details (prefix match)
+agency stop 2026                       # send Ctrl+C to claude
+agency kill 2026                       # kill tmux session (keeps files)
+agency resume 2026                     # reattach (creates session if needed)
+agency resume 2026 --restart           # restart with fresh claude session
+```
+
+### step 7: review the work
+
+```bash
+# see what claude did
+agency show 20260115143022-a3f2
+
+# open in your IDE (VS Code)
+code "$(agency show 2026 --path | grep worktree_root | cut -d' ' -f2)"
+
+# or cd into the worktree
+cd "$(agency show 2026 --path | grep worktree_root | cut -d' ' -f2)"
+git log --oneline main..HEAD
+git diff main
+```
+
+### step 8: push and create PR
+
+```bash
+agency push 20260115143022-a3f2
+```
+
+output:
+```
+pr: https://github.com/owner/repo/pull/123
+```
+
+**what just happened:**
+1. pushed the branch to origin
+2. created a GitHub PR with title `[agency] add user authentication`
+3. synced `.agency/report.md` from worktree to PR body
+
+you can now review the PR on GitHub, request changes, etc.
+
+**if you make more changes and push again**, agency updates the existing PR.
+
+### step 9: merge and cleanup
+
+```bash
+agency merge 20260115143022-a3f2
+```
+
+prompts:
+```
+verify failed. continue anyway? [y/N] y
+confirm: type 'merge' to proceed: merge
+```
+
+output:
+```
+merged: 20260115143022-a3f2
+pr: https://github.com/owner/repo/pull/123
+log: /path/to/logs/archive.log
+```
+
+**what just happened:**
+1. ran `scripts/agency_verify.sh` (tests, lint)
+2. prompted for confirmation
+3. merged the PR via `gh pr merge --squash`
+4. ran `scripts/agency_archive.sh`
+5. killed the tmux session
+6. deleted the worktree
+
+### alternative: abandon a run
+
+if the work isn't good and you want to discard it:
+
+```bash
+agency clean 20260115143022-a3f2
+```
+
+prompts:
+```
+confirm: type 'clean' to proceed: clean
+```
+
+this deletes the worktree and tmux session but does NOT merge anything.
+
+### command reference card
+
+```bash
+# === SETUP ===
+agency init                        # initialize repo for agency
+agency doctor                      # check prerequisites
+
+# === LIFECYCLE ===
+agency run --title "do X"          # start new AI session
+agency attach <id>                 # enter tmux session
+# Ctrl+b, d                        # detach from tmux
+agency push <id>                   # push branch + create/update PR
+agency merge <id>                  # verify + merge + cleanup
+agency clean <id>                  # abandon (no merge)
+
+# === OBSERVABILITY ===
+agency ls                          # list all runs
+agency ls --all                    # include archived
+agency show <id>                   # show details
+agency show <id> --path            # show paths only
+
+# === SESSION CONTROL ===
+agency resume <id>                 # attach (create session if needed)
+agency resume <id> --restart       # restart session (loses chat history)
+agency stop <id>                   # send Ctrl+C
+agency kill <id>                   # kill session (keeps files)
+
+# === VERIFICATION ===
+agency verify <id>                 # run verify script manually
+```
+
+### environment variables available in scripts
+
+these are automatically set when agency runs your scripts:
+
+| variable | description | example |
+|----------|-------------|---------|
+| `AGENCY_RUN_ID` | run identifier | `20260115143022-a3f2` |
+| `AGENCY_TITLE` | run title | `add user authentication` |
+| `AGENCY_REPO_ROOT` | original repo path | `/Users/you/myapp` |
+| `AGENCY_WORKSPACE_ROOT` | worktree path | `/path/to/worktree` |
+| `AGENCY_BRANCH` | worktree branch | `agency/add-user-auth-a3f2` |
+| `AGENCY_PARENT_BRANCH` | parent branch | `main` |
+| `AGENCY_ORIGIN_URL` | git remote URL | `git@github.com:you/myapp.git` |
+| `AGENCY_RUNNER` | runner name | `claude` |
+| `AGENCY_DOTAGENCY_DIR` | `.agency/` path | `/path/to/worktree/.agency` |
+| `AGENCY_OUTPUT_DIR` | script output dir | `/path/to/worktree/.agency/out` |
+| `AGENCY_LOG_DIR` | log directory | `/path/to/logs` |
+| `CI` | always `1` | `1` |
+
+### script timeouts
+
+| script | timeout | purpose |
+|--------|---------|---------|
+| `setup` | 10 minutes | install deps, copy env files |
+| `verify` | 30 minutes | run tests, lint, build |
+| `archive` | 5 minutes | cleanup before deletion |
 
 ## commands
 
