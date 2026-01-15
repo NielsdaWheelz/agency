@@ -127,7 +127,18 @@ agency kill <id> # kill tmux only
 - Failure modes: tmux missing -> fail with `E_TMUX_NOT_INSTALLED`.
 - Risks/spikes: resume is intentionally conservative; no idle detection in v1.
 
-## Slice 5: Merge + archive
+## Slice 5: Verify recording
+
+- Outcome: user can run `agency verify` to record deterministic verification evidence.
+- Scope:
+  - Verify: run `scripts.verify` (timeout 30m) and record result; update flags; append events.
+  - Evidence: write `verify_record.json` and overwrite `logs/verify.log`.
+- Non-scope: merge, archive, clean, interactive TUI, auto-resolving conflicts, PR checks enforcement, retention GC.
+- Dependencies: Slice 4.
+- Acceptance: `agency verify <id>` produces `verify_record.json`, overwrites `verify.log`, and sets `needs_attention` on failures.
+- Failure modes: verify fails -> `needs_attention` set with reason `verify_failed`; workspace missing -> `E_WORKSPACE_ARCHIVED`.
+
+## Slice 6: Merge + archive
 
 - Outcome: user can finish the loop by merging and archiving.
 - Scope:
@@ -135,7 +146,7 @@ agency kill <id> # kill tmux only
   - Archive: run archive script (timeout 5m); delete worktree; delete tmux session; retain metadata/logs under `${AGENCY_DATA_DIR}/.../runs/<id>`.
   - Clean: archive without merging; mark abandoned.
 - Non-scope: interactive TUI, auto-resolving conflicts, PR checks enforcement, retention GC.
-- Dependencies: Slice 4.
+- Dependencies: Slice 5.
 - Acceptance: merge performs verify + explicit prompt + merges PR + deletes worktree + removes tmux session; run remains in history as merged/archived.
 - Failure modes: verify fails -> user can abort or `--force`; merge conflicts/not mergeable -> fail with `E_PR_NOT_MERGEABLE`; archive script fails -> warn and continue best-effort cleanup.
 

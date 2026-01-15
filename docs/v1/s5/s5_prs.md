@@ -22,8 +22,9 @@ implement the core verify execution engine and canonical `verify_record.json` wr
 - subprocess runner for `scripts.verify`:
   - `cwd = worktree`
   - stdin `/dev/null`
-  - env injection (existing L0 contract)
+  - env provided by caller (existing L0 contract); runner does not inject
   - capture stdout/stderr to `${...}/logs/verify.log` (truncate/overwrite per invocation)
+  - verify runner accepts fully merged env from caller (no env injection in runner)
   - start subprocess in its own process group (Go: `SysProcAttr{Setpgid: true}`)
   - send signals to `-pgid` (negative pid) to kill the whole group
 - timeout handling:
@@ -88,7 +89,7 @@ wire verify results into `meta.json` and `events.jsonl` deterministically, with 
   - `E_WORKSPACE_ARCHIVED` for “run exists but worktree missing/archived; cannot verify”
 - `agency verify` plumbing helpers (still not CLI):
   - load run meta, locate worktree, fail `E_WORKSPACE_ARCHIVED` if missing
-  - acquire repo lock (existing lock behavior), fail `E_REPO_LOCKED` if held and not stale
+  - acquire repo lock (pid-only staleness), fail `E_REPO_LOCKED` if held and not stale
   - lock file location is derived from the run’s `repo_id`; verify should not depend on current cwd
 - update `meta.json` atomically on verify completion:
   - set `last_verify_at`
@@ -118,7 +119,7 @@ wire verify results into `meta.json` and `events.jsonl` deterministically, with 
 ### tests
 - unit:
   - needs_attention update rules (clear only when reason == verify_failed)
-  - repo lock stale detection behavior (if not already covered)
+  - repo lock stale detection behavior (pid-only)
 - integration (no tmux):
   - create temp git repo + `agency.json`
   - create real git worktree for a fake run and a matching `meta.json`
@@ -152,8 +153,8 @@ ship the user-facing `agency verify <id> [--timeout <dur>]` command wired to the
   - acquire repo lock; fail `E_REPO_LOCKED`
   - emit events; run verify; write record; update meta
 - stdout/stderr UX contract (v1):
-  - on success: one-line `verify ok` + paths (record + log)
-  - on failure/timeout/cancel: one-line `verify failed` + paths; exit non-zero
+  - on success: one-line `ok verify <id> record=<path> log=<path>`
+  - on failure/timeout/cancel: one-line `E_SCRIPT_FAILED: verify failed (<reason>) record=<path> log=<path>`
   - do not print full logs; point to `verify.log`
 - exit codes:
   - ok => exit 0
