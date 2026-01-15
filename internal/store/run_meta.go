@@ -85,6 +85,12 @@ type RunMetaFlags struct {
 	// NeedsAttention is true if the run requires user attention.
 	NeedsAttention bool `json:"needs_attention,omitempty"`
 
+	// NeedsAttentionReason is the reason for needing attention.
+	// Allowed values (v1): "", "verify_failed", "stop_requested", "user_marked",
+	// "pr_not_mergeable", "setup_failed", "unknown".
+	// Empty string means no specific reason (omitted in JSON).
+	NeedsAttentionReason string `json:"needs_attention_reason,omitempty"`
+
 	// Abandoned is true if the run was abandoned by the user.
 	Abandoned bool `json:"abandoned,omitempty"`
 }

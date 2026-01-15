@@ -48,10 +48,10 @@ slice 4 progress:
 
 slice 5 progress:
 - [x] PR-01: verify runner core (process + record + precedence)
-- [ ] PR-02: meta + flags + events integration (+ new error code)
+- [x] PR-02: meta + flags + events integration (+ new error code)
 - [ ] PR-03: CLI command `agency verify` + UX output
 
-next: slice 5 PRs 2-3, then slice 6 (merge + archive)
+next: slice 5 PR 3, then slice 6 (merge + archive)
 
 ## installation
 
@@ -758,6 +758,7 @@ agency/
 │   ├── tmux/             # tmux Client interface, exec-backed impl, session detection, scrollback capture, ANSI stripping
 │   ├── tty/              # TTY detection helpers for interactive prompts
 │   ├── verify/           # verify script execution engine + evidence recording
+│   ├── verifyservice/    # verify pipeline entrypoint (S5) + meta/events integration
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
 └── docs/                 # specifications
