@@ -236,11 +236,12 @@ func TestValidatePRState(t *testing.T) {
 	eventsPath := filepath.Join(tmpDir, "events.jsonl")
 
 	tests := []struct {
-		name           string
-		pr             *ghPRViewFull
-		expectedBranch string
-		wantErr        bool
-		errCode        string
+		name            string
+		pr              *ghPRViewFull
+		expectedBranch  string
+		wantErr         bool
+		errCode         string
+		wantMerged      bool // for idempotent already-merged path
 	}{
 		{
 			name: "open PR, matching branch",
@@ -252,17 +253,18 @@ func TestValidatePRState(t *testing.T) {
 			},
 			expectedBranch: "agency/test",
 			wantErr:        false,
+			wantMerged:     false,
 		},
 		{
-			name: "merged PR",
+			name: "merged PR - idempotent path",
 			pr: &ghPRViewFull{
 				Number:      123,
 				State:       "MERGED",
 				HeadRefName: "agency/test",
 			},
 			expectedBranch: "agency/test",
-			wantErr:        true,
-			errCode:        "E_PR_NOT_OPEN",
+			wantErr:        false,
+			wantMerged:     true, // Should return AlreadyMerged=true instead of error
 		},
 		{
 			name: "closed PR",
@@ -303,7 +305,7 @@ func TestValidatePRState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePRState(tt.pr, tt.expectedBranch, eventsPath, "repo123", "run123")
+			result, err := validatePRState(tt.pr, tt.expectedBranch, eventsPath, "repo123", "run123")
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("validatePRState() expected error with code %s, got nil", tt.errCode)
@@ -313,6 +315,11 @@ func TestValidatePRState(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("validatePRState() unexpected error: %v", err)
+				}
+				if result == nil {
+					t.Errorf("validatePRState() returned nil result on success")
+				} else if result.AlreadyMerged != tt.wantMerged {
+					t.Errorf("validatePRState() AlreadyMerged = %v, want %v", result.AlreadyMerged, tt.wantMerged)
 				}
 			}
 		})
@@ -605,6 +612,122 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 	// We can't easily test the full flow without mocking tty.IsInteractive()
 	// This test is more of a compilation/structure check
 	t.Log("Integration test structure verified - full test requires TTY mocking")
+}
+
+// TestMergeStrategyFlags tests the strategy flag mapping.
+func TestMergeStrategyFlags(t *testing.T) {
+	tests := []struct {
+		strategy MergeStrategy
+		wantFlag string
+	}{
+		{MergeStrategySquash, "--squash"},
+		{MergeStrategyMerge, "--merge"},
+		{MergeStrategyRebase, "--rebase"},
+		{"", "--squash"}, // default
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.strategy), func(t *testing.T) {
+			strategy := tt.strategy
+			if strategy == "" {
+				strategy = MergeStrategySquash
+			}
+			gotFlag := "--" + string(strategy)
+			if gotFlag != tt.wantFlag {
+				t.Errorf("strategy flag = %q, want %q", gotFlag, tt.wantFlag)
+			}
+		})
+	}
+}
+
+// TestConfirmPRMerged tests the post-merge state confirmation.
+func TestConfirmPRMerged(t *testing.T) {
+	tests := []struct {
+		name       string
+		responses  []string // JSON responses for each gh call
+		wantResult bool
+		wantSleeps int
+	}{
+		{
+			name: "merged on first try",
+			responses: []string{
+				`{"state": "MERGED"}`,
+			},
+			wantResult: true,
+			wantSleeps: 0,
+		},
+		{
+			name: "open then merged",
+			responses: []string{
+				`{"state": "OPEN"}`,
+				`{"state": "MERGED"}`,
+			},
+			wantResult: true,
+			wantSleeps: 1,
+		},
+		{
+			name: "never merged",
+			responses: []string{
+				`{"state": "OPEN"}`,
+				`{"state": "OPEN"}`,
+				`{"state": "OPEN"}`,
+			},
+			wantResult: false,
+			wantSleeps: 2, // Sleeps before attempts 2 and 3
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callIdx := 0
+			fakeCR := &mergeTestCommandRunner{
+				runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+					if name != "gh" || len(args) < 2 || args[0] != "pr" || args[1] != "view" {
+						return exec.CmdResult{ExitCode: 1}, nil
+					}
+					if callIdx >= len(tt.responses) {
+						return exec.CmdResult{ExitCode: 1, Stderr: "unexpected call"}, nil
+					}
+					resp := tt.responses[callIdx]
+					callIdx++
+					return exec.CmdResult{ExitCode: 0, Stdout: resp}, nil
+				},
+			}
+
+			sleeper := &fakeMergeSleeper{}
+			result, _ := confirmPRMerged(context.Background(), fakeCR, "/tmp", "owner/repo", 123, sleeper)
+
+			if result != tt.wantResult {
+				t.Errorf("confirmPRMerged() = %v, want %v", result, tt.wantResult)
+			}
+
+			if len(sleeper.sleeps) != tt.wantSleeps {
+				t.Errorf("confirmPRMerged() sleeps = %d, want %d", len(sleeper.sleeps), tt.wantSleeps)
+			}
+		})
+	}
+}
+
+// TestTruncateString tests the string truncation helper.
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "hello..."},
+		{"", 10, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := truncateString(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("truncateString(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+		})
+	}
 }
 
 // TestGetOriginURLForMerge tests origin URL resolution.

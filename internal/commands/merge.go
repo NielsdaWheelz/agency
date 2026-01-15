@@ -12,15 +12,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/archive"
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/events"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/NielsdaWheelz/agency/internal/tty"
 	"github.com/NielsdaWheelz/agency/internal/verify"
 )
@@ -48,6 +51,9 @@ type MergeOpts struct {
 
 	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
 	Sleeper Sleeper
+
+	// TmuxClient is an injectable tmux client for testing. If nil, uses real tmux client.
+	TmuxClient tmux.Client
 }
 
 // ghPRViewFull represents the full JSON output of gh pr view with all required fields.
@@ -205,8 +211,14 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	// === Precheck 7: PR state and mismatch checks ===
-	if err := validatePRState(pr, meta.Branch, eventsPath, repoID, meta.RunID); err != nil {
+	prStateResult, err := validatePRState(pr, meta.Branch, eventsPath, repoID, meta.RunID)
+	if err != nil {
 		return err
+	}
+
+	// Handle already-merged PR (idempotent path)
+	if prStateResult.AlreadyMerged {
+		return handleAlreadyMergedPR(ctx, cr, fsys, st, meta, repoID, pr, ghRepo, opts, stdin, stdout, stderr, eventsPath, dataDir)
 	}
 
 	// === Precheck 8: mergeability ===
@@ -266,6 +278,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 				appendMergeEvent(eventsPath, repoID, meta.RunID, "verify_continue_rejected", map[string]any{
 					"answer": answer,
 				})
+				appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EScriptFailed)))
 				if verifyErr != nil {
 					return verifyErr
 				}
@@ -283,9 +296,279 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		// With --force, we continue without prompting
 	}
 
-	// === PR-06b termination: not implemented yet ===
-	fmt.Fprintln(stderr, "note: merge step not implemented in pr-06b; re-run after pr-06c lands")
-	return errors.New(errors.ENotImplemented, "merge step not implemented; re-run after pr-06c lands")
+	// === Merge confirmation prompt ===
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
+
+	fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+	reader := bufio.NewReader(stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		input = ""
+	}
+	confirmation := strings.TrimSpace(input)
+
+	if confirmation != "merge" {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EAborted)))
+		return errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'")
+	}
+
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirmed", events.MergeConfirmedData())
+
+	// === Execute gh pr merge ===
+	strategyFlag := "--" + string(opts.Strategy)
+
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_started", events.GHMergeStartedData(pr.Number, pr.URL, string(opts.Strategy)))
+
+	// Capture merge output to logs/merge.log
+	mergeLogPath := filepath.Join(st.RunLogsDir(repoID, meta.RunID), "merge.log")
+	mergeErr := executeGHMerge(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, strategyFlag, mergeLogPath)
+
+	if mergeErr != nil {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_finished", events.GHMergeFinishedData(false, pr.Number, pr.URL))
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EGHPRMergeFailed)))
+		return mergeErr
+	}
+
+	// === Confirm PR reached MERGED state ===
+	confirmed, confirmErr := confirmPRMerged(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, sleeper)
+	if confirmErr != nil || !confirmed {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_finished", events.GHMergeFinishedData(false, pr.Number, pr.URL))
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EGHPRMergeFailed)))
+		if confirmErr != nil {
+			return confirmErr
+		}
+		return errors.NewWithDetails(errors.EGHPRMergeFailed,
+			"gh pr merge succeeded but could not confirm MERGED state",
+			map[string]string{"hint": fmt.Sprintf("re-run `agency merge %s`; it may have merged but confirmation failed", meta.RunID)})
+	}
+
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_finished", events.GHMergeFinishedData(true, pr.Number, pr.URL))
+
+	// === Set merged_at ===
+	_ = st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
+		if m.Archive == nil {
+			m.Archive = &store.RunMetaArchive{}
+		}
+		m.Archive.MergedAt = time.Now().UTC().Format(time.RFC3339)
+	})
+
+	// === Run archive pipeline ===
+	return runArchivePipeline(ctx, cr, fsys, st, meta, repoID, ghRepo, opts, stdout, stderr, eventsPath, dataDir, true)
+}
+
+// handleAlreadyMergedPR handles the idempotent path when PR is already merged.
+// Skips verify, mergeability, and remote head checks. Still requires confirmation.
+func handleAlreadyMergedPR(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, st *store.Store, meta *store.RunMeta, repoID string, pr *ghPRViewFull, ghRepo string, opts MergeOpts, stdin io.Reader, stdout, stderr io.Writer, eventsPath, dataDir string) error {
+	// Append already merged event
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_already_merged", events.MergeAlreadyMergedData(pr.Number, pr.URL))
+
+	fmt.Fprintf(stderr, "note: PR #%d is already merged; proceeding to archive\n", pr.Number)
+
+	// Still require typed confirmation (archive is destructive)
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
+
+	fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+	reader := bufio.NewReader(stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		input = ""
+	}
+	confirmation := strings.TrimSpace(input)
+
+	if confirmation != "merge" {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EAborted)))
+		return errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'")
+	}
+
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirmed", events.MergeConfirmedData())
+
+	// Set merged_at if missing
+	_ = st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
+		if m.Archive == nil {
+			m.Archive = &store.RunMetaArchive{}
+		}
+		if m.Archive.MergedAt == "" {
+			m.Archive.MergedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+	})
+
+	// Run archive pipeline
+	return runArchivePipeline(ctx, cr, fsys, st, meta, repoID, ghRepo, opts, stdout, stderr, eventsPath, dataDir, false)
+}
+
+// executeGHMerge runs gh pr merge and captures output to merge.log.
+func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int, strategyFlag, mergeLogPath string) error {
+	// Ensure logs directory exists
+	logsDir := filepath.Dir(mergeLogPath)
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		// Non-fatal; continue anyway
+	}
+
+	result, err := cr.Run(ctx, "gh", []string{
+		"pr", "merge", fmt.Sprintf("%d", prNumber),
+		"-R", ghRepo,
+		strategyFlag,
+	}, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+
+	// Write output to merge.log regardless of result
+	logContent := fmt.Sprintf("=== gh pr merge %d -R %s %s ===\n", prNumber, ghRepo, strategyFlag)
+	logContent += fmt.Sprintf("Exit code: %d\n", result.ExitCode)
+	if result.Stdout != "" {
+		logContent += fmt.Sprintf("\n=== stdout ===\n%s", result.Stdout)
+	}
+	if result.Stderr != "" {
+		logContent += fmt.Sprintf("\n=== stderr ===\n%s", result.Stderr)
+	}
+	_ = os.WriteFile(mergeLogPath, []byte(logContent), 0o644)
+
+	if err != nil {
+		return errors.Wrap(errors.EGHPRMergeFailed, "gh pr merge failed", err)
+	}
+	if result.ExitCode != 0 {
+		return errors.NewWithDetails(errors.EGHPRMergeFailed,
+			fmt.Sprintf("gh pr merge exited %d", result.ExitCode),
+			map[string]string{"stderr": truncateString(result.Stderr, 256)})
+	}
+
+	return nil
+}
+
+// confirmPRMerged confirms the PR reached MERGED state with retries.
+// Backoff: 250ms, 750ms, 1500ms
+func confirmPRMerged(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int, sleeper Sleeper) (bool, error) {
+	delays := []time.Duration{250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
+
+	for i, delay := range delays {
+		if i > 0 {
+			sleeper.Sleep(delay)
+		}
+
+		result, err := cr.Run(ctx, "gh", []string{
+			"pr", "view", fmt.Sprintf("%d", prNumber),
+			"-R", ghRepo,
+			"--json", "state",
+		}, exec.RunOpts{
+			Dir: workDir,
+			Env: nonInteractiveEnv(),
+		})
+		if err != nil {
+			continue // Retry on exec error
+		}
+		if result.ExitCode != 0 {
+			continue // Retry on non-zero exit
+		}
+
+		var stateResp struct {
+			State string `json:"state"`
+		}
+		if json.Unmarshal([]byte(result.Stdout), &stateResp) != nil {
+			continue // Retry on parse error
+		}
+
+		if stateResp.State == "MERGED" {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// runArchivePipeline runs the archive pipeline after successful merge.
+// mergeJustHappened indicates if gh pr merge was just executed (vs already-merged path).
+func runArchivePipeline(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, st *store.Store, meta *store.RunMeta, repoID, ghRepo string, opts MergeOpts, stdout, stderr io.Writer, eventsPath, dataDir string, mergeJustHappened bool) error {
+	// Append archive_started event
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "archive_started", events.ArchiveStartedData(meta.RunID))
+
+	// Find repo root (best-effort for archive)
+	repoRoot, repoRootErr := git.GetRepoRoot(ctx, cr, meta.WorktreePath)
+	repoRootPath := ""
+	if repoRootErr == nil {
+		repoRootPath = repoRoot.Path
+	}
+
+	// Load agency.json for archive script
+	agencyJSON, err := config.LoadAgencyConfig(fsys, meta.WorktreePath)
+	if err != nil {
+		// If config can't be loaded, still try with empty script
+		agencyJSON = config.AgencyConfig{}
+	}
+
+	// Create tmux client
+	tmuxClient := opts.TmuxClient
+	if tmuxClient == nil {
+		tmuxClient = tmux.NewExecClient(cr)
+	}
+
+	archiveCfg := archive.Config{
+		Meta:          meta,
+		RepoRoot:      repoRootPath,
+		DataDir:       dataDir,
+		ArchiveScript: agencyJSON.Scripts.Archive,
+		Timeout:       archive.DefaultArchiveTimeout,
+	}
+
+	archiveDeps := archive.Deps{
+		CR:         cr,
+		TmuxClient: tmuxClient,
+		Stdout:     stdout,
+		Stderr:     stderr,
+	}
+
+	result := archive.Archive(ctx, archiveCfg, archiveDeps, st)
+
+	// Append archive event based on result
+	if result.Success() {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "archive_finished", events.ArchiveFinishedData(true))
+	} else {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "archive_failed",
+			events.ArchiveFailedData(result.ScriptOK, result.TmuxOK, result.DeleteOK, result.ScriptReason, result.TmuxReason, result.DeleteReason))
+	}
+
+	// Update meta on archive success
+	if result.DeleteOK {
+		_ = st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
+			if m.Archive == nil {
+				m.Archive = &store.RunMetaArchive{}
+			}
+			m.Archive.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
+		})
+	}
+
+	// Append merge_finished event
+	if result.Success() {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(true, ""))
+		// Print success message
+		fmt.Fprintf(stdout, "merged: %s\n", meta.RunID)
+		fmt.Fprintf(stdout, "pr: %s\n", meta.PRURL)
+		if result.LogPath != "" {
+			fmt.Fprintf(stdout, "log: %s\n", result.LogPath)
+		}
+		return nil
+	}
+
+	// Archive failed but merge may have succeeded
+	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EArchiveFailed)))
+
+	if mergeJustHappened {
+		// Merge succeeded but archive failed
+		return errors.NewWithDetails(errors.EArchiveFailed,
+			"merge succeeded; archive failed",
+			map[string]string{"detail": truncateString(result.ToError().Error(), 256)})
+	}
+
+	// Already-merged path: archive failed
+	return result.ToError()
+}
+
+// truncateString truncates s to maxLen characters.
+func truncateString(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
 
 // resolveRunForMerge resolves the run identifier and loads metadata.
@@ -530,42 +813,46 @@ func isGHPRNotFound(err error) bool {
 		strings.Contains(errStr, "could not find pull request")
 }
 
+// prStateResult holds the result of PR state validation.
+type prStateResult struct {
+	AlreadyMerged bool // true if PR state is MERGED
+}
+
 // validatePRState validates PR state and head branch match.
-func validatePRState(pr *ghPRViewFull, expectedBranch, eventsPath, repoID, runID string) error {
+// Returns prStateResult with AlreadyMerged=true if PR is already merged (idempotent path).
+// Returns error for CLOSED or DRAFT PRs, or branch mismatch.
+func validatePRState(pr *ghPRViewFull, expectedBranch, eventsPath, repoID, runID string) (*prStateResult, error) {
+	result := &prStateResult{}
+
 	// Check state
 	switch pr.State {
 	case "OPEN":
-		// Good
+		// Good, continue with normal flow
 	case "MERGED":
-		// In PR-06b, we don't handle idempotent merge path yet
-		appendMergeEvent(eventsPath, repoID, runID, "merge_failed", map[string]any{
-			"error_code": string(errors.EPRNotOpen),
-			"step":       "pr_state_check",
-			"state":      pr.State,
-		})
-		return errors.NewWithDetails(errors.EPRNotOpen, fmt.Sprintf("PR #%d is already MERGED", pr.Number),
-			map[string]string{"pr_number": fmt.Sprintf("%d", pr.Number), "state": pr.State})
+		// Idempotent path: PR already merged, skip verify/mergeability but still archive
+		result.AlreadyMerged = true
+		return result, nil
 	case "CLOSED":
 		appendMergeEvent(eventsPath, repoID, runID, "merge_failed", map[string]any{
 			"error_code": string(errors.EPRNotOpen),
 			"step":       "pr_state_check",
 			"state":      pr.State,
 		})
-		return errors.NewWithDetails(errors.EPRNotOpen, fmt.Sprintf("PR #%d is CLOSED (not merged)", pr.Number),
+		return nil, errors.NewWithDetails(errors.EPRNotOpen, fmt.Sprintf("PR #%d is CLOSED (not merged)", pr.Number),
 			map[string]string{"pr_number": fmt.Sprintf("%d", pr.Number), "state": pr.State})
 	}
 
-	// Check draft status
+	// Check draft status (only for OPEN PRs)
 	if pr.IsDraft {
 		appendMergeEvent(eventsPath, repoID, runID, "merge_failed", map[string]any{
 			"error_code": string(errors.EPRDraft),
 			"step":       "pr_draft_check",
 		})
-		return errors.NewWithDetails(errors.EPRDraft, fmt.Sprintf("PR #%d is a draft", pr.Number),
+		return nil, errors.NewWithDetails(errors.EPRDraft, fmt.Sprintf("PR #%d is a draft", pr.Number),
 			map[string]string{"pr_number": fmt.Sprintf("%d", pr.Number)})
 	}
 
-	// Check head branch matches
+	// Check head branch matches (only for OPEN PRs)
 	if pr.HeadRefName != expectedBranch {
 		appendMergeEvent(eventsPath, repoID, runID, "merge_failed", map[string]any{
 			"error_code":      string(errors.EPRMismatch),
@@ -573,7 +860,7 @@ func validatePRState(pr *ghPRViewFull, expectedBranch, eventsPath, repoID, runID
 			"expected_branch": expectedBranch,
 			"pr_head_branch":  pr.HeadRefName,
 		})
-		return errors.NewWithDetails(errors.EPRMismatch,
+		return nil, errors.NewWithDetails(errors.EPRMismatch,
 			fmt.Sprintf("PR #%d head branch %q does not match expected branch %q", pr.Number, pr.HeadRefName, expectedBranch),
 			map[string]string{
 				"pr_number":       fmt.Sprintf("%d", pr.Number),
@@ -583,7 +870,7 @@ func validatePRState(pr *ghPRViewFull, expectedBranch, eventsPath, repoID, runID
 			})
 	}
 
-	return nil
+	return result, nil
 }
 
 // checkMergeability checks PR mergeability with retries for UNKNOWN.
