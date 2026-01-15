@@ -26,6 +26,7 @@ commands:
   ls          list runs and their statuses
   show        show run details
   attach      attach to a tmux session for an existing run
+  resume      attach to tmux session (create if missing)
   stop        send C-c to runner (best-effort interrupt)
   kill        kill tmux session (workspace remains)
   push        push branch to origin (GitHub PR creation in future PR)
@@ -121,6 +122,32 @@ options:
 
 examples:
   agency kill 20260110120000-a3f2
+`
+
+const resumeUsageText = `usage: agency resume <run_id> [options]
+
+attach to the tmux session for a run.
+if session is missing, creates one and starts the runner.
+
+arguments:
+  run_id        the run identifier (e.g., 20260110120000-a3f2)
+
+options:
+  --detached    do not attach; return after ensuring session exists
+  --restart     kill existing session (if any) and recreate
+  --yes         skip confirmation prompt for --restart
+  -h, --help    show this help
+
+notes:
+  - resume never runs scripts (setup/verify/archive)
+  - resume preserves git state; only tmux session changes
+  - --restart will lose in-tool history (chat context, etc.)
+
+examples:
+  agency resume 20260110120000-a3f2               # attach (create if needed)
+  agency resume 20260110120000-a3f2 --detached    # ensure session exists
+  agency resume 20260110120000-a3f2 --restart     # force fresh runner
+  agency resume 20260110120000-a3f2 --restart --yes  # non-interactive restart
 `
 
 const pushUsageText = `usage: agency push <run_id> [options]
@@ -226,6 +253,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runStop(cmdArgs, stdout, stderr)
 	case "kill":
 		return runKill(cmdArgs, stdout, stderr)
+	case "resume":
+		return runResume(cmdArgs, stdout, stderr)
 	case "push":
 		return runPush(cmdArgs, stdout, stderr)
 	default:
@@ -569,6 +598,55 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Kill(ctx, cr, fsys, cwd, opts, stdout, stderr)
+}
+
+func runResume(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("resume", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	detached := flagSet.Bool("detached", false, "do not attach; return after ensuring session exists")
+	restart := flagSet.Bool("restart", false, "kill existing session (if any) and recreate")
+	yes := flagSet.Bool("yes", false, "skip confirmation prompt for --restart")
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, resumeUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, resumeUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.ResumeOpts{
+		RunID:    runID,
+		Detached: *detached,
+		Restart:  *restart,
+		Yes:      *yes,
+	}
+
+	return commands.Resume(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
 }
 
 func runPush(args []string, stdout, stderr io.Writer) error {
