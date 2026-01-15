@@ -4,7 +4,7 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## status
 
-**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete.
+**v1 in development** — slice 0 (bootstrap) complete, slice 1 complete, slice 2 complete, slice 3 (push + PR) complete, slice 4 (lifecycle control) in progress.
 
 slice 0 progress:
 - [x] PR-00: project skeleton + shared contracts
@@ -41,7 +41,12 @@ slice 3 progress:
 - [x] PR-03: gh PR idempotency + create + body sync + metadata persistence
 - [x] PR-04: polish + docs sync
 
-next: slice 4 (lifecycle control: stop/kill/resume + flags)
+slice 4 progress:
+- [x] PR-04a: tmux client interface + exec implementation + fakes
+- [ ] PR-04b: attach + stop + kill
+- [ ] PR-04c: resume (create/attach/restart/detached) + worktree missing + locking
+
+next: slice 4 PR-04b (attach + stop + kill commands)
 
 ## installation
 
@@ -623,7 +628,7 @@ agency/
 │   ├── scaffold/         # agency.json template + stub script creation
 │   ├── status/           # pure status derivation from meta + local snapshot
 │   ├── store/            # repo_index.json + repo.json + run meta.json + run scanning
-│   ├── tmux/             # tmux session detection, scrollback capture, ANSI stripping
+│   ├── tmux/             # tmux Client interface, exec-backed impl, session detection, scrollback capture, ANSI stripping
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
 └── docs/                 # specifications
@@ -641,6 +646,8 @@ agency/
 - [slice 2 PRs](docs/v1/s2/s2_prs.md) — slice 2 PR breakdown
 - [slice 3 spec](docs/v1/s3/s3_spec.md) — push + PR slice detailed spec
 - [slice 3 PRs](docs/v1/s3/s3_prs.md) — slice 3 PR breakdown
+- [slice 4 spec](docs/v1/s4/s4_spec.md) — lifecycle control slice detailed spec
+- [slice 4 PRs](docs/v1/s4/s4_prs.md) — slice 4 PR breakdown
 
 ## license
 

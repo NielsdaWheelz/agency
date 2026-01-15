@@ -114,6 +114,8 @@ Schema (v1):
   "timed_out": false,
   "cancelled": false,
   "exit_code": 0,
+  "signal": "string|null",
+  "error": "string|null",
   "ok": true,
   "verify_json_path": "string|null",
   "log_path": "string",
@@ -121,11 +123,17 @@ Schema (v1):
 }
 
 Notes:
-	•	exit_code is -1 if the process did not produce an exit code (e.g., killed before start completes).
+	•	exit_code is an integer or null.
+	•	exit_code is null if no exit code is available (e.g., failed to start).
+	•	signal is a string like "SIGKILL" when terminated by signal, otherwise null.
+	•	error is a human-readable string for failures to start (e.g., "exec failed"), otherwise null.
+	•	timed_out and cancelled are mutually exclusive; never both true.
+	•	cancelled is true iff the user interrupted agency verify; timed_out is true iff the agency timeout fired.
 	•	verify_json_path is null if absent.
 	•	summary is derived for human display:
 	•	prefer verify.json.summary if present/valid
 	•	else a generic message (e.g., "verify succeeded" / "verify failed (exit 1)" / "verify timed out")
+	•	script_path is the resolved value from agency.json (exact string executed), not a realpath.
 
 events.jsonl (UPDATED)
 
@@ -146,6 +154,14 @@ Event data fields (recommended):
 ⸻
 
 behaviors (given/when/then)
+
+0) ok derivation precedence
+
+	•	if timed_out or cancelled => ok=false
+	•	else if exit_code is null => ok=false
+	•	else if exit_code != 0 => ok=false
+	•	else if verify.json valid => ok=verify.json.ok
+	•	else => ok=true
 
 1) success via exit code
 
@@ -176,13 +192,6 @@ when agency verify <id> runs
 then
 	•	verify_record.json.ok = false (verify.json wins)
 	•	set needs_attention + reason "verify_failed"
-
-given scripts.verify exits non-zero, and verify.json exists valid with "ok": true
-when agency verify <id> runs
-then
-	•	verify_record.json.ok = true (verify.json wins)
-	•	do not set needs_attention due to verify
-	•	record the non-zero exit code in verify_record.json.exit_code for debugging
 
 4) invalid verify.json falls back to exit code
 
@@ -224,7 +233,14 @@ then
 given lock file exists but PID is stale
 when agency verify <id> is invoked
 then
-	•	treat lock as stale and proceed (same stale detection rules as prior slices)
+	•	treat lock as stale and proceed (same stale detection rules as L0: lock file PID not alive)
+
+8) workspace existence
+
+given a run exists but its worktree is missing or archived
+when agency verify <id> is invoked
+then
+	•	fail with E_WORKSPACE_ARCHIVED and a clear message (e.g., "cannot verify archived run")
 
 ⸻
 
@@ -234,12 +250,13 @@ writes
 	•	verify_record.json written atomically (write temp + rename)
 	•	meta.json updated atomically
 	•	events.jsonl appended (best-effort; failure to append should not lose verify_record/meta updates)
+	•	if events.jsonl append fails, emit a warning to stderr and include it in verify_record.json.summary
+	•	last_verify_at updates only if verify actually started
 
 log file policy
 	•	${...}/logs/verify.log:
 	•	v1 recommendation: overwrite per verify run (simpler, avoids unbounded growth)
-	•	include a timestamp header line at the top to preserve provenance
-	•	(alternatively append; if you append, ensure separators)
+	•	record started_at in verify_record.json; logs are overwritten
 
 ⸻
 
@@ -252,7 +269,9 @@ unit tests (table-driven)
 
 	•	(timed_out=true) => ok=false regardless of verify.json/exit_code
 	•	(cancelled=true) => ok=false regardless
-	•	(verify.json valid) => ok=verify.json.ok regardless of exit_code
+	•	(exit_code=null) => ok=false regardless of verify.json
+	•	(exit_code!=0) => ok=false regardless of verify.json
+	•	(exit_code==0 + verify.json valid) => ok=verify.json.ok
 	•	(verify.json invalid/absent) => ok=(exit_code==0)
 
 	2.	needs_attention update rules:
@@ -295,8 +314,3 @@ guardrails
 	•	do not add new commands beyond agency verify (and internal helpers)
 
 ⸻
-
-open questions (must be answered in implementation)
-	•	grace period for SIGINT before SIGKILL (suggest: 5s)
-	•	whether verify.log overwrites or appends (spec prefers overwrite in v1)
-	•	exact error messaging formatting (must include actionable next step)
