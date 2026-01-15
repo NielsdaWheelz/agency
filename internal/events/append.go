@@ -102,3 +102,21 @@ func KillSessionData(sessionName string) map[string]any {
 		"session_name": sessionName,
 	}
 }
+
+// ResumeData returns the data map for a resume_* event (resume_attach, resume_create, resume_restart).
+func ResumeData(sessionName, runner string, detached, restart bool) map[string]any {
+	return map[string]any{
+		"session_name": sessionName,
+		"runner":       runner,
+		"detached":     detached,
+		"restart":      restart,
+	}
+}
+
+// ResumeFailedData returns the data map for a resume_failed event.
+func ResumeFailedData(sessionName, reason string) map[string]any {
+	return map[string]any{
+		"session_name": sessionName,
+		"reason":       reason,
+	}
+}

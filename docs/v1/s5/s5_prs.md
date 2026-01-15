@@ -24,12 +24,15 @@ implement the core verify execution engine and canonical `verify_record.json` wr
   - stdin `/dev/null`
   - env injection (existing L0 contract)
   - capture stdout/stderr to `${...}/logs/verify.log` (truncate/overwrite per invocation)
+  - start subprocess in its own process group (Go: `SysProcAttr{Setpgid: true}`)
+  - send signals to `-pgid` (negative pid) to kill the whole group
 - timeout handling:
   - default 30m (configurable via caller)
   - on timeout: SIGINT to process group, wait 3s, then SIGKILL to process group
   - record `timed_out=true`, `ok=false`
 - cancellation handling (user ctrl-c):
-  - forward SIGINT to process group, wait 3s, then SIGKILL to process group
+  - runner accepts `context.Context`
+  - on ctx cancel: treat as cancelled, forward SIGINT to process group, wait 3s, then SIGKILL to process group
   - record `cancelled=true`, `ok=false`
 - structured output consumption (read-only):
   - read `<worktree>/.agency/out/verify.json` if present
@@ -42,12 +45,17 @@ implement the core verify execution engine and canonical `verify_record.json` wr
   4. else if `verify.json` valid => `ok = verify.json.ok`
   5. else => `ok=true`
 - write `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/verify_record.json` atomically
+  - overwrite per invocation (latest result only)
 - `verify_record.json.summary` derivation:
   - prefer `verify.json.summary` if present
   - else generic (“verify succeeded” / “verify failed (exit N)” / “verify timed out” / “verify cancelled”)
 - warnings/errors:
   - do **not** pollute `summary`
   - record any internal issues in `verify_record.json.error` (string) and/or `signal`
+  - `error` only for failures to start or internal errors (exec/log open/json write)
+  - `signal` only when the verify process was terminated by a signal sent or detected; otherwise null
+  - if cancelled or timed_out, `signal` should generally be `SIGKILL`
+  - if terminated by signal, `exit_code` should be null
 
 ### public surface area
 none (no CLI command yet). internal packages/helpers allowed.
@@ -61,11 +69,7 @@ none (no CLI command yet). internal packages/helpers allowed.
   - summary derivation
 
 ### acceptance (demo)
-- run the verify runner in unit tests using a temp script that:
-  - exits 0
-  - exits 1
-  - writes verify.json ok=false then exits 0
-  - sleeps past timeout
+- unit tests remain pure (no subprocess)
 
 ### guardrails
 - do not touch tmux code
@@ -85,6 +89,7 @@ wire verify results into `meta.json` and `events.jsonl` deterministically, with 
 - `agency verify` plumbing helpers (still not CLI):
   - load run meta, locate worktree, fail `E_WORKSPACE_ARCHIVED` if missing
   - acquire repo lock (existing lock behavior), fail `E_REPO_LOCKED` if held and not stale
+  - lock file location is derived from the run’s `repo_id`; verify should not depend on current cwd
 - update `meta.json` atomically on verify completion:
   - set `last_verify_at`
   - if verify ok:
@@ -97,7 +102,12 @@ wire verify results into `meta.json` and `events.jsonl` deterministically, with 
   - `verify_started` (includes timeout_ms, log_path)
   - `verify_finished` (includes ok, exit_code, timed_out, cancelled, duration_ms, verify_json_path)
   - if append fails: continue; store message in `verify_record.json.error` (not `summary`)
-- ensure `verify_record.json` is written even if events append fails
+- pipeline order (v1):
+  - run script
+  - parse verify.json
+  - attempt events append (best-effort)
+  - write verify_record once (atomic)
+  - update meta
 
 ### public surface area
 - NEW error code: `E_WORKSPACE_ARCHIVED`
@@ -112,7 +122,10 @@ wire verify results into `meta.json` and `events.jsonl` deterministically, with 
 - integration (no tmux):
   - create temp git repo + `agency.json`
   - create real git worktree for a fake run and a matching `meta.json`
-  - run verify pipeline (script exits 0/1/timeout) and assert:
+  - write `meta.json.worktree_path` pointing to that worktree
+  - ensure `<worktree>/.agency/out/` exists
+  - verify script path points to a test script within the repo
+  - run the verify pipeline entrypoint (not tmux, not full CLI unless desired) with script exits 0/1/timeout and assert:
     - `verify_record.json` exists and ok matches
     - `meta.json` updated correctly
     - `events.jsonl` appended with the two events
@@ -142,6 +155,17 @@ ship the user-facing `agency verify <id> [--timeout <dur>]` command wired to the
   - on success: one-line `verify ok` + paths (record + log)
   - on failure/timeout/cancel: one-line `verify failed` + paths; exit non-zero
   - do not print full logs; point to `verify.log`
+- exit codes:
+  - ok => exit 0
+  - verify failed => `E_SCRIPT_FAILED`
+  - timeout => `E_SCRIPT_TIMEOUT`
+  - cancelled => `E_SCRIPT_FAILED` (no new code)
+  - lock held => `E_REPO_LOCKED`
+  - missing run => `E_RUN_NOT_FOUND`
+  - archived workspace => `E_WORKSPACE_ARCHIVED`
+- timeout parse failures:
+  - if a global usage error code exists, use it
+  - otherwise print usage + exit 2 (do not map to domain errors)
 
 ### public surface area
 - NEW command: `agency verify`

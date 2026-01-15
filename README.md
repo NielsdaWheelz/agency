@@ -44,9 +44,9 @@ slice 3 progress:
 slice 4 progress:
 - [x] PR-04a: tmux client interface + exec implementation + fakes
 - [x] PR-04b: attach + stop + kill
-- [ ] PR-04c: resume (create/attach/restart/detached) + worktree missing + locking
+- [x] PR-04c: resume (create/attach/restart/detached) + worktree missing + locking
 
-next: slice 4 PR-04c (resume command)
+next: slice 5 (merge + archive)
 
 ## installation
 
@@ -474,12 +474,18 @@ agency attach <run_id>
 **error codes:**
 - `E_NO_REPO` — not inside a git repository
 - `E_RUN_NOT_FOUND` — run not found (meta.json does not exist)
-- `E_TMUX_SESSION_MISSING` — tmux session does not exist (killed or system restarted)
+- `E_SESSION_NOT_FOUND` — tmux session does not exist (killed or system restarted)
 - `E_TMUX_NOT_INSTALLED` — tmux not found
 
 **when session is missing:**
 
-if the run exists but the tmux session has been killed (e.g., system restarted), attach will fail with `E_SESSION_NOT_FOUND` and suggest using `agency resume <id>` instead.
+if the run exists but the tmux session has been killed (e.g., system restarted), attach will fail with `E_SESSION_NOT_FOUND` and suggest using `agency resume <id>` instead:
+
+```
+E_SESSION_NOT_FOUND: tmux session 'agency_20260110120000-a3f2' does not exist
+
+try: agency resume 20260110120000-a3f2
+```
 
 ### `agency stop`
 
@@ -534,6 +540,71 @@ agency kill <run_id>
 - `E_TMUX_NOT_INSTALLED` — tmux not found
 - `E_TMUX_FAILED` — tmux kill-session failed
 - `E_PERSIST_FAILED` — failed to write event
+
+### `agency resume`
+
+attaches to the tmux session for a run. If session is missing, creates one and starts the runner.
+
+**usage:**
+```bash
+agency resume <run_id> [--detached] [--restart] [--yes]
+```
+
+**arguments:**
+- `run_id`: the run identifier (e.g., `20260110120000-a3f2`)
+
+**flags:**
+- `--detached`: do not attach; return after ensuring session exists
+- `--restart`: kill existing session (if any) and recreate
+- `--yes`: skip confirmation prompt for `--restart`
+
+**behavior:**
+- if session exists (no `--restart`): attaches to session (unless `--detached`)
+- if session missing: creates new tmux session with cwd in worktree, starts runner, then attaches (unless `--detached`)
+- if `--restart`: prompts for confirmation (unless `--yes` or non-interactive), kills session if exists, creates new session
+
+**locking:**
+- resume acquires repo lock **only** when creating or restarting a session
+- uses double-check pattern: check session existence, acquire lock, re-check under lock
+
+**notes:**
+- resume **never** runs scripts (setup/verify/archive)
+- resume **never** touches git (worktree state preserved)
+- `--restart` will lose in-tool history (chat context, etc.) but git state is unchanged
+- archived runs cannot be resumed (`E_WORKTREE_MISSING`)
+
+**output (detached mode):**
+```
+ok: session agency_20260110120000-a3f2 ready
+```
+
+**confirmation prompt (restart with existing session):**
+```
+restart session? in-tool history will be lost (git state unchanged) [y/N]:
+```
+
+**events:**
+- `resume_attach`: session existed, attached
+- `resume_create`: session missing, created new session
+- `resume_restart`: `--restart` used, killed and recreated session
+- `resume_failed`: worktree missing (archived or corrupted)
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_WORKTREE_MISSING` — run worktree path is missing on disk
+- `E_CONFIRMATION_REQUIRED` — `--restart` attempted in non-interactive mode without `--yes`
+- `E_REPO_LOCKED` — another agency process holds the lock
+- `E_TMUX_NOT_INSTALLED` — tmux not found
+- `E_TMUX_FAILED` — tmux operation failed
+- `E_RUNNER_NOT_CONFIGURED` — runner command not found
+
+**examples:**
+```bash
+agency resume 20260110120000-a3f2               # attach (create if needed)
+agency resume 20260110120000-a3f2 --detached    # ensure session exists
+agency resume 20260110120000-a3f2 --restart     # force fresh runner (prompts)
+agency resume 20260110120000-a3f2 --restart --yes  # non-interactive restart
+```
 
 ### `agency push`
 
@@ -680,6 +751,7 @@ agency/
 │   ├── status/           # pure status derivation from meta + local snapshot
 │   ├── store/            # repo_index.json + repo.json + run meta.json + run scanning
 │   ├── tmux/             # tmux Client interface, exec-backed impl, session detection, scrollback capture, ANSI stripping
+│   ├── tty/              # TTY detection helpers for interactive prompts
 │   ├── version/          # build version
 │   └── worktree/         # git worktree creation + workspace scaffolding
 └── docs/                 # specifications

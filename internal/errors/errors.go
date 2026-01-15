@@ -73,7 +73,8 @@ const (
 	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
 
 	// Slice 4 lifecycle control error codes
-	ESessionNotFound Code = "E_SESSION_NOT_FOUND" // attach when tmux session is missing; suggests resume
+	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"      // attach when tmux session is missing; suggests resume
+	EConfirmationRequired Code = "E_CONFIRMATION_REQUIRED" // restart attempted without confirmation in non-interactive mode
 )
 
 // AgencyError is the standard error type for agency errors.

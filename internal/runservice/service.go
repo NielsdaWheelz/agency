@@ -185,28 +185,10 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 		runnerName = cfg.Defaults.Runner
 	}
 
-	// If a non-default runner is requested, we need to resolve it
-	// ValidateForS1 already resolved the default runner, but if user specified
-	// a different one, we need to check if it's configured
-	resolvedRunnerCmd := cfg.ResolvedRunnerCmd
-	if runnerName != cfg.Defaults.Runner {
-		// Check if the requested runner is configured
-		if cfg.Runners != nil {
-			if cmd, ok := cfg.Runners[runnerName]; ok {
-				resolvedRunnerCmd = cmd
-			} else if runnerName == "claude" || runnerName == "codex" {
-				// Standard runners fallback to PATH
-				resolvedRunnerCmd = runnerName
-			} else {
-				return errors.New(errors.ERunnerNotConfigured,
-					"runner \""+runnerName+"\" not configured; set runners."+runnerName+" or choose claude/codex")
-			}
-		} else if runnerName == "claude" || runnerName == "codex" {
-			resolvedRunnerCmd = runnerName
-		} else {
-			return errors.New(errors.ERunnerNotConfigured,
-				"runner \""+runnerName+"\" not configured; set runners."+runnerName+" or choose claude/codex")
-		}
+	// Resolve runner command using shared helper
+	resolvedRunnerCmd, err := config.ResolveRunnerCmd(&cfg, runnerName)
+	if err != nil {
+		return err
 	}
 
 	// Resolve parent branch
