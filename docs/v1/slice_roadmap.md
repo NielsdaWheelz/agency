@@ -44,7 +44,7 @@ agency attach <id> # then detach with ctrl-b d
   - Create worktree under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>`.
   - Create `.agency/` dirs in worktree; run setup script outside tmux (timeout 10m).
   - Create `.agency/report.md` on run with template (prefill title if provided).
-  - Create tmux session `agency:<run_id>` with `cwd=worktree`, run runner command.
+  - Create tmux session `tmux.SessionName(<run_id>)` with `cwd=worktree`, run runner command.
   - Persist `meta.json` for the run (title, runner, branch, worktree path, created_at).
   - Spike checklist (folded into implementation):
     - Create worktree.
