@@ -9,8 +9,8 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
 ### in-scope
 
 - `agency merge <run_id>`:
-  - requires a pre-existing pr for the run (`meta.pr_number` or discoverable by head branch)
-  - prechecks: run exists, worktree present, origin host `github.com`, gh authed, pr open, mergeability known+ok, remote head up-to-date
+  - requires a pre-existing pr on GitHub for the run; pr discovery only resolves an existing pr
+  - prechecks: run exists, worktree present, origin host `github.com`, gh authed, pr open and not draft, mergeability known+ok, fetch origin branch succeeds, remote head up-to-date
   - always runs `scripts.verify` and records evidence (even if recently verified)
   - if verify fails: prompt to continue; `--force` bypasses this prompt only
   - requires explicit human confirmation (type `merge`)
@@ -20,7 +20,7 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
 
 - `agency clean <run_id>`:
   - archives without merging
-  - marks run abandoned
+  - marks run abandoned after successful archive
   - runs `scripts.archive`, kills tmux, deletes worktree
   - retains metadata/logs
 
@@ -44,7 +44,7 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
 ### new/changed commands
 
 - `agency merge <run_id> [--squash|--merge|--rebase] [--force]`
-- `agency clean <run_id> [--force]` (if not already implemented)
+- `agency clean <run_id>` (if not already implemented)
 
 ### new flags (merge)
 
@@ -56,14 +56,9 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
   - **does not** bypass: missing pr, non-mergeable pr, unknown mergeability, unsupported origin host, remote out-of-date, pr not open, gh auth failure
 
 merge strategy rules (v1):
-- exactly one of `--squash|--merge|--rebase` may be set
+- at most one of `--squash|--merge|--rebase` may be set
 - if none provided: default to `--squash`
-
-### new flags (clean)
-
-- `--force`:
-  - allows archiving even if archive script fails (best-effort cleanup continues)
-  - does **not** suppress printing failures; only affects exit code behavior (see below)
+- if more than one is provided: fail `E_USAGE`
 
 ---
 
@@ -72,18 +67,22 @@ merge strategy rules (v1):
 ### modified (global store)
 
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/meta.json` (updated)
-- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/events.jsonl` (append)
+- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/events.jsonl` (append; create if missing)
 
 ### written/overwritten (global store)
 
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/verify.log` (overwrite)
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/archive.log` (overwrite)
+- `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/merge.log` (overwrite)
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/verify_record.json` (overwrite)
+
+notes:
+- `events.jsonl` is canonical at `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/events.jsonl`; if not created in earlier slices, s6 must create it on first append
 
 ### deleted (on successful archive)
 
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>/` (entire directory)
-- tmux session `agency:<run_id>` (killed if exists)
+- tmux session `agency_<run_id>` (killed if exists)
 
 ---
 
@@ -93,6 +92,14 @@ merge strategy rules (v1):
 - `E_REMOTE_OUT_OF_DATE` — local head sha != origin/<branch> sha (requires `agency push`)
 - `E_ARCHIVE_FAILED` — archive step failed (script failure and/or deletion failure)
 - `E_WORKSPACE_ARCHIVED` — merge/clean called after workspace already archived (optional; otherwise reuse `E_WORKTREE_MISSING`)
+- `E_GIT_FETCH_FAILED` — failed to fetch remote branch before head check
+- `E_PR_DRAFT` — pr is a draft
+- `E_GH_PR_VIEW_FAILED` — `gh pr view --json ...` failed or returned unexpected fields/values
+- `E_PR_MISMATCH` — resolved PR does not match expected branch
+- `E_GH_REPO_PARSE_FAILED` — failed to parse owner/repo from origin
+- `E_GH_PR_MERGE_FAILED` — gh merge failed or merge state could not be confirmed
+- `E_ABORTED` — user declined confirmation / wrong token
+- `E_NOT_INTERACTIVE` — command requires an interactive TTY
 
 notes:
 - keep existing codes: `E_NO_PR`, `E_PR_NOT_OPEN`, `E_PR_NOT_MERGEABLE`, `E_UNSUPPORTED_ORIGIN_HOST`, `E_GH_NOT_AUTHENTICATED`, etc.
@@ -101,11 +108,17 @@ notes:
 
 ## behaviors (given/when/then)
 
+### lock scope
+
+- acquire repo lock at command start
+- hold lock through verify/merge/archive attempts (if any)
+- release lock on command termination (success or failure)
+
 ### merge: happy path
 
 given:
 - run exists, worktree present
-- pr exists and is open
+- pr exists, is open, and is not a draft
 - origin host is `github.com`
 - gh authenticated
 - remote branch is up to date with local head
@@ -117,14 +130,15 @@ when:
 then:
 - agency acquires repo lock
 - agency runs `scripts.verify` (timeout 30m), writes verify evidence
-- agency prompts: `verify ok. type 'merge' to confirm:` (exact string may vary but must require typing `merge`)
+- agency prompts: `confirm: type 'merge' to proceed: `
+- accept only `strings.TrimSpace(input) == "merge"`; anything else aborts
 - on confirmation, agency runs `gh pr merge` with the chosen strategy
 - on successful merge, agency runs `scripts.archive` (timeout 5m)
 - agency kills tmux session if exists
-- agency deletes worktree directory
+- agency deletes worktree via `git worktree remove --force <path>` (if that fails, fallback to `rm -rf` only when `<path>` is under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/`)
 - updates meta:
-  - `archive.merged_at` set (utc iso8601) after gh confirms merged
-  - `archive.archived_at` set after worktree deletion succeeds
+  - `archive.merged_at` set (UTC RFC3339) after gh confirms merged
+  - `archive.archived_at` set (UTC RFC3339) after worktree deletion succeeds
   - clears any transient flags only if you already have that mechanic (optional)
 - appends events (see “events” section)
 - exits 0
@@ -157,11 +171,19 @@ then:
 - merge proceeds; archive proceeds
 - events record verify failure + forced continuation
 
+### interactivity
+
+- `agency merge` and `agency clean` require an interactive TTY for confirmation prompts
+- if stdin/stderr are not TTYs: return `E_NOT_INTERACTIVE` and perform no writes
+
 ### merge: pr missing
 
-given pr cannot be resolved by:
-- `meta.pr_number`, or
-- `gh pr view --head <branch>`
+given pr cannot be resolved by (in order):
+1. `meta.pr_number` → `gh pr view <number> -R <owner>/<repo>`
+2. `gh pr view --head <owner>:<branch> -R <owner>/<repo>` (branch is the run's head branch)
+3. otherwise: no pr exists for this run
+note: if the remote branch no longer exists, treat this as no pr found
+note: a failed or schema-mismatched `gh pr view --json number,url,state,isDraft,mergeable` is `E_GH_PR_VIEW_FAILED`, not `E_NO_PR`
 
 when:
 - `agency merge <id>` is run
@@ -170,10 +192,11 @@ then:
 - fail with `E_NO_PR`
 - print hint: `run: agency push <id>`
 - no verify, no merge, no archive
+- do not create a pr here
 
 ### merge: pr not open
 
-given pr exists but state is `MERGED` or `CLOSED`
+given pr exists but state is `MERGED` or `CLOSED`, or `isDraft` is true
 
 when/then:
 - if `MERGED`:
@@ -182,11 +205,14 @@ when/then:
 - if `CLOSED` (unmerged):
   - fail `E_PR_NOT_OPEN`
   - no archive (user decision)
+- if `DRAFT`:
+  - fail `E_PR_DRAFT`
+  - no archive (user decision)
 
 ### merge: mergeability unknown
 
 given:
-- `gh pr view --json mergeable` returns `UNKNOWN`
+- `gh pr view -R <owner>/<repo> --json number,url,state,isDraft,mergeable,headRefName` returns `UNKNOWN` for `mergeable` (and state/isDraft checks already passed)
 
 when:
 - `agency merge <id>` is run
@@ -196,9 +222,35 @@ then:
 - if still `UNKNOWN`: fail `E_PR_MERGEABILITY_UNKNOWN`
 - no verify, no merge, no archive
 
+### merge: gh pr view schema mismatch
+
+given:
+- `gh pr view --json number,url,state,isDraft,mergeable` fails, returns non-json, omits any required field, or returns an unexpected value for `state`/`mergeable` (expected: `state` in {`OPEN`,`CLOSED`,`MERGED`}, `mergeable` in {`MERGEABLE`,`CONFLICTING`,`UNKNOWN`})
+
+when:
+- `agency merge <id>` is run
+
+then:
+- fail `E_GH_PR_VIEW_FAILED`
+- capture stderr in error message/log output
+- no verify, no merge, no archive
+
 ### merge: remote out of date
 
 given:
+- `git fetch origin refs/heads/<branch>:refs/remotes/origin/<branch>` fails
+
+when:
+- `agency merge <id>` is run
+
+then:
+- fail `E_GIT_FETCH_FAILED`
+- no verify, no merge, no archive
+
+### merge: remote out of date
+
+given:
+- `git fetch origin refs/heads/<branch>:refs/remotes/origin/<branch>` succeeded
 - `git rev-parse HEAD` != `git rev-parse origin/<branch>`
 
 when:
@@ -220,11 +272,13 @@ when:
 
 then:
 - acquire repo lock
-- set `flags.abandoned=true`
+- set `flags.abandon_requested=true` (optional)
 - run `scripts.archive` (timeout 5m)
 - kill tmux session if exists
-- delete worktree directory
-- set `archive.archived_at`
+- delete worktree via `git worktree remove --force <path>` (if that fails, fallback to `rm -rf` only when `<path>` is under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/`)
+- on successful archive:
+  - set `flags.abandoned=true`
+  - set `archive.archived_at`
 - append events
 - exit 0
 
@@ -240,7 +294,8 @@ rules:
 - if any failure occurs:
   - append `archive_failed` event with details
   - do **not** set `archive.archived_at` unless deletion succeeded
-  - return `E_ARCHIVE_FAILED` (unless `--force` on `clean`, which returns 0 but prints warnings)
+- return `E_ARCHIVE_FAILED` (even if merge succeeded; message should note merge ok but archive failed)
+- do not `rm -rf` unless the worktree path is under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/`
 
 ---
 
@@ -258,8 +313,9 @@ rules:
 - always update `updated_at` if you add it later (optional)
 
 `agency clean`:
-- set `flags.abandoned=true`
+- set `flags.abandon_requested=true` (optional)
 - on successful archive:
+  - set `flags.abandoned=true`
   - set `archive.archived_at`
 
 ### verify_record.json (written by agency)
@@ -269,34 +325,41 @@ schema (v1):
 {
   "schema_version": "1.0",
   "run_id": "<run_id>",
-  "timestamp": "2025-01-09T12:34:56Z",
+  "started_at": "2025-01-09T12:34:56Z",
+  "finished_at": "2025-01-09T12:35:56Z",
   "exit_code": 0,
   "ok": true,
   "duration_ms": 12345,
   "log_path": "<absolute path to logs/verify.log>",
+  "script_path": "<absolute path to scripts/verify>",
+  "timeout_ms": 1800000,
   "script_output_path": "<absolute path to .agency/out/verify.json or empty>"
 }
+```
 
-events.jsonl
+### events.jsonl
 
 required events appended (minimum set; keep stable strings):
-	•	merge_started
-	•	merge_prechecks_passed
-	•	verify_started
-	•	verify_finished (include {ok, exit_code, duration_ms})
-	•	merge_confirm_prompted
-	•	merge_confirmed
-	•	gh_merge_started
-	•	gh_merge_finished (include {ok, pr_number, pr_url})
-	•	archive_started
-	•	archive_finished (include {ok})
-	•	archive_failed (if any archive sub-step fails; include reason)
+- `merge_started`
+- `merge_prechecks_passed`
+- `verify_started`
+- `verify_finished` (include {ok, exit_code, duration_ms})
+- `verify_continue_prompted`
+- `verify_continue_accepted` / `verify_continue_rejected`
+- `merge_confirm_prompted`
+- `merge_confirmed`
+- `gh_merge_started`
+- `gh_merge_finished` (include {ok, pr_number, pr_url})
+- `merge_finished` (include {ok, error_code?})
+- `archive_started`
+- `archive_finished` (include {ok})
+- `archive_failed` (if any archive sub-step fails; include reason)
 
 for clean:
-	•	clean_started
-	•	archive_started
-	•	archive_finished / archive_failed
-	•	clean_finished
+- `clean_started`
+- `archive_started`
+- `archive_finished` / `archive_failed`
+- `clean_finished`
 
 ⸻
 
