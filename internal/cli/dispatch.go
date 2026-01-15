@@ -26,6 +26,8 @@ commands:
   ls          list runs and their statuses
   show        show run details
   attach      attach to a tmux session for an existing run
+  stop        send C-c to runner (best-effort interrupt)
+  kill        kill tmux session (workspace remains)
   push        push branch to origin (GitHub PR creation in future PR)
 
 options:
@@ -85,6 +87,40 @@ options:
 
 examples:
   agency attach 20260110120000-a3f2
+`
+
+const stopUsageText = `usage: agency stop <run_id>
+
+send C-c to the runner in the tmux session (best-effort interrupt).
+sets needs_attention flag on the run.
+
+arguments:
+  run_id        the run identifier (e.g., 20260110120000-a3f2)
+
+options:
+  -h, --help    show this help
+
+notes:
+  - best-effort only; may not stop the runner if it is in the middle of an operation
+  - session remains alive; use 'agency resume --restart' to guarantee a fresh runner
+
+examples:
+  agency stop 20260110120000-a3f2
+`
+
+const killUsageText = `usage: agency kill <run_id>
+
+kill the tmux session for a run.
+workspace remains intact.
+
+arguments:
+  run_id        the run identifier (e.g., 20260110120000-a3f2)
+
+options:
+  -h, --help    show this help
+
+examples:
+  agency kill 20260110120000-a3f2
 `
 
 const pushUsageText = `usage: agency push <run_id> [options]
@@ -186,6 +222,10 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runShow(cmdArgs, stdout, stderr)
 	case "attach":
 		return runAttach(cmdArgs, stdout, stderr)
+	case "stop":
+		return runStop(cmdArgs, stdout, stderr)
+	case "kill":
+		return runKill(cmdArgs, stdout, stderr)
 	case "push":
 		return runPush(cmdArgs, stdout, stderr)
 	default:
@@ -435,24 +475,100 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 
 	err = commands.Attach(ctx, cr, fsys, cwd, opts, stdout, stderr)
 	if err != nil {
-		// Print helpful details for E_TMUX_SESSION_MISSING
-		if ae, ok := errors.AsAgencyError(err); ok && ae.Code == errors.ETmuxSessionMissing {
+		// Print helpful details for E_SESSION_NOT_FOUND
+		if ae, ok := errors.AsAgencyError(err); ok && ae.Code == errors.ESessionNotFound {
 			if ae.Details != nil {
-				fmt.Fprintln(stderr)
-				if wp := ae.Details["worktree_path"]; wp != "" {
-					fmt.Fprintf(stderr, "worktree_path: %s\n", wp)
+				if suggestion := ae.Details["suggestion"]; suggestion != "" {
+					fmt.Fprintf(stderr, "\n%s\n", suggestion)
 				}
-				if rc := ae.Details["runner_cmd"]; rc != "" {
-					fmt.Fprintf(stderr, "runner_cmd: %s\n", rc)
-				}
-				if hint := ae.Details["hint"]; hint != "" {
-					fmt.Fprintf(stderr, "\nto start the runner manually:\n  %s\n", hint)
-				}
-				fmt.Fprintln(stderr, "\nnote: resume is not yet implemented (coming in later slice)")
 			}
 		}
 	}
 	return err
+}
+
+func runStop(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("stop", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, stopUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, stopUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.StopOpts{
+		RunID: runID,
+	}
+
+	return commands.Stop(ctx, cr, fsys, cwd, opts, stdout, stderr)
+}
+
+func runKill(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("kill", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(stdout, killUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		fmt.Fprint(stderr, killUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.KillOpts{
+		RunID: runID,
+	}
+
+	return commands.Kill(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
 
 func runPush(args []string, stdout, stderr io.Writer) error {

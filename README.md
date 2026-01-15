@@ -43,10 +43,10 @@ slice 3 progress:
 
 slice 4 progress:
 - [x] PR-04a: tmux client interface + exec implementation + fakes
-- [ ] PR-04b: attach + stop + kill
+- [x] PR-04b: attach + stop + kill
 - [ ] PR-04c: resume (create/attach/restart/detached) + worktree missing + locking
 
-next: slice 4 PR-04b (attach + stop + kill commands)
+next: slice 4 PR-04c (resume command)
 
 ## installation
 
@@ -479,10 +479,61 @@ agency attach <run_id>
 
 **when session is missing:**
 
-if the run exists but the tmux session has been killed (e.g., system restarted), attach will fail with `E_TMUX_SESSION_MISSING` and print:
-- worktree path
-- runner command
-- suggested manual command to restart the runner
+if the run exists but the tmux session has been killed (e.g., system restarted), attach will fail with `E_SESSION_NOT_FOUND` and suggest using `agency resume <id>` instead.
+
+### `agency stop`
+
+sends C-c to the runner in the tmux session (best-effort interrupt).
+
+**usage:**
+```bash
+agency stop <run_id>
+```
+
+**arguments:**
+- `run_id`: the run identifier (e.g., `20260110120000-a3f2`)
+
+**behavior:**
+- if session exists: sends C-c to the primary pane, sets `needs_attention` flag, appends `stop` event
+- if session missing: prints `no session for <id>` to stderr and exits 0 (no-op)
+
+**notes:**
+- best-effort only; does not guarantee the runner stops
+- session remains alive; use `agency resume --restart` to guarantee a fresh runner
+- does not mutate meta or events if session is missing
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_TMUX_NOT_INSTALLED` — tmux not found
+- `E_TMUX_FAILED` — tmux send-keys failed
+- `E_PERSIST_FAILED` — failed to write event
+
+### `agency kill`
+
+kills the tmux session for a run. Workspace remains intact.
+
+**usage:**
+```bash
+agency kill <run_id>
+```
+
+**arguments:**
+- `run_id`: the run identifier (e.g., `20260110120000-a3f2`)
+
+**behavior:**
+- if session exists: kills the tmux session, appends `kill_session` event
+- if session missing: prints `no session for <id>` to stderr and exits 0 (no-op)
+
+**notes:**
+- does not delete the worktree (use `agency clean <id>` for that)
+- does not set any flags on the run
+- does not append events if session is missing
+
+**error codes:**
+- `E_RUN_NOT_FOUND` — run not found
+- `E_TMUX_NOT_INSTALLED` — tmux not found
+- `E_TMUX_FAILED` — tmux kill-session failed
+- `E_PERSIST_FAILED` — failed to write event
 
 ### `agency push`
 

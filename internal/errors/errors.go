@@ -71,6 +71,9 @@ const (
 	EReportInvalid         Code = "E_REPORT_INVALID"          // report missing/empty without --force
 	EEmptyDiff             Code = "E_EMPTY_DIFF"              // no commits ahead of parent branch
 	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
+
+	// Slice 4 lifecycle control error codes
+	ESessionNotFound Code = "E_SESSION_NOT_FOUND" // attach when tmux session is missing; suggests resume
 )
 
 // AgencyError is the standard error type for agency errors.
