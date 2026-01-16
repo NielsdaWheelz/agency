@@ -81,7 +81,7 @@ func TestScanAllRuns_MismatchedMetaIdentity(t *testing.T) {
 		SchemaVersion: "1.0",
 		RunID:         "meta-run-id",  // Different from directory name
 		RepoID:        "meta-repo-id", // Different from directory name
-		Title:         "Test",
+		Name:          "test",
 		Runner:        "claude",
 		CreatedAt:     "2026-01-10T12:00:00Z",
 	}
@@ -399,7 +399,7 @@ func createValidMeta(t *testing.T, dataDir, repoID, runID string) {
 		SchemaVersion: "1.0",
 		RunID:         runID,
 		RepoID:        repoID,
-		Title:         "Test Run",
+		Name:          "test-run",
 		Runner:        "claude",
 		ParentBranch:  "main",
 		Branch:        "agency/test-" + runID,

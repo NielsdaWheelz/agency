@@ -1,9 +1,8 @@
 package core
 
-// BranchName returns "agency/<slug>-<shortid>".
-// slug max len must be 30 (call Slugify(title, 30)).
-func BranchName(title, runID string) string {
-	slug := Slugify(title, 30)
+// BranchName returns "agency/<name>-<shortid>".
+// Name is pre-validated, so no slugification is needed.
+func BranchName(name, runID string) string {
 	shortID := ShortID(runID)
-	return "agency/" + slug + "-" + shortID
+	return "agency/" + name + "-" + shortID
 }

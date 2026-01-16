@@ -141,7 +141,7 @@ func TestService_CreateWorktree(t *testing.T) {
 	// Setup pipeline state
 	st := &pipeline.PipelineState{
 		RunID:    "20260110120000-test",
-		Title:    "Service Test",
+		Name:    "service-test",
 		RepoRoot: resolvedRepoRoot,
 		RepoID:   "abcd1234ef567890",
 		DataDir:  dataDir,
@@ -300,7 +300,7 @@ func TestService_WriteMeta_Success(t *testing.T) {
 	// First create the worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Test Run",
+		Name:        "test-run",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -357,8 +357,8 @@ func TestService_WriteMeta_Success(t *testing.T) {
 	if !strings.Contains(content, `"repo_id": "abcd1234ef567890"`) {
 		t.Error("meta.json should contain correct repo_id")
 	}
-	if !strings.Contains(content, `"title": "Test Run"`) {
-		t.Error("meta.json should contain correct title")
+	if !strings.Contains(content, `"name": "test-run"`) {
+		t.Error("meta.json should contain correct name")
 	}
 	if !strings.Contains(content, `"runner": "claude"`) {
 		t.Error("meta.json should contain correct runner")
@@ -438,7 +438,7 @@ func TestService_WriteMeta_RunDirCollision(t *testing.T) {
 	// Create worktree first
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Collision Test",
+		Name:        "collision-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -505,7 +505,7 @@ func TestService_RunSetup_Success(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Setup Test",
+		Name:        "setup-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -618,7 +618,7 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Setup Fail Test",
+		Name:        "setup-fail-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -713,7 +713,7 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Setup JSON Test",
+		Name:        "setup-json-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -811,7 +811,7 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Setup Malformed JSON Test",
+		Name:        "setup-malformed-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -899,7 +899,7 @@ func TestService_StartTmux_Success(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Tmux Test",
+		Name:        "tmux-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -994,7 +994,7 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Tmux Fail Test",
+		Name:        "tmux-fail-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -1089,7 +1089,7 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Title:        "Collision Test",
+		Name:        "collision-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,

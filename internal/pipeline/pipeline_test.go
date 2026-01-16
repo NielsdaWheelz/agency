@@ -69,7 +69,7 @@ func TestShortCircuitPreservesErrorCode(t *testing.T) {
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
-	runID, err := p.Run(context.Background(), RunPipelineOpts{Title: "test"})
+	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should return error
 	if err == nil {
@@ -111,7 +111,7 @@ func TestReachesThirdStepReturnsNotImplemented(t *testing.T) {
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
-	runID, err := p.Run(context.Background(), RunPipelineOpts{Title: "test"})
+	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should return error
 	if err == nil {
@@ -163,7 +163,7 @@ func TestWrapsNonAgencyError(t *testing.T) {
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
-	runID, err := p.Run(context.Background(), RunPipelineOpts{Title: "test"})
+	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should return error
 	if err == nil {
@@ -216,7 +216,7 @@ func TestSuccessPath(t *testing.T) {
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
-	runID, err := p.Run(context.Background(), RunPipelineOpts{Title: "test"})
+	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should succeed
 	if err != nil {
@@ -260,7 +260,7 @@ func TestRunIDGeneratedBeforeSteps(t *testing.T) {
 	p := NewPipeline(stateCapturer)
 	p.SetNowFunc(fixedTime)
 
-	runID, _ := p.Run(context.Background(), RunPipelineOpts{})
+	runID, _ := p.Run(context.Background(), RunPipelineOpts{Name: "test-run"})
 
 	capturedRunID = stateCapturer.capturedRunID
 
@@ -308,7 +308,7 @@ func TestOptsPassedToState(t *testing.T) {
 	p.SetNowFunc(fixedTime)
 
 	opts := RunPipelineOpts{
-		Title:  "my title",
+		Name:   "my-feature",
 		Runner: "claude",
 		Parent: "main",
 		Attach: true,
@@ -322,8 +322,8 @@ func TestOptsPassedToState(t *testing.T) {
 	if capturedState == nil {
 		t.Fatal("expected state to be captured")
 	}
-	if capturedState.Title != opts.Title {
-		t.Errorf("expected Title %q, got %q", opts.Title, capturedState.Title)
+	if capturedState.Name != opts.Name {
+		t.Errorf("expected Title %q, got %q", opts.Name, capturedState.Name)
 	}
 	if capturedState.Runner != opts.Runner {
 		t.Errorf("expected Runner %q, got %q", opts.Runner, capturedState.Runner)
@@ -360,7 +360,7 @@ func TestStepsExecuteInOrder(t *testing.T) {
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
-	_, err := p.Run(context.Background(), RunPipelineOpts{})
+	_, err := p.Run(context.Background(), RunPipelineOpts{Name: "test-run"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestMiddleStepFailure(t *testing.T) {
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
-	_, err := p.Run(context.Background(), RunPipelineOpts{})
+	_, err := p.Run(context.Background(), RunPipelineOpts{Name: "test-run"})
 
 	if err == nil {
 		t.Fatal("expected error, got nil")

@@ -140,7 +140,7 @@ func TestWriteLSJSON_AllFields(t *testing.T) {
 			RepoID:          "abc123",
 			RepoKey:         &repoKey,
 			OriginURL:       &originURL,
-			Title:           "test run",
+			Name:           "test run",
 			Runner:          &runner,
 			CreatedAt:       &createdAt,
 			LastPushAt:      &lastPushAt,
@@ -183,8 +183,8 @@ func TestWriteLSJSON_AllFields(t *testing.T) {
 	if s.OriginURL == nil || *s.OriginURL != originURL {
 		t.Errorf("OriginURL = %v, want %q", s.OriginURL, originURL)
 	}
-	if s.Title != "test run" {
-		t.Errorf("Title = %q, want %q", s.Title, "test run")
+	if s.Name != "test run" {
+		t.Errorf("Title = %q, want %q", s.Name, "test run")
 	}
 	if s.Runner == nil || *s.Runner != "claude" {
 		t.Errorf("Runner = %v, want %q", s.Runner, "claude")
@@ -228,7 +228,7 @@ func TestWriteLSJSON_BrokenRun(t *testing.T) {
 			RepoID:          "abc123",
 			RepoKey:         nil, // missing
 			OriginURL:       nil, // missing
-			Title:           "<broken>",
+			Name:           "<broken>",
 			Runner:          nil, // null for broken
 			CreatedAt:       nil, // null for broken
 			LastPushAt:      nil,
@@ -260,8 +260,8 @@ func TestWriteLSJSON_BrokenRun(t *testing.T) {
 	if !s.Broken {
 		t.Error("Broken = false, want true")
 	}
-	if s.Title != "<broken>" {
-		t.Errorf("Title = %q, want %q", s.Title, "<broken>")
+	if s.Name != "<broken>" {
+		t.Errorf("Title = %q, want %q", s.Name, "<broken>")
 	}
 	if s.Runner != nil {
 		t.Errorf("Runner = %v, want nil", s.Runner)
@@ -310,7 +310,7 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 	rows := []render.RunSummaryHumanRow{
 		{
 			RunID:     "20260110-a3f2",
-			Title:     "test run",
+			Name:     "test run",
 			Runner:    "claude",
 			CreatedAt: "2 hours ago",
 			Status:    "active",
@@ -329,8 +329,8 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 	if !bytes.Contains(buf.Bytes(), []byte("RUN_ID")) {
 		t.Error("missing RUN_ID header")
 	}
-	if !bytes.Contains(buf.Bytes(), []byte("TITLE")) {
-		t.Error("missing TITLE header")
+	if !bytes.Contains(buf.Bytes(), []byte("NAME")) {
+		t.Error("missing NAME header")
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("RUNNER")) {
 		t.Error("missing RUNNER header")
@@ -341,7 +341,7 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 		t.Errorf("missing run_id in output: %s", output)
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("test run")) {
-		t.Errorf("missing title in output: %s", output)
+		t.Errorf("missing name in output: %s", output)
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("#123")) {
 		t.Errorf("missing PR in output: %s", output)
@@ -355,7 +355,7 @@ func TestFormatHumanRow_TitleTruncation(t *testing.T) {
 
 	summary := render.RunSummary{
 		RunID:         "run1",
-		Title:         longTitle,
+		Name:         longTitle,
 		Runner:        &runner,
 		CreatedAt:     &createdAt,
 		DerivedStatus: "active",
@@ -365,13 +365,13 @@ func TestFormatHumanRow_TitleTruncation(t *testing.T) {
 	row := render.FormatHumanRow(summary, now)
 
 	// Title should be truncated with ellipsis
-	if len([]rune(row.Title)) > render.TitleMaxLen {
-		t.Errorf("title length = %d, want <= %d", len([]rune(row.Title)), render.TitleMaxLen)
+	if len([]rune(row.Name)) > render.NameMaxLen {
+		t.Errorf("title length = %d, want <= %d", len([]rune(row.Name)), render.NameMaxLen)
 	}
 
 	// Should end with ellipsis
-	if !bytes.HasSuffix([]byte(row.Title), []byte("…")) {
-		t.Errorf("truncated title should end with ellipsis: %q", row.Title)
+	if !bytes.HasSuffix([]byte(row.Name), []byte("…")) {
+		t.Errorf("truncated title should end with ellipsis: %q", row.Name)
 	}
 }
 
@@ -379,15 +379,15 @@ func TestFormatHumanRow_BrokenRun(t *testing.T) {
 	summary := render.RunSummary{
 		RunID:         "broken1",
 		Broken:        true,
-		Title:         "<broken>",
+		Name:         "<broken>",
 		DerivedStatus: status.StatusBroken,
 	}
 
 	now := time.Now()
 	row := render.FormatHumanRow(summary, now)
 
-	if row.Title != render.TitleBroken {
-		t.Errorf("Title = %q, want %q", row.Title, render.TitleBroken)
+	if row.Name != render.NameBroken {
+		t.Errorf("Title = %q, want %q", row.Name, render.NameBroken)
 	}
 	if row.Runner != "" {
 		t.Errorf("Runner = %q, want empty", row.Runner)
@@ -403,7 +403,7 @@ func TestFormatHumanRow_UntitledRun(t *testing.T) {
 
 	summary := render.RunSummary{
 		RunID:         "run1",
-		Title:         "", // empty title
+		Name:         "", // empty title
 		Runner:        &runner,
 		CreatedAt:     &createdAt,
 		DerivedStatus: "idle",
@@ -411,8 +411,8 @@ func TestFormatHumanRow_UntitledRun(t *testing.T) {
 
 	row := render.FormatHumanRow(summary, time.Now())
 
-	if row.Title != render.TitleUntitled {
-		t.Errorf("Title = %q, want %q", row.Title, render.TitleUntitled)
+	if row.Name != render.NameUntitled {
+		t.Errorf("Title = %q, want %q", row.Name, render.NameUntitled)
 	}
 }
 
@@ -494,8 +494,8 @@ func TestLS_IntegrationWithFakeData(t *testing.T) {
 
 	// Verify broken run has correct fields
 	brokenIdx := 2
-	if summaries[brokenIdx].Title != render.TitleBroken {
-		t.Errorf("broken run Title = %q, want %q", summaries[brokenIdx].Title, render.TitleBroken)
+	if summaries[brokenIdx].Name != render.NameBroken {
+		t.Errorf("broken run Title = %q, want %q", summaries[brokenIdx].Name, render.NameBroken)
 	}
 	if summaries[brokenIdx].DerivedStatus != status.StatusBroken {
 		t.Errorf("broken run DerivedStatus = %q, want %q", summaries[brokenIdx].DerivedStatus, status.StatusBroken)
@@ -542,7 +542,7 @@ func createValidMetaForLS(t *testing.T, dataDir, repoID, runID string, createdAt
 		SchemaVersion: "1.0",
 		RunID:         runID,
 		RepoID:        repoID,
-		Title:         "Test Run " + runID,
+		Name:         "Test Run " + runID,
 		Runner:        "claude",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",

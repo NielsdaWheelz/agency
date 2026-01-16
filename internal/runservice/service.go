@@ -18,6 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
 	"github.com/NielsdaWheelz/agency/internal/repo"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -100,7 +101,9 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 		st.RepoKey = result.RepoKey
 		st.OriginURL = result.OriginURL
 		st.DataDir = result.DataDir
-		return nil
+
+		// Check name uniqueness among active runs
+		return s.checkNameUnique(st)
 	}
 
 	// Parent not provided - do basic repo checks without parent validation
@@ -115,7 +118,9 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 	st.RepoKey = result.RepoKey
 	st.OriginURL = result.OriginURL
 	st.DataDir = result.DataDir
-	return nil
+
+	// Check name uniqueness among active runs
+	return s.checkNameUnique(st)
 }
 
 // checkRepoSafeWithoutParent performs repo safety checks without parent branch validation.
@@ -139,6 +144,40 @@ func checkRepoSafeWithoutParent(ctx context.Context, cr exec.CommandRunner, fsys
 	// We need to load repo info even without parent branch validation.
 	// Let's inline the repo checks without the parent branch check.
 	return checkRepoContextOnly(ctx, cr, fsys, cwd)
+}
+
+// checkNameUnique verifies the run name is not already used by an active run.
+func (s *Service) checkNameUnique(st *pipeline.PipelineState) error {
+	// Scan runs for this repo
+	records, err := store.ScanRunsForRepo(st.DataDir, st.RepoID)
+	if err != nil {
+		// Best-effort: if scan fails, continue (new repo with no runs yet is fine)
+		return nil
+	}
+
+	// Convert to RunRef for the uniqueness check
+	refs := make([]ids.RunRef, len(records))
+	for i, r := range records {
+		refs[i] = ids.RunRef{
+			RepoID: r.RepoID,
+			RunID:  r.RunID,
+			Name:   r.Name,
+			Broken: r.Broken,
+		}
+	}
+
+	// isArchived checks if a run is archived (has Archive field set)
+	isArchived := func(ref ids.RunRef) bool {
+		// Find the record to check Archive status
+		for _, r := range records {
+			if r.RunID == ref.RunID && r.RepoID == ref.RepoID {
+				return r.Meta != nil && r.Meta.Archive != nil
+			}
+		}
+		return false
+	}
+
+	return ids.CheckNameUnique(st.Name, refs, isArchived)
 }
 
 // checkRepoContextOnly resolves repo context without running all gates.
@@ -236,7 +275,7 @@ func branchExists(ctx context.Context, cr exec.CommandRunner, repoRoot, branch s
 func (s *Service) CreateWorktree(ctx context.Context, st *pipeline.PipelineState) error {
 	result, err := worktree.Create(ctx, s.cr, s.fsys, worktree.CreateOpts{
 		RunID:        st.RunID,
-		Title:        st.Title,
+		Name:         st.Name,
 		RepoRoot:     st.RepoRoot,
 		RepoID:       st.RepoID,
 		ParentBranch: st.ParentBranch,
@@ -249,11 +288,6 @@ func (s *Service) CreateWorktree(ctx context.Context, st *pipeline.PipelineState
 	// Populate state
 	st.Branch = result.Branch
 	st.WorktreePath = result.WorktreePath
-
-	// If title was empty, use the resolved title for later use
-	if st.Title == "" {
-		st.Title = result.ResolvedTitle
-	}
 
 	// Convert worktree warnings to pipeline warnings
 	for _, w := range result.Warnings {
@@ -317,7 +351,7 @@ func (s *Service) WriteMeta(ctx context.Context, st *pipeline.PipelineState) err
 	meta := store.NewRunMeta(
 		st.RunID,
 		st.RepoID,
-		st.Title,
+		st.Name,
 		st.Runner,
 		st.ResolvedRunnerCmd,
 		st.ParentBranch,
@@ -551,7 +585,7 @@ func buildSetupEnv(st *pipeline.PipelineState, logsDir string) map[string]string
 
 	env := map[string]string{
 		"AGENCY_RUN_ID":         st.RunID,
-		"AGENCY_TITLE":          st.Title,
+		"AGENCY_NAME":           st.Name,
 		"AGENCY_REPO_ROOT":      st.RepoRoot,
 		"AGENCY_WORKSPACE_ROOT": st.WorktreePath,
 		"AGENCY_BRANCH":         st.Branch,

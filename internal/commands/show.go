@@ -548,7 +548,7 @@ func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string
 	data := render.ShowHumanData{
 		// Core
 		RunID:     meta.RunID,
-		Title:     meta.Title,
+		Name:      meta.Name,
 		Runner:    meta.Runner,
 		CreatedAt: meta.CreatedAt,
 		RepoID:    record.RepoID,

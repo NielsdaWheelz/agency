@@ -186,7 +186,7 @@ Invalid `runners.<name>` values (non-string or empty string) are configuration e
 
 **environment** (injected by agency):
 - `AGENCY_RUN_ID`
-- `AGENCY_TITLE`
+- `AGENCY_NAME`
 - `AGENCY_REPO_ROOT`
 - `AGENCY_WORKSPACE_ROOT`
 - `AGENCY_BRANCH`
@@ -355,7 +355,7 @@ Required fields:
 - `schema_version`
 - `run_id`
 - `repo_id`
-- `title`
+- `name`
 - `runner`
 - `parent_branch`
 - `branch`
@@ -453,8 +453,8 @@ Status is **composable**, not a flat enum:
 
 **repo discovery**: `git rev-parse --show-toplevel` from cwd.
 
-**branch naming**: `agency/<slug>-<shortid>`
-- slug: sanitized title (lowercase, hyphens, max 30 chars)
+**branch naming**: `agency/<name>-<shortid>`
+- name: run name (validated: lowercase alphanumeric with hyphens, 2-40 chars, starts with letter)
 - shortid: first 4 chars of run_id
 
 **parent branch**: defaults to `agency.json defaults.parent_branch`. override with `--parent <branch>`.
@@ -499,12 +499,12 @@ if not mergeable: `E_PR_NOT_MERGEABLE`. no auto-rebase.
 
 Lives at `<worktree>/.agency/report.md`.
 
-Created on `agency run` with a template; title prefilled if provided.
+Created on `agency run` with a template; name used as heading.
 
 Template:
 
 ```markdown
-# <title>
+# <name>
 
 ## summary
 - what changed (high level)
@@ -544,7 +544,7 @@ Template:
 
 ```
 agency init                       create agency.json template
-agency run [--title] [--runner] [--parent]
+agency run --name <name> [--runner] [--parent]
                                   create workspace, setup, start tmux
 agency ls                         list runs + statuses
 agency show <id> [--path]         show run details

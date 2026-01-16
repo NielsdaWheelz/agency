@@ -17,7 +17,7 @@ func TestPrintRunSuccess(t *testing.T) {
 			name: "full result",
 			result: &RunResult{
 				RunID:           "20260110120000-a3f2",
-				Title:           "test run",
+				Name:           "test-run",
 				Runner:          "claude",
 				Parent:          "main",
 				Branch:          "agency/test-run-a3f2",
@@ -25,34 +25,34 @@ func TestPrintRunSuccess(t *testing.T) {
 				TmuxSessionName: "agency_20260110120000-a3f2",
 			},
 			expected: `run_id: 20260110120000-a3f2
-title: test run
+name: test-run
 runner: claude
 parent: main
 branch: agency/test-run-a3f2
 worktree: /path/to/worktree
 tmux: agency_20260110120000-a3f2
-next: agency attach 20260110120000-a3f2
+next: agency attach test-run
 `,
 		},
 		{
-			name: "untitled run",
+			name: "another run",
 			result: &RunResult{
 				RunID:           "20260110130000-b4c5",
-				Title:           "untitled-b4c5",
+				Name:           "fix-bug",
 				Runner:          "codex",
 				Parent:          "develop",
-				Branch:          "agency/untitled-b4c5",
+				Branch:          "agency/fix-bug-b4c5",
 				WorktreePath:    "/tmp/worktree",
 				TmuxSessionName: "agency_20260110130000-b4c5",
 			},
 			expected: `run_id: 20260110130000-b4c5
-title: untitled-b4c5
+name: fix-bug
 runner: codex
 parent: develop
-branch: agency/untitled-b4c5
+branch: agency/fix-bug-b4c5
 worktree: /tmp/worktree
 tmux: agency_20260110130000-b4c5
-next: agency attach 20260110130000-b4c5
+next: agency attach fix-bug
 `,
 		},
 	}
@@ -71,7 +71,7 @@ next: agency attach 20260110130000-b4c5
 func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 	// Verify the exact order and keys per spec:
 	// 1. run_id
-	// 2. title
+	// 2. name
 	// 3. runner
 	// 4. parent
 	// 5. branch
@@ -81,7 +81,7 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 
 	result := &RunResult{
 		RunID:           "id",
-		Title:           "title",
+		Name:           "my-name",
 		Runner:          "runner",
 		Parent:          "parent",
 		Branch:          "branch",
@@ -94,7 +94,7 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 
 	expectedKeys := []string{
 		"run_id:",
-		"title:",
+		"name:",
 		"runner:",
 		"parent:",
 		"branch:",
@@ -119,7 +119,7 @@ func TestRunResultWarnings(t *testing.T) {
 	// Test that warnings are stored correctly in result
 	result := &RunResult{
 		RunID:           "id",
-		Title:           "title",
+		Name:           "title",
 		Runner:          "runner",
 		Parent:          "parent",
 		Branch:          "branch",
@@ -142,7 +142,7 @@ func TestRunOptsDefaults(t *testing.T) {
 	// Test that empty opts are valid (defaults come from agency.json)
 	opts := RunOpts{}
 
-	if opts.Title != "" {
+	if opts.Name != "" {
 		t.Error("expected empty title by default")
 	}
 	if opts.Runner != "" {
@@ -158,14 +158,14 @@ func TestRunOptsDefaults(t *testing.T) {
 
 func TestRunOptsWithValues(t *testing.T) {
 	opts := RunOpts{
-		Title:  "my title",
+		Name:  "my title",
 		Runner: "claude",
 		Parent: "main",
 		Attach: true,
 	}
 
-	if opts.Title != "my title" {
-		t.Errorf("expected title 'my title', got %q", opts.Title)
+	if opts.Name != "my title" {
+		t.Errorf("expected title 'my title', got %q", opts.Name)
 	}
 	if opts.Runner != "claude" {
 		t.Errorf("expected runner 'claude', got %q", opts.Runner)

@@ -603,7 +603,7 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 		SchemaVersion:   "1.0",
 		RunID:           runID,
 		RepoID:          repoID,
-		Title:           "test run",
+		Name:           "test run",
 		Runner:          "claude",
 		ParentBranch:    "main",
 		Branch:          "agency/test-abcd",

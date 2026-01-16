@@ -180,7 +180,7 @@ func buildArchiveEnv(meta *store.RunMeta, repoRoot, dataDir string) []string {
 	// Add agency-specific variables per L0 contract
 	agencyEnv := map[string]string{
 		"AGENCY_RUN_ID":         meta.RunID,
-		"AGENCY_TITLE":          meta.Title,
+		"AGENCY_NAME":           meta.Name,
 		"AGENCY_REPO_ROOT":      repoRoot, // best-effort; may be empty
 		"AGENCY_WORKSPACE_ROOT": worktreePath,
 		"AGENCY_WORKTREE_ROOT":  worktreePath, // alias for clarity

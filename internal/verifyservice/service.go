@@ -272,7 +272,7 @@ func buildVerifyEnv(meta *store.RunMeta, worktreePath, runDir, dataDir string) [
 	// Add agency-specific variables per L0 contract
 	agencyEnv := map[string]string{
 		"AGENCY_RUN_ID":         meta.RunID,
-		"AGENCY_TITLE":          meta.Title,
+		"AGENCY_NAME":           meta.Name,
 		"AGENCY_REPO_ROOT":      worktreePath, // worktree is the repo root for scripts
 		"AGENCY_WORKSPACE_ROOT": worktreePath,
 		"AGENCY_BRANCH":         meta.Branch,

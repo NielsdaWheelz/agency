@@ -9,21 +9,21 @@ import (
 
 // Constants for human output formatting.
 const (
-	// TitleMaxLen is the maximum display length for title in human output.
-	TitleMaxLen = 50
+	// NameMaxLen is the maximum display length for name in human output.
+	NameMaxLen = 50
 
-	// TitleBroken is displayed for broken runs.
-	TitleBroken = "<broken>"
+	// NameBroken is displayed for broken runs.
+	NameBroken = "<broken>"
 
-	// TitleUntitled is displayed for runs with empty titles.
-	TitleUntitled = "<untitled>"
+	// NameUntitled is displayed for runs with empty names.
+	NameUntitled = "<untitled>"
 )
 
 // RunSummaryHumanRow holds the fields for a single human-output row.
 // This is separate from RunSummary to allow formatting before display.
 type RunSummaryHumanRow struct {
 	RunID     string
-	Title     string
+	Name      string
 	Runner    string
 	CreatedAt string
 	Status    string
@@ -43,7 +43,7 @@ func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow) error {
 	// Write header
 	header := formatRow(
 		"RUN_ID", widths.runID,
-		"TITLE", widths.title,
+		"NAME", widths.name,
 		"RUNNER", widths.runner,
 		"CREATED", widths.createdAt,
 		"STATUS", widths.status,
@@ -57,7 +57,7 @@ func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow) error {
 	for _, row := range rows {
 		line := formatRow(
 			row.RunID, widths.runID,
-			row.Title, widths.title,
+			row.Name, widths.name,
 			row.Runner, widths.runner,
 			row.CreatedAt, widths.createdAt,
 			row.Status, widths.status,
@@ -74,7 +74,7 @@ func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow) error {
 // colWidths holds the calculated column widths.
 type colWidths struct {
 	runID     int
-	title     int
+	name      int
 	runner    int
 	createdAt int
 	status    int
@@ -85,7 +85,7 @@ type colWidths struct {
 func columnWidths(rows []RunSummaryHumanRow) colWidths {
 	widths := colWidths{
 		runID:     len("RUN_ID"),
-		title:     len("TITLE"),
+		name:      len("NAME"),
 		runner:    len("RUNNER"),
 		createdAt: len("CREATED"),
 		status:    len("STATUS"),
@@ -96,8 +96,8 @@ func columnWidths(rows []RunSummaryHumanRow) colWidths {
 		if len(row.RunID) > widths.runID {
 			widths.runID = len(row.RunID)
 		}
-		if len(row.Title) > widths.title {
-			widths.title = len(row.Title)
+		if len(row.Name) > widths.name {
+			widths.name = len(row.Name)
 		}
 		if len(row.Runner) > widths.runner {
 			widths.runner = len(row.Runner)
@@ -117,10 +117,10 @@ func columnWidths(rows []RunSummaryHumanRow) colWidths {
 }
 
 // formatRow formats a row with the given column values and widths.
-func formatRow(runID string, runIDW int, title string, titleW int, runner string, runnerW int, created string, createdW int, status string, statusW int, pr string, prW int) string {
+func formatRow(runID string, runIDW int, name string, nameW int, runner string, runnerW int, created string, createdW int, status string, statusW int, pr string, prW int) string {
 	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s  %s",
 		runIDW, runID,
-		titleW, title,
+		nameW, name,
 		runnerW, runner,
 		createdW, created,
 		statusW, status,
@@ -134,13 +134,13 @@ func FormatHumanRow(s RunSummary, now time.Time) RunSummaryHumanRow {
 		RunID: s.RunID,
 	}
 
-	// Format title
+	// Format name
 	if s.Broken {
-		row.Title = TitleBroken
-	} else if s.Title == "" {
-		row.Title = TitleUntitled
+		row.Name = NameBroken
+	} else if s.Name == "" {
+		row.Name = NameUntitled
 	} else {
-		row.Title = truncateTitle(s.Title)
+		row.Name = truncateName(s.Name)
 	}
 
 	// Format runner (empty for broken)
@@ -164,14 +164,14 @@ func FormatHumanRow(s RunSummary, now time.Time) RunSummaryHumanRow {
 	return row
 }
 
-// truncateTitle truncates the title to TitleMaxLen, adding ellipsis if needed.
-func truncateTitle(title string) string {
+// truncateName truncates the name to NameMaxLen, adding ellipsis if needed.
+func truncateName(name string) string {
 	// Count runes for proper Unicode handling
-	runes := []rune(title)
-	if len(runes) <= TitleMaxLen {
-		return title
+	runes := []rune(name)
+	if len(runes) <= NameMaxLen {
+		return name
 	}
-	return string(runes[:TitleMaxLen-1]) + "…"
+	return string(runes[:NameMaxLen-1]) + "…"
 }
 
 // formatStatus adds "(archived)" suffix if archived.

@@ -1229,7 +1229,7 @@ func buildVerifyEnvForMerge(meta *store.RunMeta, worktreePath, runDir string) []
 
 	agencyEnv := map[string]string{
 		"AGENCY_RUN_ID":         meta.RunID,
-		"AGENCY_TITLE":          meta.Title,
+		"AGENCY_NAME":           meta.Name,
 		"AGENCY_REPO_ROOT":      worktreePath,
 		"AGENCY_WORKSPACE_ROOT": worktreePath,
 		"AGENCY_BRANCH":         meta.Branch,

@@ -23,14 +23,11 @@ type Warning struct {
 
 // CreateResult holds the result of a successful worktree creation.
 type CreateResult struct {
-	// Branch is the newly created branch name (agency/<slug>-<shortid>).
+	// Branch is the newly created branch name (agency/<name>-<shortid>).
 	Branch string
 
 	// WorktreePath is the absolute path to the worktree directory.
 	WorktreePath string
-
-	// ResolvedTitle is the title used for slug/template (may differ from input if defaulted).
-	ResolvedTitle string
 
 	// Warnings contains non-fatal warnings (e.g., .agency/ not ignored).
 	Warnings []Warning
@@ -41,8 +38,8 @@ type CreateOpts struct {
 	// RunID is the run identifier (e.g., "20260109013207-a3f2").
 	RunID string
 
-	// Title is the run title (may be empty; will default to "untitled-<shortid>").
-	Title string
+	// Name is the run name (required, validated).
+	Name string
 
 	// RepoRoot is the absolute path to the git repository root.
 	RepoRoot string
@@ -60,7 +57,7 @@ type CreateOpts struct {
 // Create creates a git worktree and scaffolds the workspace.
 //
 // Operations (in order):
-//  1. Compute branch name from title + run_id
+//  1. Compute branch name from name + run_id
 //  2. Compute worktree path from data_dir + repo_id + run_id
 //  3. Create branch + worktree via: git worktree add -b <branch> <path> <parent>
 //  4. Create .agency/, .agency/out/, .agency/tmp/ directories
@@ -70,15 +67,8 @@ type CreateOpts struct {
 // Error codes:
 //   - E_WORKTREE_CREATE_FAILED: any git worktree add failure (including collisions)
 func Create(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts CreateOpts) (*CreateResult, error) {
-	// 1. Resolve title (default if empty)
-	resolvedTitle := opts.Title
-	if resolvedTitle == "" {
-		shortID := core.ShortID(opts.RunID)
-		resolvedTitle = "untitled-" + shortID
-	}
-
-	// 2. Compute branch name
-	branch := core.BranchName(resolvedTitle, opts.RunID)
+	// 1. Compute branch name (Name is pre-validated, no need to default)
+	branch := core.BranchName(opts.Name, opts.RunID)
 
 	// 3. Compute worktree path
 	worktreePath := WorktreePath(opts.DataDir, opts.RepoID, opts.RunID)
@@ -138,7 +128,7 @@ func Create(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts CreateO
 	}
 
 	// 5. Scaffold workspace directories
-	if err := scaffoldWorkspace(fsys, worktreePath, resolvedTitle); err != nil {
+	if err := scaffoldWorkspace(fsys, worktreePath, opts.Name); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EWorktreeCreateFailed,
 			"failed to scaffold workspace",
@@ -156,10 +146,9 @@ func Create(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts CreateO
 	}
 
 	return &CreateResult{
-		Branch:        branch,
-		WorktreePath:  worktreePath,
-		ResolvedTitle: resolvedTitle,
-		Warnings:      warnings,
+		Branch:       branch,
+		WorktreePath: worktreePath,
+		Warnings:     warnings,
 	}, nil
 }
 
@@ -171,7 +160,7 @@ func WorktreePath(dataDir, repoID, runID string) string {
 
 // scaffoldWorkspace creates the .agency/ directory structure and report.md.
 // This function is idempotent for directories but will not overwrite report.md.
-func scaffoldWorkspace(fsys fs.FS, worktreePath, title string) error {
+func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
 	// Create .agency/ directories
 	dirs := []string{
 		filepath.Join(worktreePath, ".agency"),
@@ -188,7 +177,7 @@ func scaffoldWorkspace(fsys fs.FS, worktreePath, title string) error {
 	// Create report.md if it doesn't exist
 	reportPath := filepath.Join(worktreePath, ".agency", "report.md")
 	if _, err := fsys.Stat(reportPath); os.IsNotExist(err) {
-		content := ReportTemplate(title)
+		content := ReportTemplate(name)
 		if err := fsys.WriteFile(reportPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to create report.md: %w", err)
 		}
@@ -229,9 +218,9 @@ func checkIgnored(ctx context.Context, cr exec.CommandRunner, worktreePath strin
 	}
 }
 
-// ReportTemplate returns the report.md template with the given title.
+// ReportTemplate returns the report.md template with the given name.
 // The template follows the standard agency report format.
-func ReportTemplate(title string) string {
+func ReportTemplate(name string) string {
 	return fmt.Sprintf(`# %s
 
 ## summary of changes
@@ -251,12 +240,12 @@ func ReportTemplate(title string) string {
 
 ## how to test
 - ...
-`, title)
+`, name)
 }
 
 // ScaffoldWorkspaceOnly scaffolds the .agency/ directories and report.md
 // without creating a worktree. Useful for testing or recovery scenarios.
 // This is an exported wrapper around scaffoldWorkspace for testing.
-func ScaffoldWorkspaceOnly(fsys fs.FS, worktreePath, title string) error {
-	return scaffoldWorkspace(fsys, worktreePath, title)
+func ScaffoldWorkspaceOnly(fsys fs.FS, worktreePath, name string) error {
+	return scaffoldWorkspace(fsys, worktreePath, name)
 }

@@ -104,7 +104,7 @@ func setupStopTestEnv(t *testing.T, runID string, setupMeta bool) (string, strin
 			SchemaVersion:   "1.0",
 			RunID:           runID,
 			RepoID:          repoID,
-			Title:           "test run",
+			Name:           "test run",
 			Runner:          "claude",
 			RunnerCmd:       "claude",
 			ParentBranch:    "main",

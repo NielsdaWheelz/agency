@@ -12,7 +12,7 @@ func mkMeta(fn func(*store.RunMeta)) *store.RunMeta {
 		SchemaVersion: "1.0",
 		RunID:         "20260110-a3f2",
 		RepoID:        "abcd1234ef567890",
-		Title:         "test run",
+		Name:         "test run",
 		Runner:        "claude",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",

@@ -21,8 +21,8 @@ type RunMeta struct {
 	// RepoID is the repository identifier (16 hex chars).
 	RepoID string `json:"repo_id"`
 
-	// Title is the run title (may be empty; not slugified).
-	Title string `json:"title"`
+	// Name is the run name (validated, required).
+	Name string `json:"name"`
 
 	// Runner is the runner name (e.g., "claude" or "codex").
 	Runner string `json:"runner"`
@@ -264,12 +264,12 @@ func (s *Store) ReadMeta(repoID, runID string) (*RunMeta, error) {
 
 // NewRunMeta creates a new RunMeta with required fields set.
 // createdAt should be the current time in UTC.
-func NewRunMeta(runID, repoID, title, runner, runnerCmd, parentBranch, branch, worktreePath string, createdAt time.Time) *RunMeta {
+func NewRunMeta(runID, repoID, name, runner, runnerCmd, parentBranch, branch, worktreePath string, createdAt time.Time) *RunMeta {
 	return &RunMeta{
 		SchemaVersion: "1.0",
 		RunID:         runID,
 		RepoID:        repoID,
-		Title:         title,
+		Name:          name,
 		Runner:        runner,
 		RunnerCmd:     runnerCmd,
 		ParentBranch:  parentBranch,

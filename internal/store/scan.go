@@ -28,6 +28,9 @@ type RunRecord struct {
 	// RunID is the run_id from the directory name (canonical identity).
 	RunID string
 
+	// Name is the run name from meta.json. Empty if Broken==true.
+	Name string
+
 	// Broken indicates meta.json is unreadable or invalid.
 	// When true, Meta is nil but RepoID/RunID are still populated from dir names.
 	Broken bool
@@ -215,6 +218,7 @@ func scanRepoRuns(dataDir, repoID string, cache *repoJoinCache) ([]RunRecord, er
 		}
 
 		record.Meta = &meta
+		record.Name = meta.Name
 		records = append(records, record)
 	}
 

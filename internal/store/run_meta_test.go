@@ -119,11 +119,11 @@ func TestWriteInitialMeta_RequiredFields(t *testing.T) {
 	meta := NewRunMeta(
 		"run456",
 		"repo123",
-		"Test Title",
+		"test-name",
 		"claude",
 		"claude --model opus",
 		"main",
-		"agency/test-title-a3f2",
+		"agency/test-name-a3f2",
 		"/path/to/worktree",
 		now,
 	)
@@ -161,8 +161,8 @@ func TestWriteInitialMeta_RequiredFields(t *testing.T) {
 	if parsed.RepoID != "repo123" {
 		t.Errorf("repo_id = %q, want %q", parsed.RepoID, "repo123")
 	}
-	if parsed.Title != "Test Title" {
-		t.Errorf("title = %q, want %q", parsed.Title, "Test Title")
+	if parsed.Name != "test-name" {
+		t.Errorf("name = %q, want %q", parsed.Name, "test-name")
 	}
 	if parsed.Runner != "claude" {
 		t.Errorf("runner = %q, want %q", parsed.Runner, "claude")
@@ -173,8 +173,8 @@ func TestWriteInitialMeta_RequiredFields(t *testing.T) {
 	if parsed.ParentBranch != "main" {
 		t.Errorf("parent_branch = %q, want %q", parsed.ParentBranch, "main")
 	}
-	if parsed.Branch != "agency/test-title-a3f2" {
-		t.Errorf("branch = %q, want %q", parsed.Branch, "agency/test-title-a3f2")
+	if parsed.Branch != "agency/test-name-a3f2" {
+		t.Errorf("branch = %q, want %q", parsed.Branch, "agency/test-name-a3f2")
 	}
 	if parsed.WorktreePath != "/path/to/worktree" {
 		t.Errorf("worktree_path = %q, want %q", parsed.WorktreePath, "/path/to/worktree")
@@ -208,14 +208,14 @@ func TestWriteInitialMeta_IsAtomic(t *testing.T) {
 	}
 
 	// Write initial meta
-	meta1 := NewRunMeta("run456", "repo123", "First Title", "claude", "claude", "main", "agency/first-a3f2", "/path/first", now)
+	meta1 := NewRunMeta("run456", "repo123", "first-name", "claude", "claude", "main", "agency/first-a3f2", "/path/first", now)
 	err = s.WriteInitialMeta("repo123", "run456", meta1)
 	if err != nil {
 		t.Fatalf("first WriteInitialMeta() error = %v", err)
 	}
 
-	// Write again with different title
-	meta2 := NewRunMeta("run456", "repo123", "Second Title", "claude", "claude", "main", "agency/second-a3f2", "/path/second", now)
+	// Write again with different name
+	meta2 := NewRunMeta("run456", "repo123", "second-name", "claude", "claude", "main", "agency/second-a3f2", "/path/second", now)
 	err = s.WriteInitialMeta("repo123", "run456", meta2)
 	if err != nil {
 		t.Fatalf("second WriteInitialMeta() error = %v", err)
@@ -227,8 +227,8 @@ func TestWriteInitialMeta_IsAtomic(t *testing.T) {
 		t.Fatalf("ReadMeta() error = %v", err)
 	}
 
-	if loaded.Title != "Second Title" {
-		t.Errorf("title = %q, want %q (second write)", loaded.Title, "Second Title")
+	if loaded.Name != "second-name" {
+		t.Errorf("name = %q, want %q (second write)", loaded.Name, "second-name")
 	}
 }
 
@@ -285,7 +285,7 @@ func TestUpdateMeta(t *testing.T) {
 		t.Fatalf("EnsureRunDir() error = %v", err)
 	}
 
-	meta := NewRunMeta("run456", "repo123", "Test Title", "claude", "claude", "main", "agency/test-a3f2", "/path/to/worktree", now)
+	meta := NewRunMeta("run456", "repo123", "test-name", "claude", "claude", "main", "agency/test-a3f2", "/path/to/worktree", now)
 	err = s.WriteInitialMeta("repo123", "run456", meta)
 	if err != nil {
 		t.Fatalf("WriteInitialMeta() error = %v", err)
@@ -309,8 +309,8 @@ func TestUpdateMeta(t *testing.T) {
 		t.Errorf("tmux_session_name = %q, want %q", loaded.TmuxSessionName, "agency:run456")
 	}
 	// Original fields should be preserved
-	if loaded.Title != "Test Title" {
-		t.Errorf("title = %q, want %q", loaded.Title, "Test Title")
+	if loaded.Name != "test-name" {
+		t.Errorf("name = %q, want %q", loaded.Name, "test-name")
 	}
 }
 
@@ -321,7 +321,7 @@ func TestNewRunMeta(t *testing.T) {
 	meta := NewRunMeta(
 		"20260110153045-a3f2",
 		"abc123def456",
-		"My Test Run",
+		"my-test-run",
 		"codex",
 		"codex --full-auto",
 		"develop",
@@ -339,8 +339,8 @@ func TestNewRunMeta(t *testing.T) {
 	if meta.RepoID != "abc123def456" {
 		t.Errorf("RepoID = %q, want %q", meta.RepoID, "abc123def456")
 	}
-	if meta.Title != "My Test Run" {
-		t.Errorf("Title = %q, want %q", meta.Title, "My Test Run")
+	if meta.Name != "my-test-run" {
+		t.Errorf("Name = %q, want %q", meta.Name, "my-test-run")
 	}
 	if meta.Runner != "codex" {
 		t.Errorf("Runner = %q, want %q", meta.Runner, "codex")
@@ -377,7 +377,7 @@ func TestJSONOmitEmptyFields(t *testing.T) {
 	}
 
 	// Write meta without optional fields
-	meta := NewRunMeta("run456", "repo123", "Test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
+	meta := NewRunMeta("run456", "repo123", "test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
 	err = s.WriteInitialMeta("repo123", "run456", meta)
 	if err != nil {
 		t.Fatalf("WriteInitialMeta() error = %v", err)
@@ -427,7 +427,7 @@ func TestMetaSlice3PushFields(t *testing.T) {
 	}
 
 	// Write initial meta
-	meta := NewRunMeta("run456", "repo123", "Test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
+	meta := NewRunMeta("run456", "repo123", "test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
 	err = s.WriteInitialMeta("repo123", "run456", meta)
 	if err != nil {
 		t.Fatalf("WriteInitialMeta() error = %v", err)
@@ -472,8 +472,8 @@ func TestMetaSlice3PushFields(t *testing.T) {
 	}
 
 	// Verify original fields preserved
-	if loaded.Title != "Test" {
-		t.Errorf("Title = %q, want %q", loaded.Title, "Test")
+	if loaded.Name != "test" {
+		t.Errorf("Name = %q, want %q", loaded.Name, "test")
 	}
 }
 
@@ -491,7 +491,7 @@ func TestMetaSlice3FieldsInJSON(t *testing.T) {
 	}
 
 	// Write meta with all push fields set
-	meta := NewRunMeta("run456", "repo123", "Test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
+	meta := NewRunMeta("run456", "repo123", "test", "claude", "claude", "main", "agency/test-a3f2", "/path", now)
 	meta.LastReportSyncAt = "2026-01-10T14:00:00Z"
 	meta.LastReportHash = "abc123"
 

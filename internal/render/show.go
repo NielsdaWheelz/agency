@@ -23,7 +23,7 @@ type ShowPathsData struct {
 type ShowHumanData struct {
 	// Core
 	RunID     string
-	Title     string
+	Name      string
 	Runner    string
 	CreatedAt string // RFC3339
 	RepoID    string
@@ -92,10 +92,10 @@ func WriteShowPaths(w io.Writer, data ShowPathsData) error {
 // WriteShowHuman writes human-readable show output in the spec-defined format.
 // Per PR-4 spec, output is plain key/value lines in exact order.
 func WriteShowHuman(w io.Writer, data ShowHumanData) error {
-	// Format title for display
-	displayTitle := data.Title
-	if displayTitle == "" {
-		displayTitle = TitleUntitled
+	// Format name for display
+	displayName := data.Name
+	if displayName == "" {
+		displayName = NameUntitled
 	}
 
 	// Format tmux session display
@@ -135,7 +135,7 @@ func WriteShowHuman(w io.Writer, data ShowHumanData) error {
 
 	// Output in spec-defined order with blank line between worktree and tmux
 	_, _ = fmt.Fprintf(w, "run: %s\n", data.RunID)
-	_, _ = fmt.Fprintf(w, "title: %s\n", displayTitle)
+	_, _ = fmt.Fprintf(w, "name: %s\n", displayName)
 	_, _ = fmt.Fprintf(w, "repo: %s\n", data.RepoID)
 	_, _ = fmt.Fprintf(w, "runner: %s\n", data.Runner)
 	_, _ = fmt.Fprintf(w, "parent: %s\n", data.ParentBranch)

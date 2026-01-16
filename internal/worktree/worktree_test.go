@@ -98,7 +98,7 @@ func TestCreate_Success(t *testing.T) {
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Title:        "Test Run",
+		Name:        "test-run",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
@@ -119,11 +119,6 @@ func TestCreate_Success(t *testing.T) {
 	expectedPath := filepath.Join(dataDir, "repos", repoID, "worktrees", runID)
 	if result.WorktreePath != expectedPath {
 		t.Errorf("WorktreePath = %q, want %q", result.WorktreePath, expectedPath)
-	}
-
-	// Verify resolved title
-	if result.ResolvedTitle != "Test Run" {
-		t.Errorf("ResolvedTitle = %q, want %q", result.ResolvedTitle, "Test Run")
 	}
 
 	// Verify worktree directory exists
@@ -154,8 +149,8 @@ func TestCreate_Success(t *testing.T) {
 		t.Fatalf("failed to read report.md: %v", err)
 	}
 
-	if !strings.HasPrefix(string(reportContent), "# Test Run\n") {
-		t.Errorf("report.md should start with '# Test Run\\n', got: %q", string(reportContent)[:min(50, len(reportContent))])
+	if !strings.HasPrefix(string(reportContent), "# test-run\n") {
+		t.Errorf("report.md should start with '# test-run\\n', got: %q", string(reportContent)[:min(50, len(reportContent))])
 	}
 
 	// Verify git worktree list shows the new worktree
@@ -169,59 +164,9 @@ func TestCreate_Success(t *testing.T) {
 	}
 }
 
-func TestCreate_EmptyTitle(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
-
-	parentBranch := getCurrentBranch(t, repoRoot)
-	if parentBranch == "" {
-		parentBranch = "master"
-	}
-
-	ctx := context.Background()
-	cr := agencyexec.NewRealRunner()
-	fsys := fs.NewRealFS()
-
-	runID := "20260110120000-beef"
-	repoID := "abcd1234ef567890"
-
-	result, err := Create(ctx, cr, fsys, CreateOpts{
-		RunID:        runID,
-		Title:        "", // empty title
-		RepoRoot:     resolvedRepoRoot,
-		RepoID:       repoID,
-		ParentBranch: parentBranch,
-		DataDir:      dataDir,
-	})
-
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-
-	// Title should default to "untitled-<shortid>"
-	expectedTitle := "untitled-beef"
-	if result.ResolvedTitle != expectedTitle {
-		t.Errorf("ResolvedTitle = %q, want %q", result.ResolvedTitle, expectedTitle)
-	}
-
-	// Branch should use the default title
-	expectedBranch := "agency/untitled-beef-beef"
-	if result.Branch != expectedBranch {
-		t.Errorf("Branch = %q, want %q", result.Branch, expectedBranch)
-	}
-
-	// Verify report.md has the default title
-	reportPath := filepath.Join(result.WorktreePath, ".agency", "report.md")
-	reportContent, err := os.ReadFile(reportPath)
-	if err != nil {
-		t.Fatalf("failed to read report.md: %v", err)
-	}
-
-	if !strings.HasPrefix(string(reportContent), "# "+expectedTitle+"\n") {
-		t.Errorf("report.md should start with '# %s\\n', got: %q", expectedTitle, string(reportContent)[:min(50, len(reportContent))])
-	}
-}
+// Note: TestCreate_EmptyTitle was removed because name is now required
+// and validated at the CLI/pipeline level. The worktree package expects
+// a valid, pre-validated name to be passed.
 
 func TestCreate_Collision_ReturnsError(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
@@ -242,7 +187,7 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 
 	opts := CreateOpts{
 		RunID:        runID,
-		Title:        "Collision Test",
+		Name:        "collision-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
@@ -298,7 +243,7 @@ func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
 
 	_, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Title:        "Test",
+		Name:        "Test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: "nonexistent-branch",
@@ -437,7 +382,7 @@ func TestCreate_IgnoreWarning(t *testing.T) {
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Title:        "Test",
+		Name:        "Test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
@@ -491,7 +436,7 @@ func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Title:        "Test",
+		Name:        "Test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
