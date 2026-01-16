@@ -81,7 +81,7 @@ agency push <run_id>    # creates PR
                                                                                     
 Agency doesn't have a built-in agency code <run_id> command
 
-11) customize script timeouts. they shouldn't be hardoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
+11) customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
 
 12) agency attach fails when runner is dead. at minimum, the error message should be more clear, and i think we should be able to attach anyway. relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again? 
 

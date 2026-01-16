@@ -32,6 +32,22 @@ prebuilt binaries available on [GitHub releases](https://github.com/NielsdaWheel
 brew install NielsdaWheelz/tap/agency
 ```
 
+## release (maintainers)
+
+release builds are tag-driven via `.github/workflows/release.yml` and `.goreleaser.yaml`.
+
+1) ensure main is green and committed
+2) tag and push:
+
+```bash
+git tag -a v0.1.1 -m "v0.1.1"
+git push origin v0.1.1
+```
+
+notes:
+- `go install github.com/NielsdaWheelz/agency/cmd/agency@latest` installs the latest semver tag, not the GitHub release binary.
+- `agency --version` will show `dev` for `go install` builds unless you pass ldflags or use release artifacts.
+
 ## prerequisites
 
 agency requires:
