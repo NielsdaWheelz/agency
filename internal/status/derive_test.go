@@ -2,7 +2,6 @@ package status
 
 import (
 	"testing"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -25,21 +24,6 @@ func mkMeta(fn func(*store.RunMeta)) *store.RunMeta {
 		fn(meta)
 	}
 	return meta
-}
-
-// Test helper: create a pointer to a time.Time.
-func ptrTime(t time.Time) *time.Time {
-	return &t
-}
-
-// Test helper: create a pointer to an int.
-func ptrInt(n int) *int {
-	return &n
-}
-
-// Test helper: create a pointer to a bool.
-func ptrBool(b bool) *bool {
-	return &b
 }
 
 func TestDerive(t *testing.T) {

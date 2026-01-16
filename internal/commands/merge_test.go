@@ -532,6 +532,10 @@ func (f *mergeTestCommandRunner) Run(ctx context.Context, name string, args []st
 	return exec.CmdResult{ExitCode: 0}, nil
 }
 
+func (f *mergeTestCommandRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
+
 func contains(args []string, target string) bool {
 	for _, arg := range args {
 		if arg == target {
@@ -554,10 +558,16 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 	repoRoot := filepath.Join(tmpDir, "repo")
 
 	// Create directories
-	os.MkdirAll(dataDir, 0o755)
-	os.MkdirAll(worktreePath, 0o755)
-	os.MkdirAll(repoRoot, 0o755)
-	os.MkdirAll(filepath.Join(worktreePath, ".agency", "out"), 0o755)
+	for _, dir := range []string{
+		dataDir,
+		worktreePath,
+		repoRoot,
+		filepath.Join(worktreePath, ".agency", "out"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+	}
 
 	// Create agency.json
 	agencyJSON := map[string]any{
@@ -572,14 +582,21 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 			"archive": "scripts/archive.sh",
 		},
 	}
-	agencyJSONBytes, _ := json.Marshal(agencyJSON)
-	os.WriteFile(filepath.Join(worktreePath, "agency.json"), agencyJSONBytes, 0o644)
+	agencyJSONBytes, err := json.Marshal(agencyJSON)
+	if err != nil {
+		t.Fatalf("failed to marshal agency.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "agency.json"), agencyJSONBytes, 0o644); err != nil {
+		t.Fatalf("failed to write agency.json: %v", err)
+	}
 
 	// Create meta.json
 	repoID := "test123456789012"
 	runID := "20260115120000-abcd"
 	runsDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-	os.MkdirAll(filepath.Join(runsDir, "logs"), 0o755)
+	if err := os.MkdirAll(filepath.Join(runsDir, "logs"), 0o755); err != nil {
+		t.Fatalf("failed to create runs dir: %v", err)
+	}
 
 	meta := &store.RunMeta{
 		SchemaVersion:   "1.0",
@@ -595,19 +612,31 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 		PRNumber:        123,
 		PRURL:           "https://github.com/owner/repo/pull/123",
 	}
-	metaBytes, _ := json.Marshal(meta)
-	os.WriteFile(filepath.Join(runsDir, "meta.json"), metaBytes, 0o644)
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("failed to marshal meta.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "meta.json"), metaBytes, 0o644); err != nil {
+		t.Fatalf("failed to write meta.json: %v", err)
+	}
 
 	// Create repo.json
 	repoRecordDir := filepath.Join(dataDir, "repos", repoID)
-	os.MkdirAll(repoRecordDir, 0o755)
+	if err := os.MkdirAll(repoRecordDir, 0o755); err != nil {
+		t.Fatalf("failed to create repo record dir: %v", err)
+	}
 	repoRecord := map[string]any{
 		"schema_version": "1.0",
 		"origin_url":     "git@github.com:owner/repo.git",
 		"origin_host":    "github.com",
 	}
-	repoRecordBytes, _ := json.Marshal(repoRecord)
-	os.WriteFile(filepath.Join(repoRecordDir, "repo.json"), repoRecordBytes, 0o644)
+	repoRecordBytes, err := json.Marshal(repoRecord)
+	if err != nil {
+		t.Fatalf("failed to marshal repo.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRecordDir, "repo.json"), repoRecordBytes, 0o644); err != nil {
+		t.Fatalf("failed to write repo.json: %v", err)
+	}
 
 	// We can't easily test the full flow without mocking tty.IsInteractive()
 	// This test is more of a compilation/structure check
@@ -738,14 +767,21 @@ func TestGetOriginURLForMerge(t *testing.T) {
 
 	// Create repo.json with origin URL
 	repoRecordDir := filepath.Join(dataDir, "repos", repoID)
-	os.MkdirAll(repoRecordDir, 0o755)
+	if err := os.MkdirAll(repoRecordDir, 0o755); err != nil {
+		t.Fatalf("failed to create repo record dir: %v", err)
+	}
 	repoRecord := map[string]any{
 		"schema_version": "1.0",
 		"origin_url":     "git@github.com:owner/repo.git",
 		"origin_host":    "github.com",
 	}
-	repoRecordBytes, _ := json.Marshal(repoRecord)
-	os.WriteFile(filepath.Join(repoRecordDir, "repo.json"), repoRecordBytes, 0o644)
+	repoRecordBytes, err := json.Marshal(repoRecord)
+	if err != nil {
+		t.Fatalf("failed to marshal repo.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRecordDir, "repo.json"), repoRecordBytes, 0o644); err != nil {
+		t.Fatalf("failed to write repo.json: %v", err)
+	}
 
 	// Create store
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)

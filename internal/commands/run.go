@@ -82,7 +82,7 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 
 	// Print warnings to stderr
 	for _, w := range result.Warnings {
-		fmt.Fprintf(stderr, "warning: %s\n", w.Message)
+		_, _ = fmt.Fprintf(stderr, "warning: %s\n", w.Message)
 	}
 
 	// Handle --attach if requested
@@ -135,47 +135,51 @@ func getRunResult(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 }
 
 // printRunSuccess prints the success output in the required format.
+// All writes use explicit error ignoring since this is informational output
+// where write failures cannot be meaningfully handled.
 func printRunSuccess(w io.Writer, result *RunResult) {
-	fmt.Fprintf(w, "run_id: %s\n", result.RunID)
-	fmt.Fprintf(w, "title: %s\n", result.Title)
-	fmt.Fprintf(w, "runner: %s\n", result.Runner)
-	fmt.Fprintf(w, "parent: %s\n", result.Parent)
-	fmt.Fprintf(w, "branch: %s\n", result.Branch)
-	fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
-	fmt.Fprintf(w, "tmux: %s\n", result.TmuxSessionName)
-	fmt.Fprintf(w, "next: agency attach %s\n", result.RunID)
+	_, _ = fmt.Fprintf(w, "run_id: %s\n", result.RunID)
+	_, _ = fmt.Fprintf(w, "title: %s\n", result.Title)
+	_, _ = fmt.Fprintf(w, "runner: %s\n", result.Runner)
+	_, _ = fmt.Fprintf(w, "parent: %s\n", result.Parent)
+	_, _ = fmt.Fprintf(w, "branch: %s\n", result.Branch)
+	_, _ = fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
+	_, _ = fmt.Fprintf(w, "tmux: %s\n", result.TmuxSessionName)
+	_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.RunID)
 }
 
 // printRunError prints error details for run failures.
+// All writes use explicit error ignoring since this is informational output
+// where write failures cannot be meaningfully handled.
 func printRunError(w io.Writer, err error, runID string, cwd string, fsys fs.FS) {
 	ae, ok := errors.AsAgencyError(err)
 	if !ok {
-		fmt.Fprintf(w, "error: %s\n", err.Error())
+		_, _ = fmt.Fprintf(w, "error: %s\n", err.Error())
 		return
 	}
 
 	// Print error line
-	fmt.Fprintf(w, "error: %s: %s\n", ae.Code, ae.Msg)
+	_, _ = fmt.Fprintf(w, "error: %s: %s\n", ae.Code, ae.Msg)
 
 	// Print run_id if we have one (means worktree was likely created)
 	if runID != "" {
-		fmt.Fprintf(w, "run_id: %s\n", runID)
+		_, _ = fmt.Fprintf(w, "run_id: %s\n", runID)
 	}
 
 	// Print evidence paths if available in details
 	if ae.Details != nil {
 		if wp := ae.Details["worktree_path"]; wp != "" {
-			fmt.Fprintf(w, "worktree: %s\n", wp)
+			_, _ = fmt.Fprintf(w, "worktree: %s\n", wp)
 		}
 		if lp := ae.Details["log_path"]; lp != "" {
-			fmt.Fprintf(w, "setup_log: %s\n", lp)
+			_, _ = fmt.Fprintf(w, "setup_log: %s\n", lp)
 		}
 	}
 
 	// Try to get worktree path from meta if we have a run_id
 	if runID != "" && ae.Details["worktree_path"] == "" {
 		if result, err := tryGetRunMeta(cwd, runID, fsys); err == nil {
-			fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
+			_, _ = fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
 		}
 	}
 }

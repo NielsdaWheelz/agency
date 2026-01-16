@@ -42,6 +42,10 @@ func (f *fakeRunner) Run(ctx context.Context, name string, args []string, opts e
 	return exec.CmdResult{}, nil
 }
 
+func (f *fakeRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
+
 func TestExecClient_HasSession(t *testing.T) {
 	tests := []struct {
 		name      string

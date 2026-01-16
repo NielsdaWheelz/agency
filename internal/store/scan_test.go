@@ -144,8 +144,8 @@ func TestScanAllRuns_MissingReposDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanAllRuns() error = %v, want nil", err)
 	}
-	if records != nil && len(records) != 0 {
-		t.Errorf("records = %v, want nil or empty slice", records)
+	if len(records) != 0 {
+		t.Errorf("records = %v, want empty slice", records)
 	}
 }
 
@@ -185,8 +185,8 @@ func TestScanRunsForRepo_MissingRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanRunsForRepo() error = %v, want nil", err)
 	}
-	if records != nil && len(records) != 0 {
-		t.Errorf("records = %v, want nil or empty slice", records)
+	if len(records) != 0 {
+		t.Errorf("records = %v, want empty slice", records)
 	}
 }
 

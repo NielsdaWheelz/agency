@@ -168,7 +168,7 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 
 	// Print capture warnings (only for human mode, to stderr)
 	if opts.Capture && captureRes != nil && !captureRes.ok && !opts.JSON && !opts.Path {
-		fmt.Fprintf(stderr, "warning: capture failed at stage '%s': %s\n", captureRes.stage, captureRes.errorMsg)
+		_, _ = fmt.Fprintf(stderr, "warning: capture failed at stage '%s': %s\n", captureRes.stage, captureRes.errorMsg)
 	}
 
 	// Build output based on mode
@@ -202,7 +202,11 @@ func performCapture(ctx context.Context, cr agencyexec.CommandRunner, dataDir st
 		// Other lock errors are treated as capture failures
 		return &captureResult{ok: false, stage: "lock", errorMsg: err.Error()}, nil
 	}
-	defer unlock()
+	defer func() {
+		if uerr := unlock(); uerr != nil {
+			_ = uerr // Lock package handles logging internally
+		}
+	}()
 
 	// Emit cmd_start event (best-effort)
 	cmdStartEvent := events.Event{
@@ -248,7 +252,7 @@ func doCapture(runID, runDir, transcriptPath string, stderr io.Writer) *captureR
 
 	// Check if session exists
 	if !tmux.HasSession(executor, sessionName) {
-		fmt.Fprintln(stderr, "warning: no tmux session; transcript not captured")
+		_, _ = fmt.Fprintln(stderr, "warning: no tmux session; transcript not captured")
 		return &captureResult{ok: false, stage: "has_session", errorMsg: "tmux session does not exist"}
 	}
 
@@ -486,11 +490,6 @@ func outputShowPaths(stdout io.Writer, repoRoot *string, worktreePath, runDir, l
 		ReportPath:     reportPath,
 	}
 	return render.WriteShowPaths(stdout, data)
-}
-
-// outputShowJSON writes the --json output.
-func outputShowJSON(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir, eventsPath, transcriptPath string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string) error {
-	return outputShowJSONWithCapture(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, nil)
 }
 
 // outputShowJSONWithCapture writes the --json output, optionally including capture result.

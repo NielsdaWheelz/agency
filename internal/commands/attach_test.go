@@ -108,10 +108,7 @@ func setupAttachTestEnv(t *testing.T, runID string, setupMeta bool) (string, str
 	}
 
 	// Set environment for data dir resolution
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	t.Cleanup(func() {
-		os.Unsetenv("AGENCY_DATA_DIR")
-	})
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	return repoDir, dataDir, repoID, cr, fsys
 }

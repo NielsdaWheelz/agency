@@ -444,15 +444,7 @@ func TestLS_IntegrationWithFakeData(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Set AGENCY_DATA_DIR to our temp dir
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer func() {
-		if oldDataDir == "" {
-			os.Unsetenv("AGENCY_DATA_DIR")
-		} else {
-			os.Setenv("AGENCY_DATA_DIR", oldDataDir)
-		}
-	}()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create repos with runs
 	createValidMetaForLS(t, dataDir, "r1", "20260110-a3f2", time.Date(2026, 1, 10, 14, 0, 0, 0, time.UTC))

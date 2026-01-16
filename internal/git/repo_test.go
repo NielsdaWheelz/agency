@@ -62,6 +62,10 @@ func (s *stubRunner) Run(ctx context.Context, name string, args []string, opts e
 	return exec.CmdResult{ExitCode: 127, Stderr: "command not found"}, nil
 }
 
+func (s *stubRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
+
 func TestGetRepoRoot_Success(t *testing.T) {
 	ctx := context.Background()
 	cr := newStubRunner()

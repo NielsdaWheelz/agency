@@ -162,7 +162,7 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 		})
 
 		if opts.Detached {
-			fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
+			_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 			return nil
 		}
 		return attachToTmuxSession(sessionName, stdout, stderr)
@@ -197,17 +197,17 @@ func handleRestart(
 				"refusing to restart without confirmation in non-interactive mode; pass --yes")
 		}
 
-		// Prompt for confirmation
-		fmt.Fprintf(stderr, "restart session? in-tool history will be lost (git state unchanged) [y/N]: ")
+		// Prompt for confirmation (user interaction via stderr)
+		_, _ = fmt.Fprintf(stderr, "restart session? in-tool history will be lost (git state unchanged) [y/N]: ")
 		scanner := bufio.NewScanner(stdin)
 		if !scanner.Scan() {
 			// No input - treat as cancel
-			fmt.Fprintln(stderr, "canceled")
+			_, _ = fmt.Fprintln(stderr, "canceled")
 			return nil
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if answer != "y" && answer != "yes" {
-			fmt.Fprintln(stderr, "canceled")
+			_, _ = fmt.Fprintln(stderr, "canceled")
 			return nil
 		}
 	}
@@ -221,7 +221,11 @@ func handleRestart(
 		}
 		return errors.Wrap(errors.EInternal, "failed to acquire repo lock", err)
 	}
-	defer unlock()
+	defer func() {
+		if uerr := unlock(); uerr != nil {
+			_ = uerr // Lock package handles logging internally
+		}
+	}()
 
 	// Re-check session existence under lock
 	sessionExists, err = tmuxClient.HasSession(ctx, sessionName)
@@ -253,7 +257,7 @@ func handleRestart(
 	})
 
 	if opts.Detached {
-		fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
+		_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 		return nil
 	}
 	return attachToTmuxSession(sessionName, stdout, stderr)
@@ -283,7 +287,11 @@ func handleCreateSession(
 		}
 		return errors.Wrap(errors.EInternal, "failed to acquire repo lock", err)
 	}
-	defer unlock()
+	defer func() {
+		if uerr := unlock(); uerr != nil {
+			_ = uerr // Lock package handles logging internally
+		}
+	}()
 
 	// Re-check session existence under lock (double-check pattern)
 	sessionExists, err := tmuxClient.HasSession(ctx, sessionName)
@@ -304,7 +312,7 @@ func handleCreateSession(
 		})
 
 		if opts.Detached {
-			fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
+			_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 			return nil
 		}
 		return attachToTmuxSession(sessionName, stdout, stderr)
@@ -327,7 +335,7 @@ func handleCreateSession(
 	})
 
 	if opts.Detached {
-		fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
+		_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 		return nil
 	}
 	return attachToTmuxSession(sessionName, stdout, stderr)

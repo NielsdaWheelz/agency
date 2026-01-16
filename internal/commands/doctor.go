@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -109,7 +108,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	// 8. Verify runner command exists
-	if err := checkRunnerExists(fsys, cfg.ResolvedRunnerCmd, repoRoot.Path); err != nil {
+	if err := checkRunnerExists(cr, fsys, cfg.ResolvedRunnerCmd, repoRoot.Path); err != nil {
 		return err
 	}
 
@@ -214,7 +213,7 @@ func checkGhAuth(ctx context.Context, cr agencyexec.CommandRunner) error {
 }
 
 // checkRunnerExists verifies the runner command exists on PATH or as a path.
-func checkRunnerExists(fsys fs.FS, runnerCmd, repoRoot string) error {
+func checkRunnerExists(cr agencyexec.CommandRunner, fsys fs.FS, runnerCmd, repoRoot string) error {
 	// If it contains a path separator, it's a path (absolute or relative)
 	if strings.Contains(runnerCmd, string(filepath.Separator)) || strings.HasPrefix(runnerCmd, ".") {
 		// Resolve relative to repo root
@@ -236,8 +235,8 @@ func checkRunnerExists(fsys fs.FS, runnerCmd, repoRoot string) error {
 		return nil
 	}
 
-	// Otherwise, use exec.LookPath for PATH lookup
-	_, err := exec.LookPath(runnerCmd)
+	// Otherwise, use CommandRunner.LookPath for PATH lookup
+	_, err := cr.LookPath(runnerCmd)
 	if err != nil {
 		return errors.New(errors.ERunnerNotConfigured, "runner command not found on PATH: "+runnerCmd)
 	}
@@ -325,37 +324,39 @@ func persistOnSuccess(fsys fs.FS, dataDir, repoRoot string, repoIdentity identit
 }
 
 // writeDoctorOutput writes the stable key: value output.
+// All writes use explicit error ignoring since this is informational output
+// where write failures cannot be meaningfully handled.
 func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	// Repo + dirs
-	fmt.Fprintf(w, "repo_root: %s\n", r.RepoRoot)
-	fmt.Fprintf(w, "agency_data_dir: %s\n", r.AgencyDataDir)
-	fmt.Fprintf(w, "agency_config_dir: %s\n", r.AgencyConfigDir)
-	fmt.Fprintf(w, "agency_cache_dir: %s\n", r.AgencyCacheDir)
+	_, _ = fmt.Fprintf(w, "repo_root: %s\n", r.RepoRoot)
+	_, _ = fmt.Fprintf(w, "agency_data_dir: %s\n", r.AgencyDataDir)
+	_, _ = fmt.Fprintf(w, "agency_config_dir: %s\n", r.AgencyConfigDir)
+	_, _ = fmt.Fprintf(w, "agency_cache_dir: %s\n", r.AgencyCacheDir)
 
 	// Identity/origin
-	fmt.Fprintf(w, "repo_key: %s\n", r.RepoKey)
-	fmt.Fprintf(w, "repo_id: %s\n", r.RepoID)
-	fmt.Fprintf(w, "origin_present: %s\n", boolStr(r.OriginPresent))
-	fmt.Fprintf(w, "origin_url: %s\n", r.OriginURL)
-	fmt.Fprintf(w, "origin_host: %s\n", r.OriginHost)
-	fmt.Fprintf(w, "github_flow_available: %s\n", boolStr(r.GitHubFlowAvailable))
+	_, _ = fmt.Fprintf(w, "repo_key: %s\n", r.RepoKey)
+	_, _ = fmt.Fprintf(w, "repo_id: %s\n", r.RepoID)
+	_, _ = fmt.Fprintf(w, "origin_present: %s\n", boolStr(r.OriginPresent))
+	_, _ = fmt.Fprintf(w, "origin_url: %s\n", r.OriginURL)
+	_, _ = fmt.Fprintf(w, "origin_host: %s\n", r.OriginHost)
+	_, _ = fmt.Fprintf(w, "github_flow_available: %s\n", boolStr(r.GitHubFlowAvailable))
 
 	// Tooling
-	fmt.Fprintf(w, "git_version: %s\n", r.GitVersion)
-	fmt.Fprintf(w, "tmux_version: %s\n", r.TmuxVersion)
-	fmt.Fprintf(w, "gh_version: %s\n", r.GhVersion)
-	fmt.Fprintf(w, "gh_authenticated: %s\n", boolStr(r.GhAuthenticated))
+	_, _ = fmt.Fprintf(w, "git_version: %s\n", r.GitVersion)
+	_, _ = fmt.Fprintf(w, "tmux_version: %s\n", r.TmuxVersion)
+	_, _ = fmt.Fprintf(w, "gh_version: %s\n", r.GhVersion)
+	_, _ = fmt.Fprintf(w, "gh_authenticated: %s\n", boolStr(r.GhAuthenticated))
 
 	// Config resolution
-	fmt.Fprintf(w, "defaults_parent_branch: %s\n", r.DefaultsParentBranch)
-	fmt.Fprintf(w, "defaults_runner: %s\n", r.DefaultsRunner)
-	fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)
-	fmt.Fprintf(w, "script_setup: %s\n", r.ScriptSetup)
-	fmt.Fprintf(w, "script_verify: %s\n", r.ScriptVerify)
-	fmt.Fprintf(w, "script_archive: %s\n", r.ScriptArchive)
+	_, _ = fmt.Fprintf(w, "defaults_parent_branch: %s\n", r.DefaultsParentBranch)
+	_, _ = fmt.Fprintf(w, "defaults_runner: %s\n", r.DefaultsRunner)
+	_, _ = fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)
+	_, _ = fmt.Fprintf(w, "script_setup: %s\n", r.ScriptSetup)
+	_, _ = fmt.Fprintf(w, "script_verify: %s\n", r.ScriptVerify)
+	_, _ = fmt.Fprintf(w, "script_archive: %s\n", r.ScriptArchive)
 
 	// Final
-	fmt.Fprintln(w, "status: ok")
+	_, _ = fmt.Fprintln(w, "status: ok")
 }
 
 func boolStr(b bool) string {

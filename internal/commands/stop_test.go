@@ -121,10 +121,7 @@ func setupStopTestEnv(t *testing.T, runID string, setupMeta bool) (string, strin
 	}
 
 	// Set environment for data dir resolution
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	t.Cleanup(func() {
-		os.Unsetenv("AGENCY_DATA_DIR")
-	})
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	return repoDir, dataDir, repoID, cr, fsys
 }
@@ -163,6 +160,10 @@ func (f *fakeCommandRunner) Run(ctx context.Context, name string, args []string,
 	}
 
 	return exec.CmdResult{}, nil
+}
+
+func (f *fakeCommandRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
 }
 
 func TestStop_SessionExists(t *testing.T) {

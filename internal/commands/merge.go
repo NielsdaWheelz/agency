@@ -147,10 +147,15 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		}
 		return errors.Wrap(errors.EInternal, "failed to acquire repo lock", err)
 	}
-	defer unlock()
+	defer func() {
+		// Unlock error logged but not returned; command result takes priority
+		if uerr := unlock(); uerr != nil {
+			_ = uerr // Lock package handles logging internally
+		}
+	}()
 
-	// Print lock acquisition message (per spec)
-	fmt.Fprintln(stderr, "lock: acquired repo lock (held during verify/merge/archive)")
+	// Print lock acquisition message (per spec, diagnostic output to stderr)
+	_, _ = fmt.Fprintln(stderr, "lock: acquired repo lock (held during verify/merge/archive)")
 
 	// === Precheck 2: origin exists ===
 	originURL, err := getOriginURLForMerge(ctx, cr, st, repoID, meta.WorktreePath)
@@ -266,7 +271,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 			appendMergeEvent(eventsPath, repoID, meta.RunID, "verify_continue_prompted", nil)
 
 			// Prompt user
-			fmt.Fprint(stderr, "verify failed. continue anyway? [y/N] ")
+			_, _ = fmt.Fprint(stderr, "verify failed. continue anyway? [y/N] ")
 			reader := bufio.NewReader(stdin)
 			input, err := reader.ReadString('\n')
 			if err != nil {
@@ -299,7 +304,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	// === Merge confirmation prompt ===
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
 
-	fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+	_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
 	reader := bufio.NewReader(stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
@@ -362,12 +367,12 @@ func handleAlreadyMergedPR(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 	// Append already merged event
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_already_merged", events.MergeAlreadyMergedData(pr.Number, pr.URL))
 
-	fmt.Fprintf(stderr, "note: PR #%d is already merged; proceeding to archive\n", pr.Number)
+	_, _ = fmt.Fprintf(stderr, "note: PR #%d is already merged; proceeding to archive\n", pr.Number)
 
 	// Still require typed confirmation (archive is destructive)
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
 
-	fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+	_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
 	reader := bufio.NewReader(stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
@@ -398,11 +403,9 @@ func handleAlreadyMergedPR(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 
 // executeGHMerge runs gh pr merge and captures output to merge.log.
 func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int, strategyFlag, mergeLogPath string) error {
-	// Ensure logs directory exists
+	// Ensure logs directory exists (non-fatal; continue anyway)
 	logsDir := filepath.Dir(mergeLogPath)
-	if err := os.MkdirAll(logsDir, 0o700); err != nil {
-		// Non-fatal; continue anyway
-	}
+	_ = os.MkdirAll(logsDir, 0o700)
 
 	result, err := cr.Run(ctx, "gh", []string{
 		"pr", "merge", fmt.Sprintf("%d", prNumber),
@@ -541,10 +544,10 @@ func runArchivePipeline(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, 
 	if result.Success() {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(true, ""))
 		// Print success message
-		fmt.Fprintf(stdout, "merged: %s\n", meta.RunID)
-		fmt.Fprintf(stdout, "pr: %s\n", meta.PRURL)
+		_, _ = fmt.Fprintf(stdout, "merged: %s\n", meta.RunID)
+		_, _ = fmt.Fprintf(stdout, "pr: %s\n", meta.PRURL)
 		if result.LogPath != "" {
-			fmt.Fprintf(stdout, "log: %s\n", result.LogPath)
+			_, _ = fmt.Fprintf(stdout, "log: %s\n", result.LogPath)
 		}
 		return nil
 	}

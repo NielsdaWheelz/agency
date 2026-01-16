@@ -83,7 +83,7 @@ func KillWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	}
 	if !exists {
 		// Session doesn't exist - no-op, exit 0
-		fmt.Fprintf(stderr, "no session for %s\n", opts.RunID)
+		_, _ = fmt.Fprintf(stderr, "no session for %s\n", opts.RunID)
 		return nil
 	}
 

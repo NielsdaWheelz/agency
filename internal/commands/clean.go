@@ -85,7 +85,7 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 
 	// Check if already archived (idempotent)
 	if meta.Archive != nil && meta.Archive.ArchivedAt != "" {
-		fmt.Fprintln(stdout, "already archived")
+		_, _ = fmt.Fprintln(stdout, "already archived")
 		return nil
 	}
 
@@ -111,13 +111,18 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		}
 		return errors.Wrap(errors.EInternal, "failed to acquire repo lock", err)
 	}
-	defer unlock()
+	defer func() {
+		// Unlock error logged but not returned; command result takes priority
+		if uerr := unlock(); uerr != nil {
+			_ = uerr // Lock package handles logging internally
+		}
+	}()
 
 	// Print lock acquisition message (per spec)
-	fmt.Fprintln(stderr, "lock: acquired repo lock (held during clean/archive)")
+	_, _ = fmt.Fprintln(stderr, "lock: acquired repo lock (held during clean/archive)")
 
 	// Prompt for confirmation
-	fmt.Fprint(stderr, "confirm: type 'clean' to proceed: ")
+	_, _ = fmt.Fprint(stderr, "confirm: type 'clean' to proceed: ")
 	reader := bufio.NewReader(stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
@@ -212,8 +217,8 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 			m.Archive.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
 		})
 		if updateErr != nil {
-			// Non-fatal; log and continue
-			fmt.Fprintf(stderr, "warning: failed to update meta.json: %v\n", updateErr)
+			// Non-fatal; log and continue (diagnostic output)
+			_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json: %v\n", updateErr)
 		}
 	}
 
@@ -232,10 +237,10 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		return result.ToError()
 	}
 
-	// Print success message
-	fmt.Fprintf(stdout, "cleaned: %s\n", opts.RunID)
+	// Print success message (informational output to user)
+	_, _ = fmt.Fprintf(stdout, "cleaned: %s\n", opts.RunID)
 	if result.LogPath != "" {
-		fmt.Fprintf(stdout, "log: %s\n", result.LogPath)
+		_, _ = fmt.Fprintf(stdout, "log: %s\n", result.LogPath)
 	}
 
 	return nil

@@ -134,23 +134,23 @@ func WriteShowHuman(w io.Writer, data ShowHumanData) error {
 	statusDisplay := formatStatus(data.DerivedStatus, data.Archived)
 
 	// Output in spec-defined order with blank line between worktree and tmux
-	fmt.Fprintf(w, "run: %s\n", data.RunID)
-	fmt.Fprintf(w, "title: %s\n", displayTitle)
-	fmt.Fprintf(w, "repo: %s\n", data.RepoID)
-	fmt.Fprintf(w, "runner: %s\n", data.Runner)
-	fmt.Fprintf(w, "parent: %s\n", data.ParentBranch)
-	fmt.Fprintf(w, "branch: %s\n", data.Branch)
-	fmt.Fprintf(w, "worktree: %s\n", data.WorktreePath)
+	_, _ = fmt.Fprintf(w, "run: %s\n", data.RunID)
+	_, _ = fmt.Fprintf(w, "title: %s\n", displayTitle)
+	_, _ = fmt.Fprintf(w, "repo: %s\n", data.RepoID)
+	_, _ = fmt.Fprintf(w, "runner: %s\n", data.Runner)
+	_, _ = fmt.Fprintf(w, "parent: %s\n", data.ParentBranch)
+	_, _ = fmt.Fprintf(w, "branch: %s\n", data.Branch)
+	_, _ = fmt.Fprintf(w, "worktree: %s\n", data.WorktreePath)
 
 	// Blank line between worktree and tmux (per spec)
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 
-	fmt.Fprintf(w, "tmux: %s\n", tmuxDisplay)
-	fmt.Fprintf(w, "pr: %s (#%s)\n", prURLDisplay, prNumberDisplay)
-	fmt.Fprintf(w, "last_push_at: %s\n", lastPushDisplay)
-	fmt.Fprintf(w, "last_report_sync_at: %s\n", lastReportSyncDisplay)
-	fmt.Fprintf(w, "report_hash: %s\n", reportHashDisplay)
-	fmt.Fprintf(w, "status: %s\n", statusDisplay)
+	_, _ = fmt.Fprintf(w, "tmux: %s\n", tmuxDisplay)
+	_, _ = fmt.Fprintf(w, "pr: %s (#%s)\n", prURLDisplay, prNumberDisplay)
+	_, _ = fmt.Fprintf(w, "last_push_at: %s\n", lastPushDisplay)
+	_, _ = fmt.Fprintf(w, "last_report_sync_at: %s\n", lastReportSyncDisplay)
+	_, _ = fmt.Fprintf(w, "report_hash: %s\n", reportHashDisplay)
+	_, _ = fmt.Fprintf(w, "status: %s\n", statusDisplay)
 
 	return nil
 }

@@ -455,12 +455,12 @@ func executeSetupScript(ctx context.Context, script, workDir string, env map[str
 		return setupResult{ExitCode: -1, Failed: true}
 	}
 
-	// Write header to log
-	fmt.Fprintf(logFile, "# agency setup log\n")
-	fmt.Fprintf(logFile, "# timestamp: %s\n", start.UTC().Format(time.RFC3339))
-	fmt.Fprintf(logFile, "# command: sh -lc %s\n", script)
-	fmt.Fprintf(logFile, "# cwd: %s\n", workDir)
-	fmt.Fprintf(logFile, "# ---\n\n")
+	// Write header to log (best-effort diagnostic output)
+	_, _ = fmt.Fprintf(logFile, "# agency setup log\n")
+	_, _ = fmt.Fprintf(logFile, "# timestamp: %s\n", start.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(logFile, "# command: sh -lc %s\n", script)
+	_, _ = fmt.Fprintf(logFile, "# cwd: %s\n", workDir)
+	_, _ = fmt.Fprintf(logFile, "# ---\n\n")
 
 	// Apply timeout
 	if timeout > 0 {
@@ -480,11 +480,11 @@ func executeSetupScript(ctx context.Context, script, workDir string, env map[str
 	// Open /dev/null for stdin
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
-		logFile.Close()
+		_ = logFile.Close() // Best-effort cleanup; returning early
 		return setupResult{ExitCode: -1, Failed: true}
 	}
 	cmd.Stdin = devnull
-	defer devnull.Close()
+	defer func() { _ = devnull.Close() }()
 
 	// Build environment: inherit + overlay AGENCY_* vars
 	cmd.Env = os.Environ()
@@ -497,8 +497,8 @@ func executeSetupScript(ctx context.Context, script, workDir string, env map[str
 	duration := time.Since(start)
 	durationMs := duration.Milliseconds()
 
-	// Close log file
-	logFile.Close()
+	// Close log file (best-effort; command result takes priority)
+	_ = logFile.Close()
 
 	result := setupResult{
 		DurationMs: durationMs,
@@ -685,8 +685,8 @@ func (s *Service) StartTmux(ctx context.Context, st *pipeline.PipelineState) err
 	})
 	if err != nil {
 		// Meta write failed, but tmux session was created
-		// Best effort: try to kill the session
-		s.cr.Run(ctx, "tmux", []string{"kill-session", "-t", sessionName}, exec.RunOpts{})
+		// Best-effort: try to kill the session; returning meta write error
+		_, _ = s.cr.Run(ctx, "tmux", []string{"kill-session", "-t", sessionName}, exec.RunOpts{})
 		return err
 	}
 

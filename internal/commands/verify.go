@@ -75,7 +75,7 @@ func formatVerifyOutput(result *verifyservice.VerifyRunResult, err error, stdout
 
 	// Handle successful verification
 	if record.OK {
-		fmt.Fprintf(stdout, "ok verify %s record=%s log=%s\n", record.RunID, recordPath, logPath)
+		_, _ = fmt.Fprintf(stdout, "ok verify %s record=%s log=%s\n", record.RunID, recordPath, logPath)
 		return nil
 	}
 
@@ -84,11 +84,11 @@ func formatVerifyOutput(result *verifyservice.VerifyRunResult, err error, stdout
 
 	// Choose error code based on timed_out
 	if record.TimedOut {
-		fmt.Fprintf(stderr, "E_SCRIPT_TIMEOUT: verify timed out record=%s log=%s\n", recordPath, logPath)
+		_, _ = fmt.Fprintf(stderr, "E_SCRIPT_TIMEOUT: verify timed out record=%s log=%s\n", recordPath, logPath)
 		return errors.New(errors.EScriptTimeout, "verify timed out")
 	}
 
-	fmt.Fprintf(stderr, "E_SCRIPT_FAILED: verify failed (%s) record=%s log=%s\n", reason, recordPath, logPath)
+	_, _ = fmt.Fprintf(stderr, "E_SCRIPT_FAILED: verify failed (%s) record=%s log=%s\n", reason, recordPath, logPath)
 	return errors.New(errors.EScriptFailed, fmt.Sprintf("verify failed (%s)", reason))
 }
 
