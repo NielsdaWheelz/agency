@@ -116,7 +116,7 @@ func recordToSummary(rec store.RunRecord, tmuxSessions map[string]bool, fsys fs.
 
 	// Handle broken runs
 	if rec.Broken {
-		summary.Title = render.TitleBroken
+		summary.Name = render.NameBroken
 		summary.DerivedStatus = status.StatusBroken
 
 		// Check tmux even for broken runs
@@ -132,7 +132,7 @@ func recordToSummary(rec store.RunRecord, tmuxSessions map[string]bool, fsys fs.
 
 	// Non-broken run: extract from meta
 	meta := rec.Meta
-	summary.Title = meta.Title
+	summary.Name = meta.Name
 	summary.Runner = &meta.Runner
 
 	// Parse created_at

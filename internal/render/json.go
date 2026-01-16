@@ -24,8 +24,8 @@ type RunSummary struct {
 	// OriginURL is the origin URL from repo.json (nullable if missing/corrupt).
 	OriginURL *string `json:"origin_url"`
 
-	// Title is the run title ("<broken>" for broken runs).
-	Title string `json:"title"`
+	// Name is the run name ("<broken>" for broken runs).
+	Name string `json:"name"`
 
 	// Runner is the runner name (null for broken runs).
 	Runner *string `json:"runner"`

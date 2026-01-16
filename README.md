@@ -46,7 +46,7 @@ agency requires:
 cd myrepo
 agency init       # create agency.json + stub scripts
 agency doctor     # verify prerequisites
-agency run --title "implement feature X"
+agency run --name feature-x
 agency attach <id>
 agency push <id>
 agency merge <id>
@@ -254,19 +254,19 @@ if you see errors, fix them before continuing.
 ### step 5: start an ai coding session
 
 ```bash
-agency run --title "add user authentication"
+agency run --name add-user-auth
 ```
 
 output:
 ```
 run_id: 20260115143022-a3f2
-title: add user authentication
+name: add-user-auth
 runner: claude
 parent: main
-branch: agency/add-user-authentication-a3f2
+branch: agency/add-user-auth-a3f2
 worktree: ~/Library/Application Support/agency/repos/.../worktrees/20260115143022-a3f2
 tmux: agency_20260115143022-a3f2
-next: agency attach 20260115143022-a3f2
+next: agency attach add-user-auth
 ```
 
 **what just happened:**
@@ -387,7 +387,7 @@ agency init                        # initialize repo for agency
 agency doctor                      # check prerequisites
 
 # === LIFECYCLE ===
-agency run --title "do X"          # start new AI session
+agency run --name my-feature       # start new AI session
 agency attach <id>                 # enter tmux session
 # Ctrl+b, d                        # detach from tmux
 agency push <id>                   # push branch + create/update PR
@@ -417,7 +417,7 @@ these are automatically set when agency runs your scripts:
 | variable | description | example |
 |----------|-------------|---------|
 | `AGENCY_RUN_ID` | run identifier | `20260115143022-a3f2` |
-| `AGENCY_TITLE` | run title | `add user authentication` |
+| `AGENCY_NAME` | run name | `add-user-auth` |
 | `AGENCY_REPO_ROOT` | original repo path | `/Users/you/myapp` |
 | `AGENCY_WORKSPACE_ROOT` | worktree path | `/path/to/worktree` |
 | `AGENCY_BRANCH` | worktree branch | `agency/add-user-auth-a3f2` |
@@ -442,7 +442,7 @@ these are automatically set when agency runs your scripts:
 ```
 agency init [--no-gitignore] [--force]
                                   create agency.json template + stub scripts
-agency run [--title] [--runner] [--parent]
+agency run --name <name> [--runner] [--parent]
                                   create workspace, setup, start tmux
 agency ls                         list runs + statuses
 agency show <id> [--path]         show run details
@@ -542,11 +542,11 @@ creates an isolated workspace and launches the runner in a tmux session.
 
 **usage:**
 ```bash
-agency run [--title <string>] [--runner <name>] [--parent <branch>] [--attach]
+agency run --name <name> [--runner <name>] [--parent <branch>] [--attach]
 ```
 
 **flags:**
-- `--title`: run title (default: `untitled-<shortid>`)
+- `--name`: run name (required, 2-40 chars, lowercase alphanumeric with hyphens, must start with letter)
 - `--runner`: runner name: `claude` or `codex` (default: agency.json `defaults.runner`)
 - `--parent`: parent branch to branch from (default: agency.json `defaults.parent_branch`)
 - `--attach`: attach to tmux session immediately after creation
@@ -555,7 +555,7 @@ agency run [--title <string>] [--runner <name>] [--parent <branch>] [--attach]
 1. validates parent working tree is clean (`git status --porcelain`)
 2. creates git worktree + branch under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>/`
 3. creates `.agency/`, `.agency/out/`, `.agency/tmp/` directories
-4. creates `.agency/report.md` with template (title prefilled)
+4. creates `.agency/report.md` with template (name as heading)
 5. runs `scripts.setup` with injected environment variables (timeout: 10 minutes)
 6. creates tmux session `agency_<run_id>` running the runner command
 7. writes `meta.json` with run metadata
@@ -563,13 +563,13 @@ agency run [--title <string>] [--runner <name>] [--parent <branch>] [--attach]
 **success output:**
 ```
 run_id: 20260110120000-a3f2
-title: implement feature X
+name: feature-x
 runner: claude
 parent: main
-branch: agency/implement-feature-x-a3f2
+branch: agency/feature-x-a3f2
 worktree: ~/Library/Application Support/agency/repos/abc123/worktrees/20260110120000-a3f2
 tmux: agency_20260110120000-a3f2
-next: agency attach 20260110120000-a3f2
+next: agency attach feature-x
 ```
 
 **error codes:**
@@ -614,7 +614,7 @@ agency ls [--all] [--all-repos] [--json]
 
 **human output columns:**
 - `RUN_ID`: full run identifier
-- `TITLE`: run title (truncated to 50 chars; `<broken>` for corrupt meta; `<untitled>` for empty)
+- `NAME`: run name (truncated to 50 chars; `<broken>` for corrupt meta; `<untitled>` for empty)
 - `RUNNER`: runner name (empty for broken runs)
 - `CREATED`: relative timestamp (e.g., "2 hours ago")
 - `STATUS`: derived status (e.g., "active", "idle", "ready for review", "merged (archived)")
@@ -641,7 +641,7 @@ agency ls [--all] [--all-repos] [--json]
       "repo_id": "abc123",
       "repo_key": "github:owner/repo",
       "origin_url": "git@github.com:owner/repo.git",
-      "title": "implement feature X",
+      "name": "feature-x",
       "runner": "claude",
       "created_at": "2026-01-10T12:00:00Z",
       "last_push_at": "2026-01-10T14:00:00Z",
@@ -703,11 +703,11 @@ agency show <run_id> [--json] [--path] [--capture]
 **human output:**
 ```
 run: 20260110120000-a3f2
-title: implement feature X
+name: feature-x
 repo: abc123
 runner: claude
 parent: main
-branch: agency/implement-feature-x-a3f2
+branch: agency/feature-x-a3f2
 worktree: ~/Library/Application Support/agency/repos/abc123/worktrees/20260110120000-a3f2
 
 tmux: agency_20260110120000-a3f2
@@ -994,7 +994,7 @@ agency push <run_id> [--force]
    - fallback to `gh pr view --head <branch>`
 2. if PR exists but not OPEN (CLOSED or MERGED): fail with `E_PR_NOT_OPEN`
 3. if no PR exists: create via `gh pr create`
-   - title: `[agency] <run_title>` (or branch name if untitled)
+   - title: `[agency] <run_name>`
    - body: contents of `.agency/report.md` (or placeholder with `--force`)
 4. sync report to PR body:
    - compute sha256 hash of report

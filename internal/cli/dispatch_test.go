@@ -190,8 +190,8 @@ func TestRun_RunHelp(t *testing.T) {
 				t.Error("expected run usage in stdout")
 			}
 			// Verify flags are documented
-			if !strings.Contains(stdout.String(), "--title") {
-				t.Error("expected --title in run usage")
+			if !strings.Contains(stdout.String(), "--name") {
+				t.Error("expected --name in run usage")
 			}
 			if !strings.Contains(stdout.String(), "--runner") {
 				t.Error("expected --runner in run usage")
@@ -227,7 +227,7 @@ func TestRun_RunNotInRepo(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err = Run([]string{"run"}, &stdout, &stderr)
+	err = Run([]string{"run", "--name", "test-run"}, &stdout, &stderr)
 
 	if err == nil {
 		t.Fatal("expected error when not in git repo")

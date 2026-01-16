@@ -13,8 +13,8 @@ import (
 
 // RunPipelineOpts contains the inputs for running a pipeline.
 type RunPipelineOpts struct {
-	// Title is the run title (may be empty; defaults applied in later PRs).
-	Title string
+	// Name is the run name (required, validated by CLI).
+	Name string
 
 	// Runner is the runner name (may be empty; defaults applied in later PRs).
 	Runner string
@@ -39,7 +39,7 @@ type Warning struct {
 // Fields are populated by steps as they execute.
 type PipelineState struct {
 	// From opts (copied at start)
-	Title  string
+	Name   string
 	Runner string
 	Parent string
 	Attach bool
@@ -128,7 +128,7 @@ func (p *Pipeline) SetNowFunc(fn func() time.Time) {
 func (p *Pipeline) Run(ctx context.Context, opts RunPipelineOpts) (string, error) {
 	// Initialize state with opts
 	st := &PipelineState{
-		Title:  opts.Title,
+		Name:   opts.Name,
 		Runner: opts.Runner,
 		Parent: opts.Parent,
 		Attach: opts.Attach,
@@ -142,6 +142,11 @@ func (p *Pipeline) Run(ctx context.Context, opts RunPipelineOpts) (string, error
 		return "", errors.Wrap(errors.EInternal, "failed to generate run_id", err)
 	}
 	st.RunID = runID
+
+	// Validate name (required and must match pattern)
+	if err := core.ValidateName(st.Name); err != nil {
+		return st.RunID, err
+	}
 
 	// Execute steps in fixed order
 	if err := p.svc.CheckRepoSafe(ctx, st); err != nil {

@@ -720,9 +720,9 @@ func createPR(
 	sleeper Sleeper,
 	workDir string,
 ) (*ghPRView, error) {
-	// Build title
-	title := "[agency] " + meta.Title
-	if meta.Title == "" {
+	// Build PR title from run name
+	title := "[agency] " + meta.Name
+	if meta.Name == "" {
 		title = "[agency] " + meta.Branch
 	}
 

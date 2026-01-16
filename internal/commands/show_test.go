@@ -74,7 +74,7 @@ func TestWriteShowJSON_AllFields(t *testing.T) {
 		SchemaVersion: "1.0",
 		RunID:         "20260110-a3f2",
 		RepoID:        "abc123",
-		Title:         "test run",
+		Name:         "test run",
 		Runner:        "claude",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",
@@ -153,8 +153,8 @@ func TestWriteShowJSON_AllFields(t *testing.T) {
 	if d.Meta.RunID != "20260110-a3f2" {
 		t.Errorf("Meta.RunID = %q, want %q", d.Meta.RunID, "20260110-a3f2")
 	}
-	if d.Meta.Title != "test run" {
-		t.Errorf("Meta.Title = %q, want %q", d.Meta.Title, "test run")
+	if d.Meta.Name != "test run" {
+		t.Errorf("Meta.Name = %q, want %q", d.Meta.Name, "test run")
 	}
 
 	// Check derived fields
@@ -329,7 +329,7 @@ func TestWriteShowPaths_BrokenRun(t *testing.T) {
 func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
-		Title:            "test run",
+		Name:            "test run",
 		Runner:           "claude",
 		CreatedAt:        "2026-01-10T12:00:00Z",
 		RepoID:           "abc123",
@@ -367,8 +367,8 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	if !strings.Contains(output, "run: 20260110-a3f2") {
 		t.Error("missing run field")
 	}
-	if !strings.Contains(output, "title: test run") {
-		t.Error("missing title field")
+	if !strings.Contains(output, "name: test run") {
+		t.Error("missing name field")
 	}
 	if !strings.Contains(output, "repo: abc123") {
 		t.Error("missing repo field")
@@ -415,7 +415,7 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 func TestWriteShowHuman_UntitledRun(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
-		Title:           "", // empty title
+		Name:           "", // empty title
 		Runner:          "claude",
 		CreatedAt:       "2026-01-10T12:00:00Z",
 		RepoID:          "abc123",
@@ -434,7 +434,7 @@ func TestWriteShowHuman_UntitledRun(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "title: <untitled>") {
+	if !strings.Contains(output, "name: <untitled>") {
 		t.Errorf("expected untitled placeholder, got: %s", output)
 	}
 }
@@ -442,7 +442,7 @@ func TestWriteShowHuman_UntitledRun(t *testing.T) {
 func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
-		Title:           "test run",
+		Name:           "test run",
 		Runner:          "claude",
 		CreatedAt:       "2026-01-10T12:00:00Z",
 		RepoID:          "abc123",
@@ -470,7 +470,7 @@ func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 func TestWriteShowHuman_WithPR(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
-		Title:            "test run",
+		Name:            "test run",
 		Runner:           "claude",
 		CreatedAt:        "2026-01-10T12:00:00Z",
 		RepoID:           "abc123",
@@ -515,7 +515,7 @@ func TestWriteShowHuman_NoPR(t *testing.T) {
 	// Test that when PR fields are missing, the output shows "none" and "-"
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
-		Title:           "test run",
+		Name:           "test run",
 		Runner:          "claude",
 		CreatedAt:       "2026-01-10T12:00:00Z",
 		RepoID:          "abc123",
@@ -806,7 +806,7 @@ func createValidMetaForShow(t *testing.T, dataDir, repoID, runID, worktreePath s
 		SchemaVersion:   "1.0",
 		RunID:           runID,
 		RepoID:          repoID,
-		Title:           "Test Run " + runID,
+		Name:           "Test Run " + runID,
 		Runner:          "claude",
 		RunnerCmd:       "claude",
 		ParentBranch:    "main",

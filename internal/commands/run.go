@@ -21,8 +21,8 @@ import (
 
 // RunOpts holds options for the run command.
 type RunOpts struct {
-	// Title is the run title (empty = use default).
-	Title string
+	// Name is the run name (required, validated).
+	Name string
 
 	// Runner is the runner name (empty = use agency.json default).
 	Runner string
@@ -37,7 +37,7 @@ type RunOpts struct {
 // RunResult holds the result of a successful run for output formatting.
 type RunResult struct {
 	RunID           string
-	Title           string
+	Name            string
 	Runner          string
 	Parent          string
 	Branch          string
@@ -57,7 +57,7 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 
 	// Execute the pipeline
 	pipelineOpts := pipeline.RunPipelineOpts{
-		Title:  opts.Title,
+		Name:   opts.Name,
 		Runner: opts.Runner,
 		Parent: opts.Parent,
 		Attach: opts.Attach,
@@ -125,7 +125,7 @@ func getRunResult(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 
 	return &RunResult{
 		RunID:           meta.RunID,
-		Title:           meta.Title,
+		Name:            meta.Name,
 		Runner:          meta.Runner,
 		Parent:          meta.ParentBranch,
 		Branch:          meta.Branch,
@@ -139,13 +139,13 @@ func getRunResult(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 // where write failures cannot be meaningfully handled.
 func printRunSuccess(w io.Writer, result *RunResult) {
 	_, _ = fmt.Fprintf(w, "run_id: %s\n", result.RunID)
-	_, _ = fmt.Fprintf(w, "title: %s\n", result.Title)
+	_, _ = fmt.Fprintf(w, "name: %s\n", result.Name)
 	_, _ = fmt.Fprintf(w, "runner: %s\n", result.Runner)
 	_, _ = fmt.Fprintf(w, "parent: %s\n", result.Parent)
 	_, _ = fmt.Fprintf(w, "branch: %s\n", result.Branch)
 	_, _ = fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
 	_, _ = fmt.Fprintf(w, "tmux: %s\n", result.TmuxSessionName)
-	_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.RunID)
+	_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.Name)
 }
 
 // printRunError prints error details for run failures.

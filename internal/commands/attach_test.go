@@ -91,7 +91,7 @@ func setupAttachTestEnv(t *testing.T, runID string, setupMeta bool) (string, str
 			SchemaVersion:   "1.0",
 			RunID:           runID,
 			RepoID:          repoID,
-			Title:           "test run",
+			Name:           "test run",
 			Runner:          "claude",
 			RunnerCmd:       "claude",
 			ParentBranch:    "main",

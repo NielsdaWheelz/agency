@@ -62,46 +62,47 @@ options:
   -h, --help    show this help
 `
 
-const runUsageText = `usage: agency run [options]
+const runUsageText = `usage: agency run --name <name> [options]
 
 create workspace, run setup, and start tmux runner session.
 requires cwd to be inside a git repo with agency.json.
 
 options:
-  --title <string>    run title (default: untitled-<shortid>)
+  --name <string>     run name (required, 2-40 chars, lowercase alphanumeric with hyphens)
   --runner <name>     runner name: claude or codex (default: agency.json defaults.runner)
   --parent <branch>   parent branch (default: agency.json defaults.parent_branch)
   --attach            attach to tmux session immediately after creation
   -h, --help          show this help
 
 examples:
-  agency run --title "implement feature X" --runner claude
-  agency run --attach
-  agency run --parent develop
+  agency run --name my-feature
+  agency run --name fix-bug-123 --runner claude
+  agency run --name refactor-auth --attach
 `
 
-const attachUsageText = `usage: agency attach <run_id>
+const attachUsageText = `usage: agency attach <run>
 
 attach to the tmux session for an existing run.
 requires cwd to be inside the target repo.
 
 arguments:
-  run_id        the run identifier (e.g., 20260110120000-a3f2)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   -h, --help    show this help
 
 examples:
+  agency attach my-feature
   agency attach 20260110120000-a3f2
 `
 
-const stopUsageText = `usage: agency stop <run_id>
+const stopUsageText = `usage: agency stop <run>
 
 send C-c to the runner in the tmux session (best-effort interrupt).
 sets needs_attention flag on the run.
 
 arguments:
-  run_id        the run identifier (e.g., 20260110120000-a3f2)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   -h, --help    show this help
@@ -111,31 +112,33 @@ notes:
   - session remains alive; use 'agency resume --restart' to guarantee a fresh runner
 
 examples:
+  agency stop my-feature
   agency stop 20260110120000-a3f2
 `
 
-const killUsageText = `usage: agency kill <run_id>
+const killUsageText = `usage: agency kill <run>
 
 kill the tmux session for a run.
 workspace remains intact.
 
 arguments:
-  run_id        the run identifier (e.g., 20260110120000-a3f2)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   -h, --help    show this help
 
 examples:
+  agency kill my-feature
   agency kill 20260110120000-a3f2
 `
 
-const resumeUsageText = `usage: agency resume <run_id> [options]
+const resumeUsageText = `usage: agency resume <run> [options]
 
 attach to the tmux session for a run.
 if session is missing, creates one and starts the runner.
 
 arguments:
-  run_id        the run identifier (e.g., 20260110120000-a3f2)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   --detached    do not attach; return after ensuring session exists
@@ -149,19 +152,19 @@ notes:
   - --restart will lose in-tool history (chat context, etc.)
 
 examples:
-  agency resume 20260110120000-a3f2               # attach (create if needed)
-  agency resume 20260110120000-a3f2 --detached    # ensure session exists
-  agency resume 20260110120000-a3f2 --restart     # force fresh runner
-  agency resume 20260110120000-a3f2 --restart --yes  # non-interactive restart
+  agency resume my-feature                    # attach (create if needed)
+  agency resume my-feature --detached         # ensure session exists
+  agency resume my-feature --restart          # force fresh runner
+  agency resume my-feature --restart --yes    # non-interactive restart
 `
 
-const pushUsageText = `usage: agency push <run_id> [options]
+const pushUsageText = `usage: agency push <run> [options]
 
 push the run branch to origin.
 creates/updates GitHub PR in future PRs (slice 3 PR-03).
 
 arguments:
-  run_id        the run identifier (exact or unique prefix)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   --force       proceed even if .agency/report.md is missing/empty
@@ -174,17 +177,17 @@ notes:
   - warns if worktree has uncommitted changes
 
 examples:
-  agency push 20260110120000-a3f2           # push branch
-  agency push 20260110120000-a3f2 --force   # push with empty report
+  agency push my-feature               # push branch
+  agency push my-feature --force       # push with empty report
 `
 
-const verifyUsageText = `usage: agency verify <run_id> [options]
+const verifyUsageText = `usage: agency verify <run> [options]
 
 run the repo's scripts.verify for a run and record results.
 does not require being in the repo directory.
 
 arguments:
-  run_id        the run identifier (exact or unique prefix)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   --timeout <dur>   script timeout (default: 30m, Go duration format)
@@ -196,18 +199,18 @@ behavior:
   - does NOT affect push or merge behavior
 
 examples:
-  agency verify 20260110120000-a3f2             # run verify
-  agency verify 20260110120000-a3f2 --timeout 10m
+  agency verify my-feature                 # run verify
+  agency verify my-feature --timeout 10m
 `
 
-const mergeUsageText = `usage: agency merge <run_id> [options]
+const mergeUsageText = `usage: agency merge <run> [options]
 
 verify, confirm, merge PR, and archive workspace.
 requires cwd to be inside the target repo.
 requires an interactive terminal for confirmation.
 
 arguments:
-  run_id        the run identifier (e.g., 20260110120000-a3f2)
+  run           run name, run_id, or unique run_id prefix
 
 options:
   --squash      use squash merge strategy (default)
@@ -230,19 +233,19 @@ notes:
   - at most one of --squash/--merge/--rebase may be set
 
 examples:
-  agency merge 20260110120000-a3f2              # squash merge (default)
-  agency merge 20260110120000-a3f2 --merge      # regular merge
-  agency merge 20260110120000-a3f2 --force      # skip verify-fail prompt
+  agency merge my-feature                  # squash merge (default)
+  agency merge my-feature --merge          # regular merge
+  agency merge my-feature --force          # skip verify-fail prompt
 `
 
-const cleanUsageText = `usage: agency clean <run_id>
+const cleanUsageText = `usage: agency clean <run>
 
 archive a run without merging (abandon).
 requires cwd to be inside the target repo.
 requires an interactive terminal for confirmation.
 
 arguments:
-  run_id        the run identifier (e.g., 20260110120000-a3f2)
+  run           run name, run_id, or unique run_id prefix
 
 behavior:
   - runs scripts.archive (timeout: 5m)
@@ -258,7 +261,7 @@ options:
   -h, --help    show this help
 
 examples:
-  agency clean 20260110120000-a3f2
+  agency clean my-feature
 `
 
 const lsUsageText = `usage: agency ls [options]
@@ -280,14 +283,13 @@ examples:
   agency ls --json             # machine-readable output
 `
 
-const showUsageText = `usage: agency show <run_id> [options]
+const showUsageText = `usage: agency show <run> [options]
 
 show details for a single run.
-resolves run_id globally (works from anywhere, not just inside a repo).
-accepts exact run_id or unique prefix.
+resolves globally (works from anywhere, not just inside a repo).
 
 arguments:
-  run_id        the run identifier or unique prefix
+  run           run name, run_id, or unique run_id prefix
 
 options:
   --json          output as JSON (stable format)
@@ -296,11 +298,11 @@ options:
   -h, --help      show this help
 
 examples:
-  agency show 20260110120000-a3f2           # show run details
-  agency show 20260110                       # unique prefix resolution
-  agency show 20260110120000-a3f2 --json    # machine-readable output
-  agency show 20260110120000-a3f2 --path    # print paths only
-  agency show 20260110120000-a3f2 --capture # capture transcript + show details
+  agency show my-feature               # show run details by name
+  agency show 20260110120000-a3f2      # show by run_id
+  agency show my-feature --json        # machine-readable output
+  agency show my-feature --path        # print paths only
+  agency show my-feature --capture     # capture transcript + show details
 `
 
 // Run parses arguments and dispatches to the appropriate subcommand.
@@ -429,7 +431,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("run", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
-	title := flagSet.String("title", "", "run title")
+	name := flagSet.String("name", "", "run name (required)")
 	runner := flagSet.String("runner", "", "runner name (claude or codex)")
 	parent := flagSet.String("parent", "", "parent branch")
 	attach := flagSet.Bool("attach", false, "attach to tmux session immediately")
@@ -446,6 +448,12 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
 	}
 
+	// --name is required
+	if *name == "" {
+		_, _ = fmt.Fprint(stderr, runUsageText)
+		return errors.New(errors.EUsage, "--name is required")
+	}
+
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -458,7 +466,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.RunOpts{
-		Title:  *title,
+		Name:   *name,
 		Runner: *runner,
 		Parent: *parent,
 		Attach: *attach,

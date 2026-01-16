@@ -92,6 +92,10 @@ const (
 	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
 	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
 	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the run
+
+	// Name validation error codes
+	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run
+	EInvalidName Code = "E_INVALID_NAME" // name does not match validation rules
 )
 
 // AgencyError is the standard error type for agency errors.
