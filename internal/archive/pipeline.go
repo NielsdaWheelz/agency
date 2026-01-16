@@ -75,10 +75,10 @@ type Config struct {
 
 // Deps holds the dependencies for the archive pipeline.
 type Deps struct {
-	CR          agencyexec.CommandRunner
-	TmuxClient  tmux.Client
-	Stdout      io.Writer
-	Stderr      io.Writer
+	CR         agencyexec.CommandRunner
+	TmuxClient tmux.Client
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // Archive executes the archive pipeline:
@@ -179,23 +179,23 @@ func buildArchiveEnv(meta *store.RunMeta, repoRoot, dataDir string) []string {
 
 	// Add agency-specific variables per L0 contract
 	agencyEnv := map[string]string{
-		"AGENCY_RUN_ID":          meta.RunID,
-		"AGENCY_TITLE":           meta.Title,
-		"AGENCY_REPO_ROOT":       repoRoot, // best-effort; may be empty
-		"AGENCY_WORKSPACE_ROOT":  worktreePath,
-		"AGENCY_WORKTREE_ROOT":   worktreePath, // alias for clarity
-		"AGENCY_BRANCH":          meta.Branch,
-		"AGENCY_PARENT_BRANCH":   meta.ParentBranch,
-		"AGENCY_ORIGIN_NAME":     "origin",
-		"AGENCY_ORIGIN_URL":      "", // Could be populated if needed
-		"AGENCY_RUNNER":          meta.Runner,
-		"AGENCY_PR_URL":          meta.PRURL,
-		"AGENCY_PR_NUMBER":       "",
-		"AGENCY_DOTAGENCY_DIR":   filepath.Join(worktreePath, ".agency"),
-		"AGENCY_OUTPUT_DIR":      filepath.Join(worktreePath, ".agency", "out"),
-		"AGENCY_LOG_DIR":         filepath.Join(runDir, "logs"),
-		"AGENCY_NONINTERACTIVE":  "1",
-		"CI":                     "1",
+		"AGENCY_RUN_ID":         meta.RunID,
+		"AGENCY_TITLE":          meta.Title,
+		"AGENCY_REPO_ROOT":      repoRoot, // best-effort; may be empty
+		"AGENCY_WORKSPACE_ROOT": worktreePath,
+		"AGENCY_WORKTREE_ROOT":  worktreePath, // alias for clarity
+		"AGENCY_BRANCH":         meta.Branch,
+		"AGENCY_PARENT_BRANCH":  meta.ParentBranch,
+		"AGENCY_ORIGIN_NAME":    "origin",
+		"AGENCY_ORIGIN_URL":     "", // Could be populated if needed
+		"AGENCY_RUNNER":         meta.Runner,
+		"AGENCY_PR_URL":         meta.PRURL,
+		"AGENCY_PR_NUMBER":      "",
+		"AGENCY_DOTAGENCY_DIR":  filepath.Join(worktreePath, ".agency"),
+		"AGENCY_OUTPUT_DIR":     filepath.Join(worktreePath, ".agency", "out"),
+		"AGENCY_LOG_DIR":        filepath.Join(runDir, "logs"),
+		"AGENCY_NONINTERACTIVE": "1",
+		"CI":                    "1",
 	}
 
 	if meta.PRNumber != 0 {

@@ -73,25 +73,25 @@ const (
 	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
 
 	// Slice 4 lifecycle control error codes
-	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"      // attach when tmux session is missing; suggests resume
+	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"     // attach when tmux session is missing; suggests resume
 	EConfirmationRequired Code = "E_CONFIRMATION_REQUIRED" // restart attempted without confirmation in non-interactive mode
 
 	// Slice 5 verify error codes
 	EWorkspaceArchived Code = "E_WORKSPACE_ARCHIVED" // run exists but worktree missing or archived; cannot verify
 
 	// Slice 6 merge + archive error codes
-	EArchiveFailed    Code = "E_ARCHIVE_FAILED"    // archive step failed (script failure and/or deletion failure)
-	EAborted          Code = "E_ABORTED"           // user declined confirmation / wrong confirmation token
-	ENotInteractive   Code = "E_NOT_INTERACTIVE"   // command requires an interactive TTY
-	EGitFetchFailed   Code = "E_GIT_FETCH_FAILED"  // git fetch failed
-	ERemoteOutOfDate  Code = "E_REMOTE_OUT_OF_DATE" // local head sha != origin/<branch> sha
-	EPRDraft          Code = "E_PR_DRAFT"          // PR is a draft
-	EPRMismatch       Code = "E_PR_MISMATCH"       // resolved PR does not match expected branch
-	EGHRepoParseFailed Code = "E_GH_REPO_PARSE_FAILED" // failed to parse owner/repo from origin
+	EArchiveFailed         Code = "E_ARCHIVE_FAILED"          // archive step failed (script failure and/or deletion failure)
+	EAborted               Code = "E_ABORTED"                 // user declined confirmation / wrong confirmation token
+	ENotInteractive        Code = "E_NOT_INTERACTIVE"         // command requires an interactive TTY
+	EGitFetchFailed        Code = "E_GIT_FETCH_FAILED"        // git fetch failed
+	ERemoteOutOfDate       Code = "E_REMOTE_OUT_OF_DATE"      // local head sha != origin/<branch> sha
+	EPRDraft               Code = "E_PR_DRAFT"                // PR is a draft
+	EPRMismatch            Code = "E_PR_MISMATCH"             // resolved PR does not match expected branch
+	EGHRepoParseFailed     Code = "E_GH_REPO_PARSE_FAILED"    // failed to parse owner/repo from origin
 	EPRMergeabilityUnknown Code = "E_PR_MERGEABILITY_UNKNOWN" // gh reports mergeable as UNKNOWN after retries
-	EGHPRMergeFailed  Code = "E_GH_PR_MERGE_FAILED" // gh merge failed or merge state could not be confirmed
-	EPRNotMergeable   Code = "E_PR_NOT_MERGEABLE"  // PR cannot be merged (conflicts or checks failing)
-	ENoPR             Code = "E_NO_PR"             // no PR exists for the run
+	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
+	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
+	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the run
 )
 
 // AgencyError is the standard error type for agency errors.

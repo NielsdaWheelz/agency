@@ -318,9 +318,9 @@ func TestArchive_DeleteOutsidePrefix(t *testing.T) {
 
 func TestResult_Success(t *testing.T) {
 	tests := []struct {
-		name     string
-		result   Result
-		wantOK   bool
+		name   string
+		result Result
+		wantOK bool
 	}{
 		{
 			name:   "all ok",

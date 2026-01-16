@@ -348,10 +348,10 @@ func (m *optCapturingMock) CheckRepoSafe(_ context.Context, st *PipelineState) e
 	return nil
 }
 func (m *optCapturingMock) LoadAgencyConfig(_ context.Context, _ *PipelineState) error { return nil }
-func (m *optCapturingMock) CreateWorktree(_ context.Context, _ *PipelineState) error  { return nil }
-func (m *optCapturingMock) WriteMeta(_ context.Context, _ *PipelineState) error       { return nil }
-func (m *optCapturingMock) RunSetup(_ context.Context, _ *PipelineState) error        { return nil }
-func (m *optCapturingMock) StartTmux(_ context.Context, _ *PipelineState) error       { return nil }
+func (m *optCapturingMock) CreateWorktree(_ context.Context, _ *PipelineState) error   { return nil }
+func (m *optCapturingMock) WriteMeta(_ context.Context, _ *PipelineState) error        { return nil }
+func (m *optCapturingMock) RunSetup(_ context.Context, _ *PipelineState) error         { return nil }
+func (m *optCapturingMock) StartTmux(_ context.Context, _ *PipelineState) error        { return nil }
 
 // TestStepsExecuteInOrder tests that steps execute in the expected fixed order.
 func TestStepsExecuteInOrder(t *testing.T) {

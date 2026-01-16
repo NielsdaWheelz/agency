@@ -6,7 +6,7 @@ import "strings"
 // including surrounding single quotes.
 // example: abc -> 'abc'
 // example: a'b -> 'a'"'"'b'
-// example: "" -> ''
+// example: "" -> ”
 func ShellEscapePosix(s string) string {
 	if s == "" {
 		return "''"

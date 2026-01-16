@@ -236,12 +236,12 @@ func TestValidatePRState(t *testing.T) {
 	eventsPath := filepath.Join(tmpDir, "events.jsonl")
 
 	tests := []struct {
-		name            string
-		pr              *ghPRViewFull
-		expectedBranch  string
-		wantErr         bool
-		errCode         string
-		wantMerged      bool // for idempotent already-merged path
+		name           string
+		pr             *ghPRViewFull
+		expectedBranch string
+		wantErr        bool
+		errCode        string
+		wantMerged     bool // for idempotent already-merged path
 	}{
 		{
 			name: "open PR, matching branch",
