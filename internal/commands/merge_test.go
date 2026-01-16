@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -734,6 +735,54 @@ func TestConfirmPRMerged(t *testing.T) {
 				t.Errorf("confirmPRMerged() sleeps = %d, want %d", len(sleeper.sleeps), tt.wantSleeps)
 			}
 		})
+	}
+}
+
+func TestViewPRByHeadFullWithRetry_Backoff(t *testing.T) {
+	tmpDir := t.TempDir()
+	eventsPath := filepath.Join(tmpDir, "events.jsonl")
+	sleeper := &fakeMergeSleeper{}
+
+	origJitter := jitterDelay
+	jitterDelay = func(d time.Duration) time.Duration { return d }
+	t.Cleanup(func() { jitterDelay = origJitter })
+
+	call := 0
+	fakeCR := &mergeTestCommandRunner{
+		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+			call++
+			if call < 3 {
+				return exec.CmdResult{ExitCode: 1, Stderr: "no pull requests found"}, nil
+			}
+			return exec.CmdResult{
+				ExitCode: 0,
+				Stdout:   `{"number":3,"url":"https://github.com/owner/repo/pull/3","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","headRefName":"agency/test"}`,
+			}, nil
+		},
+	}
+
+	pr, err := viewPRByHeadFullWithRetry(context.Background(), fakeCR, "/tmp", "owner/repo", "owner:branch", "branch", sleeper, eventsPath, "repo123", "run123")
+	if err != nil {
+		t.Fatalf("viewPRByHeadFullWithRetry() error = %v", err)
+	}
+	if pr.Number != 3 {
+		t.Errorf("pr.Number = %d, want 3", pr.Number)
+	}
+
+	if len(sleeper.sleeps) != 2 {
+		t.Fatalf("sleeps = %d, want 2", len(sleeper.sleeps))
+	}
+	if sleeper.sleeps[0] != time.Second || sleeper.sleeps[1] != 2*time.Second {
+		t.Errorf("sleeps = %v, want [1s 2s]", sleeper.sleeps)
+	}
+
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("event lines = %d, want 3", len(lines))
 	}
 }
 

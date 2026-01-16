@@ -1,4 +1,4 @@
-.PHONY: build test clean install help
+.PHONY: build test test-v lint fmt fmt-check e2e clean install run help
 
 # Default target
 all: build
@@ -14,6 +14,23 @@ test:
 # Run tests with verbose output
 test-v:
 	go test -v ./...
+
+# Run golangci-lint (requires golangci-lint on PATH)
+lint:
+	golangci-lint run
+
+# Format all Go files
+fmt:
+	gofmt -w $$(gofmt -l .)
+
+# Check formatting without modifying files
+fmt-check:
+	@[ -z "$$(gofmt -l .)" ] || (echo "gofmt needed:" && gofmt -l . && exit 1)
+
+# Run GH e2e test (requires env vars)
+e2e:
+	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN=$${GH_TOKEN:?} \
+		go test ./... -run TestGHE2EPushMerge -count=1
 
 # Clean build artifacts
 clean:
@@ -32,8 +49,12 @@ run:
 help:
 	@echo "available targets:"
 	@echo "  build    - build the agency binary"
+	@echo "  fmt      - gofmt all Go files"
+	@echo "  fmt-check- check formatting without modifying files"
+	@echo "  lint     - run golangci-lint"
 	@echo "  test     - run tests"
 	@echo "  test-v   - run tests with verbose output"
+	@echo "  e2e      - run GH e2e test (requires GH_TOKEN)"
 	@echo "  clean    - clean build artifacts"
 	@echo "  install  - install to GOBIN"
 	@echo "  run      - run from source"

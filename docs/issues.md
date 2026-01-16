@@ -81,11 +81,32 @@ agency push <run_id>    # creates PR
                                                                                     
 Agency doesn't have a built-in agency code <run_id> command
 
-11) simple, clear run names (easier to type, tab-able)
+11) customize script timeouts
 
-12) customize script timeouts
+12) agency attach when runner is dead. error should be clearer, and/or we should be able to attach anyway.
 
+13) ```
+❯ agency push 20260116164805-b987
+warning: worktree has uncommitted changes; pushing commits anyway
+```
+probably shouldn't push anyway
 
+14) i don't think the tmux should exit if the runner closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again?
+
+15) this is terrible:
+# open in your IDE (VS Code)
+code "$(agency show 2026 --path | grep worktree_root | cut -d' ' -f2)"
+
+# or cd into the worktree
+cd "$(agency show 2026 --path | grep worktree_root | cut -d' ' -f2)"
+git log --oneline main..HEAD
+git diff main
+```
+16) i don't think it should be limited to working in repo. should work anywhere
+
+17) agency push is too fast, github doesnt create it in time to get the url back. can we wait? detect when it's ready somehow?
+
+18) the report.md still looks like the template, it was never filled out. i guess that's something i have to tell the runner to do in the prompt. could we instead create a default agency prompt file (like AGENT or CLAUDE instructions), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)?
 
 what i need from your codebase
 	•	current file layout and whether you already have a “run directory” abstraction
