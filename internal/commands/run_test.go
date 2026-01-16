@@ -17,7 +17,7 @@ func TestPrintRunSuccess(t *testing.T) {
 			name: "full result",
 			result: &RunResult{
 				RunID:           "20260110120000-a3f2",
-				Name:           "test-run",
+				Name:            "test-run",
 				Runner:          "claude",
 				Parent:          "main",
 				Branch:          "agency/test-run-a3f2",
@@ -38,7 +38,7 @@ next: agency attach test-run
 			name: "another run",
 			result: &RunResult{
 				RunID:           "20260110130000-b4c5",
-				Name:           "fix-bug",
+				Name:            "fix-bug",
 				Runner:          "codex",
 				Parent:          "develop",
 				Branch:          "agency/fix-bug-b4c5",
@@ -81,7 +81,7 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 
 	result := &RunResult{
 		RunID:           "id",
-		Name:           "my-name",
+		Name:            "my-name",
 		Runner:          "runner",
 		Parent:          "parent",
 		Branch:          "branch",
@@ -119,7 +119,7 @@ func TestRunResultWarnings(t *testing.T) {
 	// Test that warnings are stored correctly in result
 	result := &RunResult{
 		RunID:           "id",
-		Name:           "title",
+		Name:            "title",
 		Runner:          "runner",
 		Parent:          "parent",
 		Branch:          "branch",
@@ -158,7 +158,7 @@ func TestRunOptsDefaults(t *testing.T) {
 
 func TestRunOptsWithValues(t *testing.T) {
 	opts := RunOpts{
-		Name:  "my title",
+		Name:   "my title",
 		Runner: "claude",
 		Parent: "main",
 		Attach: true,

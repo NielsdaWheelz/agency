@@ -2,7 +2,9 @@
 package commands
 
 import (
+	"errors"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 )
@@ -58,4 +60,19 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+var errPRNotFound = errors.New("pr_not_found")
+
+func isPRNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errPRNotFound) {
+		return true
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "no pull requests found") ||
+		strings.Contains(errStr, "no pull request found") ||
+		strings.Contains(errStr, "could not find pull request")
 }

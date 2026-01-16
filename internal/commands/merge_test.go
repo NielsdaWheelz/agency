@@ -197,6 +197,11 @@ func TestIsGHPRNotFound(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "sentinel not found",
+			err:  errPRNotFound,
+			want: true,
+		},
+		{
 			name: "no pull requests found",
 			err:  &testError{msg: "no pull requests found for branch"},
 			want: true,
@@ -603,7 +608,7 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 		SchemaVersion:   "1.0",
 		RunID:           runID,
 		RepoID:          repoID,
-		Name:           "test run",
+		Name:            "test run",
 		Runner:          "claude",
 		ParentBranch:    "main",
 		Branch:          "agency/test-abcd",
@@ -751,13 +756,22 @@ func TestViewPRByHeadFullWithRetry_Backoff(t *testing.T) {
 	fakeCR := &mergeTestCommandRunner{
 		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
 			call++
-			if call < 3 {
-				return exec.CmdResult{ExitCode: 1, Stderr: "no pull requests found"}, nil
+			if args[1] == "list" {
+				if call < 3 {
+					return exec.CmdResult{ExitCode: 0, Stdout: `[]`}, nil
+				}
+				return exec.CmdResult{
+					ExitCode: 0,
+					Stdout:   `[{"number":3,"url":"https://github.com/owner/repo/pull/3","state":"OPEN"}]`,
+				}, nil
 			}
-			return exec.CmdResult{
-				ExitCode: 0,
-				Stdout:   `{"number":3,"url":"https://github.com/owner/repo/pull/3","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","headRefName":"agency/test"}`,
-			}, nil
+			if args[1] == "view" {
+				return exec.CmdResult{
+					ExitCode: 0,
+					Stdout:   `{"number":3,"url":"https://github.com/owner/repo/pull/3","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","headRefName":"agency/test"}`,
+				}, nil
+			}
+			return exec.CmdResult{ExitCode: 1, Stderr: "unexpected call"}, nil
 		},
 	}
 

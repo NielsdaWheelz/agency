@@ -74,7 +74,7 @@ func TestWriteShowJSON_AllFields(t *testing.T) {
 		SchemaVersion: "1.0",
 		RunID:         "20260110-a3f2",
 		RepoID:        "abc123",
-		Name:         "test run",
+		Name:          "test run",
 		Runner:        "claude",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",
@@ -329,7 +329,7 @@ func TestWriteShowPaths_BrokenRun(t *testing.T) {
 func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
-		Name:            "test run",
+		Name:             "test run",
 		Runner:           "claude",
 		CreatedAt:        "2026-01-10T12:00:00Z",
 		RepoID:           "abc123",
@@ -415,7 +415,7 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 func TestWriteShowHuman_UntitledRun(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
-		Name:           "", // empty title
+		Name:            "", // empty title
 		Runner:          "claude",
 		CreatedAt:       "2026-01-10T12:00:00Z",
 		RepoID:          "abc123",
@@ -442,7 +442,7 @@ func TestWriteShowHuman_UntitledRun(t *testing.T) {
 func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
-		Name:           "test run",
+		Name:            "test run",
 		Runner:          "claude",
 		CreatedAt:       "2026-01-10T12:00:00Z",
 		RepoID:          "abc123",
@@ -470,7 +470,7 @@ func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 func TestWriteShowHuman_WithPR(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
-		Name:            "test run",
+		Name:             "test run",
 		Runner:           "claude",
 		CreatedAt:        "2026-01-10T12:00:00Z",
 		RepoID:           "abc123",
@@ -515,7 +515,7 @@ func TestWriteShowHuman_NoPR(t *testing.T) {
 	// Test that when PR fields are missing, the output shows "none" and "-"
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
-		Name:           "test run",
+		Name:            "test run",
 		Runner:          "claude",
 		CreatedAt:       "2026-01-10T12:00:00Z",
 		RepoID:          "abc123",
@@ -806,7 +806,7 @@ func createValidMetaForShow(t *testing.T, dataDir, repoID, runID, worktreePath s
 		SchemaVersion:   "1.0",
 		RunID:           runID,
 		RepoID:          repoID,
-		Name:           "Test Run " + runID,
+		Name:            "Test Run " + runID,
 		Runner:          "claude",
 		RunnerCmd:       "claude",
 		ParentBranch:    "main",

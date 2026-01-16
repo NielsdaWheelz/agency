@@ -141,7 +141,7 @@ func TestService_CreateWorktree(t *testing.T) {
 	// Setup pipeline state
 	st := &pipeline.PipelineState{
 		RunID:    "20260110120000-test",
-		Name:    "service-test",
+		Name:     "service-test",
 		RepoRoot: resolvedRepoRoot,
 		RepoID:   "abcd1234ef567890",
 		DataDir:  dataDir,
@@ -300,7 +300,7 @@ func TestService_WriteMeta_Success(t *testing.T) {
 	// First create the worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "test-run",
+		Name:         "test-run",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -438,7 +438,7 @@ func TestService_WriteMeta_RunDirCollision(t *testing.T) {
 	// Create worktree first
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "collision-test",
+		Name:         "collision-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -505,7 +505,7 @@ func TestService_RunSetup_Success(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "setup-test",
+		Name:         "setup-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -618,7 +618,7 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "setup-fail-test",
+		Name:         "setup-fail-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -713,7 +713,7 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "setup-json-test",
+		Name:         "setup-json-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -811,7 +811,7 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "setup-malformed-test",
+		Name:         "setup-malformed-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -899,7 +899,7 @@ func TestService_StartTmux_Success(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "tmux-test",
+		Name:         "tmux-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -994,7 +994,7 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "tmux-fail-test",
+		Name:         "tmux-fail-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,
@@ -1089,7 +1089,7 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 	// Create worktree
 	st := &pipeline.PipelineState{
 		RunID:        runID,
-		Name:        "collision-test",
+		Name:         "collision-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		DataDir:      dataDir,

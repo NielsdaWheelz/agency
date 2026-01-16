@@ -98,7 +98,7 @@ func TestCreate_Success(t *testing.T) {
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Name:        "test-run",
+		Name:         "test-run",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
@@ -187,7 +187,7 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 
 	opts := CreateOpts{
 		RunID:        runID,
-		Name:        "collision-test",
+		Name:         "collision-test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
@@ -243,7 +243,7 @@ func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
 
 	_, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Name:        "Test",
+		Name:         "Test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: "nonexistent-branch",
@@ -382,7 +382,7 @@ func TestCreate_IgnoreWarning(t *testing.T) {
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Name:        "Test",
+		Name:         "Test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
@@ -436,7 +436,7 @@ func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
-		Name:        "Test",
+		Name:         "Test",
 		RepoRoot:     resolvedRepoRoot,
 		RepoID:       repoID,
 		ParentBranch: parentBranch,
