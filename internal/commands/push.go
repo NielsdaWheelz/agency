@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -149,6 +151,8 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return errors.New(errors.EUnsupportedOriginHost, "origin host must be github.com")
 	}
 
+	repoRef := resolveGHRepoRef(originURL)
+
 	// Step 6: Report gating
 	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
 	reportEmpty, err := isReportEffectivelyEmpty(fsys, reportPath)
@@ -262,12 +266,19 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		sleeper = realSleeper{}
 	}
 
-	prResult, err := handlePR(ctx, cr, fsys, st, meta, repoID, reportPath, reportEmpty, opts.Force, sleeper, eventsPath, stderr)
+	prResult, err := handlePR(ctx, cr, fsys, st, meta, repoID, reportPath, reportEmpty, repoRef, opts.Force, sleeper, eventsPath, stderr)
 	if err != nil {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
 			"error_code": string(errors.GetCode(err)),
 			"step":       "pr",
+			"error":      err.Error(),
 		})
+		if hint := hintFromError(err); hint != "" {
+			printHint(stderr, hint)
+		}
+		if shouldPrintPRViewHint(errors.GetCode(err)) {
+			printHint(stderr, prViewHint(repoRef, meta.Branch, meta.PRNumber))
+		}
 		return err
 	}
 
@@ -546,6 +557,7 @@ func handlePR(
 	repoID string,
 	reportPath string,
 	reportEmpty bool,
+	repoRef ghRepoRef,
 	force bool,
 	sleeper Sleeper,
 	eventsPath string,
@@ -554,7 +566,7 @@ func handlePR(
 	workDir := meta.WorktreePath
 
 	// Step 1: Look up existing PR
-	pr, prState, err := lookupPR(ctx, cr, workDir, meta)
+	pr, prState, err := lookupPR(ctx, cr, workDir, meta, repoRef)
 	if err != nil {
 		return nil, err
 	}
@@ -575,18 +587,20 @@ func handlePR(
 	// Step 2: Create PR if not found
 	prCreated := false
 	if pr == nil {
-		createdPR, err := createPR(ctx, cr, fsys, meta, reportPath, reportEmpty, force, sleeper, workDir)
+		createdPR, created, err := createPR(ctx, cr, fsys, meta, reportPath, reportEmpty, repoRef, repoID, eventsPath, force, sleeper, workDir)
 		if err != nil {
 			return nil, err
 		}
 		pr = createdPR
-		prCreated = true
+		prCreated = created
 
-		// Append pr_created event
-		appendPushEvent(eventsPath, repoID, meta.RunID, "pr_created", map[string]any{
-			"pr_number": pr.Number,
-			"pr_url":    pr.URL,
-		})
+		if prCreated {
+			// Append pr_created event
+			appendPushEvent(eventsPath, repoID, meta.RunID, "pr_created", map[string]any{
+				"pr_number": pr.Number,
+				"pr_url":    pr.URL,
+			})
+		}
 	}
 
 	// Step 3: Persist PR metadata to meta.json
@@ -638,10 +652,10 @@ func handlePR(
 // Returns (nil, "", nil) if no PR found.
 // Returns (pr, state, nil) if PR found.
 // Returns (nil, "", error) on lookup failure.
-func lookupPR(ctx context.Context, cr exec.CommandRunner, workDir string, meta *store.RunMeta) (*ghPRView, string, error) {
+func lookupPR(ctx context.Context, cr exec.CommandRunner, workDir string, meta *store.RunMeta, repoRef ghRepoRef) (*ghPRView, string, error) {
 	// Step 1: If meta has pr_number, try that first
 	if meta.PRNumber != 0 {
-		pr, err := viewPRByNumber(ctx, cr, workDir, meta.PRNumber)
+		pr, err := viewPRByNumber(ctx, cr, workDir, meta.PRNumber, repoRef)
 		if err == nil {
 			return pr, pr.State, nil
 		}
@@ -649,21 +663,26 @@ func lookupPR(ctx context.Context, cr exec.CommandRunner, workDir string, meta *
 	}
 
 	// Step 2: Try branch lookup
-	pr, err := viewPRByBranch(ctx, cr, workDir, meta.Branch)
+	pr, err := viewPRByBranch(ctx, cr, workDir, meta.Branch, repoRef)
 	if err != nil {
-		// No PR found
-		return nil, "", nil
+		if isGHPRNotFound(err) {
+			return nil, "", nil
+		}
+		return nil, "", err
 	}
 
 	return pr, pr.State, nil
 }
 
 // viewPRByNumber runs: gh pr view <number> --json number,url,state
-func viewPRByNumber(ctx context.Context, cr exec.CommandRunner, workDir string, prNumber int) (*ghPRView, error) {
-	result, err := cr.Run(ctx, "gh", []string{
-		"pr", "view", fmt.Sprintf("%d", prNumber),
-		"--json", "number,url,state",
-	}, exec.RunOpts{
+func viewPRByNumber(ctx context.Context, cr exec.CommandRunner, workDir string, prNumber int, repoRef ghRepoRef) (*ghPRView, error) {
+	args := []string{"pr", "view", fmt.Sprintf("%d", prNumber)}
+	if repoRef.NameWithOwner != "" {
+		args = append(args, "-R", repoRef.NameWithOwner)
+	}
+	args = append(args, "--json", "number,url,state")
+
+	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
@@ -683,12 +702,62 @@ func viewPRByNumber(ctx context.Context, cr exec.CommandRunner, workDir string, 
 }
 
 // viewPRByBranch runs: gh pr view --head <branch> --json number,url,state
-func viewPRByBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch string) (*ghPRView, error) {
-	result, err := cr.Run(ctx, "gh", []string{
-		"pr", "view",
-		"--head", branch,
-		"--json", "number,url,state",
-	}, exec.RunOpts{
+func viewPRByBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch string, repoRef ghRepoRef) (*ghPRView, error) {
+	pr, attempt := viewPRByBranchAttempt(ctx, cr, workDir, branch, repoRef)
+	if attempt.Err != nil {
+		return nil, attempt.Err
+	}
+	return pr, nil
+}
+
+func viewPRByBranchAttempt(ctx context.Context, cr exec.CommandRunner, workDir, branch string, repoRef ghRepoRef) (*ghPRView, prViewAttempt) {
+	head := headRef(repoRef, branch)
+
+	args := []string{"pr", "view", "--head", head}
+	if repoRef.NameWithOwner != "" {
+		args = append(args, "-R", repoRef.NameWithOwner)
+	}
+	args = append(args, "--json", "number,url,state")
+
+	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		return nil, prViewAttempt{
+			ExitCode: exec.ExitStartFail,
+			Err:      err,
+		}
+	}
+	if result.ExitCode != 0 {
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Stderr:   result.Stderr,
+			Err:      fmt.Errorf("gh pr view exited with code %d: %s", result.ExitCode, result.Stderr),
+		}
+	}
+
+	var pr ghPRView
+	if err := json.Unmarshal([]byte(result.Stdout), &pr); err != nil {
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Stderr:   result.Stderr,
+			Err:      fmt.Errorf("failed to parse gh pr view output: %w", err),
+		}
+	}
+
+	return &pr, prViewAttempt{}
+}
+
+// viewPRByURL runs: gh pr view <url> --json number,url,state
+func viewPRByURL(ctx context.Context, cr exec.CommandRunner, workDir, url string, repoRef ghRepoRef) (*ghPRView, error) {
+	args := []string{"pr", "view", url}
+	if repoRef.NameWithOwner != "" {
+		args = append(args, "-R", repoRef.NameWithOwner)
+	}
+	args = append(args, "--json", "number,url,state")
+
+	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
@@ -716,10 +785,13 @@ func createPR(
 	meta *store.RunMeta,
 	reportPath string,
 	reportEmpty bool,
+	repoRef ghRepoRef,
+	repoID string,
+	eventsPath string,
 	force bool,
 	sleeper Sleeper,
 	workDir string,
-) (*ghPRView, error) {
+) (*ghPRView, bool, error) {
 	// Build title
 	title := "[agency] " + meta.Title
 	if meta.Title == "" {
@@ -752,31 +824,51 @@ func createPR(
 		Env: nonInteractiveEnv(),
 	})
 	if err != nil {
-		return nil, errors.Wrap(errors.EGHPRCreateFailed, "gh pr create failed to start", err)
+		return nil, false, errors.Wrap(errors.EGHPRCreateFailed, "gh pr create failed to start", err)
 	}
-	if result.ExitCode != 0 {
-		return nil, errors.NewWithDetails(
-			errors.EGHPRCreateFailed,
-			fmt.Sprintf("gh pr create failed: %s", strings.TrimSpace(result.Stderr)),
-			map[string]string{
-				"exit_code": fmt.Sprintf("%d", result.ExitCode),
-				"stderr":    result.Stderr,
-			},
-		)
-	}
+	created := true
+	var pr *ghPRView
 
-	// Do NOT parse stdout from gh pr create. Instead, look up the PR by branch.
-	// Retry with backoff per spec.
-	pr, err := viewPRWithRetry(ctx, cr, workDir, meta.Branch, sleeper)
-	if err != nil {
-		return nil, err
+	if result.ExitCode != 0 {
+		if !isPRAlreadyExistsError(result.Stderr) {
+			return nil, false, errors.NewWithDetails(
+				errors.EGHPRCreateFailed,
+				fmt.Sprintf("gh pr create failed: %s", strings.TrimSpace(result.Stderr)),
+				map[string]string{
+					"exit_code": fmt.Sprintf("%d", result.ExitCode),
+					"stderr":    result.Stderr,
+				},
+			)
+		}
+
+		created = false
+		pr, err = viewPRWithRetry(ctx, cr, workDir, meta.Branch, repoRef, repoID, meta.RunID, eventsPath, sleeper)
+		if err != nil {
+			if prURL, _, ok := parsePRURL(result.Stderr); ok {
+				pr, err = viewPRByURL(ctx, cr, workDir, prURL, repoRef)
+			}
+		}
+		if err != nil {
+			return nil, false, err
+		}
+	} else {
+		// Do NOT parse stdout from gh pr create. Instead, look up the PR by branch.
+		// Retry with backoff per spec.
+		pr, err = viewPRWithRetry(ctx, cr, workDir, meta.Branch, repoRef, repoID, meta.RunID, eventsPath, sleeper)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 
 	// Verify state is OPEN
 	if pr.State != "OPEN" {
-		return nil, errors.NewWithDetails(
+		msg := fmt.Sprintf("PR #%d was created but state is %s (expected OPEN)", pr.Number, pr.State)
+		if !created {
+			msg = fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, pr.State)
+		}
+		return nil, false, errors.NewWithDetails(
 			errors.EPRNotOpen,
-			fmt.Sprintf("PR #%d was created but state is %s (expected OPEN)", pr.Number, pr.State),
+			msg,
 			map[string]string{
 				"pr_number": fmt.Sprintf("%d", pr.Number),
 				"state":     pr.State,
@@ -784,26 +876,45 @@ func createPR(
 		)
 	}
 
-	return pr, nil
+	return pr, created, nil
 }
 
 // viewPRWithRetry attempts to view a PR by branch with retries.
-// Per spec: try 3 times with delays of 0, 500ms, 1500ms.
-func viewPRWithRetry(ctx context.Context, cr exec.CommandRunner, workDir, branch string, sleeper Sleeper) (*ghPRView, error) {
-	delays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
+// Retries: 0s, 1s, 2s, 4s, 8s, 16s (with jitter).
+func viewPRWithRetry(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	workDir, branch string,
+	repoRef ghRepoRef,
+	repoID, runID, eventsPath string,
+	sleeper Sleeper,
+) (*ghPRView, error) {
 	var lastErr error
+	head := headRef(repoRef, branch)
 
-	for _, delay := range delays {
-		if delay > 0 {
+	for i, baseDelay := range prViewRetryDelays {
+		delay := jitterDelay(baseDelay)
+		if i > 0 && delay > 0 {
 			sleeper.Sleep(delay)
 		}
 
-		pr, err := viewPRByBranch(ctx, cr, workDir, branch)
-		if err == nil {
+		pr, attempt := viewPRByBranchAttempt(ctx, cr, workDir, branch, repoRef)
+		if eventsPath != "" {
+			appendPushEvent(eventsPath, repoID, runID, "pr_resolution_attempt", map[string]any{
+				"owner_repo":  repoRef.NameWithOwner,
+				"head":        head,
+				"attempt":     i + 1,
+				"sleep_ms":    delay.Milliseconds(),
+				"exit_code":   attempt.ExitCode,
+				"stderr_tail": truncateString(attempt.Stderr, 256),
+				"error":       errString(attempt.Err),
+			})
+		}
+		if attempt.Err == nil {
 			return pr, nil
 		}
-		lastErr = err
-		// Continue to next retry if any remain
+
+		lastErr = attempt.Err
 	}
 
 	return nil, errors.NewWithDetails(
@@ -814,6 +925,27 @@ func viewPRWithRetry(ctx context.Context, cr exec.CommandRunner, workDir, branch
 			"last_error": lastErr.Error(),
 		},
 	)
+}
+
+var prURLPattern = regexp.MustCompile(`https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/([0-9]+)`)
+
+func parsePRURL(text string) (string, int, bool) {
+	matches := prURLPattern.FindStringSubmatch(text)
+	if len(matches) != 2 {
+		return "", 0, false
+	}
+
+	number, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return "", 0, false
+	}
+
+	return matches[0], number, true
+}
+
+func isPRAlreadyExistsError(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "pull request") && strings.Contains(lower, "already exists")
 }
 
 // syncPRBody syncs the report to the PR body if the hash has changed.

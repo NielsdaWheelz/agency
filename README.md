@@ -1307,11 +1307,32 @@ agency clean 20260110120000-a3f2    # archive without merging
 go build -o agency ./cmd/agency
 ```
 
+### format
+
+```bash
+make fmt
+make fmt-check
+```
+
+### lint
+
+```bash
+make lint
+```
+
 ### test
 
 ```bash
 go test ./...
 ```
+
+### gh e2e (optional)
+
+```bash
+make e2e
+```
+
+this creates, pushes, merges, and deletes a PR branch in the target repo.
 
 ### run from source
 

@@ -24,7 +24,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/tty"
 	"github.com/NielsdaWheelz/agency/internal/verify"
 )
 
@@ -80,7 +79,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	// Check for interactive TTY (stdin and stderr must be TTYs)
-	if !tty.IsInteractive() {
+	if !isInteractive() {
 		return errors.New(errors.ENotInteractive, "merge requires an interactive terminal; stdin and stderr must be TTYs")
 	}
 
@@ -106,6 +105,11 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 
 	// Get events path
 	eventsPath := st.EventsPath(repoID, meta.RunID)
+
+	sleeper := opts.Sleeper
+	if sleeper == nil {
+		sleeper = realSleeper{}
+	}
 
 	// Append merge_started event
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_started", map[string]any{
@@ -200,10 +204,17 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 			map[string]string{"origin_url": originURL})
 	}
 	ghRepo := fmt.Sprintf("%s/%s", owner, repo)
+	repoRef := newGHRepoRef(owner, repo)
 
 	// === Precheck 6: PR resolution ===
-	pr, err := resolvePRForMerge(ctx, cr, meta, ghRepo, eventsPath, repoID)
+	pr, err := resolvePRForMerge(ctx, cr, meta, ghRepo, repoRef, eventsPath, repoID, sleeper)
 	if err != nil {
+		if hint := hintFromError(err); hint != "" {
+			printHint(stderr, hint)
+		}
+		if shouldPrintPRViewHint(errors.GetCode(err)) {
+			printHint(stderr, prViewHint(repoRef, meta.Branch, meta.PRNumber))
+		}
 		return err
 	}
 
@@ -227,10 +238,6 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	// === Precheck 8: mergeability ===
-	sleeper := opts.Sleeper
-	if sleeper == nil {
-		sleeper = realSleeper{}
-	}
 	if err := checkMergeability(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, sleeper, eventsPath, repoID, meta.RunID); err != nil {
 		return err
 	}
@@ -674,12 +681,13 @@ func checkGhAuthForMerge(ctx context.Context, cr exec.CommandRunner, workDir str
 
 // resolvePRForMerge resolves the PR for a run.
 // Returns the PR info or an error.
-func resolvePRForMerge(ctx context.Context, cr exec.CommandRunner, meta *store.RunMeta, ghRepo, eventsPath, repoID string) (*ghPRViewFull, error) {
+func resolvePRForMerge(ctx context.Context, cr exec.CommandRunner, meta *store.RunMeta, ghRepo string, repoRef ghRepoRef, eventsPath, repoID string, sleeper Sleeper) (*ghPRViewFull, error) {
 	workDir := meta.WorktreePath
+	head := headRef(repoRef, meta.Branch)
 
 	// Try by stored PR number first
 	if meta.PRNumber != 0 {
-		pr, err := viewPRByNumberFull(ctx, cr, workDir, ghRepo, meta.PRNumber)
+		pr, err := viewPRByNumberFullWithRetry(ctx, cr, workDir, ghRepo, head, meta.PRNumber, sleeper, eventsPath, repoID, meta.RunID)
 		if err == nil {
 			return pr, nil
 		}
@@ -696,7 +704,7 @@ func resolvePRForMerge(ctx context.Context, cr exec.CommandRunner, meta *store.R
 	}
 
 	// Try by head branch
-	pr, err := viewPRByHeadFull(ctx, cr, workDir, ghRepo, meta.Branch)
+	pr, err := viewPRByHeadFullWithRetry(ctx, cr, workDir, ghRepo, head, meta.Branch, sleeper, eventsPath, repoID, meta.RunID)
 	if err != nil {
 		// Check if it's a "not found" error
 		if isGHPRNotFound(err) {
@@ -721,22 +729,11 @@ func resolvePRForMerge(ctx context.Context, cr exec.CommandRunner, meta *store.R
 
 // viewPRByNumberFull runs: gh pr view <number> -R <repo> --json number,url,state,isDraft,mergeable,headRefName
 func viewPRByNumberFull(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int) (*ghPRViewFull, error) {
-	result, err := cr.Run(ctx, "gh", []string{
-		"pr", "view", fmt.Sprintf("%d", prNumber),
-		"-R", ghRepo,
-		"--json", "number,url,state,isDraft,mergeable,headRefName",
-	}, exec.RunOpts{
-		Dir: workDir,
-		Env: nonInteractiveEnv(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("gh pr view exec error: %w", err)
+	pr, attempt := viewPRByNumberFullAttempt(ctx, cr, workDir, ghRepo, prNumber)
+	if attempt.Err != nil {
+		return nil, attempt.Err
 	}
-	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("gh pr view exited %d: %s", result.ExitCode, result.Stderr)
-	}
-
-	return parseGHPRViewFull(result.Stdout)
+	return pr, nil
 }
 
 // viewPRByHeadFull runs: gh pr view --head <owner>:<branch> -R <repo> --json ...
@@ -749,6 +746,46 @@ func viewPRByHeadFull(ctx context.Context, cr exec.CommandRunner, workDir, ghRep
 	owner := parts[0]
 	headArg := fmt.Sprintf("%s:%s", owner, branch)
 
+	pr, attempt := viewPRByHeadFullAttempt(ctx, cr, workDir, ghRepo, headArg)
+	if attempt.Err != nil {
+		return nil, attempt.Err
+	}
+	return pr, nil
+}
+
+func viewPRByNumberFullAttempt(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int) (*ghPRViewFull, prViewAttempt) {
+	result, err := cr.Run(ctx, "gh", []string{
+		"pr", "view", fmt.Sprintf("%d", prNumber),
+		"-R", ghRepo,
+		"--json", "number,url,state,isDraft,mergeable,headRefName",
+	}, exec.RunOpts{
+		Dir: workDir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		return nil, prViewAttempt{ExitCode: exec.ExitStartFail, Err: fmt.Errorf("gh pr view exec error: %w", err)}
+	}
+	if result.ExitCode != 0 {
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Stderr:   result.Stderr,
+			Err:      fmt.Errorf("gh pr view exited %d: %s", result.ExitCode, result.Stderr),
+		}
+	}
+
+	pr, parseErr := parseGHPRViewFull(result.Stdout)
+	if parseErr != nil {
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Stderr:   result.Stderr,
+			Err:      parseErr,
+		}
+	}
+
+	return pr, prViewAttempt{}
+}
+
+func viewPRByHeadFullAttempt(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo, headArg string) (*ghPRViewFull, prViewAttempt) {
 	result, err := cr.Run(ctx, "gh", []string{
 		"pr", "view",
 		"--head", headArg,
@@ -759,13 +796,95 @@ func viewPRByHeadFull(ctx context.Context, cr exec.CommandRunner, workDir, ghRep
 		Env: nonInteractiveEnv(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gh pr view exec error: %w", err)
+		return nil, prViewAttempt{ExitCode: exec.ExitStartFail, Err: fmt.Errorf("gh pr view exec error: %w", err)}
 	}
 	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("gh pr view exited %d: %s", result.ExitCode, result.Stderr)
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Stderr:   result.Stderr,
+			Err:      fmt.Errorf("gh pr view exited %d: %s", result.ExitCode, result.Stderr),
+		}
 	}
 
-	return parseGHPRViewFull(result.Stdout)
+	pr, parseErr := parseGHPRViewFull(result.Stdout)
+	if parseErr != nil {
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Stderr:   result.Stderr,
+			Err:      parseErr,
+		}
+	}
+
+	return pr, prViewAttempt{}
+}
+
+func viewPRByNumberFullWithRetry(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	workDir, ghRepo, head string,
+	prNumber int,
+	sleeper Sleeper,
+	eventsPath, repoID, runID string,
+) (*ghPRViewFull, error) {
+	return viewPRFullWithRetry(ctx, cr, workDir, ghRepo, head, sleeper, eventsPath, repoID, runID,
+		func() (*ghPRViewFull, prViewAttempt) {
+			return viewPRByNumberFullAttempt(ctx, cr, workDir, ghRepo, prNumber)
+		})
+}
+
+func viewPRByHeadFullWithRetry(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	workDir, ghRepo, head, branch string,
+	sleeper Sleeper,
+	eventsPath, repoID, runID string,
+) (*ghPRViewFull, error) {
+	return viewPRFullWithRetry(ctx, cr, workDir, ghRepo, head, sleeper, eventsPath, repoID, runID,
+		func() (*ghPRViewFull, prViewAttempt) {
+			headArg := head
+			if headArg == "" {
+				headArg = branch
+			}
+			return viewPRByHeadFullAttempt(ctx, cr, workDir, ghRepo, headArg)
+		})
+}
+
+func viewPRFullWithRetry(
+	ctx context.Context,
+	cr exec.CommandRunner,
+	workDir, ghRepo, head string,
+	sleeper Sleeper,
+	eventsPath, repoID, runID string,
+	view func() (*ghPRViewFull, prViewAttempt),
+) (*ghPRViewFull, error) {
+	var lastErr error
+
+	for i, baseDelay := range prViewRetryDelays {
+		delay := jitterDelay(baseDelay)
+		if i > 0 && delay > 0 {
+			sleeper.Sleep(delay)
+		}
+
+		pr, attempt := view()
+		if eventsPath != "" {
+			appendMergeEvent(eventsPath, repoID, runID, "pr_resolution_attempt", map[string]any{
+				"owner_repo":  ghRepo,
+				"head":        head,
+				"attempt":     i + 1,
+				"sleep_ms":    delay.Milliseconds(),
+				"exit_code":   attempt.ExitCode,
+				"stderr_tail": truncateString(attempt.Stderr, 256),
+				"error":       errString(attempt.Err),
+			})
+		}
+		if attempt.Err == nil {
+			return pr, nil
+		}
+
+		lastErr = attempt.Err
+	}
+
+	return nil, lastErr
 }
 
 // parseGHPRViewFull parses gh pr view JSON output.
