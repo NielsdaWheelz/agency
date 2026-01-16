@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -742,4 +744,132 @@ func TestPushOutputFormat_SuccessLine(t *testing.T) {
 	if strings.Contains(expected, "created") || strings.Contains(expected, "updated") {
 		t.Error("success output should NOT contain 'created' or 'updated'")
 	}
+}
+
+func TestParsePRURL(t *testing.T) {
+	stderr := `a pull request for branch "agency/test" into branch "main" already exists:
+https://github.com/owner/repo/pull/80`
+
+	url, number, ok := parsePRURL(stderr)
+	if !ok {
+		t.Fatal("expected URL to be parsed")
+	}
+	if url != "https://github.com/owner/repo/pull/80" {
+		t.Errorf("url = %q, want %q", url, "https://github.com/owner/repo/pull/80")
+	}
+	if number != 80 {
+		t.Errorf("number = %d, want 80", number)
+	}
+}
+
+func TestIsPRAlreadyExistsError(t *testing.T) {
+	if !isPRAlreadyExistsError("a pull request for branch already exists") {
+		t.Error("expected already exists error to match")
+	}
+	if isPRAlreadyExistsError("gh pr create failed: permission denied") {
+		t.Error("expected non-matching error to be false")
+	}
+}
+
+func TestViewPRByBranchUsesOwnerRepo(t *testing.T) {
+	cr := &pushTestCommandRunner{
+		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+			if name != "gh" {
+				return exec.CmdResult{ExitCode: 1, Stderr: "unexpected command"}, nil
+			}
+			got := strings.Join(args, " ")
+			if !strings.Contains(got, "--head owner:branch") {
+				return exec.CmdResult{ExitCode: 1, Stderr: "missing head"}, nil
+			}
+			if !strings.Contains(got, "-R owner/repo") {
+				return exec.CmdResult{ExitCode: 1, Stderr: "missing repo"}, nil
+			}
+			return exec.CmdResult{
+				ExitCode: 0,
+				Stdout:   `{"number":1,"url":"https://github.com/owner/repo/pull/1","state":"OPEN"}`,
+			}, nil
+		},
+	}
+
+	pr, err := viewPRByBranch(context.Background(), cr, "/tmp", "branch", ghRepoRef{
+		NameWithOwner: "owner/repo",
+		Owner:         "owner",
+	})
+	if err != nil {
+		t.Fatalf("viewPRByBranch() error = %v", err)
+	}
+	if pr.Number != 1 {
+		t.Errorf("pr.Number = %d, want 1", pr.Number)
+	}
+}
+
+func TestViewPRWithRetry_BackoffAndEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+	eventsPath := filepath.Join(tmpDir, "events.jsonl")
+	sleeper := &fakePushSleeper{}
+
+	origJitter := jitterDelay
+	jitterDelay = func(d time.Duration) time.Duration { return d }
+	t.Cleanup(func() { jitterDelay = origJitter })
+
+	call := 0
+	cr := &pushTestCommandRunner{
+		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+			call++
+			if call < 3 {
+				return exec.CmdResult{ExitCode: 1, Stderr: "no pull requests found"}, nil
+			}
+			return exec.CmdResult{
+				ExitCode: 0,
+				Stdout:   `{"number":2,"url":"https://github.com/owner/repo/pull/2","state":"OPEN"}`,
+			}, nil
+		},
+	}
+
+	pr, err := viewPRWithRetry(context.Background(), cr, "/tmp", "branch", ghRepoRef{
+		NameWithOwner: "owner/repo",
+		Owner:         "owner",
+	}, "repo123", "run123", eventsPath, sleeper)
+	if err != nil {
+		t.Fatalf("viewPRWithRetry() error = %v", err)
+	}
+	if pr.Number != 2 {
+		t.Errorf("pr.Number = %d, want 2", pr.Number)
+	}
+
+	if len(sleeper.sleeps) != 2 {
+		t.Fatalf("sleeps = %d, want 2", len(sleeper.sleeps))
+	}
+	if sleeper.sleeps[0] != time.Second || sleeper.sleeps[1] != 2*time.Second {
+		t.Errorf("sleeps = %v, want [1s 2s]", sleeper.sleeps)
+	}
+
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("event lines = %d, want 3", len(lines))
+	}
+}
+
+type pushTestCommandRunner struct {
+	runFunc func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error)
+}
+
+func (f *pushTestCommandRunner) Run(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+	return f.runFunc(ctx, name, args, opts)
+}
+
+func (f *pushTestCommandRunner) LookPath(file string) (string, error) {
+	return "", nil
+}
+
+type fakePushSleeper struct {
+	sleeps []time.Duration
+}
+
+func (f *fakePushSleeper) Sleep(d time.Duration) {
+	f.sleeps = append(f.sleeps, d)
 }
