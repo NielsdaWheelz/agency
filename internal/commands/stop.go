@@ -83,7 +83,7 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	}
 	if !exists {
 		// Session doesn't exist - no-op, exit 0
-		fmt.Fprintf(stderr, "no session for %s\n", opts.RunID)
+		_, _ = fmt.Fprintf(stderr, "no session for %s\n", opts.RunID)
 		return nil
 	}
 
@@ -95,16 +95,13 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	}
 
 	// Set needs_attention flag in meta.json
-	err = st.UpdateMeta(repoID, opts.RunID, func(m *store.RunMeta) {
+	// Note: if this fails, we continue to append the event and return the error afterward
+	metaErr := st.UpdateMeta(repoID, opts.RunID, func(m *store.RunMeta) {
 		if m.Flags == nil {
 			m.Flags = &store.RunMetaFlags{}
 		}
 		m.Flags.NeedsAttention = true
 	})
-	if err != nil {
-		// Meta mutation failed - continue to append event anyway
-		// but return the error at the end
-	}
 
 	// Append stop event
 	eventsPath := filepath.Join(st.RunDir(repoID, opts.RunID), "events.jsonl")
@@ -124,8 +121,8 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	}
 
 	// Return meta mutation error if it occurred
-	if err != nil {
-		return err
+	if metaErr != nil {
+		return metaErr
 	}
 
 	return nil

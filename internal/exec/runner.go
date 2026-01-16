@@ -30,6 +30,11 @@ type CommandRunner interface {
 	// Returns CmdResult with ExitCode set if the process exits (even non-zero).
 	// Returns error only for execution failures (binary not found, ctx canceled, io failure).
 	Run(ctx context.Context, name string, args []string, opts RunOpts) (CmdResult, error)
+
+	// LookPath searches for an executable named file in the directories
+	// named by the PATH environment variable.
+	// Returns the path to the executable, or an error if not found.
+	LookPath(file string) (string, error)
 }
 
 // RealRunner is the production implementation of CommandRunner using os/exec.
@@ -38,6 +43,11 @@ type RealRunner struct{}
 // NewRealRunner creates a new RealRunner.
 func NewRealRunner() *RealRunner {
 	return &RealRunner{}
+}
+
+// LookPath searches for an executable using the system PATH.
+func (r *RealRunner) LookPath(file string) (string, error) {
+	return exec.LookPath(file)
 }
 
 // Run executes the command and captures stdout/stderr.

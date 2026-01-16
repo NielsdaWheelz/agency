@@ -186,10 +186,10 @@ func Print(w io.Writer, err error) {
 	}
 	var ae *AgencyError
 	if errors.As(err, &ae) {
-		fmt.Fprintf(w, "error_code: %s\n", ae.Code)
-		fmt.Fprintln(w, ae.Msg)
+		_, _ = fmt.Fprintf(w, "error_code: %s\n", ae.Code)
+		_, _ = fmt.Fprintln(w, ae.Msg)
 	} else {
 		// Fallback for non-AgencyError errors (should not happen in practice)
-		fmt.Fprintln(w, err.Error())
+		_, _ = fmt.Fprintln(w, err.Error())
 	}
 }

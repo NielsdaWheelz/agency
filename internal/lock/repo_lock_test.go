@@ -34,7 +34,11 @@ func TestRepoLock_WritesLockFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock() failed: %v", err)
 	}
-	defer unlock()
+	t.Cleanup(func() {
+		if err := unlock(); err != nil {
+			t.Errorf("unlock failed: %v", err)
+		}
+	})
 
 	// Verify lock file exists
 	lockPath := filepath.Join(dataDir, "repos", "test-repo-id", ".lock")
@@ -84,7 +88,11 @@ func TestRepoLock_ErrLockedOnContention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock A failed: %v", err)
 	}
-	defer unlockA()
+	t.Cleanup(func() {
+		if err := unlockA(); err != nil {
+			t.Errorf("unlockA failed: %v", err)
+		}
+	})
 
 	// Attempt lock with locker B (same repo)
 	_, err = l.Lock("test-repo", "cmd-b")
@@ -140,7 +148,11 @@ func TestRepoLock_StaleByDeadPIDSteals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock() failed (should steal stale lock): %v", err)
 	}
-	defer unlock()
+	t.Cleanup(func() {
+		if err := unlock(); err != nil {
+			t.Errorf("unlock failed: %v", err)
+		}
+	})
 
 	// Verify new lock was written
 	data, err = os.ReadFile(lockPath)
@@ -261,7 +273,11 @@ func TestRepoLock_UnreadableLockFile_MtimeFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Lock() failed (should steal stale garbage lock): %v", err)
 		}
-		defer unlock()
+		t.Cleanup(func() {
+			if err := unlock(); err != nil {
+				t.Errorf("unlock failed: %v", err)
+			}
+		})
 	})
 }
 
@@ -319,7 +335,11 @@ func TestRepoLock_ParentDirCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock() failed: %v", err)
 	}
-	defer unlock()
+	t.Cleanup(func() {
+		if err := unlock(); err != nil {
+			t.Errorf("unlock failed: %v", err)
+		}
+	})
 
 	// Verify directory was created
 	if _, err := os.Stat(repoDir); err != nil {
@@ -343,7 +363,11 @@ func TestRepoLock_ConcurrencySanity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock A failed: %v", err)
 	}
-	defer unlockA()
+	t.Cleanup(func() {
+		if err := unlockA(); err != nil {
+			t.Errorf("unlockA failed: %v", err)
+		}
+	})
 
 	// In goroutine, attempt lock B and expect ErrLocked quickly
 	var wg sync.WaitGroup
@@ -387,14 +411,22 @@ func TestRepoLock_DifferentReposIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock repo-a failed: %v", err)
 	}
-	defer unlockA()
+	t.Cleanup(func() {
+		if err := unlockA(); err != nil {
+			t.Errorf("unlockA failed: %v", err)
+		}
+	})
 
 	// Lock repo B should succeed (different repo)
 	unlockB, err := l.Lock("repo-b", "cmd")
 	if err != nil {
 		t.Fatalf("Lock repo-b failed: %v", err)
 	}
-	defer unlockB()
+	t.Cleanup(func() {
+		if err := unlockB(); err != nil {
+			t.Errorf("unlockB failed: %v", err)
+		}
+	})
 }
 
 func TestNewRepoLock_DefaultValues(t *testing.T) {

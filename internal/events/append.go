@@ -25,7 +25,7 @@ type Event struct {
 //
 // Best-effort: errors are returned but callers should typically ignore them
 // and continue with the main operation.
-func AppendEvent(path string, e Event) error {
+func AppendEvent(path string, e Event) (err error) {
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -37,7 +37,11 @@ func AppendEvent(path string, e Event) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	// Marshal event to compact JSON (no indentation)
 	data, err := json.Marshal(e)

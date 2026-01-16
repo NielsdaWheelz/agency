@@ -17,14 +17,18 @@ import (
 
 // mockRunner implements exec.CommandRunner for testing.
 type mockRunner struct {
-	responses map[string]agencyexec.CmdResult
-	errors    map[string]error
+	responses     map[string]agencyexec.CmdResult
+	errors        map[string]error
+	lookPathPaths map[string]string // file -> path (if found)
+	lookPathErrs  map[string]error  // file -> error (if not found)
 }
 
 func newMockRunner() *mockRunner {
 	return &mockRunner{
-		responses: make(map[string]agencyexec.CmdResult),
-		errors:    make(map[string]error),
+		responses:     make(map[string]agencyexec.CmdResult),
+		errors:        make(map[string]error),
+		lookPathPaths: make(map[string]string),
+		lookPathErrs:  make(map[string]error),
 	}
 }
 
@@ -34,6 +38,28 @@ func (m *mockRunner) SetResponse(name string, args []string, result agencyexec.C
 	if err != nil {
 		m.errors[key] = err
 	}
+}
+
+// SetLookPath configures the mock response for LookPath calls.
+// If err is nil, the path is returned; if err is non-nil, it's returned as the error.
+func (m *mockRunner) SetLookPath(file, path string, err error) {
+	if err != nil {
+		m.lookPathErrs[file] = err
+	} else {
+		m.lookPathPaths[file] = path
+	}
+}
+
+// LookPath implements CommandRunner.LookPath for testing.
+func (m *mockRunner) LookPath(file string) (string, error) {
+	if err, ok := m.lookPathErrs[file]; ok {
+		return "", err
+	}
+	if path, ok := m.lookPathPaths[file]; ok {
+		return path, nil
+	}
+	// Default: command found at /usr/bin/<file>
+	return "/usr/bin/" + file, nil
 }
 
 func (m *mockRunner) key(name string, args []string) string {
@@ -53,28 +79,20 @@ func (m *mockRunner) Run(_ context.Context, name string, args []string, _ agency
 }
 
 // setupTestRepo creates a temporary git repo with agency.json and executable scripts.
-func setupTestRepo(t *testing.T) (string, func()) {
+// Returns the repo root path. Cleanup is handled automatically by t.TempDir().
+func setupTestRepo(t *testing.T) string {
 	t.Helper()
 
-	// Create temp dir
-	tmpDir, err := os.MkdirTemp("", "agency-doctor-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	cleanup := func() {
-		os.RemoveAll(tmpDir)
-	}
+	// Create temp dir (t.TempDir handles cleanup automatically)
+	tmpDir := t.TempDir()
 
 	// Create minimal directory structure
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755); err != nil {
-		cleanup()
 		t.Fatalf("failed to create .git dir: %v", err)
 	}
 
 	scriptsDir := filepath.Join(tmpDir, "scripts")
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		cleanup()
 		t.Fatalf("failed to create scripts dir: %v", err)
 	}
 
@@ -96,7 +114,6 @@ func setupTestRepo(t *testing.T) (string, func()) {
   }
 }`
 	if err := os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644); err != nil {
-		cleanup()
 		t.Fatalf("failed to write agency.json: %v", err)
 	}
 
@@ -106,12 +123,11 @@ func setupTestRepo(t *testing.T) (string, func()) {
 	for _, script := range scripts {
 		path := filepath.Join(scriptsDir, script)
 		if err := os.WriteFile(path, []byte(stubScript), 0755); err != nil {
-			cleanup()
 			t.Fatalf("failed to write script %s: %v", script, err)
 		}
 	}
 
-	return tmpDir, cleanup
+	return tmpDir
 }
 
 // setupMockRunnerAllOK sets up mock runner to respond OK for all tool checks.
@@ -153,20 +169,13 @@ func setupMockRunnerAllOK(m *mockRunner, repoRoot string) {
 }
 
 func TestDoctor_Success(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
-	// Create temp data dir
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	// Create temp data dir (t.TempDir handles cleanup automatically)
+	dataDir := t.TempDir()
 
-	// Set env var for data dir
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set env var for data dir (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Setup mock
 	m := newMockRunner()
@@ -175,7 +184,7 @@ func TestDoctor_Success(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("doctor failed: %v", err)
 	}
@@ -215,19 +224,12 @@ func TestDoctor_Success(t *testing.T) {
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
-	// Create temp data dir
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	// Create temp data dir (t.TempDir handles cleanup automatically)
+	dataDir := t.TempDir()
 
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -240,7 +242,7 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error for unauthenticated gh")
 	}
@@ -262,8 +264,7 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 }
 
 func TestDoctor_ScriptNotExecutable(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
 	// Make setup script non-executable
 	setupScript := filepath.Join(repoRoot, "scripts", "agency_setup.sh")
@@ -271,15 +272,9 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 		t.Fatalf("failed to chmod script: %v", err)
 	}
 
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	dataDir := t.TempDir()
 
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -287,7 +282,7 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error for non-executable script")
 	}
@@ -303,8 +298,7 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 }
 
 func TestDoctor_ScriptMissing(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
 	// Remove setup script
 	setupScript := filepath.Join(repoRoot, "scripts", "agency_setup.sh")
@@ -312,15 +306,9 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 		t.Fatalf("failed to remove script: %v", err)
 	}
 
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	dataDir := t.TempDir()
 
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -328,7 +316,7 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error for missing script")
 	}
@@ -339,18 +327,11 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 }
 
 func TestDoctor_NoGitHubOrigin(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	dataDir := t.TempDir()
 
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -363,7 +344,7 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	// Doctor should still succeed with missing origin
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("doctor should succeed without GitHub origin: %v", err)
 	}
@@ -387,18 +368,11 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 }
 
 func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	dataDir := t.TempDir()
 
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -407,7 +381,7 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 
 	// Run doctor twice
 	var stdout1, stderr1 bytes.Buffer
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout1, &stderr1)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout1, &stderr1)
 	if err != nil {
 		t.Fatalf("first doctor run failed: %v", err)
 	}
@@ -459,18 +433,11 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 }
 
 func TestDoctor_OutputOrder(t *testing.T) {
-	repoRoot, cleanup := setupTestRepo(t)
-	defer cleanup()
+	repoRoot := setupTestRepo(t)
 
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	dataDir := t.TempDir()
 
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -478,7 +445,7 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("doctor failed: %v", err)
 	}

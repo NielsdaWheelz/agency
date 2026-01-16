@@ -122,10 +122,7 @@ func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Dur
 	}
 
 	// Check if archived (via archive field or worktree missing on disk)
-	archived := false
-	if meta.Archive != nil && meta.Archive.ArchivedAt != "" {
-		archived = true
-	}
+	archived := meta.Archive != nil && meta.Archive.ArchivedAt != ""
 	if !archived {
 		if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
 			archived = true
@@ -150,7 +147,13 @@ func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Dur
 		}
 		return nil, errors.Wrap(errors.EInternal, "failed to acquire repo lock", err)
 	}
-	defer unlock()
+	defer func() {
+		// Unlock error is logged but not returned; verify result takes priority
+		if uerr := unlock(); uerr != nil {
+			// Lock package handles logging internally
+			_ = uerr
+		}
+	}()
 
 	// Step 5: Load agency.json to get verify script path
 	agencyJSON, err := config.LoadAgencyConfig(s.FS, worktreePath)

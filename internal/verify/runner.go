@@ -99,12 +99,12 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	startTime := time.Now().UTC()
 	record.StartedAt = startTime.Format(time.RFC3339Nano)
 
-	// Write header to log file (matching setup.log style)
-	fmt.Fprintf(logFile, "# agency verify log\n")
-	fmt.Fprintf(logFile, "# timestamp: %s\n", startTime.Format(time.RFC3339))
-	fmt.Fprintf(logFile, "# command: sh -lc %s\n", cfg.Script)
-	fmt.Fprintf(logFile, "# cwd: %s\n", cfg.WorkDir)
-	fmt.Fprintf(logFile, "# ---\n\n")
+	// Write header to log file (matching setup.log style, best-effort diagnostic output)
+	_, _ = fmt.Fprintf(logFile, "# agency verify log\n")
+	_, _ = fmt.Fprintf(logFile, "# timestamp: %s\n", startTime.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(logFile, "# command: sh -lc %s\n", cfg.Script)
+	_, _ = fmt.Fprintf(logFile, "# cwd: %s\n", cfg.WorkDir)
+	_, _ = fmt.Fprintf(logFile, "# ---\n\n")
 
 	// Create context with timeout
 	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, timeout)
@@ -120,7 +120,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	// Open /dev/null for stdin
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
-		logFile.Close()
+		_ = logFile.Close() // Best-effort cleanup; returning open error
 		errStr := fmt.Sprintf("failed to open /dev/null: %v", err)
 		record.Error = &errStr
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -135,8 +135,8 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 
 	// Start the command
 	if err := cmd.Start(); err != nil {
-		devnull.Close()
-		logFile.Close()
+		_ = devnull.Close() // Best-effort cleanup; returning start error
+		_ = logFile.Close()
 		errStr := fmt.Sprintf("failed to start verify script: %v", err)
 		record.Error = &errStr
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -174,9 +174,9 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		runErr = <-waitDone
 	}
 
-	// Close resources
-	devnull.Close()
-	logFile.Close()
+	// Close resources (best-effort cleanup; process results take priority)
+	_ = devnull.Close()
+	_ = logFile.Close()
 
 	// Record finish time and duration
 	finishTime := time.Now().UTC()
@@ -194,7 +194,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		if stderrors.As(runErr, &exitErr) {
 			if exitErr.ProcessState != nil {
 				// Check if terminated by signal
-				if status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok {
+				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 					if status.Signaled() {
 						sig := status.Signal().String()
 						record.Signal = &sig

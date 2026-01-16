@@ -104,10 +104,8 @@ func Archive(ctx context.Context, cfg Config, deps Deps, st *store.Store) *Resul
 	logPath := filepath.Join(logsDir, "archive.log")
 	result.LogPath = logPath
 
-	// Ensure logs directory exists
-	if err := os.MkdirAll(logsDir, 0o700); err != nil {
-		// Non-fatal: we'll still try all steps
-	}
+	// Ensure logs directory exists (non-fatal: we'll still try all steps)
+	_ = os.MkdirAll(logsDir, 0o700)
 
 	// Step 1: Run archive script
 	result.ScriptOK, result.ScriptReason = runArchiveScript(ctx, cfg, deps, logPath)
@@ -134,7 +132,12 @@ func runArchiveScript(ctx context.Context, cfg Config, deps Deps, logPath string
 	if err != nil {
 		return false, fmt.Sprintf("failed to create log file: %v", err)
 	}
-	defer logFile.Close()
+	defer func() {
+		if cerr := logFile.Close(); cerr != nil && ok {
+			ok = false
+			reason = fmt.Sprintf("failed to close log file: %v", cerr)
+		}
+	}()
 
 	// Create context with timeout
 	scriptCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
@@ -152,8 +155,8 @@ func runArchiveScript(ctx context.Context, cfg Config, deps Deps, logPath string
 	runErr := cmd.Run()
 	duration := time.Since(startTime)
 
-	// Write duration to log
-	fmt.Fprintf(logFile, "\n--- archive script finished in %v ---\n", duration)
+	// Write duration to log (best-effort diagnostic output)
+	_, _ = fmt.Fprintf(logFile, "\n--- archive script finished in %v ---\n", duration)
 
 	if runErr != nil {
 		if scriptCtx.Err() == context.DeadlineExceeded {

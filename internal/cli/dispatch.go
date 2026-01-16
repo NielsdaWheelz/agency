@@ -307,7 +307,7 @@ examples:
 // Returns an error if the command fails; the caller should print the error and exit.
 func Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprint(stdout, usageText)
+		_, _ = fmt.Fprint(stderr, usageText)
 		return errors.New(errors.EUsage, "no command specified")
 	}
 
@@ -316,11 +316,11 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 	// Handle global flags
 	if cmd == "-h" || cmd == "--help" {
-		fmt.Fprint(stdout, usageText)
+		_, _ = fmt.Fprint(stdout, usageText)
 		return nil
 	}
 	if cmd == "-v" || cmd == "--version" {
-		fmt.Fprintf(stdout, "agency %s\n", version.Version)
+		_, _ = fmt.Fprintf(stdout, "agency %s\n", version.Version)
 		return nil
 	}
 
@@ -352,7 +352,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	case "clean":
 		return runClean(cmdArgs, stdout, stderr)
 	default:
-		fmt.Fprint(stdout, usageText)
+		_, _ = fmt.Fprint(stderr, usageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("unknown command: %s", cmd))
 	}
 }
@@ -367,7 +367,7 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, initUsageText)
+			_, _ = fmt.Fprint(stdout, initUsageText)
 			return nil
 		}
 	}
@@ -402,7 +402,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, doctorUsageText)
+			_, _ = fmt.Fprint(stdout, doctorUsageText)
 			return nil
 		}
 	}
@@ -437,7 +437,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, runUsageText)
+			_, _ = fmt.Fprint(stdout, runUsageText)
 			return nil
 		}
 	}
@@ -478,7 +478,7 @@ func runLS(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, lsUsageText)
+			_, _ = fmt.Fprint(stdout, lsUsageText)
 			return nil
 		}
 	}
@@ -518,7 +518,7 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, showUsageText)
+			_, _ = fmt.Fprint(stdout, showUsageText)
 			return nil
 		}
 	}
@@ -530,7 +530,7 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, showUsageText)
+		_, _ = fmt.Fprint(stderr, showUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -564,7 +564,7 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, attachUsageText)
+			_, _ = fmt.Fprint(stdout, attachUsageText)
 			return nil
 		}
 	}
@@ -576,7 +576,7 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, attachUsageText)
+		_, _ = fmt.Fprint(stderr, attachUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -602,7 +602,7 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 		if ae, ok := errors.AsAgencyError(err); ok && ae.Code == errors.ESessionNotFound {
 			if ae.Details != nil {
 				if suggestion := ae.Details["suggestion"]; suggestion != "" {
-					fmt.Fprintf(stderr, "\n%s\n", suggestion)
+					_, _ = fmt.Fprintf(stderr, "\n%s\n", suggestion)
 				}
 			}
 		}
@@ -617,7 +617,7 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, stopUsageText)
+			_, _ = fmt.Fprint(stdout, stopUsageText)
 			return nil
 		}
 	}
@@ -629,7 +629,7 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, stopUsageText)
+		_, _ = fmt.Fprint(stderr, stopUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -659,7 +659,7 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, killUsageText)
+			_, _ = fmt.Fprint(stdout, killUsageText)
 			return nil
 		}
 	}
@@ -671,7 +671,7 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, killUsageText)
+		_, _ = fmt.Fprint(stderr, killUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -705,7 +705,7 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, resumeUsageText)
+			_, _ = fmt.Fprint(stdout, resumeUsageText)
 			return nil
 		}
 	}
@@ -717,7 +717,7 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, resumeUsageText)
+		_, _ = fmt.Fprint(stderr, resumeUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -752,7 +752,7 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, pushUsageText)
+			_, _ = fmt.Fprint(stdout, pushUsageText)
 			return nil
 		}
 	}
@@ -764,7 +764,7 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, pushUsageText)
+		_, _ = fmt.Fprint(stderr, pushUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -797,7 +797,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, verifyUsageText)
+			_, _ = fmt.Fprint(stdout, verifyUsageText)
 			return nil
 		}
 	}
@@ -809,7 +809,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, verifyUsageText)
+		_, _ = fmt.Fprint(stderr, verifyUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -817,11 +817,11 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	// Parse timeout
 	timeout, err := time.ParseDuration(*timeoutStr)
 	if err != nil {
-		fmt.Fprint(stderr, verifyUsageText)
+		_, _ = fmt.Fprint(stderr, verifyUsageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("invalid timeout: %s", *timeoutStr))
 	}
 	if timeout <= 0 {
-		fmt.Fprint(stderr, verifyUsageText)
+		_, _ = fmt.Fprint(stderr, verifyUsageText)
 		return errors.New(errors.EUsage, "timeout must be positive")
 	}
 
@@ -860,7 +860,7 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, mergeUsageText)
+			_, _ = fmt.Fprint(stdout, mergeUsageText)
 			return nil
 		}
 	}
@@ -872,7 +872,7 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, mergeUsageText)
+		_, _ = fmt.Fprint(stderr, mergeUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]
@@ -927,7 +927,7 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			fmt.Fprint(stdout, cleanUsageText)
+			_, _ = fmt.Fprint(stdout, cleanUsageText)
 			return nil
 		}
 	}
@@ -939,7 +939,7 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	// run_id is a required positional argument
 	positionalArgs := flagSet.Args()
 	if len(positionalArgs) < 1 {
-		fmt.Fprint(stderr, cleanUsageText)
+		_, _ = fmt.Fprint(stderr, cleanUsageText)
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 	runID := positionalArgs[0]

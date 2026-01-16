@@ -14,60 +14,41 @@ import (
 )
 
 // setupTempRepo creates a temp repo with one commit on the default branch.
-// Returns the repo root path, data dir, and a cleanup function.
-func setupTempRepo(t *testing.T) (repoRoot, dataDir string, cleanup func()) {
+// Returns the repo root path and data dir. Cleanup is handled automatically by t.TempDir().
+func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	t.Helper()
 
-	// Create temp directories
-	repoRoot, err := os.MkdirTemp("", "agency-worktree-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp repo dir: %v", err)
-	}
-
-	dataDir, err = os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		os.RemoveAll(repoRoot)
-		t.Fatalf("failed to create temp data dir: %v", err)
-	}
-
-	cleanup = func() {
-		os.RemoveAll(repoRoot)
-		os.RemoveAll(dataDir)
-	}
+	// Create temp directories (t.TempDir handles cleanup automatically)
+	repoRoot = t.TempDir()
+	dataDir = t.TempDir()
 
 	// Initialize git repo
 	if err := runGit(repoRoot, "init"); err != nil {
-		cleanup()
 		t.Fatalf("git init failed: %v", err)
 	}
 
 	// Configure git user for commits
 	if err := runGit(repoRoot, "config", "user.email", "test@example.com"); err != nil {
-		cleanup()
 		t.Fatalf("git config user.email failed: %v", err)
 	}
 	if err := runGit(repoRoot, "config", "user.name", "Test User"); err != nil {
-		cleanup()
 		t.Fatalf("git config user.name failed: %v", err)
 	}
 
 	// Create and commit a file
 	readme := filepath.Join(repoRoot, "README.md")
 	if err := os.WriteFile(readme, []byte("# Test Repo\n"), 0644); err != nil {
-		cleanup()
 		t.Fatalf("failed to write README.md: %v", err)
 	}
 
 	if err := runGit(repoRoot, "add", "-A"); err != nil {
-		cleanup()
 		t.Fatalf("git add failed: %v", err)
 	}
 	if err := runGit(repoRoot, "commit", "-m", "initial commit"); err != nil {
-		cleanup()
 		t.Fatalf("git commit failed: %v", err)
 	}
 
-	return repoRoot, dataDir, cleanup
+	return repoRoot, dataDir
 }
 
 // runGit runs a git command in the given directory.
@@ -98,8 +79,7 @@ func getCurrentBranch(t *testing.T, dir string) string {
 }
 
 func TestCreate_Success(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
 	// Resolve symlinks for comparison (macOS /var -> /private/var)
 	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
@@ -190,8 +170,7 @@ func TestCreate_Success(t *testing.T) {
 }
 
 func TestCreate_EmptyTitle(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
 	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
 
@@ -245,8 +224,7 @@ func TestCreate_EmptyTitle(t *testing.T) {
 }
 
 func TestCreate_Collision_ReturnsError(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
 	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
 
@@ -307,8 +285,7 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 }
 
 func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
 	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
 
@@ -340,11 +317,8 @@ func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
 }
 
 func TestScaffoldWorkspaceOnly_ReportNotOverwritten(t *testing.T) {
-	dir, err := os.MkdirTemp("", "agency-scaffold-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
+	// Create temp directory (t.TempDir handles cleanup automatically)
+	dir := t.TempDir()
 
 	fsys := fs.NewRealFS()
 
@@ -443,8 +417,7 @@ func TestReportTemplate(t *testing.T) {
 }
 
 func TestCreate_IgnoreWarning(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
 	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
 
@@ -488,8 +461,7 @@ func TestCreate_IgnoreWarning(t *testing.T) {
 }
 
 func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
 	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
 

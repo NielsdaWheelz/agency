@@ -19,8 +19,9 @@ func TestRun_NoArgs(t *testing.T) {
 	if errors.GetCode(err) != errors.EUsage {
 		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.EUsage)
 	}
-	if !strings.Contains(stdout.String(), "usage:") {
-		t.Error("expected usage in stdout")
+	// Usage goes to stderr in error paths (Unix convention)
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Error("expected usage in stderr")
 	}
 }
 
@@ -71,8 +72,9 @@ func TestRun_UnknownCommand(t *testing.T) {
 	if !strings.Contains(err.Error(), "nope") {
 		t.Error("expected unknown command name in error")
 	}
-	if !strings.Contains(stdout.String(), "usage:") {
-		t.Error("expected usage in stdout")
+	// Usage goes to stderr in error paths (Unix convention)
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Error("expected usage in stderr")
 	}
 }
 
@@ -119,7 +121,11 @@ func TestRun_InitNotInRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get cwd: %v", err)
 	}
-	defer os.Chdir(originalWd)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Errorf("failed to restore cwd: %v", err)
+		}
+	})
 
 	// Change to temp dir that is NOT a git repo
 	tmpDir := t.TempDir()
@@ -147,7 +153,11 @@ func TestRun_DoctorNotInRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get cwd: %v", err)
 	}
-	defer os.Chdir(originalWd)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Errorf("failed to restore cwd: %v", err)
+		}
+	})
 
 	// Change to temp dir that is NOT a git repo
 	tmpDir := t.TempDir()
@@ -204,7 +214,11 @@ func TestRun_RunNotInRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get cwd: %v", err)
 	}
-	defer os.Chdir(originalWd)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Errorf("failed to restore cwd: %v", err)
+		}
+	})
 
 	// Change to temp dir that is NOT a git repo
 	tmpDir := t.TempDir()

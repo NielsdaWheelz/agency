@@ -93,24 +93,26 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	// Output result
 	writeInitOutput(stdout, result)
 
-	// Warning if gitignore skipped
+	// Warning if gitignore skipped (informational output to user)
 	if opts.NoGitignore {
-		fmt.Fprintln(stdout, "warning: gitignore_skipped")
+		_, _ = fmt.Fprintln(stdout, "warning: gitignore_skipped")
 	}
 
 	return nil
 }
 
 // writeInitOutput writes the stable key: value output for init.
+// All writes use explicit error ignoring since this is informational output
+// where write failures cannot be meaningfully handled.
 func writeInitOutput(w io.Writer, r InitResult) {
-	fmt.Fprintf(w, "repo_root: %s\n", r.RepoRoot)
-	fmt.Fprintf(w, "agency_json: %s\n", r.AgencyJSONState)
+	_, _ = fmt.Fprintf(w, "repo_root: %s\n", r.RepoRoot)
+	_, _ = fmt.Fprintf(w, "agency_json: %s\n", r.AgencyJSONState)
 
 	scriptsCreated := "none"
 	if len(r.ScriptsCreated) > 0 {
 		scriptsCreated = strings.Join(r.ScriptsCreated, ", ")
 	}
-	fmt.Fprintf(w, "scripts_created: %s\n", scriptsCreated)
+	_, _ = fmt.Fprintf(w, "scripts_created: %s\n", scriptsCreated)
 
-	fmt.Fprintf(w, "gitignore: %s\n", r.GitignoreState)
+	_, _ = fmt.Fprintf(w, "gitignore: %s\n", r.GitignoreState)
 }

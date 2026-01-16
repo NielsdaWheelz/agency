@@ -17,74 +17,56 @@ import (
 // These tests use real git operations in temp directories.
 
 // setupTempRepo creates a temp repo with one commit on the default branch.
-// Returns the repo root path and a cleanup function.
-func setupTempRepo(t *testing.T) (string, func()) {
+// Returns the repo root path. Cleanup is handled automatically by t.TempDir().
+func setupTempRepo(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "agency-gates-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	cleanup := func() {
-		os.RemoveAll(dir)
-	}
+	// Create temp directory (t.TempDir handles cleanup automatically)
+	dir := t.TempDir()
 
 	// Initialize git repo
 	if err := runGit(dir, "init"); err != nil {
-		cleanup()
 		t.Fatalf("git init failed: %v", err)
 	}
 
 	// Configure git user for commits
 	if err := runGit(dir, "config", "user.email", "test@example.com"); err != nil {
-		cleanup()
 		t.Fatalf("git config user.email failed: %v", err)
 	}
 	if err := runGit(dir, "config", "user.name", "Test User"); err != nil {
-		cleanup()
 		t.Fatalf("git config user.name failed: %v", err)
 	}
 
 	// Create and commit a file
 	readme := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(readme, []byte("# Test Repo\n"), 0644); err != nil {
-		cleanup()
 		t.Fatalf("failed to write README.md: %v", err)
 	}
 
 	if err := runGit(dir, "add", "-A"); err != nil {
-		cleanup()
 		t.Fatalf("git add failed: %v", err)
 	}
 	if err := runGit(dir, "commit", "-m", "initial commit"); err != nil {
-		cleanup()
 		t.Fatalf("git commit failed: %v", err)
 	}
 
-	return dir, cleanup
+	return dir
 }
 
 // setupEmptyRepo creates a temp repo with git init but no commits.
-func setupEmptyRepo(t *testing.T) (string, func()) {
+// Returns the repo root path. Cleanup is handled automatically by t.TempDir().
+func setupEmptyRepo(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "agency-gates-empty-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	cleanup := func() {
-		os.RemoveAll(dir)
-	}
+	// Create temp directory (t.TempDir handles cleanup automatically)
+	dir := t.TempDir()
 
 	// Initialize git repo only
 	if err := runGit(dir, "init"); err != nil {
-		cleanup()
 		t.Fatalf("git init failed: %v", err)
 	}
 
-	return dir, cleanup
+	return dir
 }
 
 // runGit runs a git command in the given directory.
@@ -116,19 +98,11 @@ func getCurrentBranch(t *testing.T, dir string) string {
 }
 
 func TestCheckRepoSafe_CleanRepoSuccess(t *testing.T) {
-	repoRoot, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR to a temp directory
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR to a temp directory (t.TempDir handles cleanup automatically)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Get current branch name
 	branch := getCurrentBranch(t, repoRoot)
@@ -210,19 +184,11 @@ func TestCheckRepoSafe_CleanRepoSuccess(t *testing.T) {
 }
 
 func TestCheckRepoSafe_DirtyRepoFails(t *testing.T) {
-	repoRoot, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot := setupTempRepo(t)
 
 	// Set AGENCY_DATA_DIR
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Make the repo dirty
 	dirty := filepath.Join(repoRoot, "dirty.txt")
@@ -239,7 +205,7 @@ func TestCheckRepoSafe_DirtyRepoFails(t *testing.T) {
 	cr := agencyexec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
-	_, err = CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
+	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
 		ParentBranch: branch,
 	})
 
@@ -254,25 +220,17 @@ func TestCheckRepoSafe_DirtyRepoFails(t *testing.T) {
 }
 
 func TestCheckRepoSafe_EmptyRepoFails(t *testing.T) {
-	repoRoot, cleanup := setupEmptyRepo(t)
-	defer cleanup()
+	repoRoot := setupEmptyRepo(t)
 
 	// Set AGENCY_DATA_DIR
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	ctx := context.Background()
 	cr := agencyexec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
-	_, err = CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
+	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
 		ParentBranch: "main",
 	})
 
@@ -287,25 +245,17 @@ func TestCheckRepoSafe_EmptyRepoFails(t *testing.T) {
 }
 
 func TestCheckRepoSafe_MissingParentBranchFails(t *testing.T) {
-	repoRoot, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot := setupTempRepo(t)
 
 	// Set AGENCY_DATA_DIR
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	ctx := context.Background()
 	cr := agencyexec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
-	_, err = CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
+	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
 		ParentBranch: "nonexistent-branch",
 	})
 
@@ -320,8 +270,7 @@ func TestCheckRepoSafe_MissingParentBranchFails(t *testing.T) {
 }
 
 func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
-	repoRoot, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot := setupTempRepo(t)
 
 	// Add a fake origin
 	if err := runGit(repoRoot, "remote", "add", "origin", "git@github.com:test/repo.git"); err != nil {
@@ -329,15 +278,8 @@ func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
 	}
 
 	// Set AGENCY_DATA_DIR
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {
@@ -383,21 +325,13 @@ func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
 }
 
 func TestCheckRepoSafe_NoOriginURL(t *testing.T) {
-	repoRoot, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot := setupTempRepo(t)
 
 	// No origin is set (default state after setupTempRepo)
 
 	// Set AGENCY_DATA_DIR
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {
@@ -442,18 +376,14 @@ func TestCheckRepoSafe_NoOriginURL(t *testing.T) {
 }
 
 func TestCheckRepoSafe_NotInsideRepo(t *testing.T) {
-	// Create a temp directory that is NOT a git repo
-	dir, err := os.MkdirTemp("", "agency-gates-norepo-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
+	// Create a temp directory that is NOT a git repo (t.TempDir handles cleanup)
+	dir := t.TempDir()
 
 	ctx := context.Background()
 	cr := agencyexec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
-	_, err = CheckRepoSafe(ctx, cr, fsys, dir, CheckRepoSafeOpts{
+	_, err := CheckRepoSafe(ctx, cr, fsys, dir, CheckRepoSafeOpts{
 		ParentBranch: "main",
 	})
 
@@ -468,19 +398,11 @@ func TestCheckRepoSafe_NotInsideRepo(t *testing.T) {
 }
 
 func TestCheckRepoSafe_RepoJSONUpdatedOnSecondCall(t *testing.T) {
-	repoRoot, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot := setupTempRepo(t)
 
 	// Set AGENCY_DATA_DIR
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
-
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	dataDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {

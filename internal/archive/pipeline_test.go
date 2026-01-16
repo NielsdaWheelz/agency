@@ -57,6 +57,10 @@ func (f *fakeRunner) Run(ctx context.Context, name string, args []string, opts e
 	return exec.CmdResult{ExitCode: 0}, nil
 }
 
+func (f *fakeRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
+
 func TestArchive_HappyPath(t *testing.T) {
 	tmpDir := t.TempDir()
 

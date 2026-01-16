@@ -14,69 +14,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-// mockCmdRunner is a mock CommandRunner for testing.
-type mockCmdRunner struct {
-	calls   []mockCall
-	results map[string]mockResult
-}
-
-type mockCall struct {
-	Name string
-	Args []string
-	Opts mockOpts
-}
-
-type mockOpts struct {
-	Dir string
-	Env map[string]string
-}
-
-type mockResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
-	Err      error
-}
-
-func newMockCmdRunner() *mockCmdRunner {
-	return &mockCmdRunner{
-		results: make(map[string]mockResult),
-	}
-}
-
-func (m *mockCmdRunner) Run(ctx context.Context, name string, args []string, opts struct {
-	Dir string
-	Env map[string]string
-}) (struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
-}, error) {
-	m.calls = append(m.calls, mockCall{Name: name, Args: args, Opts: mockOpts{Dir: opts.Dir, Env: opts.Env}})
-
-	// Build key from command
-	key := name + " " + strings.Join(args, " ")
-
-	if result, ok := m.results[key]; ok {
-		return struct {
-			Stdout   string
-			Stderr   string
-			ExitCode int
-		}{result.Stdout, result.Stderr, result.ExitCode}, result.Err
-	}
-
-	// Default success
-	return struct {
-		Stdout   string
-		Stderr   string
-		ExitCode int
-	}{"", "", 0}, nil
-}
-
-func (m *mockCmdRunner) setResult(key string, result mockResult) {
-	m.results[key] = result
-}
-
 // TestIsReportEffectivelyEmpty tests the report gating logic.
 func TestIsReportEffectivelyEmpty(t *testing.T) {
 	tests := []struct {
@@ -597,7 +534,7 @@ func jsonUnmarshalForTest(data []byte, v any) error {
 		if idx := strings.Index(str, `"number":`); idx >= 0 {
 			rest := str[idx+9:]
 			var num int
-			fmt.Sscanf(rest, "%d", &num)
+			_, _ = fmt.Sscanf(rest, "%d", &num) // Ignore parse count; 0 means field missing
 			pr.Number = num
 		}
 		// Extract url

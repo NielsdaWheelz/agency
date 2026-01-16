@@ -120,7 +120,12 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		}
 		return errors.Wrap(errors.EInternal, "failed to acquire repo lock", err)
 	}
-	defer unlock()
+	defer func() {
+		// Unlock error logged but not returned; command result takes priority
+		if uerr := unlock(); uerr != nil {
+			_ = uerr // Lock package handles logging internally
+		}
+	}()
 
 	// Step 4: Ensure origin exists (spec: exact error message)
 	originURL := git.GetOriginURL(ctx, cr, meta.WorktreePath)
@@ -148,8 +153,8 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
 	reportEmpty, err := isReportEffectivelyEmpty(fsys, reportPath)
 	if err != nil && !os.IsNotExist(err) {
-		// Unexpected error reading report
-		fmt.Fprintf(stderr, "warning: failed to read report: %v\n", err)
+		// Unexpected error reading report - warn user but continue
+		_, _ = fmt.Fprintf(stderr, "warning: failed to read report: %v\n", err)
 		reportEmpty = true
 	}
 
@@ -163,15 +168,15 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 
 	if reportEmpty && opts.Force {
-		fmt.Fprintf(stderr, "warning: report missing or empty; proceeding due to --force\n")
+		_, _ = fmt.Fprintf(stderr, "warning: report missing or empty; proceeding due to --force\n")
 	}
 
 	// Step 7: Dirty worktree warning (spec: exact string)
 	isClean, err := git.IsClean(ctx, cr, meta.WorktreePath)
 	if err != nil {
-		fmt.Fprintf(stderr, "warning: failed to check worktree status: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: failed to check worktree status: %v\n", err)
 	} else if !isClean {
-		fmt.Fprintf(stderr, "warning: worktree has uncommitted changes; pushing commits anyway\n")
+		_, _ = fmt.Fprintf(stderr, "warning: worktree has uncommitted changes; pushing commits anyway\n")
 	}
 
 	// Step 8: gh auth check
@@ -248,7 +253,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		m.LastPushAt = now
 	}); err != nil {
 		// Non-fatal: log warning but don't fail the push
-		fmt.Fprintf(stderr, "warning: failed to update meta.json: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json: %v\n", err)
 	}
 
 	// Step 14: PR lookup / create / update
@@ -274,7 +279,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	})
 
 	// Print success output (spec: exactly one stdout line)
-	fmt.Fprintf(stdout, "pr: %s\n", prResult.URL)
+	_, _ = fmt.Fprintf(stdout, "pr: %s\n", prResult.URL)
 
 	_ = runRef // silence unused variable warning
 	return nil
@@ -484,7 +489,7 @@ func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch s
 	if result.ExitCode != 0 {
 		// Surface stderr for actionable debugging
 		if result.Stderr != "" {
-			fmt.Fprintf(stderr, "git push stderr:\n%s", result.Stderr)
+			_, _ = fmt.Fprintf(stderr, "git push stderr:\n%s", result.Stderr)
 		}
 		return errors.NewWithDetails(
 			errors.EGitPushFailed,
@@ -590,7 +595,7 @@ func handlePR(
 		m.PRNumber = pr.Number
 		m.PRURL = pr.URL
 	}); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to update meta.json with PR info: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json with PR info: %v\n", err)
 	}
 
 	// Step 4: Sync report body (if PR exists and report is non-empty)
@@ -604,7 +609,7 @@ func handlePR(
 				m.LastReportSyncAt = now
 				m.LastReportHash = reportHash
 			}); err != nil {
-				fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
+				_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
 			}
 		}
 	} else {
@@ -788,7 +793,7 @@ func viewPRWithRetry(ctx context.Context, cr exec.CommandRunner, workDir, branch
 	delays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
 	var lastErr error
 
-	for i, delay := range delays {
+	for _, delay := range delays {
 		if delay > 0 {
 			sleeper.Sleep(delay)
 		}
@@ -798,11 +803,7 @@ func viewPRWithRetry(ctx context.Context, cr exec.CommandRunner, workDir, branch
 			return pr, nil
 		}
 		lastErr = err
-
-		// Log retry attempt
-		if i < len(delays)-1 {
-			// Will retry
-		}
+		// Continue to next retry if any remain
 	}
 
 	return nil, errors.NewWithDetails(
@@ -872,7 +873,7 @@ func syncPRBody(
 		m.LastReportSyncAt = now
 		m.LastReportHash = reportHash
 	}); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
 	}
 
 	return true, nil

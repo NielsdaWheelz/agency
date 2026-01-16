@@ -318,7 +318,9 @@ func TestSha256Hex(t *testing.T) {
 
 	// Verify it's all lowercase hex
 	for _, c := range hash {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		isDigit := c >= '0' && c <= '9'
+		isLowerHex := c >= 'a' && c <= 'f'
+		if !isDigit && !isLowerHex {
 			t.Errorf("hash contains non-lowercase-hex character: %c", c)
 		}
 	}

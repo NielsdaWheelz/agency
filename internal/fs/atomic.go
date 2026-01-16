@@ -25,14 +25,14 @@ func WriteFileAtomic(fs FS, path string, data []byte, perm os.FileMode) error {
 	success := false
 	defer func() {
 		if !success {
-			fs.Remove(tmpPath)
+			_ = fs.Remove(tmpPath) // Best-effort cleanup
 		}
 	}()
 
 	// Write data to temp file
 	_, err = w.Write(data)
 	if err != nil {
-		w.Close()
+		_ = w.Close() // Best-effort close; returning write error
 		return err
 	}
 
@@ -88,13 +88,13 @@ func WriteJSONAtomic(path string, v any, perm fs.FileMode) error {
 	success := false
 	defer func() {
 		if !success {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath) // Best-effort cleanup
 		}
 	}()
 
 	// Write data
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close() // Best-effort close; returning write error
 		return err
 	}
 

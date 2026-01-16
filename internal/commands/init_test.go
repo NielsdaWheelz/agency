@@ -32,6 +32,10 @@ func (s *stubRunner) Run(ctx context.Context, name string, args []string, opts e
 	return exec.CmdResult{ExitCode: 1}, nil
 }
 
+func (s *stubRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
+
 // setupTempGitRepo creates a temp directory and initializes a minimal git repo.
 func setupTempGitRepo(t *testing.T) string {
 	t.Helper()

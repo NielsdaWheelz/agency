@@ -252,20 +252,6 @@ func TestSuccessPath(t *testing.T) {
 func TestRunIDGeneratedBeforeSteps(t *testing.T) {
 	var capturedRunID string
 
-	mock := &mockRunService{}
-	// Override CheckRepoSafe to capture the runID from state
-	originalCheckRepoSafe := mock.CheckRepoSafe
-	_ = originalCheckRepoSafe
-
-	// Use a custom mock that captures state
-	type capturingMock struct {
-		mockRunService
-		capturedState *PipelineState
-	}
-	cm := &capturingMock{}
-	cm.checkRepoSafeErr = errors.New(errors.EParentDirty, "dirty")
-
-	// We need a way to capture state. Let's use a different approach.
 	// Create a mock that captures the runID when CheckRepoSafe is called.
 	stateCapturer := &stateCapturingMock{
 		err: errors.New(errors.EParentDirty, "dirty"),

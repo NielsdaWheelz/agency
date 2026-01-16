@@ -578,15 +578,7 @@ func TestShow_IntegrationWithFakeData_ValidRun(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Set AGENCY_DATA_DIR to our temp dir
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer func() {
-		if oldDataDir == "" {
-			os.Unsetenv("AGENCY_DATA_DIR")
-		} else {
-			os.Setenv("AGENCY_DATA_DIR", oldDataDir)
-		}
-	}()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create a valid run
 	runID := "20260110-a3f2"
@@ -631,15 +623,7 @@ func TestShow_IntegrationWithFakeData_BrokenRun(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Set AGENCY_DATA_DIR to our temp dir
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer func() {
-		if oldDataDir == "" {
-			os.Unsetenv("AGENCY_DATA_DIR")
-		} else {
-			os.Setenv("AGENCY_DATA_DIR", oldDataDir)
-		}
-	}()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create a broken run
 	runID := "20260110-bad1"
@@ -673,15 +657,7 @@ func TestShow_IDResolutionErrors(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Set AGENCY_DATA_DIR to our temp dir
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer func() {
-		if oldDataDir == "" {
-			os.Unsetenv("AGENCY_DATA_DIR")
-		} else {
-			os.Setenv("AGENCY_DATA_DIR", oldDataDir)
-		}
-	}()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create two runs with similar prefixes
 	createValidMetaForShow(t, dataDir, "r1", "20260110-a3f2", "/path/wt1", time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC))

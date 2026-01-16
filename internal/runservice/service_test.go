@@ -15,38 +15,23 @@ import (
 )
 
 // setupTempRepo creates a temp repo with agency.json and one commit.
-// Returns repo root, data dir, and cleanup function.
-func setupTempRepo(t *testing.T) (repoRoot, dataDir string, cleanup func()) {
+// Returns repo root and data dir. Cleanup is handled automatically by t.TempDir().
+func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	t.Helper()
 
-	repoRoot, err := os.MkdirTemp("", "agency-svc-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp repo dir: %v", err)
-	}
-
-	dataDir, err = os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		os.RemoveAll(repoRoot)
-		t.Fatalf("failed to create temp data dir: %v", err)
-	}
-
-	cleanup = func() {
-		os.RemoveAll(repoRoot)
-		os.RemoveAll(dataDir)
-	}
+	// Create temp directories (t.TempDir handles cleanup automatically)
+	repoRoot = t.TempDir()
+	dataDir = t.TempDir()
 
 	// Initialize git repo
 	if err := runGit(repoRoot, "init"); err != nil {
-		cleanup()
 		t.Fatalf("git init failed: %v", err)
 	}
 
 	if err := runGit(repoRoot, "config", "user.email", "test@example.com"); err != nil {
-		cleanup()
 		t.Fatalf("git config user.email failed: %v", err)
 	}
 	if err := runGit(repoRoot, "config", "user.name", "Test User"); err != nil {
-		cleanup()
 		t.Fatalf("git config user.name failed: %v", err)
 	}
 
@@ -64,46 +49,40 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string, cleanup func()) {
   }
 }`
 	if err := os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0644); err != nil {
-		cleanup()
 		t.Fatalf("failed to write agency.json: %v", err)
 	}
 
 	// Create scripts directory and setup script
 	scriptsDir := filepath.Join(repoRoot, "scripts")
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		cleanup()
 		t.Fatalf("failed to create scripts dir: %v", err)
 	}
 
 	setupScript := "#!/bin/bash\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		cleanup()
 		t.Fatalf("failed to write setup script: %v", err)
 	}
 
 	// Create and commit files
 	readme := filepath.Join(repoRoot, "README.md")
 	if err := os.WriteFile(readme, []byte("# Test\n"), 0644); err != nil {
-		cleanup()
 		t.Fatalf("failed to write README.md: %v", err)
 	}
 
 	if err := runGit(repoRoot, "add", "-A"); err != nil {
-		cleanup()
 		t.Fatalf("git add failed: %v", err)
 	}
 	if err := runGit(repoRoot, "commit", "-m", "initial commit"); err != nil {
-		cleanup()
 		t.Fatalf("git commit failed: %v", err)
 	}
 
 	// Rename branch to main if it's not already
 	branch := getCurrentBranch(t, repoRoot)
 	if branch != "main" {
-		runGit(repoRoot, "branch", "-m", branch, "main")
+		_ = runGit(repoRoot, "branch", "-m", branch, "main") // Best-effort rename
 	}
 
-	return repoRoot, dataDir, cleanup
+	return repoRoot, dataDir
 }
 
 func runGit(dir string, args ...string) error {
@@ -132,20 +111,29 @@ func getCurrentBranch(t *testing.T, dir string) string {
 }
 
 func TestService_CreateWorktree(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -165,7 +153,7 @@ func TestService_CreateWorktree(t *testing.T) {
 	st.SetupScript = "scripts/agency_setup.sh"
 
 	// Now test CreateWorktree
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -199,13 +187,10 @@ func TestService_CreateWorktree(t *testing.T) {
 }
 
 func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Make repo dirty
 	dirty := filepath.Join(repoRoot, "dirty.txt")
@@ -213,10 +198,19 @@ func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
 		t.Fatalf("failed to create dirty file: %v", err)
 	}
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
 	svc := New()
 	ctx := context.Background()
@@ -225,7 +219,7 @@ func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
 		Parent: "main",
 	}
 
-	err := svc.CheckRepoSafe(ctx, st)
+	err = svc.CheckRepoSafe(ctx, st)
 	if err == nil {
 		t.Fatal("expected error for dirty repo")
 	}
@@ -237,15 +231,15 @@ func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
 }
 
 func TestService_LoadAgencyConfig(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
 
 	svc := NewWithDeps(agencyexec.NewRealRunner(), fs.NewRealFS())
 	ctx := context.Background()
@@ -255,7 +249,7 @@ func TestService_LoadAgencyConfig(t *testing.T) {
 		DataDir:  dataDir,
 	}
 
-	err := svc.LoadAgencyConfig(ctx, st)
+	err = svc.LoadAgencyConfig(ctx, st)
 	if err != nil {
 		t.Fatalf("LoadAgencyConfig failed: %v", err)
 	}
@@ -273,20 +267,29 @@ func TestService_LoadAgencyConfig(t *testing.T) {
 }
 
 func TestService_WriteMeta_Success(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -305,7 +308,7 @@ func TestService_WriteMeta_Success(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -376,11 +379,8 @@ func TestService_WriteMeta_Success(t *testing.T) {
 }
 
 func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
-	dataDir, err := os.MkdirTemp("", "agency-data-*")
-	if err != nil {
-		t.Fatalf("failed to create temp data dir: %v", err)
-	}
-	defer os.RemoveAll(dataDir)
+	// Create temp data dir (t.TempDir handles cleanup automatically)
+	dataDir := t.TempDir()
 
 	svc := New()
 	ctx := context.Background()
@@ -393,7 +393,7 @@ func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err = svc.WriteMeta(ctx, st)
+	err := svc.WriteMeta(ctx, st)
 	if err == nil {
 		t.Fatal("expected error for missing worktree")
 	}
@@ -405,20 +405,29 @@ func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
 }
 
 func TestService_WriteMeta_RunDirCollision(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -437,7 +446,7 @@ func TestService_WriteMeta_RunDirCollision(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -463,20 +472,29 @@ func TestService_WriteMeta_RunDirCollision(t *testing.T) {
 }
 
 func TestService_RunSetup_Success(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -495,7 +513,7 @@ func TestService_RunSetup_Success(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -567,20 +585,29 @@ exit 0
 }
 
 func TestService_RunSetup_ScriptFailed(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -599,7 +626,7 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -653,20 +680,29 @@ exit 7
 }
 
 func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -685,7 +721,7 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -742,20 +778,29 @@ exit 0
 }
 
 func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -774,7 +819,7 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 		Runner:       "claude",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -821,20 +866,29 @@ exit 0
 }
 
 func TestService_StartTmux_Success(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -853,7 +907,7 @@ func TestService_StartTmux_Success(t *testing.T) {
 		Runner:       "sh", // Use sh as runner for testing
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -891,9 +945,9 @@ func TestService_StartTmux_Success(t *testing.T) {
 		t.Fatalf("StartTmux failed: %v", err)
 	}
 
-	// Clean up tmux session
+	// Clean up tmux session (best-effort cleanup)
 	sessionName := "agency_" + runID
-	exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+	_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
 
 	// Verify meta was updated with tmux_session_name
 	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
@@ -907,20 +961,29 @@ func TestService_StartTmux_Success(t *testing.T) {
 }
 
 func TestService_StartTmux_SetupFailed(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -939,7 +1002,7 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 		Runner:       "sh",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -983,20 +1046,29 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 }
 
 func TestService_StartTmux_SessionExists(t *testing.T) {
-	repoRoot, dataDir, cleanup := setupTempRepo(t)
-	defer cleanup()
+	repoRoot, dataDir := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
-	oldDataDir := os.Getenv("AGENCY_DATA_DIR")
-	os.Setenv("AGENCY_DATA_DIR", dataDir)
-	defer os.Setenv("AGENCY_DATA_DIR", oldDataDir)
+	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repoRoot)
-	defer os.Chdir(oldWd)
+	// Change to repo directory with proper cleanup
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("failed to chdir to repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("failed to restore working directory: %v", err)
+		}
+	})
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
+	if err2 != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err2)
+	}
 
 	svc := New()
 	ctx := context.Background()
@@ -1010,7 +1082,9 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 	if err := exec.Command("tmux", "new-session", "-d", "-s", sessionName, "sleep", "60").Run(); err != nil {
 		t.Skip("tmux not available, skipping test")
 	}
-	defer exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run() // Best-effort cleanup
+	})
 
 	// Create worktree
 	st := &pipeline.PipelineState{
@@ -1023,7 +1097,7 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 		Runner:       "sh",
 	}
 
-	err := svc.CreateWorktree(ctx, st)
+	err = svc.CreateWorktree(ctx, st)
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
