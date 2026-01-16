@@ -96,7 +96,7 @@ func TestArchive_HappyPath(t *testing.T) {
 		RunID:        runID,
 		RepoID:       repoID,
 		WorktreePath: worktreePath,
-		Name:        "Test Run",
+		Name:         "Test Run",
 		Runner:       "claude",
 		Branch:       "agency/test-a3f2",
 		ParentBranch: "main",

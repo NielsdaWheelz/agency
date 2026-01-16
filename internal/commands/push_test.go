@@ -778,6 +778,9 @@ func TestViewPRByBranchUsesOwnerRepo(t *testing.T) {
 				return exec.CmdResult{ExitCode: 1, Stderr: "unexpected command"}, nil
 			}
 			got := strings.Join(args, " ")
+			if !strings.Contains(got, "pr list") {
+				return exec.CmdResult{ExitCode: 1, Stderr: "expected list"}, nil
+			}
 			if !strings.Contains(got, "--head owner:branch") {
 				return exec.CmdResult{ExitCode: 1, Stderr: "missing head"}, nil
 			}
@@ -786,7 +789,7 @@ func TestViewPRByBranchUsesOwnerRepo(t *testing.T) {
 			}
 			return exec.CmdResult{
 				ExitCode: 0,
-				Stdout:   `{"number":1,"url":"https://github.com/owner/repo/pull/1","state":"OPEN"}`,
+				Stdout:   `[{"number":1,"url":"https://github.com/owner/repo/pull/1","state":"OPEN"}]`,
 			}, nil
 		},
 	}
@@ -817,11 +820,11 @@ func TestViewPRWithRetry_BackoffAndEvents(t *testing.T) {
 		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
 			call++
 			if call < 3 {
-				return exec.CmdResult{ExitCode: 1, Stderr: "no pull requests found"}, nil
+				return exec.CmdResult{ExitCode: 0, Stdout: `[]`}, nil
 			}
 			return exec.CmdResult{
 				ExitCode: 0,
-				Stdout:   `{"number":2,"url":"https://github.com/owner/repo/pull/2","state":"OPEN"}`,
+				Stdout:   `[{"number":2,"url":"https://github.com/owner/repo/pull/2","state":"OPEN"}]`,
 			}, nil
 		},
 	}

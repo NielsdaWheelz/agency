@@ -787,34 +787,48 @@ func viewPRByNumberFullAttempt(ctx context.Context, cr exec.CommandRunner, workD
 
 func viewPRByHeadFullAttempt(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo, headArg string) (*ghPRViewFull, prViewAttempt) {
 	result, err := cr.Run(ctx, "gh", []string{
-		"pr", "view",
+		"pr", "list",
 		"--head", headArg,
 		"-R", ghRepo,
-		"--json", "number,url,state,isDraft,mergeable,headRefName",
+		"--state", "all",
+		"--json", "number,url,state",
 	}, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
 	if err != nil {
-		return nil, prViewAttempt{ExitCode: exec.ExitStartFail, Err: fmt.Errorf("gh pr view exec error: %w", err)}
+		return nil, prViewAttempt{ExitCode: exec.ExitStartFail, Err: fmt.Errorf("gh pr list exec error: %w", err)}
 	}
 	if result.ExitCode != 0 {
 		return nil, prViewAttempt{
 			ExitCode: result.ExitCode,
 			Stderr:   result.Stderr,
-			Err:      fmt.Errorf("gh pr view exited %d: %s", result.ExitCode, result.Stderr),
+			Err:      fmt.Errorf("gh pr list exited %d: %s", result.ExitCode, result.Stderr),
 		}
 	}
 
-	pr, parseErr := parseGHPRViewFull(result.Stdout)
-	if parseErr != nil {
+	var prs []ghPRView
+	if err := json.Unmarshal([]byte(result.Stdout), &prs); err != nil {
 		return nil, prViewAttempt{
 			ExitCode: result.ExitCode,
 			Stderr:   result.Stderr,
-			Err:      parseErr,
+			Err:      fmt.Errorf("failed to parse gh pr list output: %w", err),
+		}
+	}
+	if len(prs) == 0 {
+		return nil, prViewAttempt{ExitCode: result.ExitCode, Err: errPRNotFound}
+	}
+	if len(prs) > 1 {
+		return nil, prViewAttempt{
+			ExitCode: result.ExitCode,
+			Err:      fmt.Errorf("multiple PRs found for head %q", headArg),
 		}
 	}
 
+	pr, attempt := viewPRByNumberFullAttempt(ctx, cr, workDir, ghRepo, prs[0].Number)
+	if attempt.Err != nil {
+		return nil, attempt
+	}
 	return pr, prViewAttempt{}
 }
 
@@ -926,13 +940,7 @@ func isGHPRViewSchemaError(err error) bool {
 
 // isGHPRNotFound checks if the error indicates "no PR found".
 func isGHPRNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "no pull requests found") ||
-		strings.Contains(errStr, "no pull request found") ||
-		strings.Contains(errStr, "could not find pull request")
+	return isPRNotFound(err)
 }
 
 // prStateResult holds the result of PR state validation.

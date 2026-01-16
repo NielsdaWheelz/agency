@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,6 +57,8 @@ func TestGHE2EPushMerge(t *testing.T) {
 	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.email", "agency-e2e@users.noreply.github.com")
 	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.name", "agency-e2e")
 
+	defaultBranch := resolveDefaultBranch(t, ctx, cr, repoRoot, repo)
+
 	runID, err := core.NewRunID(time.Now())
 	if err != nil {
 		t.Fatalf("runID: %v", err)
@@ -72,8 +75,8 @@ func TestGHE2EPushMerge(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		t.Fatalf("mkdir worktrees: %v", err)
 	}
-	runCmd(t, ctx, cr, repoRoot, "git", "fetch", "origin", "main")
-	runCmd(t, ctx, cr, repoRoot, "git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
+	runCmd(t, ctx, cr, repoRoot, "git", "fetch", "origin", defaultBranch)
+	runCmd(t, ctx, cr, repoRoot, "git", "worktree", "add", "-b", branch, worktreePath, "origin/"+defaultBranch)
 
 	scriptsDir := filepath.Join(worktreePath, "scripts")
 	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
@@ -124,7 +127,7 @@ func TestGHE2EPushMerge(t *testing.T) {
 	if _, err := st.EnsureRunDir(repoIdentity.RepoID, runID); err != nil {
 		t.Fatalf("EnsureRunDir: %v", err)
 	}
-	meta := store.NewRunMeta(runID, repoIdentity.RepoID, "e2e", "claude", "claude", "main", branch, worktreePath, time.Now())
+	meta := store.NewRunMeta(runID, repoIdentity.RepoID, "e2e", "claude", "claude", defaultBranch, branch, worktreePath, time.Now())
 	if err := st.WriteInitialMeta(repoIdentity.RepoID, runID, meta); err != nil {
 		t.Fatalf("WriteInitialMeta: %v", err)
 	}
@@ -191,6 +194,115 @@ func writeScript(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func resolveDefaultBranch(t *testing.T, ctx context.Context, cr exec.CommandRunner, repoRoot, repo string) string {
+	t.Helper()
+
+	result, err := cr.Run(ctx, "git", []string{
+		"-C", repoRoot,
+		"branch", "--show-current",
+	}, exec.RunOpts{})
+	if err == nil && result.ExitCode == 0 {
+		branch := strings.TrimSpace(result.Stdout)
+		if branch != "" {
+			return branch
+		}
+	}
+
+	result, err = cr.Run(ctx, "gh", []string{
+		"repo", "view", repo,
+		"--json", "defaultBranchRef",
+	}, exec.RunOpts{
+		Env: nonInteractiveEnv(),
+	})
+	if err == nil && result.ExitCode == 0 {
+		var payload struct {
+			DefaultBranchRef struct {
+				Name string `json:"name"`
+			} `json:"defaultBranchRef"`
+		}
+		if json.Unmarshal([]byte(result.Stdout), &payload) == nil && payload.DefaultBranchRef.Name != "" {
+			return payload.DefaultBranchRef.Name
+		}
+	}
+
+	result, err = cr.Run(ctx, "git", []string{
+		"-C", repoRoot,
+		"ls-remote", "--symref", "origin", "HEAD",
+	}, exec.RunOpts{})
+	if err == nil && result.ExitCode == 0 {
+		for _, line := range strings.Split(result.Stdout, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "ref:" && fields[len(fields)-1] == "HEAD" {
+				ref := fields[1]
+				if strings.HasPrefix(ref, "refs/heads/") {
+					return strings.TrimPrefix(ref, "refs/heads/")
+				}
+			}
+		}
+	}
+
+	result, err = cr.Run(ctx, "git", []string{
+		"-C", repoRoot,
+		"remote", "show", "origin",
+	}, exec.RunOpts{})
+	if err == nil && result.ExitCode == 0 {
+		for _, line := range strings.Split(result.Stdout, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "HEAD branch:") {
+				branch := strings.TrimSpace(strings.TrimPrefix(line, "HEAD branch:"))
+				if branch != "" && branch != "(unknown)" {
+					return branch
+				}
+			}
+		}
+	}
+
+	result, err = cr.Run(ctx, "git", []string{
+		"-C", repoRoot,
+		"ls-remote", "--heads", "origin",
+	}, exec.RunOpts{})
+	if err == nil && result.ExitCode == 0 {
+		branches := parseRemoteBranches(result.Stdout)
+		if branch := pickDefaultBranch(branches); branch != "" {
+			return branch
+		}
+	}
+
+	return "main"
+}
+
+func parseRemoteBranches(output string) []string {
+	var branches []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		ref := fields[1]
+		if strings.HasPrefix(ref, "refs/heads/") {
+			branches = append(branches, strings.TrimPrefix(ref, "refs/heads/"))
+		}
+	}
+	return branches
+}
+
+func pickDefaultBranch(branches []string) string {
+	preferred := []string{"main", "master", "trunk"}
+	branchSet := make(map[string]struct{}, len(branches))
+	for _, branch := range branches {
+		branchSet[branch] = struct{}{}
+	}
+	for _, branch := range preferred {
+		if _, ok := branchSet[branch]; ok {
+			return branch
+		}
+	}
+	if len(branches) > 0 {
+		return branches[0]
+	}
+	return ""
 }
 
 type noopTmuxClient struct{}

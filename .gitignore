@@ -37,3 +37,6 @@ Thumbs.db
 # Build artifacts
 dist/
 bin/
+
+# Local environment variables
+.env

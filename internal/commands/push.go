@@ -665,7 +665,7 @@ func lookupPR(ctx context.Context, cr exec.CommandRunner, workDir string, meta *
 	// Step 2: Try branch lookup
 	pr, err := viewPRByBranch(ctx, cr, workDir, meta.Branch, repoRef)
 	if err != nil {
-		if isGHPRNotFound(err) {
+		if isPRNotFound(err) {
 			return nil, "", nil
 		}
 		return nil, "", err
@@ -712,8 +712,35 @@ func viewPRByBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch 
 
 func viewPRByBranchAttempt(ctx context.Context, cr exec.CommandRunner, workDir, branch string, repoRef ghRepoRef) (*ghPRView, prViewAttempt) {
 	head := headRef(repoRef, branch)
+	prs, attempt := listPRsByHead(ctx, cr, workDir, head, repoRef)
+	if attempt.Err != nil {
+		return nil, attempt
+	}
+	if len(prs) == 0 && repoRef.Owner != "" && strings.Contains(head, ":") {
+		prs, attempt = listPRsByHead(ctx, cr, workDir, branch, repoRef)
+		if attempt.Err != nil {
+			return nil, attempt
+		}
+	}
 
-	args := []string{"pr", "view", "--head", head}
+	if len(prs) == 0 {
+		return nil, prViewAttempt{
+			ExitCode: attempt.ExitCode,
+			Err:      errPRNotFound,
+		}
+	}
+	if len(prs) > 1 {
+		return nil, prViewAttempt{
+			ExitCode: attempt.ExitCode,
+			Err:      fmt.Errorf("multiple PRs found for head %q", head),
+		}
+	}
+
+	return &prs[0], prViewAttempt{}
+}
+
+func listPRsByHead(ctx context.Context, cr exec.CommandRunner, workDir, head string, repoRef ghRepoRef) ([]ghPRView, prViewAttempt) {
+	args := []string{"pr", "list", "--head", head, "--state", "all"}
 	if repoRef.NameWithOwner != "" {
 		args = append(args, "-R", repoRef.NameWithOwner)
 	}
@@ -733,20 +760,20 @@ func viewPRByBranchAttempt(ctx context.Context, cr exec.CommandRunner, workDir, 
 		return nil, prViewAttempt{
 			ExitCode: result.ExitCode,
 			Stderr:   result.Stderr,
-			Err:      fmt.Errorf("gh pr view exited with code %d: %s", result.ExitCode, result.Stderr),
+			Err:      fmt.Errorf("gh pr list exited with code %d: %s", result.ExitCode, result.Stderr),
 		}
 	}
 
-	var pr ghPRView
-	if err := json.Unmarshal([]byte(result.Stdout), &pr); err != nil {
+	var prs []ghPRView
+	if err := json.Unmarshal([]byte(result.Stdout), &prs); err != nil {
 		return nil, prViewAttempt{
 			ExitCode: result.ExitCode,
 			Stderr:   result.Stderr,
-			Err:      fmt.Errorf("failed to parse gh pr view output: %w", err),
+			Err:      fmt.Errorf("failed to parse gh pr list output: %w", err),
 		}
 	}
 
-	return &pr, prViewAttempt{}
+	return prs, prViewAttempt{ExitCode: result.ExitCode, Stderr: result.Stderr}
 }
 
 // viewPRByURL runs: gh pr view <url> --json number,url,state

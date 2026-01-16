@@ -9,10 +9,10 @@ import (
 
 func TestValidateName(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantErr   bool
-		wantCode  errors.Code
+		name     string
+		input    string
+		wantErr  bool
+		wantCode errors.Code
 	}{
 		// Valid names
 		{"minimum length", "ab", false, ""},

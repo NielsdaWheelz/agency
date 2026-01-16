@@ -1,5 +1,8 @@
 .PHONY: build test test-v lint fmt fmt-check e2e clean install run help
 
+-include .env
+export
+
 # Default target
 all: build
 
@@ -21,7 +24,12 @@ lint:
 
 # Format all Go files
 fmt:
-	gofmt -w $$(gofmt -l .)
+	@files="$$(gofmt -l .)"; \
+	if [ -n "$$files" ]; then \
+		gofmt -w $$files; \
+	else \
+		echo "gofmt: no changes"; \
+	fi
 
 # Check formatting without modifying files
 fmt-check:

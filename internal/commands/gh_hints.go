@@ -28,9 +28,9 @@ func prViewHint(repoRef ghRepoRef, branch string, prNumber int) string {
 
 	head := headRef(repoRef, branch)
 	if repoRef.NameWithOwner != "" {
-		return fmt.Sprintf("gh pr view --head %s -R %s", head, repoRef.NameWithOwner)
+		return fmt.Sprintf("gh pr list --head %s -R %s", head, repoRef.NameWithOwner)
 	}
-	return fmt.Sprintf("gh pr view --head %s", head)
+	return fmt.Sprintf("gh pr list --head %s", head)
 }
 
 func printHint(w io.Writer, hint string) {

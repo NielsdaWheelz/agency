@@ -281,8 +281,8 @@ func TestResolveRunRefWithName(t *testing.T) {
 			name:  "exact name match wins over run_id prefix",
 			input: "my-feature",
 			refs: []RunRef{
-				{RepoID: "r1", RunID: "my-feature-a3f2", Name: "other"},       // would match as prefix
-				{RepoID: "r1", RunID: "20260110-bbbb", Name: "my-feature"},    // exact name match
+				{RepoID: "r1", RunID: "my-feature-a3f2", Name: "other"},    // would match as prefix
+				{RepoID: "r1", RunID: "20260110-bbbb", Name: "my-feature"}, // exact name match
 			},
 			isActive: isActive,
 			wantRef:  RunRef{RepoID: "r1", RunID: "20260110-bbbb", Name: "my-feature"},
@@ -312,8 +312,8 @@ func TestResolveRunRefWithName(t *testing.T) {
 			name:  "archived runs excluded from name matching",
 			input: "test-name",
 			refs: []RunRef{
-				{RepoID: "r1", RunID: "20260110-aaaa", Name: "archived"},   // simulated archived
-				{RepoID: "r1", RunID: "20260110-bbbb", Name: "test-name"},  // active
+				{RepoID: "r1", RunID: "20260110-aaaa", Name: "archived"},  // simulated archived
+				{RepoID: "r1", RunID: "20260110-bbbb", Name: "test-name"}, // active
 			},
 			isActive: func(ref RunRef) bool { return ref.RunID == "20260110-bbbb" },
 			wantRef:  RunRef{RepoID: "r1", RunID: "20260110-bbbb", Name: "test-name"},
@@ -489,9 +489,9 @@ func TestCheckNameUnique(t *testing.T) {
 			wantErr:    true,
 		},
 		{
-			name:      "empty refs passes",
-			checkName: "any-name",
-			refs:      []RunRef{},
+			name:       "empty refs passes",
+			checkName:  "any-name",
+			refs:       []RunRef{},
 			isArchived: isArchived,
 			wantErr:    false,
 		},

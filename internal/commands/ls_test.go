@@ -140,7 +140,7 @@ func TestWriteLSJSON_AllFields(t *testing.T) {
 			RepoID:          "abc123",
 			RepoKey:         &repoKey,
 			OriginURL:       &originURL,
-			Name:           "test run",
+			Name:            "test run",
 			Runner:          &runner,
 			CreatedAt:       &createdAt,
 			LastPushAt:      &lastPushAt,
@@ -228,7 +228,7 @@ func TestWriteLSJSON_BrokenRun(t *testing.T) {
 			RepoID:          "abc123",
 			RepoKey:         nil, // missing
 			OriginURL:       nil, // missing
-			Name:           "<broken>",
+			Name:            "<broken>",
 			Runner:          nil, // null for broken
 			CreatedAt:       nil, // null for broken
 			LastPushAt:      nil,
@@ -310,7 +310,7 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 	rows := []render.RunSummaryHumanRow{
 		{
 			RunID:     "20260110-a3f2",
-			Name:     "test run",
+			Name:      "test run",
 			Runner:    "claude",
 			CreatedAt: "2 hours ago",
 			Status:    "active",
@@ -355,7 +355,7 @@ func TestFormatHumanRow_TitleTruncation(t *testing.T) {
 
 	summary := render.RunSummary{
 		RunID:         "run1",
-		Name:         longTitle,
+		Name:          longTitle,
 		Runner:        &runner,
 		CreatedAt:     &createdAt,
 		DerivedStatus: "active",
@@ -379,7 +379,7 @@ func TestFormatHumanRow_BrokenRun(t *testing.T) {
 	summary := render.RunSummary{
 		RunID:         "broken1",
 		Broken:        true,
-		Name:         "<broken>",
+		Name:          "<broken>",
 		DerivedStatus: status.StatusBroken,
 	}
 
@@ -403,7 +403,7 @@ func TestFormatHumanRow_UntitledRun(t *testing.T) {
 
 	summary := render.RunSummary{
 		RunID:         "run1",
-		Name:         "", // empty title
+		Name:          "", // empty title
 		Runner:        &runner,
 		CreatedAt:     &createdAt,
 		DerivedStatus: "idle",
@@ -542,7 +542,7 @@ func createValidMetaForLS(t *testing.T, dataDir, repoID, runID string, createdAt
 		SchemaVersion: "1.0",
 		RunID:         runID,
 		RepoID:        repoID,
-		Name:         "Test Run " + runID,
+		Name:          "Test Run " + runID,
 		Runner:        "claude",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",
