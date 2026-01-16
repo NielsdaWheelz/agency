@@ -1,0 +1,10 @@
+# test log
+getenv TMPDIR
+stat /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001
+open /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001/events.jsonl
+stat /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001
+open /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001/events.jsonl
+stat /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001
+open /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001/events.jsonl
+open /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T/TestViewPRWithRetry_BackoffAndEvents1148068061/001/events.jsonl
+open /var/folders/49/nvdz6j9n3ms760pt9y2l95p40000gn/T

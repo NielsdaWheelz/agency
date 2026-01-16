@@ -727,32 +727,6 @@ func resolvePRForMerge(ctx context.Context, cr exec.CommandRunner, meta *store.R
 	return pr, nil
 }
 
-// viewPRByNumberFull runs: gh pr view <number> -R <repo> --json number,url,state,isDraft,mergeable,headRefName
-func viewPRByNumberFull(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int) (*ghPRViewFull, error) {
-	pr, attempt := viewPRByNumberFullAttempt(ctx, cr, workDir, ghRepo, prNumber)
-	if attempt.Err != nil {
-		return nil, attempt.Err
-	}
-	return pr, nil
-}
-
-// viewPRByHeadFull runs: gh pr view --head <owner>:<branch> -R <repo> --json ...
-func viewPRByHeadFull(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo, branch string) (*ghPRViewFull, error) {
-	// Extract owner from ghRepo for --head argument
-	parts := strings.Split(ghRepo, "/")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid ghRepo format: %s", ghRepo)
-	}
-	owner := parts[0]
-	headArg := fmt.Sprintf("%s:%s", owner, branch)
-
-	pr, attempt := viewPRByHeadFullAttempt(ctx, cr, workDir, ghRepo, headArg)
-	if attempt.Err != nil {
-		return nil, attempt.Err
-	}
-	return pr, nil
-}
-
 func viewPRByNumberFullAttempt(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int) (*ghPRViewFull, prViewAttempt) {
 	result, err := cr.Run(ctx, "gh", []string{
 		"pr", "view", fmt.Sprintf("%d", prNumber),

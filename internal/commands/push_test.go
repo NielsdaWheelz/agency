@@ -815,17 +815,26 @@ func TestViewPRWithRetry_BackoffAndEvents(t *testing.T) {
 	jitterDelay = func(d time.Duration) time.Duration { return d }
 	t.Cleanup(func() { jitterDelay = origJitter })
 
-	call := 0
+	attempt := 0
 	cr := &pushTestCommandRunner{
 		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
-			call++
-			if call < 3 {
-				return exec.CmdResult{ExitCode: 0, Stdout: `[]`}, nil
+			head := ""
+			for i := 0; i < len(args)-1; i++ {
+				if args[i] == "--head" {
+					head = args[i+1]
+					break
+				}
 			}
-			return exec.CmdResult{
-				ExitCode: 0,
-				Stdout:   `[{"number":2,"url":"https://github.com/owner/repo/pull/2","state":"OPEN"}]`,
-			}, nil
+			if head == "owner:branch" {
+				attempt++
+				if attempt >= 3 {
+					return exec.CmdResult{
+						ExitCode: 0,
+						Stdout:   `[{"number":2,"url":"https://github.com/owner/repo/pull/2","state":"OPEN"}]`,
+					}, nil
+				}
+			}
+			return exec.CmdResult{ExitCode: 0, Stdout: `[]`}, nil
 		},
 	}
 
