@@ -93,9 +93,9 @@ func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
 
 func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
 	tests := []struct {
-		name     string
-		fixture  string
-		wantMsg  string
+		name    string
+		fixture string
+		wantMsg string
 	}{
 		{"defaults as string", "wrong_types.json", "defaults must be an object"},
 		{"scripts as array", "wrong_types_scripts.json", "scripts must be an object"},
@@ -378,9 +378,9 @@ func TestRunnerResolution_MapOverridesDefault(t *testing.T) {
 
 func TestFirstValidationError(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     error
-		want    string
+		name string
+		err  error
+		want string
 	}{
 		{"nil error", nil, ""},
 		{"agency error", errors.New(errors.EInvalidAgencyJSON, "test message"), "test message"},
@@ -721,7 +721,7 @@ func TestValidateForS1_VerifyArchiveNotRequired(t *testing.T) {
 func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	// Create temp directory with agency.json
 	tmpDir := t.TempDir()
-	
+
 	configContent := `{
   "version": 1,
   "defaults": {
@@ -734,7 +734,7 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
     "archive": "scripts/archive.sh"
   }
 }`
-	
+
 	err := os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(configContent), 0644)
 	if err != nil {
 		t.Fatalf("failed to write test file: %v", err)

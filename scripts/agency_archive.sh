@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# agency stub: replace with repo-specific archive steps (cleanup/etc)
+# no-op for this repo
 exit 0

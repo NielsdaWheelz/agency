@@ -78,9 +78,9 @@ func TestExitCode(t *testing.T) {
 
 func TestPrint(t *testing.T) {
 	tests := []struct {
-		name   string
-		err    error
-		want   string
+		name string
+		err  error
+		want string
 	}{
 		{"nil", nil, ""},
 		{"E_USAGE", New(EUsage, "bad args"), "error_code: E_USAGE\nbad args\n"},

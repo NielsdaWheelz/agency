@@ -51,11 +51,11 @@ func (m *MockExecutor) Run(name string, args ...string) (stdout string, stderr s
 
 func TestHasSession(t *testing.T) {
 	tests := []struct {
-		name        string
-		session     string
-		responses   []MockResponse
-		want        bool
-		wantCall    MockCall
+		name      string
+		session   string
+		responses []MockResponse
+		want      bool
+		wantCall  MockCall
 	}{
 		{
 			name:    "session exists",

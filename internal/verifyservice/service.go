@@ -271,22 +271,22 @@ func buildVerifyEnv(meta *store.RunMeta, worktreePath, runDir, dataDir string) [
 
 	// Add agency-specific variables per L0 contract
 	agencyEnv := map[string]string{
-		"AGENCY_RUN_ID":          meta.RunID,
-		"AGENCY_TITLE":           meta.Title,
-		"AGENCY_REPO_ROOT":       worktreePath, // worktree is the repo root for scripts
-		"AGENCY_WORKSPACE_ROOT":  worktreePath,
-		"AGENCY_BRANCH":          meta.Branch,
-		"AGENCY_PARENT_BRANCH":   meta.ParentBranch,
-		"AGENCY_ORIGIN_NAME":     "origin",
-		"AGENCY_ORIGIN_URL":      "", // Could be populated if needed
-		"AGENCY_RUNNER":          meta.Runner,
-		"AGENCY_PR_URL":          meta.PRURL,
-		"AGENCY_PR_NUMBER":       "",
-		"AGENCY_DOTAGENCY_DIR":   filepath.Join(worktreePath, ".agency"),
-		"AGENCY_OUTPUT_DIR":      filepath.Join(worktreePath, ".agency", "out"),
-		"AGENCY_LOG_DIR":         filepath.Join(runDir, "logs"),
-		"AGENCY_NONINTERACTIVE":  "1",
-		"CI":                     "1",
+		"AGENCY_RUN_ID":         meta.RunID,
+		"AGENCY_TITLE":          meta.Title,
+		"AGENCY_REPO_ROOT":      worktreePath, // worktree is the repo root for scripts
+		"AGENCY_WORKSPACE_ROOT": worktreePath,
+		"AGENCY_BRANCH":         meta.Branch,
+		"AGENCY_PARENT_BRANCH":  meta.ParentBranch,
+		"AGENCY_ORIGIN_NAME":    "origin",
+		"AGENCY_ORIGIN_URL":     "", // Could be populated if needed
+		"AGENCY_RUNNER":         meta.Runner,
+		"AGENCY_PR_URL":         meta.PRURL,
+		"AGENCY_PR_NUMBER":      "",
+		"AGENCY_DOTAGENCY_DIR":  filepath.Join(worktreePath, ".agency"),
+		"AGENCY_OUTPUT_DIR":     filepath.Join(worktreePath, ".agency", "out"),
+		"AGENCY_LOG_DIR":        filepath.Join(runDir, "logs"),
+		"AGENCY_NONINTERACTIVE": "1",
+		"CI":                    "1",
 	}
 
 	if meta.PRNumber != 0 {

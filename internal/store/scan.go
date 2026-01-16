@@ -223,10 +223,10 @@ func scanRepoRuns(dataDir, repoID string, cache *repoJoinCache) ([]RunRecord, er
 
 // LoadRepoIndexForScan loads repo_index.json for display-only purposes.
 // Different from Store.LoadRepoIndex:
-// - Returns (*RepoIndex, nil) if file is missing (not empty index)
-// - Returns (nil, error) if JSON is invalid
-// - Accepts both { "schema_version": "1.0", "repos": {...} } format
-//   and legacy { "entries": {...} } format for compatibility
+//   - Returns (*RepoIndex, nil) if file is missing (not empty index)
+//   - Returns (nil, error) if JSON is invalid
+//   - Accepts both { "schema_version": "1.0", "repos": {...} } format
+//     and legacy { "entries": {...} } format for compatibility
 func LoadRepoIndexForScan(dataDir string) (*RepoIndex, error) {
 	path := filepath.Join(dataDir, "repo_index.json")
 

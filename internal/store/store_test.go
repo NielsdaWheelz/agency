@@ -346,12 +346,12 @@ func TestUpsertRepoRecord_PreservesCreatedAt(t *testing.T) {
 	// Create initial record
 	s := NewStore(realFS, dataDir, fixedTime(createTime))
 	input := BuildRepoRecordInput{
-		RepoKey:        "github:owner/repo",
-		RepoID:         "abc123",
-		OriginPresent:  true,
-		OriginURL:      "git@github.com:owner/repo.git",
-		OriginHost:     "github.com",
-		Capabilities:   Capabilities{GitHubOrigin: true},
+		RepoKey:       "github:owner/repo",
+		RepoID:        "abc123",
+		OriginPresent: true,
+		OriginURL:     "git@github.com:owner/repo.git",
+		OriginHost:    "github.com",
+		Capabilities:  Capabilities{GitHubOrigin: true},
 	}
 	rec := s.UpsertRepoRecord(nil, input)
 	if err := s.SaveRepoRecord(rec); err != nil {

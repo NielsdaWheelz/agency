@@ -23,23 +23,23 @@ import (
 // DoctorReport holds all the data for doctor output.
 type DoctorReport struct {
 	// Repo and directories
-	RepoRoot       string
-	AgencyDataDir  string
+	RepoRoot        string
+	AgencyDataDir   string
 	AgencyConfigDir string
-	AgencyCacheDir string
+	AgencyCacheDir  string
 
 	// Identity/origin
-	RepoKey              string
-	RepoID               string
-	OriginPresent        bool
-	OriginURL            string
-	OriginHost           string
-	GitHubFlowAvailable  bool
+	RepoKey             string
+	RepoID              string
+	OriginPresent       bool
+	OriginURL           string
+	OriginHost          string
+	GitHubFlowAvailable bool
 
 	// Tooling
-	GitVersion     string
-	TmuxVersion    string
-	GhVersion      string
+	GitVersion      string
+	TmuxVersion     string
+	GhVersion       string
 	GhAuthenticated bool
 
 	// Config resolution

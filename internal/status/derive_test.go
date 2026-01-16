@@ -291,8 +291,8 @@ func TestDerive(t *testing.T) {
 			wantReportNonempty: false,
 		},
 		{
-			name: "active: tmux_active=true, no pr_number",
-			meta: mkMeta(nil),
+			name:               "active: tmux_active=true, no pr_number",
+			meta:               mkMeta(nil),
 			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 0},
 			wantDerivedStatus:  StatusActive,
 			wantArchived:       false,
@@ -309,8 +309,8 @@ func TestDerive(t *testing.T) {
 			wantReportNonempty: false,
 		},
 		{
-			name: "idle: tmux_active=false, no pr_number",
-			meta: mkMeta(nil),
+			name:               "idle: tmux_active=false, no pr_number",
+			meta:               mkMeta(nil),
 			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
 			wantDerivedStatus:  StatusIdle,
 			wantArchived:       false,
@@ -347,8 +347,8 @@ func TestDerive(t *testing.T) {
 			wantReportNonempty: false,
 		},
 		{
-			name: "archived applies to all statuses (active + archived)",
-			meta: mkMeta(nil),
+			name:               "archived applies to all statuses (active + archived)",
+			meta:               mkMeta(nil),
 			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: false, ReportBytes: 0},
 			wantDerivedStatus:  StatusActive,
 			wantArchived:       true,

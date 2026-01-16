@@ -47,10 +47,10 @@ func TestShellEscapePosix_Newline(t *testing.T) {
 
 func TestBuildRunnerShellScript(t *testing.T) {
 	tests := []struct {
-		name        string
-		worktree    string
-		runnerCmd   string
-		expect      string
+		name      string
+		worktree  string
+		runnerCmd string
+		expect    string
 	}{
 		{
 			name:      "simple path",

@@ -84,7 +84,7 @@ func (l RepoLock) Lock(repoID string, cmd string) (unlock func() error, err erro
 			}
 			data, _ := json.Marshal(info)
 			if _, writeErr := f.Write(data); writeErr != nil {
-				_ = f.Close()          // Best-effort cleanup
+				_ = f.Close()           // Best-effort cleanup
 				_ = os.Remove(lockPath) // Best-effort cleanup
 				return nil, fmt.Errorf("failed to write lock file: %w", writeErr)
 			}

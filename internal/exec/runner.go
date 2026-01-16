@@ -99,9 +99,9 @@ type ScriptOpts struct {
 
 // Exit codes for special conditions.
 const (
-	ExitTimeout    = 124 // command timed out
-	ExitCanceled   = 125 // context was canceled
-	ExitStartFail  = -1  // command failed to start
+	ExitTimeout   = 124 // command timed out
+	ExitCanceled  = 125 // context was canceled
+	ExitStartFail = -1  // command failed to start
 )
 
 // RunScript executes a command with timeout and cancel handling.

@@ -22,12 +22,12 @@ const (
 // RunSummaryHumanRow holds the fields for a single human-output row.
 // This is separate from RunSummary to allow formatting before display.
 type RunSummaryHumanRow struct {
-	RunID         string
-	Title         string
-	Runner        string
-	CreatedAt     string
-	Status        string
-	PR            string
+	RunID     string
+	Title     string
+	Runner    string
+	CreatedAt string
+	Status    string
+	PR        string
 }
 
 // WriteLSHuman writes the ls output in human-readable format.

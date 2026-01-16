@@ -28,7 +28,7 @@ func Slugify(title string, maxLen int) string {
 			b.WriteRune(r)
 		case unicode.IsSpace(r) || r == '_' || r == '-':
 			b.WriteRune('-')
-		// drop all other chars
+			// drop all other chars
 		}
 	}
 

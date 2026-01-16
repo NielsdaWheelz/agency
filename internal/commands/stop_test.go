@@ -81,7 +81,7 @@ func setupStopTestEnv(t *testing.T, runID string, setupMeta bool) (string, strin
 	// Create fake command runner
 	cr := &fakeCommandRunner{
 		responses: map[string]fakeResponse{
-			"git rev-parse --show-toplevel":    {stdout: repoDir + "\n"},
+			"git rev-parse --show-toplevel":      {stdout: repoDir + "\n"},
 			"git config --get remote.origin.url": {stdout: originURL + "\n"},
 		},
 	}

@@ -60,9 +60,9 @@ type ShowHumanData struct {
 	Archived      bool
 
 	// Warnings
-	RepoNotFoundWarning     bool
-	WorktreeMissingWarning  bool
-	TmuxUnavailableWarning  bool
+	RepoNotFoundWarning    bool
+	WorktreeMissingWarning bool
+	TmuxUnavailableWarning bool
 }
 
 // WriteShowPaths writes --path output in the locked format.

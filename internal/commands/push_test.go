@@ -456,12 +456,12 @@ func TestPushEventNamesForPR(t *testing.T) {
 // TestGhPRViewStruct verifies ghPRView JSON parsing.
 func TestGhPRViewStruct(t *testing.T) {
 	tests := []struct {
-		name     string
-		json     string
-		wantNum  int
-		wantURL  string
-		wantSt   string
-		wantErr  bool
+		name    string
+		json    string
+		wantNum int
+		wantURL string
+		wantSt  string
+		wantErr bool
 	}{
 		{
 			name:    "open pr",
@@ -529,7 +529,7 @@ func jsonUnmarshalForTest(data []byte, v any) error {
 		if strings.Contains(str, "not json") {
 			return fmt.Errorf("invalid json")
 		}
-		
+
 		// Extract number
 		if idx := strings.Index(str, `"number":`); idx >= 0 {
 			rest := str[idx+9:]

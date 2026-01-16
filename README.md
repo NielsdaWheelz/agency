@@ -7,10 +7,19 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 ### from source (development)
 
 ```bash
-go install github.com/NielsdaWheelz/agency@latest
+go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 ```
 
-### from releases
+Ensure your Go bin dir is on PATH (uses `GOBIN` if set, otherwise `GOPATH/bin`):
+
+```bash
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+For zsh, add this to `~/.zshrc` and restart your shell.
+
+
+### from releases (coming soon)
 
 prebuilt binaries available on [GitHub releases](https://github.com/NielsdaWheelz/agency/releases) for:
 - darwin-amd64

@@ -60,7 +60,7 @@ type MergeOpts struct {
 type ghPRViewFull struct {
 	Number      int    `json:"number"`
 	URL         string `json:"url"`
-	State       string `json:"state"`       // OPEN, CLOSED, MERGED
+	State       string `json:"state"` // OPEN, CLOSED, MERGED
 	IsDraft     bool   `json:"isDraft"`
 	Mergeable   string `json:"mergeable"`   // MERGEABLE, CONFLICTING, UNKNOWN
 	HeadRefName string `json:"headRefName"` // head branch name

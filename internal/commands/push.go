@@ -810,7 +810,7 @@ func viewPRWithRetry(ctx context.Context, cr exec.CommandRunner, workDir, branch
 		errors.EGHPRViewFailed,
 		"failed to view PR after create (retries exhausted)",
 		map[string]string{
-			"branch":    branch,
+			"branch":     branch,
 			"last_error": lastErr.Error(),
 		},
 	)

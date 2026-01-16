@@ -10,16 +10,16 @@ const ReportNonemptyThresholdBytes = 64
 
 // Derived status string constants (user-visible contract, must remain stable across v1.x).
 const (
-	StatusBroken           = "broken"
-	StatusMerged           = "merged"
-	StatusAbandoned        = "abandoned"
-	StatusFailed           = "failed"
-	StatusNeedsAttention   = "needs attention"
-	StatusReadyForReview   = "ready for review"
-	StatusActivePR         = "active (pr)"
-	StatusActive           = "active"
-	StatusIdlePR           = "idle (pr)"
-	StatusIdle             = "idle"
+	StatusBroken         = "broken"
+	StatusMerged         = "merged"
+	StatusAbandoned      = "abandoned"
+	StatusFailed         = "failed"
+	StatusNeedsAttention = "needs attention"
+	StatusReadyForReview = "ready for review"
+	StatusActivePR       = "active (pr)"
+	StatusActive         = "active"
+	StatusIdlePR         = "idle (pr)"
+	StatusIdle           = "idle"
 )
 
 // Snapshot contains local-only inputs for status derivation.
