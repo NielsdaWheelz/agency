@@ -139,7 +139,7 @@ func TestRunResultWarnings(t *testing.T) {
 }
 
 func TestRunOptsDefaults(t *testing.T) {
-	// Test that empty opts are valid (defaults come from agency.json)
+	// Test that empty opts are valid (defaults resolved later)
 	opts := RunOpts{}
 
 	if opts.Name != "" {

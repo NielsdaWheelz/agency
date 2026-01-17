@@ -578,10 +578,6 @@ func TestMergeIntegration_PrechecksPass_ThenVerifyFails_ThenRejects(t *testing.T
 	// Create agency.json
 	agencyJSON := map[string]any{
 		"version": 1,
-		"defaults": map[string]any{
-			"parent_branch": "main",
-			"runner":        "claude",
-		},
 		"scripts": map[string]any{
 			"setup":   "scripts/setup.sh",
 			"verify":  "exit 1", // Will fail

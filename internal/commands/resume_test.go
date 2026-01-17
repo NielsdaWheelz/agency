@@ -94,10 +94,6 @@ func setupResumeTestEnv(t *testing.T, runID string, setupMeta, createWorktree bo
 	// Create agency.json
 	agencyJSON := `{
 		"version": 1,
-		"defaults": {
-			"parent_branch": "main",
-			"runner": "claude"
-		},
 		"scripts": {
 			"setup": "scripts/agency_setup.sh",
 			"verify": "scripts/agency_verify.sh",
@@ -274,7 +270,7 @@ func TestResume_SessionMissing_CreateSession(t *testing.T) {
 	if call.Name != expectedSession {
 		t.Errorf("NewSession name = %q, want %q", call.Name, expectedSession)
 	}
-	if len(call.Argv) != 1 || call.Argv[0] != "claude" {
+	if len(call.Argv) != 1 || filepath.Base(call.Argv[0]) != "claude" {
 		t.Errorf("NewSession argv = %v, want [claude]", call.Argv)
 	}
 

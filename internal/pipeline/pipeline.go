@@ -19,7 +19,7 @@ type RunPipelineOpts struct {
 	// Runner is the runner name (may be empty; defaults applied in later PRs).
 	Runner string
 
-	// Parent is the parent branch name (may be empty; defaults applied in later PRs).
+	// Parent is the parent branch name (may be empty; resolved later).
 	Parent string
 
 	// Attach indicates whether to attach to tmux after creation (used in later PRs).
@@ -57,7 +57,7 @@ type PipelineState struct {
 	// Populated by LoadAgencyConfig
 	ResolvedRunnerCmd string
 	SetupScript       string
-	ParentBranch      string // resolved from config if Parent was empty
+	ParentBranch      string // resolved from --parent or current branch
 
 	// Populated by CreateWorktree
 	Branch       string

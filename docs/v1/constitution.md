@@ -48,7 +48,7 @@ Core loop:
 
 **invocation**: one execution of runner in workspace. may exit; workspace persists. relaunch via `resume`.
 
-**runner**: `claude` or `codex` (must be on PATH, or specify command in agency.json).
+**runner**: `claude` or `codex` (must be on PATH, or specify command in user config).
 
 ---
 
@@ -58,7 +58,7 @@ Core loop:
 - github integration: **`gh` CLI** only
 - attach/detach: **tmux** only
 - isolation: **git worktrees**
-- config: **`agency.json`** required at repo root
+- config: **`agency.json`** required at repo root (scripts only)
 - scripts: **setup/verify/archive** required
 - merge: **human confirmation** required
 - cli parsing: **stdlib `flag`** in v1
@@ -84,7 +84,9 @@ Agency requires (checked via `agency doctor`):
 - `git`
 - `gh` (authenticated: `gh auth status`)
 - `tmux`
-- configured runner (`claude` or `codex` on PATH, or custom command)
+- configured runner (resolved from user config; must be on PATH or explicit path)
+- user config file present (`$AGENCY_CONFIG_DIR/config.json`)
+- configured editor (resolved from user config; must be on PATH or explicit path)
 - scripts `setup/verify/archive` exist and are executable
 
 `agency doctor` also prints resolved directory paths (data, config, cache).
@@ -102,11 +104,14 @@ Agency requires (checked via `agency doctor`):
 3. else if `$XDG_DATA_HOME` set: `$XDG_DATA_HOME/agency`
 4. else: `~/.local/share/agency`
 
-**config directory** (reserved, unused in v1):
+**config directory** (used for user config):
 1. if `$AGENCY_CONFIG_DIR` set: use it
 2. else if macOS: `~/Library/Preferences/agency`
 3. else if `$XDG_CONFIG_HOME` set: `$XDG_CONFIG_HOME/agency`
 4. else: `~/.config/agency`
+
+**user config file**:
+- `${AGENCY_CONFIG_DIR}/config.json`
 
 **cache directory** (reserved, unused in v1):
 1. if `$AGENCY_CACHE_DIR` set: use it
@@ -125,49 +130,83 @@ All global state lives under `${AGENCY_DATA_DIR}`.
 ```json
 {
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",
     "archive": "scripts/agency_archive.sh"
-  },
-  "runners": {
-    "claude": "claude",
-    "codex": "codex"
   }
 }
 ```
 
 **required fields**:
-- `defaults.parent_branch`
-- `defaults.runner`
 - `scripts.setup`, `scripts.verify`, `scripts.archive`
 
 **validation (v1)**:
 - `version` must be integer `1`
-- `defaults.parent_branch` must be non-empty string
-- `defaults.runner` must be `claude` or `codex`
 - `scripts.setup|verify|archive` must be non-empty strings
-- `runners` if present must be object of string -> string (values non-empty)
-- unknown top-level keys are ignored
-- runner commands must be a single executable name or path with no whitespace (no args); otherwise `E_INVALID_AGENCY_JSON`
+- any other top-level key is invalid (including `defaults` and `runners`)
+
+**schema versioning (v1)** (applies to `agency.json`, `config.json`, `meta.json`, `events.jsonl`):
+- additive only
+- new required fields must bump version
+- config files may reject unknown top-level keys (strict validation)
+- persistence files ignore unknown fields
+
+---
+
+## 8.1) user config (`config.json`)
+
+**location**: `${AGENCY_CONFIG_DIR}/config.json`
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "runner": "claude",
+    "editor": "code"
+  },
+  "runners": {
+    "claude": "claude",
+    "codex": "codex"
+  },
+  "editors": {
+    "code": "code"
+  }
+}
+```
+
+**required fields**:
+- `defaults.runner`
+- `defaults.editor`
+
+**validation (v1)**:
+- `version` must be integer `1`
+- `defaults.runner|editor` must be non-empty strings
+- `runners` if present must be object of string -> string (values non-empty, no whitespace)
+- `editors` if present must be object of string -> string (values non-empty, no whitespace)
+- unknown top-level keys are invalid
+ - invalid user config fails all commands (no fallback)
 
 **runner resolution**:
 - if `runners.<name>` exists: use that command
 - else if `defaults.runner` is `claude` or `codex`: assume on PATH
 - else: error `E_RUNNER_NOT_CONFIGURED`
 
-Invalid `runners.<name>` values (non-string or empty string) are configuration errors (`E_INVALID_AGENCY_JSON`).
+**editor resolution**:
+- if `editors.<name>` exists: use that command
+- else: use `defaults.editor` as command on PATH
+- if the resolved command is missing or not executable: `E_EDITOR_NOT_CONFIGURED`
 
-**schema versioning (v1)** (applies to `agency.json`, `meta.json`, `events.jsonl`):
-- additive only
-- new required fields must bump version
-- unknown fields are ignored
+**missing config file**:
+- for most commands: use built-in defaults
+- for `agency doctor`: error `E_INVALID_USER_CONFIG`
 
----
+**invalid config file**:
+- `E_INVALID_USER_CONFIG` for all commands (no fallback)
+
+**built-in defaults (when config is missing)**:
+- `defaults.runner`: `claude`
+- `defaults.editor`: `code`
 
 ## 9) Scripts
 
@@ -457,7 +496,7 @@ Status is **composable**, not a flat enum:
 - name: run name (validated: lowercase alphanumeric with hyphens, 2-40 chars, starts with letter)
 - shortid: first 4 chars of run_id
 
-**parent branch**: defaults to `agency.json defaults.parent_branch`. override with `--parent <branch>`.
+**parent branch**: use `--parent <branch>` if provided; otherwise use current branch at run time.
 
 **clean working tree**: `agency run` requires:
 - cwd not inside existing agency worktree
@@ -548,6 +587,7 @@ agency run --name <name> [--runner] [--parent]
                                   create workspace, setup, start tmux
 agency ls                         list runs + statuses
 agency show <id> [--path]         show run details
+agency open <id> [--editor]       open run worktree in editor
 agency attach <id>                attach to tmux session
 agency resume <id> [--detached] [--restart]
                                   attach to tmux session (create if missing)
@@ -563,6 +603,7 @@ agency doctor                     check prerequisites + show paths
 ### Init semantics
 
 `agency init` writes the template and appends `.agency/` to the repo `.gitignore` by default. use `--no-gitignore` for a non-invasive mode.
+template includes `version` + `scripts` only; defaults/runners live in user config.
 `agency init` also creates stub scripts if missing:
 - `scripts/agency_setup.sh` (exit 0)
 - `scripts/agency_verify.sh` (print "replace scripts/agency_verify.sh" and exit 1)
@@ -597,6 +638,14 @@ Stub scripts:
 
 no idle detection in v1; tmux session existence is the only signal.
 
+### Open semantics
+
+`agency open <id>`:
+1. resolve run id globally (exact match or unique prefix)
+2. resolve editor from `config.json` defaults (override with `--editor`)
+3. execute editor command with worktree path as a single argument
+4. read-only: no repo lock, no meta mutations, no events
+
 ### Stop semantics
 
 `agency stop <id>`:
@@ -622,7 +671,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `agency doctor` reports how to clear stale locks
 - lock only for mutating commands: `run`, `push`, `merge`, `clean`, `resume --restart`
 - `stop` and `kill` are best-effort and bypass the lock
-- read-only commands (`ls`, `show`, `attach`, `resume` without `--restart`, `doctor`) do not take the lock
+- read-only commands (`ls`, `show`, `open`, `attach`, `resume` without `--restart`, `doctor`) do not take the lock
 
 ---
 
@@ -648,6 +697,8 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_NO_REPO` — not inside a git repository
 - `E_NO_AGENCY_JSON` — agency.json not found at repo root
 - `E_INVALID_AGENCY_JSON` — agency.json validation failed
+- `E_INVALID_USER_CONFIG` — user config missing or invalid
+- `E_EDITOR_NOT_CONFIGURED` — editor command not found or not executable
 - `E_AGENCY_JSON_EXISTS` — agency.json already exists (init without --force)
 
 ### Tool/prerequisite errors
@@ -704,25 +755,27 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - includes keys in this exact order:
   1. `repo_root` — absolute path to repo root
   2. `agency_data_dir` — resolved data directory
-  3. `agency_config_dir` — resolved config directory (reserved)
-  4. `agency_cache_dir` — resolved cache directory (reserved)
-  5. `repo_key` — `github:<owner>/<repo>` or `path:<sha256>`
-  6. `repo_id` — truncated sha256 of repo_key (16 hex chars)
-  7. `origin_present` — `true` or `false`
-  8. `origin_url` — remote URL or empty string
-  9. `origin_host` — hostname or empty string
-  10. `github_flow_available` — `true` or `false`
-  11. `git_version` — output of `git --version`
-  12. `tmux_version` — output of `tmux -V`
-  13. `gh_version` — first line of `gh --version`
-  14. `gh_authenticated` — `true` or `false`
-  15. `defaults_parent_branch` — from agency.json
-  16. `defaults_runner` — from agency.json
-  17. `runner_cmd` — resolved runner command
-  18. `script_setup` — absolute path to setup script
-  19. `script_verify` — absolute path to verify script
-  20. `script_archive` — absolute path to archive script
-  21. `status` — `ok` on success
+  3. `agency_config_dir` — resolved config directory
+  4. `user_config_path` — `${AGENCY_CONFIG_DIR}/config.json`
+  5. `agency_cache_dir` — resolved cache directory
+  6. `repo_key` — `github:<owner>/<repo>` or `path:<sha256>`
+  7. `repo_id` — truncated sha256 of repo_key (16 hex chars)
+  8. `origin_present` — `true` or `false`
+  9. `origin_url` — remote URL or empty string
+  10. `origin_host` — hostname or empty string
+  11. `github_flow_available` — `true` or `false`
+  12. `git_version` — output of `git --version`
+  13. `tmux_version` — output of `tmux -V`
+  14. `gh_version` — first line of `gh --version`
+  15. `gh_authenticated` — `true` or `false`
+  16. `defaults_parent_branch` — current branch at doctor time
+  17. `defaults_runner` — from config.json (or built-in)
+  18. `defaults_editor` — from config.json (or built-in)
+  19. `runner_cmd` — resolved runner command
+  20. `script_setup` — absolute path to setup script
+  21. `script_verify` — absolute path to verify script
+  22. `script_archive` — absolute path to archive script
+  23. `status` — `ok` on success
 - booleans are `true` or `false` (lowercase)
 - on success: exits 0
 - on failure: stdout is empty, error printed to stderr, exits non-zero
