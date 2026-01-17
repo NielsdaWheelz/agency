@@ -59,7 +59,7 @@ right now, v1 is a cli tool with tmux sessions for runners. that’s fine. a ful
 if you truly need the agency tui in v1, add it as slice 7 and make it explicitly “thin wrapper” (no new logic).
 
 ---
-don't make code changes yet. survey and explore the relevant parts of the codebase - start with the README.md and the docs/constitution.md. think deeply on the following: is this a worthy goal? is there a better way of achieving this? is it achievable? explain the core problem, our options, and the professional, best practice gold standard solution. 
+don't make code changes yet. survey and explore the relevant parts of the codebase - start with the README.md and the docs/v1/constitution.md. think deeply on the following: is this a worthy goal? is there a better way of achieving this? is it achievable? explain the core problem, our options, and the professional, best practice gold standard solution. 
 ---
 
 1) i want a `agency code <run-id>` command. this would open the user's ide in the target worktree. this would require setting up a `code` command (like we did for `claude` and `codex`), and setting it in the agency.json.
