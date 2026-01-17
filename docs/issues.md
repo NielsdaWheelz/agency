@@ -135,6 +135,12 @@ i think we should change the way runs work. 1) if the runner inside of a run exi
 
 18) the report.md still looks like the template, it is never filled out. i guess that's something i have to tell the runner to do in the prompt. could we instead create a default agency prompt file (like AGENT or CLAUDE instructions), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
 
+19) runners should start attached by default, not detached.
+
+20) we should add headless mode, --headless, and be able to attach a prompt file
+
+21) we should be able to open a terminal in the worktree, something like `agency open <run-id>`. porbably just use tmux still, so the user can detach.
+
 ---
 
 what i need from your codebase
