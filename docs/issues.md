@@ -122,9 +122,13 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 12) agency clean deletes the worktree (and tmux) but does not delete git branches (local or remote), per the notes in README.md:1311. If you want the branch gone, you’d delete it manually with git.
 
-13) we should enable users to customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
+13) agency attach currently only accepts an exact run_id. There’s no name/prefix resolution in the attach path, even though the usage text says there is. It calls ReadMeta with the provided string and builds the tmux session name from that, so agency attach <name> will fail with E_RUN_NOT_FOUND (internal/cli/dispatch.go, internal/commands/attach.go). we should patch this to support name/prefix resolution
 
-14) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
+14) we need tab completion of run-ids, names, etc.
+
+15) we should enable users to customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
+
+16) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
 
 
 ---
