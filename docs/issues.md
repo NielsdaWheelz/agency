@@ -58,38 +58,20 @@ right now, v1 is a cli tool with tmux sessions for runners. that’s fine. a ful
 
 if you truly need the agency tui in v1, add it as slice 7 and make it explicitly “thin wrapper” (no new logic).
 
-
-10) Reviewing Changes in a Worktree                                                  
-how do i review changes in a worktree? can i easily open my ide in a runner (e.g. `agency <run-id> code`)?
-Option A: Use agency show to get the path, then cd there                            
-                                                                                    
-agency show <run_id> --path                                                         
-# Output:                                                                           
-# worktree_root: /Users/you/Library/Application                                     
-Support/agency/repos/.../worktrees/...                                              
-                                                                                    
-cd "$(agency show <run_id> --path | grep worktree_root | cut -d' ' -f2)"            
-git diff                                                                            
-git log --oneline main..HEAD                                                        
-                                                                                    
-Option B: Open your IDE directly (see next section)                                 
-                                                                                    
-Option C: Review via the GitHub PR                                                  
-                                                                                    
-agency push <run_id>    # creates PR                                                
-# Then review on GitHub                                                             
-                                                                                    
-Agency doesn't have a built-in agency code <run_id> command
-
-11) customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
-
-12) 
-some notes:
 ---
-agency attach fails when runner is dead. at minimum, the error message should be more clear, and i think we should be able to attach anyway. relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again? 
-if you want reliable statuses, make the runner write status artifacts.
+don't make code changes yet. survey and explore the relevant parts of the codebase - start with the README.md and the docs/constitution.md. think deeply on the following: is this a worthy goal? is there a better way of achieving this? is it achievable? explain the core problem, our options, and the professional, best practice gold standard solution. 
+---
+
+1) i want a `agency code <run-id>` command. this would open the user's ide in the target worktree. this would require setting up a `code` command (like we did for `claude` and `codex`), and setting it in the agency.json.
+
+2) i want a command that opens a tmux terminal in the worktree directory, something like `agency open <run-id>`. probably just use tmux still, so the user can detach. tho, thinking on it, it makes more sense maybe to `cd` into the directory instead, since there's no easy way in the `agency` to them reattach with that terminal (unless we save it as a run, which doesn't seem good). what i want, fundamentally, is an easy and fast way for the user to jump in and out of the wortree directory so they can use the terminal there and run commands. 
+
+3) should we be kicked out of tmux when the runner exits? i'm not convinced that is the best product choice. agency attach fails when runner is dead. at minimum, the error message should be more clear. should we be able to attach anyway without having to `resume` and start a new runner? relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again?
+
+4) we need to improve the statuses and logging. `idle` is not a clear descriptor. furthermore, we have too little information about the state of the runner, whether it needs user input, whether it's done, whether it's stuck, etc.:
+i'm wondering if we should make the runner write status artifacts
 a) runner status contract (agency-owned, runner-updated)
-you already do this for scripts. do it for the runner too.
+we already do this for scripts. do it for the runner too.
 mechanism:
 	•	agency creates .agency/state/runner_status.json
 	•	system prompt (or CLAUDE.md / config) instructs the runner:
@@ -122,24 +104,26 @@ add a stall watchdog
 make “stdin blocked” a manual diagnostic
 •	agency debug stdin-wait <id> (linux-only, requires permissions)
 this yields a professional UX without lying.
----
-i think we should change the way runs work. 1) if the runner inside of a run exits, the user should still be able to to attach to that tmux, and if they are already in it it should not close and boot them. 2) the run status should be clearer. we should add reliable statuses to the runner itself, so the user better understands exactly what it's doing. don't make code changes yet. survey and explore the related code, think deeply on the problem and the possible solutions, and provide professional, best practice, gold standard recommendations.
+i think we should at least have have an Agency system prompt, created on `init`, automatically included in all runner prompts (like a CLAUDE.md or AGENTS.md); more and clearer statuses on the runners; runner watchdog; runner status contract.
 
-13) if the worktree has uncommitted changes, push should at least be prompt-blocked, if not blocked entirely (without a --force).
+5) if the worktree has uncommitted changes, push should at least be prompt-blocked, if not blocked entirely (without a --force).
 
-14) we need to fix the pr review process. users should be able to `agency code run-name` and simply attach the terminal to that directory via `agency attach run-name`. 
+6) `push` shouldn't just emit a warning and proceed anyway if the worktree has uncommitted changes, no? that seems crazy. it should probably be prompt-blocked (e.g. require user to type 'reckless'). i think it should actually just require a `--force` or something, since this is very dangerous behaviour. 
 
-16) we need to rethink the limitation that agency can only work inside a repo. most commands should work anywhere (ls, push, merge, clean, etc.) to set necessary arguments. 
+7) `merge` should be a little more protected, it's a dangerous action. should be prompt-blocked and require user to type 'merge' or something, no?
 
-17) agency push is too fast, github doesnt create it in time to get the url back. can we wait? detect when it's ready somehow?
+8) we should add e2e tests for creating, pushing, and merging prs from off the non-main branch.
 
-18) the report.md still looks like the template, it is never filled out. i guess that's something i have to tell the runner to do in the prompt. could we instead create a default agency prompt file (like AGENT or CLAUDE instructions), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
+9) we need to rethink the limitation that agency can only work inside a repo. most commands should work anywhere (ls, push, merge, clean, etc.). users should be able to just set `--repo` or `--parent` (branch) or whatever manually. especially when we one day add remote actions, so the user doesn't have to have the repo cloned locally to use agency.
 
-19) runners should start attached by default, not detached.
+10) the report.md still looks like the template after push and merge, and so do the commit and pr notes. it is never filled out. i guess that's something i have to tell the runner to do in the prompt? could we instead use the default agency prompt file (like AGENTs.md or CLAUDE.md system prompt), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
 
-20) we should add headless mode, --headless, and be able to attach a prompt file
+11) `agency run` should, by default, start attached, not detached.
 
-21) we should be able to open a terminal in the worktree, something like `agency open <run-id>`. porbably just use tmux still, so the user can detach.
+12) we should enable users to customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
+
+13) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
+
 
 ---
 
