@@ -83,7 +83,47 @@ Agency doesn't have a built-in agency code <run_id> command
 
 11) customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
 
-12) agency attach fails when runner is dead. at minimum, the error message should be more clear, and i think we should be able to attach anyway. relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again? 
+12) 
+some notes:
+---
+agency attach fails when runner is dead. at minimum, the error message should be more clear, and i think we should be able to attach anyway. relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again? 
+if you want reliable statuses, make the runner write status artifacts.
+a) runner status contract (agency-owned, runner-updated)
+you already do this for scripts. do it for the runner too.
+mechanism:
+	•	agency creates .agency/state/runner_status.json
+	•	system prompt (or CLAUDE.md / config) instructs the runner:
+	•	update status at milestones
+	•	when it needs user input, write needs_input + a short question list
+	•	when it believes it’s “done”, write ready_for_review + “how to test” + “risks”
+	•	agency ls/show reads that file, not terminal vibes
+pros
+	•	cross-platform
+	•	deterministic
+	•	composable with future headless mode
+	•	lets you define your state machine (not the tool’s)
+cons
+	•	relies on runner compliance (but that’s true of everything with llms)
+	•	still can’t detect “hung” unless you add a watchdog (below)
+b) watchdog to catch stalls (still agency-owned)
+combine status contract with a watchdog:
+	•	record last_status_update_at + last_pane_output_at
+	•	if neither changes for N minutes → show “stalled (no signals)” and set needs_attention
+this catches hangs without pretending to know “thinking vs waiting”.
+define agency-owned statuses (artifact-first)
+•	runner_status.json is the primary truth for “needs input / ready / blocked”
+•	verify.json + todos.json are the primary truth for merge gating
+add tmux-based activity hints (clearly labeled as hints)
+•	last_pane_output_at
+•	pane_output_rate (rough)
+•	optionally cpu_hint
+add a stall watchdog
+•	if no status updates + no pane output for N minutes → stalled
+make “stdin blocked” a manual diagnostic
+•	agency debug stdin-wait <id> (linux-only, requires permissions)
+this yields a professional UX without lying.
+---
+i think we should change the way runs work. 1) if the runner inside of a run exits, the user should still be able to to attach to that tmux, and if they are already in it it should not close and boot them. 2) the run status should be clearer. we should add reliable statuses to the runner itself, so the user better understands exactly what it's doing. don't make code changes yet. survey and explore the related code, think deeply on the problem and the possible solutions, and provide professional, best practice, gold standard recommendations.
 
 13) if the worktree has uncommitted changes, push should at least be prompt-blocked, if not blocked entirely (without a --force).
 
@@ -93,7 +133,9 @@ Agency doesn't have a built-in agency code <run_id> command
 
 17) agency push is too fast, github doesnt create it in time to get the url back. can we wait? detect when it's ready somehow?
 
-18) the report.md still looks like the template, it is never filled out. i guess that's something i have to tell the runner to do in the prompt. could we instead create a default agency prompt file (like AGENT or CLAUDE instructions), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new 
+18) the report.md still looks like the template, it is never filled out. i guess that's something i have to tell the runner to do in the prompt. could we instead create a default agency prompt file (like AGENT or CLAUDE instructions), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
+
+---
 
 what i need from your codebase
 	•	current file layout and whether you already have a “run directory” abstraction
