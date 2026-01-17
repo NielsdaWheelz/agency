@@ -132,14 +132,14 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 		return errors.Wrap(errors.ETmuxNotInstalled, "failed to check tmux session", err)
 	}
 
-	// Load agency.json for runner resolution
-	cfg, err := config.LoadAgencyConfig(fsys, repoRoot.Path)
+	// Resolve user config for runner resolution
+	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
 	if err != nil {
 		return err
 	}
 
 	// Resolve runner command using shared helper
-	runnerCmd, err := config.ResolveRunnerCmd(&cfg, meta.Runner)
+	runnerCmd, err := config.ResolveRunnerCmd(cr, fsys, dirs.ConfigDir, userCfg, meta.Runner)
 	if err != nil {
 		return err
 	}

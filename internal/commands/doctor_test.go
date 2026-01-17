@@ -99,18 +99,10 @@ func setupTestRepo(t *testing.T) string {
 	// Create agency.json
 	agencyJSON := `{
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",
     "archive": "scripts/agency_archive.sh"
-  },
-  "runners": {
-    "claude": "claude",
-    "codex": "codex"
   }
 }`
 	if err := os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644); err != nil {
@@ -130,6 +122,30 @@ func setupTestRepo(t *testing.T) string {
 	return tmpDir
 }
 
+func writeUserConfig(t *testing.T, configDir string) {
+	t.Helper()
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	cfg := `{
+  "version": 1,
+  "defaults": {
+    "runner": "claude",
+    "editor": "code"
+  },
+  "runners": {
+    "claude": "claude",
+    "codex": "codex"
+  },
+  "editors": {
+    "code": "code"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("failed to write config.json: %v", err)
+	}
+}
+
 // setupMockRunnerAllOK sets up mock runner to respond OK for all tool checks.
 func setupMockRunnerAllOK(m *mockRunner, repoRoot string) {
 	// git rev-parse --show-toplevel
@@ -147,6 +163,12 @@ func setupMockRunnerAllOK(m *mockRunner, repoRoot string) {
 	// git --version
 	m.SetResponse("git", []string{"--version"}, agencyexec.CmdResult{
 		Stdout:   "git version 2.40.0\n",
+		ExitCode: 0,
+	}, nil)
+
+	// git branch --show-current
+	m.SetResponse("git", []string{"branch", "--show-current"}, agencyexec.CmdResult{
+		Stdout:   "main\n",
 		ExitCode: 0,
 	}, nil)
 
@@ -176,6 +198,9 @@ func TestDoctor_Success(t *testing.T) {
 
 	// Set env var for data dir (t.Setenv auto-restores after test)
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	// Setup mock
 	m := newMockRunner()
@@ -195,6 +220,8 @@ func TestDoctor_Success(t *testing.T) {
 	expectedLines := []string{
 		"repo_root: " + repoRoot,
 		"agency_data_dir: " + dataDir,
+		"agency_config_dir: " + configDir,
+		"user_config_path: " + filepath.Join(configDir, "config.json"),
 		"repo_key: github:testowner/testrepo",
 		"origin_present: true",
 		"origin_url: git@github.com:testowner/testrepo.git",
@@ -206,7 +233,8 @@ func TestDoctor_Success(t *testing.T) {
 		"gh_authenticated: true",
 		"defaults_parent_branch: main",
 		"defaults_runner: claude",
-		"runner_cmd: claude",
+		"defaults_editor: code",
+		"runner_cmd: /usr/bin/claude",
 		"status: ok",
 	}
 
@@ -230,6 +258,9 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	dataDir := t.TempDir()
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -275,6 +306,9 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	dataDir := t.TempDir()
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -309,6 +343,9 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	dataDir := t.TempDir()
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -332,6 +369,9 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	dataDir := t.TempDir()
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -373,6 +413,9 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 	dataDir := t.TempDir()
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -438,6 +481,9 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	dataDir := t.TempDir()
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
 	setupMockRunnerAllOK(m, repoRoot)
@@ -458,6 +504,7 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"repo_root:",
 		"agency_data_dir:",
 		"agency_config_dir:",
+		"user_config_path:",
 		"agency_cache_dir:",
 		"repo_key:",
 		"repo_id:",
@@ -471,6 +518,7 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"gh_authenticated:",
 		"defaults_parent_branch:",
 		"defaults_runner:",
+		"defaults_editor:",
 		"runner_cmd:",
 		"script_setup:",
 		"script_verify:",

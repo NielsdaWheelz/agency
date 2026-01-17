@@ -27,6 +27,7 @@ commands:
   run         create workspace, setup, and start tmux runner session
   ls          list runs and their statuses
   show        show run details
+  open        open run worktree in editor
   attach      attach to a tmux session for an existing run
   resume      attach to tmux session (create if missing)
   stop        send C-c to runner (best-effort interrupt)
@@ -69,8 +70,8 @@ requires cwd to be inside a git repo with agency.json.
 
 options:
   --name <string>     run name (required, 2-40 chars, lowercase alphanumeric with hyphens)
-  --runner <name>     runner name: claude or codex (default: agency.json defaults.runner)
-  --parent <branch>   parent branch (default: agency.json defaults.parent_branch)
+  --runner <name>     runner name: claude or codex (default: user config defaults.runner)
+  --parent <branch>   parent branch (default: current branch)
   --attach            attach to tmux session immediately after creation
   -h, --help          show this help
 
@@ -305,6 +306,24 @@ examples:
   agency show my-feature --capture     # capture transcript + show details
 `
 
+const openUsageText = `usage: agency open <run> [options]
+
+open a run worktree in your editor.
+resolves globally (works from anywhere, not just inside a repo).
+
+arguments:
+  run           run name, run_id, or unique run_id prefix
+
+options:
+  --editor <name>   editor name (default: user config defaults.editor)
+  -h, --help        show this help
+
+examples:
+  agency open my-feature
+  agency open 20260110120000-a3f2
+  agency open my-feature --editor code
+`
+
 // Run parses arguments and dispatches to the appropriate subcommand.
 // Returns an error if the command fails; the caller should print the error and exit.
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -337,6 +356,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runLS(cmdArgs, stdout, stderr)
 	case "show":
 		return runShow(cmdArgs, stdout, stderr)
+	case "open":
+		return runOpen(cmdArgs, stdout, stderr)
 	case "attach":
 		return runAttach(cmdArgs, stdout, stderr)
 	case "stop":
@@ -563,6 +584,51 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Show(ctx, cr, fsys, cwd, opts, stdout, stderr)
+}
+
+func runOpen(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("open", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	editor := flagSet.String("editor", "", "editor name")
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			_, _ = fmt.Fprint(stdout, openUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		_, _ = fmt.Fprint(stderr, openUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.OpenOpts{
+		RunID:  runID,
+		Editor: *editor,
+	}
+
+	return commands.Open(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
 
 func runAttach(args []string, stdout, stderr io.Writer) error {

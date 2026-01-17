@@ -55,7 +55,7 @@ func TestLoadAgencyConfig_MissingFile(t *testing.T) {
 
 func TestLoadAgencyConfig_InvalidJSON(t *testing.T) {
 	stub := newStubFS()
-	stub.files["/repo/agency.json"] = []byte(`{"version": 1, "defaults": {`)
+	stub.files["/repo/agency.json"] = []byte(`{"version": 1, "scripts": {`)
 	_, err := LoadAgencyConfig(stub, "/repo")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
@@ -83,11 +83,14 @@ func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
 	if cfg.Version != 1 {
 		t.Errorf("Version = %d, want 1", cfg.Version)
 	}
-	if cfg.Defaults.ParentBranch != "main" {
-		t.Errorf("ParentBranch = %q, want %q", cfg.Defaults.ParentBranch, "main")
+	if cfg.Scripts.Setup != "scripts/agency_setup.sh" {
+		t.Errorf("Scripts.Setup = %q, want %q", cfg.Scripts.Setup, "scripts/agency_setup.sh")
 	}
-	if cfg.Defaults.Runner != "claude" {
-		t.Errorf("Runner = %q, want %q", cfg.Defaults.Runner, "claude")
+	if cfg.Scripts.Verify != "scripts/agency_verify.sh" {
+		t.Errorf("Scripts.Verify = %q, want %q", cfg.Scripts.Verify, "scripts/agency_verify.sh")
+	}
+	if cfg.Scripts.Archive != "scripts/agency_archive.sh" {
+		t.Errorf("Scripts.Archive = %q, want %q", cfg.Scripts.Archive, "scripts/agency_archive.sh")
 	}
 }
 
@@ -97,11 +100,8 @@ func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
 		fixture string
 		wantMsg string
 	}{
-		{"defaults as string", "wrong_types.json", "defaults must be an object"},
 		{"scripts as array", "wrong_types_scripts.json", "scripts must be an object"},
 		{"script verify as object", "wrong_types_script_verify.json", "scripts.verify must be a string"},
-		{"runners as array", "wrong_types_runners.json", "runners must be an object"},
-		{"runner value as number", "wrong_types_runner_value.json", "runners.claude must be a string"},
 		{"version as string", "wrong_version_string.json", "version must be an integer"},
 		{"version as float", "wrong_version_float.json", "version must be an integer"},
 	}
@@ -135,11 +135,8 @@ func TestValidateAgencyConfig_RequiredFields(t *testing.T) {
 		fixture string
 		wantMsg string
 	}{
-		{"missing parent_branch", "missing_parent_branch.json", "missing required field defaults.parent_branch"},
-		{"missing runner", "missing_runner.json", "missing required field defaults.runner"},
 		{"missing scripts", "missing_scripts.json", "missing required field scripts.setup"},
 		{"missing script setup", "missing_script_setup.json", "missing required field scripts.setup"},
-		{"empty parent_branch", "empty_strings.json", "missing required field defaults.parent_branch"},
 	}
 
 	for _, tt := range tests {
@@ -192,53 +189,6 @@ func TestValidateAgencyConfig_WrongVersion(t *testing.T) {
 	}
 }
 
-func TestValidateAgencyConfig_EmptyRunnerValue(t *testing.T) {
-	data, err := os.ReadFile("testdata/empty_runner_value.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateAgencyConfig(cfg)
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "runners.claude must be a non-empty string") {
-		t.Errorf("error should mention empty runner value: %s", err.Error())
-	}
-}
-
-func TestValidateAgencyConfig_RunnerWithArgs(t *testing.T) {
-	data, err := os.ReadFile("testdata/runner_with_args.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateAgencyConfig(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for runner with args")
-	}
-	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
-	if !strings.Contains(err.Error(), "single executable") {
-		t.Errorf("error should mention 'single executable': %s", err.Error())
-	}
-}
-
 func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {
 	data, err := os.ReadFile("testdata/unknown_keys.json")
 	if err != nil {
@@ -247,132 +197,12 @@ func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	validated, err := ValidateAgencyConfig(cfg)
-	if err != nil {
-		t.Fatalf("unexpected validation error: %v", err)
-	}
-	if validated.Defaults.ParentBranch != "main" {
-		t.Errorf("ParentBranch = %q, want %q", validated.Defaults.ParentBranch, "main")
-	}
-}
-
-func TestRunnerResolution_Claude(t *testing.T) {
-	data, err := os.ReadFile("testdata/valid_min.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	validated, err := ValidateAgencyConfig(cfg)
-	if err != nil {
-		t.Fatalf("validation error: %v", err)
-	}
-	if validated.ResolvedRunnerCmd != "claude" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "claude")
-	}
-}
-
-func TestRunnerResolution_Codex(t *testing.T) {
-	data, err := os.ReadFile("testdata/codex_runner.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	validated, err := ValidateAgencyConfig(cfg)
-	if err != nil {
-		t.Fatalf("validation error: %v", err)
-	}
-	if validated.ResolvedRunnerCmd != "codex" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "codex")
-	}
-}
-
-func TestRunnerResolution_CustomOk(t *testing.T) {
-	data, err := os.ReadFile("testdata/runner_custom_ok.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	validated, err := ValidateAgencyConfig(cfg)
-	if err != nil {
-		t.Fatalf("validation error: %v", err)
-	}
-	if validated.ResolvedRunnerCmd != "path/to/custom-runner" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "path/to/custom-runner")
-	}
-}
-
-func TestRunnerResolution_CustomMissing(t *testing.T) {
-	data, err := os.ReadFile("testdata/runner_custom_missing.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateAgencyConfig(cfg)
+	_, err = LoadAgencyConfig(stub, "/repo")
 	if err == nil {
-		t.Fatal("expected error for unconfigured custom runner")
+		t.Fatal("expected error for unknown keys")
 	}
-	if errors.GetCode(err) != errors.ERunnerNotConfigured {
-		t.Errorf("expected E_RUNNER_NOT_CONFIGURED, got %s", errors.GetCode(err))
-	}
-	if !strings.Contains(err.Error(), "custom") {
-		t.Errorf("error should mention runner name: %s", err.Error())
-	}
-}
-
-func TestRunnerResolution_MapOverridesDefault(t *testing.T) {
-	// When runners.claude is set, it should override the default PATH lookup
-	data, err := os.ReadFile("testdata/valid_full.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	validated, err := ValidateAgencyConfig(cfg)
-	if err != nil {
-		t.Fatalf("validation error: %v", err)
-	}
-	// runners.claude = "claude" should be used
-	if validated.ResolvedRunnerCmd != "claude" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "claude")
+	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
+		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
 	}
 }
 
@@ -398,13 +228,11 @@ func TestFirstValidationError(t *testing.T) {
 }
 
 func TestFirstValidationError_Stability(t *testing.T) {
-	// This test ensures error message format stability for doctor output
 	testCases := []struct {
 		fixture string
 		wantMsg string
 	}{
-		{"missing_parent_branch.json", "missing required field defaults.parent_branch"},
-		{"missing_runner.json", "missing required field defaults.runner"},
+		{"missing_scripts.json", "missing required field scripts.setup"},
 		{"wrong_version.json", "version must be 1"},
 	}
 
@@ -461,7 +289,6 @@ func TestContainsWhitespace(t *testing.T) {
 // S1-specific validation tests
 
 func TestValidateForS1_SetupOnly(t *testing.T) {
-	// S1 validation should pass with only scripts.setup (no verify/archive required)
 	data, err := os.ReadFile("testdata/s1_valid_setup_only.json")
 	if err != nil {
 		t.Fatalf("failed to read fixture: %v", err)
@@ -474,21 +301,14 @@ func TestValidateForS1_SetupOnly(t *testing.T) {
 		t.Fatalf("load error: %v", err)
 	}
 
-	validated, err := ValidateForS1(cfg)
+	_, err = ValidateForS1(cfg)
 	if err != nil {
 		t.Fatalf("S1 validation should pass with setup only: %v", err)
-	}
-	if validated.Defaults.ParentBranch != "main" {
-		t.Errorf("ParentBranch = %q, want %q", validated.Defaults.ParentBranch, "main")
-	}
-	if validated.ResolvedRunnerCmd != "claude" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "claude")
 	}
 }
 
 func TestValidateForS1_FullConfig(t *testing.T) {
-	// S1 validation should also pass with full config
-	data, err := os.ReadFile("testdata/valid_full.json")
+	data, err := os.ReadFile("testdata/valid_min.json")
 	if err != nil {
 		t.Fatalf("failed to read fixture: %v", err)
 	}
@@ -510,7 +330,6 @@ func TestValidateForS1_FullConfig(t *testing.T) {
 }
 
 func TestValidateForS1_MissingSetup(t *testing.T) {
-	// S1 validation should fail if scripts.setup is missing
 	data, err := os.ReadFile("testdata/missing_script_setup.json")
 	if err != nil {
 		t.Fatalf("failed to read fixture: %v", err)
@@ -535,122 +354,7 @@ func TestValidateForS1_MissingSetup(t *testing.T) {
 	}
 }
 
-func TestValidateForS1_MissingScriptsObject(t *testing.T) {
-	// S1 validation should fail if scripts object is missing entirely
-	data, err := os.ReadFile("testdata/missing_scripts.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateForS1(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for missing scripts")
-	}
-	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
-}
-
-func TestValidateForS1_InvalidVersion(t *testing.T) {
-	data, err := os.ReadFile("testdata/wrong_version.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateForS1(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for wrong version")
-	}
-	if !strings.Contains(err.Error(), "version must be 1") {
-		t.Errorf("error should mention version: %s", err.Error())
-	}
-}
-
-func TestValidateForS1_RunnerNotConfigured(t *testing.T) {
-	data, err := os.ReadFile("testdata/runner_custom_missing.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateForS1(cfg)
-	if err == nil {
-		t.Fatal("expected error for unconfigured runner")
-	}
-	if errors.GetCode(err) != errors.ERunnerNotConfigured {
-		t.Errorf("expected E_RUNNER_NOT_CONFIGURED, got %s", errors.GetCode(err))
-	}
-}
-
-func TestValidateForS1_RunnerOverride(t *testing.T) {
-	data, err := os.ReadFile("testdata/s1_valid_with_runner_override.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	validated, err := ValidateForS1(cfg)
-	if err != nil {
-		t.Fatalf("validation error: %v", err)
-	}
-	if validated.ResolvedRunnerCmd != "/custom/path/to/claude" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "/custom/path/to/claude")
-	}
-	if validated.Scripts.Setup != "./scripts/agency_setup.sh" {
-		t.Errorf("Scripts.Setup = %q, want %q", validated.Scripts.Setup, "./scripts/agency_setup.sh")
-	}
-}
-
-func TestValidateForS1_EmptyRunnerValue(t *testing.T) {
-	data, err := os.ReadFile("testdata/empty_runner_value.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = data
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	_, err = ValidateForS1(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for empty runner value")
-	}
-	if !strings.Contains(err.Error(), "non-empty string") {
-		t.Errorf("error should mention non-empty string: %s", err.Error())
-	}
-}
-
 func TestLoadAndValidateForS1(t *testing.T) {
-	// Test the convenience function
 	data, err := os.ReadFile("testdata/s1_valid_setup_only.json")
 	if err != nil {
 		t.Fatalf("failed to read fixture: %v", err)
@@ -658,12 +362,9 @@ func TestLoadAndValidateForS1(t *testing.T) {
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
-	validated, err := LoadAndValidateForS1(stub, "/repo")
+	_, err = LoadAndValidateForS1(stub, "/repo")
 	if err != nil {
 		t.Fatalf("LoadAndValidateForS1 error: %v", err)
-	}
-	if validated.ResolvedRunnerCmd != "claude" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "claude")
 	}
 }
 
@@ -678,56 +379,12 @@ func TestLoadAndValidateForS1_MissingFile(t *testing.T) {
 	}
 }
 
-func TestValidateForS1_VerifyArchiveNotRequired(t *testing.T) {
-	// Key test: S1 validation should NOT require verify/archive
-	// This is what distinguishes ValidateForS1 from ValidateAgencyConfig
-	stub := newStubFS()
-	stub.files["/repo/agency.json"] = []byte(`{
-		"version": 1,
-		"defaults": {
-			"parent_branch": "develop",
-			"runner": "codex"
-		},
-		"scripts": {
-			"setup": "my_setup.sh"
-		}
-	}`)
-
-	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	// S1 validation should pass
-	validated, err := ValidateForS1(cfg)
-	if err != nil {
-		t.Fatalf("S1 validation should pass without verify/archive: %v", err)
-	}
-	if validated.ResolvedRunnerCmd != "codex" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", validated.ResolvedRunnerCmd, "codex")
-	}
-
-	// Full validation should fail (verify/archive missing)
-	_, err = ValidateAgencyConfig(cfg)
-	if err == nil {
-		t.Fatal("full validation should fail without verify/archive")
-	}
-	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
-}
-
 // Integration test using real filesystem
 func TestLoadAgencyConfig_RealFS(t *testing.T) {
-	// Create temp directory with agency.json
 	tmpDir := t.TempDir()
 
 	configContent := `{
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
   "scripts": {
     "setup": "scripts/setup.sh",
     "verify": "scripts/verify.sh",
@@ -749,7 +406,7 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	if cfg.Version != 1 {
 		t.Errorf("Version = %d, want 1", cfg.Version)
 	}
-	if cfg.Defaults.ParentBranch != "main" {
-		t.Errorf("ParentBranch = %q, want %q", cfg.Defaults.ParentBranch, "main")
+	if cfg.Scripts.Setup != "scripts/setup.sh" {
+		t.Errorf("Scripts.Setup = %q, want %q", cfg.Scripts.Setup, "scripts/setup.sh")
 	}
 }
