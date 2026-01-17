@@ -64,7 +64,59 @@ don't make code changes yet. survey and explore the relevant parts of the codeba
 
 1) i want a `agency code <run-id>` command. this would open the user's ide in the target worktree. this would require setting up a `code` command (like we did for `claude` and `codex`), and setting it in the agency.json.
 
+
+
 2) i want a command that opens a tmux terminal in the worktree directory, something like `agency open <run-id>`. probably just use tmux still, so the user can detach. tho, thinking on it, it makes more sense maybe to `cd` into the directory instead, since there's no easy way in the `agency` to them reattach with that terminal (unless we save it as a run, which doesn't seem good). what i want, fundamentally, is an easy and fast way for the user to jump in and out of the wortree directory so they can use the terminal there and run commands. 
+The Core Problem                                                     
+
+- A CLI cannot change the caller shell’s CWD; any “cd” must 
+  be done via shell integration or a subshell.              
+- agency show --path already exposes worktree paths but only                
+  as key/value lines, so cd requires brittle parsing.
+- “Active” status hinges on the agency_<run_id> tmux   
+  session; reusing that name for a shell would misrepresent
+  runner state.                                             
+- agency resume always launches the runner; there’s no                      
+  existing “shell-only” session abstraction.                                
+- The real need is rapid, low‑friction navigation to the     15:10 17-Jan-26
+  worktree for ad‑hoc commands.                       
+              
+Options                                                     
+                                                            
+- Use existing agency show --path or agency show --json plus
+  grep/jq in a shell function; zero code, but clunky and  
+  error‑prone.                                              
+- Add a path‑only command (e.g., agency path <id> or agency
+  show --path --field worktree) so users can cd "$(agency   
+  path <id>)"; minimal risk, clean UX.                      
+- Add agency open <id> that creates/attaches a separate tmux
+  session like agency_shell_<run_id> with -c <worktree>; 
+  supports detach/reattach without touching runner state.
+- Document “attach then create tmux window” (Ctrl+b c) as a
+  workaround; no new code, but not fast and requires tmux
+  fluency.                                                  
+
+Best‑Practice (Gold Standard)                               
+
+- Provide a path‑only CLI output dedicated to scripting
+  (simple, stable, one‑line path), then ship a tiny shell
+  integration snippet (bash/zsh/fish) that defines acd/
+  agency-cd using cd "$(agency path "$1")" and pushd/popd.
+- Optionally add agency open <id> as a convenience wrapper
+  around a dedicated agency_shell_<run_id> tmux session,
+  explicitly decoupled from runner sessions and status
+  derivation.
+- Keep status logic unchanged by never touching
+  agency_<run_id> for shell use; use deterministic separate
+  names.
+- This aligns with the constitution’s tmux‑only constraint
+  while respecting the “CLI can’t cd” reality.
+
+It’s a worthy goal because it removes daily friction without
+compromising the runner lifecycle, and it’s very achievable.
+The cleanest solution is the path‑only command + shell
+integration; the tmux “open” is a nice optional extra for
+users who want detach/reattach without memorizing paths.
 
 3) should we be kicked out of tmux when the runner exits? i'm not convinced that is the best product choice. agency attach fails when runner is dead. at minimum, the error message should be more clear. should we be able to attach anyway without having to `resume` and start a new runner? relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again?
 
