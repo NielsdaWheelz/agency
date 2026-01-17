@@ -624,7 +624,7 @@ func runOpen(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.OpenOpts{
-		RunID:   runID,
+		RunID:  runID,
 		Editor: *editor,
 	}
 

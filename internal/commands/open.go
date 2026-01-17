@@ -9,6 +9,7 @@ import (
 	osexec "os/exec"
 	"strings"
 
+	stderrors "errors"
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -16,7 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	stderrors "errors"
 )
 
 // OpenOpts holds options for the open command.
