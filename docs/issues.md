@@ -120,9 +120,11 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 11) `agency run` should, by default, start attached, not detached.
 
-12) we should enable users to customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
+12) agency clean deletes the worktree (and tmux) but does not delete git branches (local or remote), per the notes in README.md:1311. If you want the branch gone, you’d delete it manually with git.
 
-13) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
+13) we should enable users to customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
+
+14) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
 
 
 ---
