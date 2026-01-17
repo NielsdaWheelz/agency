@@ -62,7 +62,7 @@ if you truly need the agency tui in v1, add it as slice 7 and make it explicitly
 don't make code changes yet. survey and explore the relevant parts of the codebase - start with the README.md and the docs/v1/constitution.md. think deeply on the following: is this a worthy goal? is there a better way of achieving this? is it achievable? explain the core problem, our options, and the professional, best practice gold standard solution. 
 ---
 
-1) i want a `agency code <run-id>` command. this would open the user's ide in the target worktree. this would require setting up a `code` command (like we did for `claude` and `codex`), and setting it in the agency.json.
+XXX) i want a `agency code <run-id>` command. this would open the user's ide in the target worktree. this would require setting up a `code` command (like we did for `claude` and `codex`), and setting it in the agency.json.
 
 
 
@@ -158,9 +158,8 @@ make “stdin blocked” a manual diagnostic
 this yields a professional UX without lying.
 i think we should at least have have an Agency system prompt, created on `init`, automatically included in all runner prompts (like a CLAUDE.md or AGENTS.md); more and clearer statuses on the runners; runner watchdog; runner status contract.
 
-5) if the worktree has uncommitted changes, push should at least be prompt-blocked, if not blocked entirely (without a --force).
+XXX) if the worktree has uncommitted changes, push should at least be prompt-blocked, if not blocked entirely (without a --force). `push` shouldn't just emit a warning and proceed anyway if the worktree has uncommitted changes, no? that seems crazy. it should probably be prompt-blocked (e.g. require user to type 'reckless'). i think it should actually just require a `--force` or something, since this is very dangerous behaviour. 
 
-6) `push` shouldn't just emit a warning and proceed anyway if the worktree has uncommitted changes, no? that seems crazy. it should probably be prompt-blocked (e.g. require user to type 'reckless'). i think it should actually just require a `--force` or something, since this is very dangerous behaviour. 
 
 7) `merge` should be a little more protected, it's a dangerous action. should be prompt-blocked and require user to type 'merge' or something, no?
 
@@ -182,6 +181,9 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 16) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
 
+17) `push` needs to add/commit too.
+
+18) we need to run `make fmt` or something before verify. or before testing. or in the system prompt so the runner does it. otherwise verify always fails.
 
 ---
 
