@@ -26,6 +26,7 @@ type DoctorReport struct {
 	RepoRoot        string
 	AgencyDataDir   string
 	AgencyConfigDir string
+	UserConfigPath  string
 	AgencyCacheDir  string
 
 	// Identity/origin
@@ -45,6 +46,7 @@ type DoctorReport struct {
 	// Config resolution
 	DefaultsParentBranch string
 	DefaultsRunner       string
+	DefaultsEditor       string
 	RunnerCmd            string
 	ScriptSetup          string
 	ScriptVerify         string
@@ -74,19 +76,28 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// 3. Load and validate agency.json
+	// 3. Load and validate user config
+	userCfg, found, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New(errors.EInvalidUserConfig, "user config not found: "+config.UserConfigPath(dirs.ConfigDir))
+	}
+
+	// 4. Load and validate agency.json
 	cfg, err := config.LoadAndValidate(fsys, repoRoot.Path)
 	if err != nil {
 		return err
 	}
 
-	// 4. Get origin info
+	// 5. Get origin info
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 
-	// 5. Derive repo identity
+	// 6. Derive repo identity
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// 6. Check tools
+	// 7. Check tools
 	gitVersion, err := checkGit(ctx, cr)
 	if err != nil {
 		return err
@@ -102,17 +113,21 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// 7. Check gh auth status
+	// 8. Check gh auth status
 	if err := checkGhAuth(ctx, cr); err != nil {
 		return err
 	}
 
-	// 8. Verify runner command exists
-	if err := checkRunnerExists(cr, fsys, cfg.ResolvedRunnerCmd, repoRoot.Path); err != nil {
+	// 9. Resolve runner/editor commands
+	resolvedRunnerCmd, err := config.ResolveRunnerCmd(cr, fsys, dirs.ConfigDir, userCfg, userCfg.Defaults.Runner)
+	if err != nil {
+		return err
+	}
+	if _, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, userCfg.Defaults.Editor); err != nil {
 		return err
 	}
 
-	// 9. Check scripts exist and are executable
+	// 10. Check scripts exist and are executable
 	scriptSetup, err := checkScript(fsys, cfg.Scripts.Setup, repoRoot.Path, "setup")
 	if err != nil {
 		return err
@@ -126,11 +141,17 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
+	currentBranch, err := currentBranch(ctx, cr, repoRoot.Path)
+	if err != nil {
+		return err
+	}
+
 	// Build report
 	report := DoctorReport{
 		RepoRoot:             repoRoot.Path,
 		AgencyDataDir:        dirs.DataDir,
 		AgencyConfigDir:      dirs.ConfigDir,
+		UserConfigPath:       config.UserConfigPath(dirs.ConfigDir),
 		AgencyCacheDir:       dirs.CacheDir,
 		RepoKey:              repoIdentity.RepoKey,
 		RepoID:               repoIdentity.RepoID,
@@ -142,9 +163,10 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		TmuxVersion:          tmuxVersion,
 		GhVersion:            ghVersion,
 		GhAuthenticated:      true,
-		DefaultsParentBranch: cfg.Defaults.ParentBranch,
-		DefaultsRunner:       cfg.Defaults.Runner,
-		RunnerCmd:            cfg.ResolvedRunnerCmd,
+		DefaultsParentBranch: currentBranch,
+		DefaultsRunner:       userCfg.Defaults.Runner,
+		DefaultsEditor:       userCfg.Defaults.Editor,
+		RunnerCmd:            resolvedRunnerCmd,
 		ScriptSetup:          scriptSetup,
 		ScriptVerify:         scriptVerify,
 		ScriptArchive:        scriptArchive,
@@ -213,36 +235,6 @@ func checkGhAuth(ctx context.Context, cr agencyexec.CommandRunner) error {
 }
 
 // checkRunnerExists verifies the runner command exists on PATH or as a path.
-func checkRunnerExists(cr agencyexec.CommandRunner, fsys fs.FS, runnerCmd, repoRoot string) error {
-	// If it contains a path separator, it's a path (absolute or relative)
-	if strings.Contains(runnerCmd, string(filepath.Separator)) || strings.HasPrefix(runnerCmd, ".") {
-		// Resolve relative to repo root
-		absPath := runnerCmd
-		if !filepath.IsAbs(runnerCmd) {
-			absPath = filepath.Join(repoRoot, runnerCmd)
-		}
-		info, err := fsys.Stat(absPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return errors.New(errors.ERunnerNotConfigured, "runner command not found: "+runnerCmd)
-			}
-			return errors.Wrap(errors.ERunnerNotConfigured, "failed to check runner command", err)
-		}
-		// Check executable
-		if info.Mode().Perm()&0111 == 0 {
-			return errors.New(errors.ERunnerNotConfigured, "runner command is not executable: "+runnerCmd)
-		}
-		return nil
-	}
-
-	// Otherwise, use CommandRunner.LookPath for PATH lookup
-	_, err := cr.LookPath(runnerCmd)
-	if err != nil {
-		return errors.New(errors.ERunnerNotConfigured, "runner command not found on PATH: "+runnerCmd)
-	}
-	return nil
-}
-
 // checkScript verifies a script exists and is executable.
 // Returns the resolved absolute path.
 func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, error) {
@@ -267,6 +259,14 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 	}
 
 	return absPath, nil
+}
+
+func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot string) (string, error) {
+	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, agencyexec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to get current branch", err)
+	}
+	return strings.TrimSpace(result.Stdout), nil
 }
 
 // persistOnSuccess writes repo_index.json and repo.json atomically.
@@ -331,6 +331,7 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	_, _ = fmt.Fprintf(w, "repo_root: %s\n", r.RepoRoot)
 	_, _ = fmt.Fprintf(w, "agency_data_dir: %s\n", r.AgencyDataDir)
 	_, _ = fmt.Fprintf(w, "agency_config_dir: %s\n", r.AgencyConfigDir)
+	_, _ = fmt.Fprintf(w, "user_config_path: %s\n", r.UserConfigPath)
 	_, _ = fmt.Fprintf(w, "agency_cache_dir: %s\n", r.AgencyCacheDir)
 
 	// Identity/origin
@@ -350,6 +351,7 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	// Config resolution
 	_, _ = fmt.Fprintf(w, "defaults_parent_branch: %s\n", r.DefaultsParentBranch)
 	_, _ = fmt.Fprintf(w, "defaults_runner: %s\n", r.DefaultsRunner)
+	_, _ = fmt.Fprintf(w, "defaults_editor: %s\n", r.DefaultsEditor)
 	_, _ = fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)
 	_, _ = fmt.Fprintf(w, "script_setup: %s\n", r.ScriptSetup)
 	_, _ = fmt.Fprintf(w, "script_verify: %s\n", r.ScriptVerify)

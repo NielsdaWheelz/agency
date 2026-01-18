@@ -11,6 +11,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -18,7 +19,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/ids"
+	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
 	"github.com/NielsdaWheelz/agency/internal/repo"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -30,6 +33,12 @@ type Service struct {
 	cr      exec.CommandRunner
 	fsys    fs.FS
 	nowFunc func() time.Time
+}
+
+type osEnv struct{}
+
+func (osEnv) Get(key string) string {
+	return os.Getenv(key)
 }
 
 // New creates a new Service with production dependencies.
@@ -187,25 +196,26 @@ func checkRepoContextOnly(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 	// Since this is getting complex, let me just call the actual CheckRepoSafe
 	// with a branch we know exists - the current HEAD.
 
-	// Get current branch
-	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: cwd})
+	// Resolve repo root so we can distinguish "no repo" from "detached HEAD".
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
 	if err != nil {
-		return nil, errors.Wrap(errors.ENoRepo, "failed to get current branch", err)
+		return nil, err
 	}
 
-	currentBranch := result.Stdout
-	if len(currentBranch) > 0 && currentBranch[len(currentBranch)-1] == '\n' {
-		currentBranch = currentBranch[:len(currentBranch)-1]
+	// Get current branch
+	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: repoRoot.Path})
+	if err != nil {
+		return nil, errors.Wrap(errors.EInternal, "failed to get current branch", err)
 	}
 
-	// Fallback to a common default if no branch (detached HEAD, etc.)
+	currentBranch := strings.TrimSpace(result.Stdout)
 	if currentBranch == "" {
-		currentBranch = "main"
+		return nil, errors.New(errors.EParentBranchNotFound, "current branch is empty; provide --parent")
 	}
 
 	// Now call the full CheckRepoSafe with the current branch
 	// This validates everything except the *actual* parent branch the user wants
-	return repo.CheckRepoSafe(ctx, cr, fsys, cwd, repo.CheckRepoSafeOpts{
+	return repo.CheckRepoSafe(ctx, cr, fsys, repoRoot.Path, repo.CheckRepoSafeOpts{
 		ParentBranch: currentBranch,
 	})
 }
@@ -218,14 +228,25 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 		return err
 	}
 
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	userCfg, _, err := config.LoadUserConfig(s.fsys, dirs.ConfigDir)
+	if err != nil {
+		return err
+	}
+
 	// Determine runner name to use
 	runnerName := st.Runner
 	if runnerName == "" {
-		runnerName = cfg.Defaults.Runner
+		runnerName = userCfg.Defaults.Runner
 	}
 
 	// Resolve runner command using shared helper
-	resolvedRunnerCmd, err := config.ResolveRunnerCmd(&cfg, runnerName)
+	resolvedRunnerCmd, err := config.ResolveRunnerCmd(s.cr, s.fsys, dirs.ConfigDir, userCfg, runnerName)
 	if err != nil {
 		return err
 	}
@@ -233,7 +254,14 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 	// Resolve parent branch
 	parentBranch := st.Parent
 	if parentBranch == "" {
-		parentBranch = cfg.Defaults.ParentBranch
+		result, err := s.cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: st.RepoRoot})
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get current branch", err)
+		}
+		parentBranch = strings.TrimSpace(result.Stdout)
+		if parentBranch == "" {
+			return errors.New(errors.EParentBranchNotFound, "current branch is empty; provide --parent")
+		}
 	}
 
 	// If parent branch wasn't checked in CheckRepoSafe (was deferred), validate it now

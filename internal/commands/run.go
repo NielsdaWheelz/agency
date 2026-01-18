@@ -24,10 +24,10 @@ type RunOpts struct {
 	// Name is the run name (required, validated).
 	Name string
 
-	// Runner is the runner name (empty = use agency.json default).
+	// Runner is the runner name (empty = use user config default).
 	Runner string
 
-	// Parent is the parent branch (empty = use agency.json default).
+	// Parent is the parent branch (empty = use current branch).
 	Parent string
 
 	// Attach indicates whether to attach after tmux creation.

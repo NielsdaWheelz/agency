@@ -20,22 +20,12 @@ func (v *ValidationError) Error() string {
 	return v.Msg
 }
 
-// ValidateAgencyConfig validates the configuration and resolves the runner command.
-// Returns the config with ResolvedRunnerCmd populated on success.
+// ValidateAgencyConfig validates the repo configuration (agency.json).
 // Returns E_INVALID_AGENCY_JSON for schema/required-field errors.
-// Returns E_RUNNER_NOT_CONFIGURED if runner cannot be resolved.
 func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	// Validate version
 	if cfg.Version != 1 {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 1")
-	}
-
-	// Validate required fields in defaults
-	if cfg.Defaults.ParentBranch == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field defaults.parent_branch")
-	}
-	if cfg.Defaults.Runner == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field defaults.runner")
 	}
 
 	// Validate required fields in scripts
@@ -49,47 +39,7 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.archive")
 	}
 
-	// Validate runners entries (if present)
-	for name, cmd := range cfg.Runners {
-		if cmd == "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runners."+name+" must be a non-empty string")
-		}
-		if containsWhitespace(cmd) {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runners."+name+" must be a single executable (no args); use a wrapper script")
-		}
-	}
-
-	// Resolve runner command
-	resolved, err := resolveRunner(cfg)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.ResolvedRunnerCmd = resolved
-
 	return cfg, nil
-}
-
-// resolveRunner determines the runner command based on config.
-// Returns E_RUNNER_NOT_CONFIGURED if resolution fails.
-func resolveRunner(cfg AgencyConfig) (string, error) {
-	name := cfg.Defaults.Runner
-
-	// If runners map has an entry for this name, use it
-	if cfg.Runners != nil {
-		if cmd, ok := cfg.Runners[name]; ok {
-			// Already validated non-empty and no whitespace in ValidateAgencyConfig
-			return cmd, nil
-		}
-	}
-
-	// PATH fallback for standard runners
-	if name == "claude" || name == "codex" {
-		return name, nil
-	}
-
-	// Runner not configured
-	return "", errors.New(errors.ERunnerNotConfigured,
-		"runner \""+name+"\" not configured; set runners."+name+" or choose claude/codex")
 }
 
 // containsWhitespace returns true if s contains any whitespace character.
@@ -146,44 +96,17 @@ func LoadAndValidate(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
 
 // ValidateForS1 validates the configuration for slice 1 requirements only.
 // Unlike ValidateAgencyConfig, this only requires scripts.setup (not verify/archive).
-// Returns the config with ResolvedRunnerCmd populated on success.
 // Returns E_INVALID_AGENCY_JSON for schema/required-field errors.
-// Returns E_RUNNER_NOT_CONFIGURED if runner cannot be resolved.
 func ValidateForS1(cfg AgencyConfig) (AgencyConfig, error) {
 	// Validate version
 	if cfg.Version != 1 {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 1")
 	}
 
-	// Validate required fields in defaults
-	if cfg.Defaults.ParentBranch == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field defaults.parent_branch")
-	}
-	if cfg.Defaults.Runner == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field defaults.runner")
-	}
-
 	// Validate scripts.setup only (S1 requirement)
 	if cfg.Scripts.Setup == "" {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.setup")
 	}
-
-	// Validate runners entries (if present)
-	for name, cmd := range cfg.Runners {
-		if cmd == "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runners."+name+" must be a non-empty string")
-		}
-		if containsWhitespace(cmd) {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runners."+name+" must be a single executable (no args); use a wrapper script")
-		}
-	}
-
-	// Resolve runner command
-	resolved, err := resolveRunner(cfg)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.ResolvedRunnerCmd = resolved
 
 	return cfg, nil
 }

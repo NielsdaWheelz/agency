@@ -19,8 +19,10 @@ const (
 	ENoRepo              Code = "E_NO_REPO"
 	ENoAgencyJSON        Code = "E_NO_AGENCY_JSON"
 	EInvalidAgencyJSON   Code = "E_INVALID_AGENCY_JSON"
+	EInvalidUserConfig   Code = "E_INVALID_USER_CONFIG"
 	EAgencyJSONExists    Code = "E_AGENCY_JSON_EXISTS"
 	ERunnerNotConfigured Code = "E_RUNNER_NOT_CONFIGURED"
+	EEditorNotConfigured Code = "E_EDITOR_NOT_CONFIGURED"
 	EStoreCorrupt        Code = "E_STORE_CORRUPT"
 
 	// Tool/prerequisite error codes
@@ -117,6 +119,32 @@ func (e *AgencyError) Unwrap() error {
 	return e.Cause
 }
 
+// ExitCodeError wraps an error with an explicit process exit code.
+type ExitCodeError struct {
+	Err  error
+	Code int
+}
+
+func (e *ExitCodeError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("exit code %d", e.Code)
+}
+
+func (e *ExitCodeError) Unwrap() error {
+	return e.Err
+}
+
+func (e *ExitCodeError) ExitCode() int {
+	return e.Code
+}
+
+// WithExitCode wraps err with a specific process exit code.
+func WithExitCode(err error, code int) error {
+	return &ExitCodeError{Err: err, Code: code}
+}
+
 // New creates a new AgencyError with the given code and message.
 func New(code Code, msg string) error {
 	return &AgencyError{Code: code, Msg: msg}
@@ -174,6 +202,9 @@ func copyDetails(details map[string]string) map[string]string {
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
+	}
+	if ec, ok := err.(interface{ ExitCode() int }); ok {
+		return ec.ExitCode()
 	}
 	if GetCode(err) == EUsage {
 		return 2

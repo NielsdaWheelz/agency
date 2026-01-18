@@ -89,17 +89,10 @@ func TestGHE2EPushMerge(t *testing.T) {
 
 	agencyJSON := `{
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",
     "archive": "scripts/agency_archive.sh"
-  },
-  "runners": {
-    "claude": "claude"
   }
 }
 `

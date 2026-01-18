@@ -1,16 +1,11 @@
 {
   "version": 1,
-  "unknown_top_level": "ignored",
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude",
-    "unknown_default": "ignored"
-  },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh",
-    "unknown_script": "ignored"
+    "archive": "scripts/agency_archive.sh"
   },
-  "future_field": {"nested": "data"}
+  "defaults": {
+    "runner": "claude"
+  }
 }

@@ -37,9 +37,12 @@ func (s *stubRunner) LookPath(file string) (string, error) {
 }
 
 // setupTempGitRepo creates a temp directory and initializes a minimal git repo.
-func setupTempGitRepo(t *testing.T) string {
+// It also sets AGENCY_CONFIG_DIR to a temp directory.
+func setupTempGitRepo(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	// Create .git directory to simulate a git repo
 	gitDir := filepath.Join(dir, ".git")
@@ -47,11 +50,11 @@ func setupTempGitRepo(t *testing.T) string {
 		t.Fatalf("failed to create .git dir: %v", err)
 	}
 
-	return dir
+	return dir, configDir
 }
 
 func TestInit_CreatesConfigAndStubs(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
@@ -121,10 +124,21 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 	if !strings.Contains(output, "gitignore: updated") {
 		t.Error("output missing gitignore: updated")
 	}
+	if !strings.Contains(output, "user_config_path:") {
+		t.Error("output missing user_config_path")
+	}
+	if !strings.Contains(output, "user_config: created") {
+		t.Error("output missing user_config: created")
+	}
+
+	userConfigPath := filepath.Join(configDir, "config.json")
+	if _, err := os.Stat(userConfigPath); err != nil {
+		t.Fatalf("expected user config at %s: %v", userConfigPath, err)
+	}
 }
 
 func TestInit_RefusesOverwrite(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	// Create existing agency.json
 	existingContent := `{"version": 999}`
@@ -160,7 +174,7 @@ func TestInit_RefusesOverwrite(t *testing.T) {
 }
 
 func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	// Create existing agency.json with different content
 	existingContent := `{"version": 999}`
@@ -217,7 +231,7 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 }
 
 func TestInit_GitignoreIdempotent(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	// Create .gitignore with .agency/ already present
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
@@ -255,7 +269,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 }
 
 func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	// Create .gitignore with .agency (no trailing slash) - should be treated as present
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
@@ -288,7 +302,7 @@ func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 }
 
 func TestInit_NoGitignore(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
@@ -339,7 +353,7 @@ func TestInit_NotInRepo(t *testing.T) {
 }
 
 func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	// Create .gitignore WITHOUT trailing newline
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
@@ -374,7 +388,7 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 }
 
 func TestInit_VerifyStubContent(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
@@ -425,7 +439,7 @@ func TestInit_VerifyStubContent(t *testing.T) {
 }
 
 func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
-	repoRoot := setupTempGitRepo(t)
+	repoRoot, _ := setupTempGitRepo(t)
 
 	// Pre-create scripts with custom content
 	scriptsDir := filepath.Join(repoRoot, "scripts")

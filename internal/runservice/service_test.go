@@ -38,10 +38,6 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	// Create agency.json
 	agencyJSON := `{
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",
@@ -50,6 +46,25 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 }`
 	if err := os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0644); err != nil {
 		t.Fatalf("failed to write agency.json: %v", err)
+	}
+
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	userConfig := `{
+  "version": 1,
+  "defaults": {
+    "runner": "sh",
+    "editor": "code"
+  },
+  "runners": {
+    "sh": "sh"
+  },
+  "editors": {
+    "code": "code"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userConfig), 0644); err != nil {
+		t.Fatalf("failed to write config.json: %v", err)
 	}
 
 	// Create scripts directory and setup script
@@ -255,8 +270,8 @@ func TestService_LoadAgencyConfig(t *testing.T) {
 	}
 
 	// Verify state was populated
-	if st.ResolvedRunnerCmd != "claude" {
-		t.Errorf("ResolvedRunnerCmd = %q, want %q", st.ResolvedRunnerCmd, "claude")
+	if filepath.Base(st.ResolvedRunnerCmd) != "sh" {
+		t.Errorf("ResolvedRunnerCmd = %q, want base %q", st.ResolvedRunnerCmd, "sh")
 	}
 	if st.SetupScript != "scripts/agency_setup.sh" {
 		t.Errorf("SetupScript = %q, want %q", st.SetupScript, "scripts/agency_setup.sh")

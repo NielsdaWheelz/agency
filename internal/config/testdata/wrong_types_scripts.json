@@ -1,8 +1,4 @@
 {
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
-  "scripts": ["not", "an", "object"]
+  "scripts": []
 }

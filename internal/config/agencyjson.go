@@ -12,19 +12,8 @@ import (
 
 // AgencyConfig represents the parsed and validated agency.json configuration.
 type AgencyConfig struct {
-	Version  int               `json:"version"`
-	Defaults Defaults          `json:"defaults"`
-	Scripts  Scripts           `json:"scripts"`
-	Runners  map[string]string `json:"runners,omitempty"`
-
-	// Derived (not from JSON):
-	ResolvedRunnerCmd string `json:"-"`
-}
-
-// Defaults contains default values for agency operations.
-type Defaults struct {
-	ParentBranch string `json:"parent_branch"`
-	Runner       string `json:"runner"`
+	Version int     `json:"version"`
+	Scripts Scripts `json:"scripts"`
 }
 
 // Scripts contains paths to the required agency scripts.
@@ -68,6 +57,15 @@ func LoadAgencyConfig(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
 // This catches type mismatches that Go's json.Unmarshal would silently accept or default.
 func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) {
 	var cfg AgencyConfig
+	allowedKeys := map[string]bool{
+		"version": true,
+		"scripts": true,
+	}
+	for key := range raw {
+		if !allowedKeys[key] {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "unknown field: "+key)
+		}
+	}
 
 	// Parse version - required, must be integer
 	if rawVersion, ok := raw["version"]; ok {
@@ -86,33 +84,6 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 			}
 		}
 		cfg.Version = version
-	}
-
-	// Parse defaults - required, must be object
-	if rawDefaults, ok := raw["defaults"]; ok {
-		// First check if it's an object
-		var defaultsMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawDefaults, &defaultsMap); err != nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "defaults must be an object")
-		}
-
-		// Parse defaults.parent_branch
-		if rawPB, ok := defaultsMap["parent_branch"]; ok {
-			var pb string
-			if err := json.Unmarshal(rawPB, &pb); err != nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "defaults.parent_branch must be a string")
-			}
-			cfg.Defaults.ParentBranch = pb
-		}
-
-		// Parse defaults.runner
-		if rawRunner, ok := defaultsMap["runner"]; ok {
-			var runner string
-			if err := json.Unmarshal(rawRunner, &runner); err != nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "defaults.runner must be a string")
-			}
-			cfg.Defaults.Runner = runner
-		}
 	}
 
 	// Parse scripts - required, must be object
@@ -148,24 +119,6 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts.archive must be a string")
 			}
 			cfg.Scripts.Archive = archive
-		}
-	}
-
-	// Parse runners - optional, must be object if present
-	if rawRunners, ok := raw["runners"]; ok {
-		// First check if it's an object (not array, not primitive)
-		var runnersMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawRunners, &runnersMap); err != nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runners must be an object")
-		}
-
-		cfg.Runners = make(map[string]string)
-		for key, rawVal := range runnersMap {
-			var val string
-			if err := json.Unmarshal(rawVal, &val); err != nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runners."+key+" must be a string")
-			}
-			cfg.Runners[key] = val
 		}
 	}
 

@@ -1,9 +1,5 @@
 {
-  "version": 1.5,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
+  "version": 1.1,
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",
