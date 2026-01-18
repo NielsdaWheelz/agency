@@ -29,6 +29,9 @@ import (
 type CleanOpts struct {
 	// RunID is the run identifier to clean (required).
 	RunID string
+
+	// AllowDirty allows clean with a dirty worktree.
+	AllowDirty bool
 }
 
 // Clean archives a run without merging.
@@ -118,6 +121,54 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		}
 	}()
 
+	// Get events path
+	eventsPath := st.EventsPath(repoID, opts.RunID)
+
+	// Dirty worktree gate
+	isClean, status, err := getDirtyStatus(ctx, cr, worktreePath)
+	if err != nil {
+		_ = events.AppendEvent(eventsPath, events.Event{
+			SchemaVersion: "1.0",
+			Timestamp:     time.Now().UTC().Format(time.RFC3339),
+			RepoID:        repoID,
+			RunID:         opts.RunID,
+			Event:         "clean_failed",
+			Data: map[string]any{
+				"error_code": string(errors.GetCode(err)),
+				"step":       "dirty_check",
+			},
+		})
+		return err
+	}
+	if !isClean {
+		if !opts.AllowDirty {
+			_ = events.AppendEvent(eventsPath, events.Event{
+				SchemaVersion: "1.0",
+				Timestamp:     time.Now().UTC().Format(time.RFC3339),
+				RepoID:        repoID,
+				RunID:         opts.RunID,
+				Event:         "clean_failed",
+				Data: map[string]any{
+					"error_code": string(errors.EDirtyWorktree),
+					"step":       "dirty_check",
+				},
+			})
+			return dirtyErrorWithContext(status)
+		}
+		_ = events.AppendEvent(eventsPath, events.Event{
+			SchemaVersion: "1.0",
+			Timestamp:     time.Now().UTC().Format(time.RFC3339),
+			RepoID:        repoID,
+			RunID:         opts.RunID,
+			Event:         "dirty_allowed",
+			Data: map[string]any{
+				"cmd":    "clean",
+				"status": status,
+			},
+		})
+		printDirtyWarning(stderr, status)
+	}
+
 	// Print lock acquisition message (per spec)
 	_, _ = fmt.Fprintln(stderr, "lock: acquired repo lock (held during clean/archive)")
 
@@ -132,9 +183,6 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	if strings.TrimSpace(input) != "clean" {
 		return errors.New(errors.EAborted, "confirmation failed; expected 'clean'")
 	}
-
-	// Get events path
-	eventsPath := st.EventsPath(repoID, opts.RunID)
 
 	// Append clean_started event
 	now := time.Now().UTC()

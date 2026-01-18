@@ -472,6 +472,7 @@ Status is **composable**, not a flat enum:
 ### Push behavior
 
 `agency push <id>`:
+0. require clean worktree unless `--allow-dirty` (if dirty: `E_DIRTY_WORKTREE`)
 1. `git fetch <origin>` — ensures remote refs exist; does NOT rebase, reset, or modify local branches
 2. check commits ahead: `git rev-list --count <parent_branch>..<workspace_branch> > 0`
 3. `git push -u origin <workspace_branch>`
@@ -536,7 +537,9 @@ Template:
 - blockers or questions
 ```
 
-**push validation**: `agency push` warns if `.agency/report.md` is missing or effectively empty. use `--force` to push anyway.
+**push validation**:
+- requires a clean worktree unless `--allow-dirty`
+- warns if `.agency/report.md` is missing or effectively empty; use `--force` to push anyway.
 
 ---
 
@@ -553,10 +556,11 @@ agency resume <id> [--detached] [--restart]
                                   attach to tmux session (create if missing)
 agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
-agency push <id> [--force]        push + create/update PR
-agency merge <id> [--squash|--merge|--rebase] [--force]
+agency push <id> [--allow-dirty] [--force]
+                                  push + create/update PR
+agency merge <id> [--squash|--merge|--rebase] [--allow-dirty] [--force]
                                   verify, confirm, merge, archive
-agency clean <id>                 archive without merging
+agency clean <id> [--allow-dirty] archive without merging
 agency doctor                     check prerequisites + show paths
 ```
 
@@ -680,6 +684,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_PR_NOT_OPEN` — PR exists but is not open (CLOSED or MERGED)
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
 - `E_NO_ORIGIN` — origin remote not configured
+- `E_DIRTY_WORKTREE` — run worktree has uncommitted changes
 - `E_REPO_LOCKED` — another agency process holds the lock
 - `E_RUN_NOT_FOUND` — specified run does not exist
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk

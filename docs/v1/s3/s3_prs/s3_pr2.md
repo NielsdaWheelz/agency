@@ -69,9 +69,12 @@ this PR does **not** create/update GitHub PRs (gh pr create/edit/view deferred t
 ## public surface area
 
 ### commands
-- `agency push <run_id> [--force]`
+- `agency push <run_id> [--allow-dirty] [--force]`
 
 ### flags
+- `--allow-dirty`
+  - allows proceeding when worktree has uncommitted changes
+  - without this flag: `E_DIRTY_WORKTREE`
 - `--force`
   - allows proceeding when `.agency/report.md` is missing or effectively empty
   - **does not** bypass `E_EMPTY_DIFF`
@@ -82,7 +85,7 @@ this PR does **not** create/update GitHub PRs (gh pr create/edit/view deferred t
 - on success: prints a single line to stdout:
   - `pushed <branch> to origin`
 - warnings to stderr:
-  - dirty worktree warning
+  - dirty worktree warning (only when `--allow-dirty` is used)
   - report missing/empty warning when `--force`
 - errors:
   - print error code + one-line explanation to stderr
@@ -99,6 +102,7 @@ this PR does **not** create/update GitHub PRs (gh pr create/edit/view deferred t
 - `E_PARENT_NOT_FOUND` — neither `<parent_branch>` nor `origin/<parent_branch>` exists after fetch
 - `E_GIT_PUSH_FAILED` — `git push` non-zero exit
 - `E_WORKTREE_MISSING` — run exists but `meta.worktree_path` missing on disk
+- `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 
 ### referenced existing
 - `E_RUN_NOT_FOUND`
@@ -131,9 +135,10 @@ this PR does **not** create/update GitHub PRs (gh pr create/edit/view deferred t
    - “effectively empty” = missing OR trimmed length < 20 chars
    - if empty AND `--force` not set => `E_REPORT_INVALID`
    - if empty AND `--force` set => warn to stderr and continue
-7. dirty worktree warning:
-   - run `git status --porcelain`
-   - if non-empty => warn to stderr and continue
+7. dirty worktree gate:
+   - run `git status --porcelain --untracked-files=all`
+   - if non-empty AND `--allow-dirty` not set => `E_DIRTY_WORKTREE`
+   - if `--allow-dirty` set => warn to stderr and continue
 8. ensure gh is installed + authenticated
    - run `gh auth status`
    - if missing gh binary => `E_GH_NOT_INSTALLED`

@@ -328,6 +328,7 @@ func TestPushEventNames(t *testing.T) {
 	// Document the event names used by push
 	eventNames := []string{
 		"push_started",
+		"dirty_allowed",
 		"git_fetch_finished",
 		"git_push_finished",
 		"push_finished",
@@ -354,6 +355,9 @@ func TestPushOptsDefaults(t *testing.T) {
 	}
 	if opts.Force != false {
 		t.Error("PushOpts.Force default should be false")
+	}
+	if opts.AllowDirty != false {
+		t.Error("PushOpts.AllowDirty default should be false")
 	}
 }
 
@@ -720,7 +724,7 @@ func TestPushOutputFormat_ErrorMessages(t *testing.T) {
 func TestPushOutputFormat_WarningMessages(t *testing.T) {
 	// These are the exact warning strings required by the spec
 	warnings := []string{
-		"warning: worktree has uncommitted changes; pushing commits anyway",
+		"warning: worktree has uncommitted changes; proceeding due to --allow-dirty",
 		"warning: report missing or empty; proceeding due to --force",
 	}
 

@@ -167,6 +167,7 @@ arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
+  --allow-dirty  allow push even if worktree has uncommitted changes
   --force       proceed even if .agency/report.md is missing/empty
   -h, --help    show this help
 
@@ -174,11 +175,12 @@ notes:
   - requires origin to be a github.com remote
   - requires gh to be authenticated
   - does NOT bypass E_EMPTY_DIFF (at least one commit required)
-  - warns if worktree has uncommitted changes
+  - fails if worktree has uncommitted changes unless --allow-dirty
 
 examples:
   agency push my-feature               # push branch
   agency push my-feature --force       # push with empty report
+  agency push my-feature --allow-dirty # push with dirty worktree
 `
 
 const verifyUsageText = `usage: agency verify <run> [options]
@@ -216,6 +218,7 @@ options:
   --squash      use squash merge strategy (default)
   --merge       use regular merge strategy
   --rebase      use rebase merge strategy
+  --allow-dirty allow merge even if worktree has uncommitted changes
   --force       bypass verify-failed prompt (still runs verify)
   -h, --help    show this help
 
@@ -236,6 +239,7 @@ examples:
   agency merge my-feature                  # squash merge (default)
   agency merge my-feature --merge          # regular merge
   agency merge my-feature --force          # skip verify-fail prompt
+  agency merge my-feature --allow-dirty    # merge with dirty worktree
 `
 
 const cleanUsageText = `usage: agency clean <run>
@@ -258,10 +262,12 @@ confirmation:
   you must type 'clean' to confirm the operation.
 
 options:
+  --allow-dirty  allow clean even if worktree has uncommitted changes
   -h, --help    show this help
 
 examples:
   agency clean my-feature
+  agency clean my-feature --allow-dirty
 `
 
 const lsUsageText = `usage: agency ls [options]
@@ -755,6 +761,7 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("push", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	allowDirty := flagSet.Bool("allow-dirty", false, "allow push even if worktree has uncommitted changes")
 	force := flagSet.Bool("force", false, "proceed even if report is missing/empty")
 
 	// Handle help manually to return nil (exit 0)
@@ -789,8 +796,9 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.PushOpts{
-		RunID: runID,
-		Force: *force,
+		RunID:      runID,
+		Force:      *force,
+		AllowDirty: *allowDirty,
 	}
 
 	return commands.Push(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -863,6 +871,7 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	squash := flagSet.Bool("squash", false, "use squash merge strategy (default)")
 	merge := flagSet.Bool("merge", false, "use regular merge strategy")
 	rebase := flagSet.Bool("rebase", false, "use rebase merge strategy")
+	allowDirty := flagSet.Bool("allow-dirty", false, "allow merge even if worktree has uncommitted changes")
 	force := flagSet.Bool("force", false, "bypass verify-failed prompt")
 
 	// Handle help manually to return nil (exit 0)
@@ -920,9 +929,10 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.MergeOpts{
-		RunID:    runID,
-		Strategy: strategy,
-		Force:    *force,
+		RunID:      runID,
+		Strategy:   strategy,
+		Force:      *force,
+		AllowDirty: *allowDirty,
 	}
 
 	return commands.Merge(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
@@ -931,6 +941,8 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 func runClean(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("clean", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
+
+	allowDirty := flagSet.Bool("allow-dirty", false, "allow clean even if worktree has uncommitted changes")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -964,7 +976,8 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.CleanOpts{
-		RunID: runID,
+		RunID:      runID,
+		AllowDirty: *allowDirty,
 	}
 
 	return commands.Clean(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)

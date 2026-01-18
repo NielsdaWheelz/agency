@@ -50,7 +50,7 @@ none (internal only). no new commands yet.
 implement all deterministic preflight checks for `agency push`, validate/report handling, and complete the git push path.
 
 ### scope
-- add `agency push <run_id> [--force]` command
+- add `agency push <run_id> [--allow-dirty] [--force]` command
 - load run metadata and resolve:
   - worktree path
   - parent branch
@@ -64,7 +64,8 @@ implement all deterministic preflight checks for `agency push`, validate/report 
   - if empty and no `--force` => `E_REPORT_INVALID`
   - if `--force` => continue (but record warning path in events)
 - dirty worktree check:
-  - if `git status --porcelain` non-empty => warn, continue
+  - if `git status --porcelain --untracked-files=all` non-empty and no `--allow-dirty` => `E_DIRTY_WORKTREE`
+  - if `--allow-dirty` => warn, continue
 - gh auth gate:
   - `gh auth status` must succeed else `E_GH_NOT_AUTHENTICATED`
 - non-interactive enforcement for all git/gh subprocesses invoked by `agency push`:
@@ -93,7 +94,8 @@ implement all deterministic preflight checks for `agency push`, validate/report 
   - origin host parsing
   - report gating + `--force`
   - gh auth failure -> correct error
-  - dirty worktree produces warning (assert warning text)
+  - dirty worktree without `--allow-dirty` fails with `E_DIRTY_WORKTREE`
+  - dirty worktree with `--allow-dirty` produces warning (assert warning text)
   - parent-ref selection logic
   - ahead==0 => `E_EMPTY_DIFF`
   - push command invoked with `-u`

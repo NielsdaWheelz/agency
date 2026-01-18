@@ -56,6 +56,9 @@ type PushOpts struct {
 	// Does NOT bypass E_EMPTY_DIFF.
 	Force bool
 
+	// AllowDirty allows pushing with a dirty worktree.
+	AllowDirty bool
+
 	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
 	Sleeper Sleeper
 }
@@ -129,7 +132,31 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		}
 	}()
 
-	// Step 4: Ensure origin exists (spec: exact error message)
+	// Step 4: Dirty worktree gate
+	isClean, status, err := getDirtyStatus(ctx, cr, meta.WorktreePath)
+	if err != nil {
+		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
+			"error_code": string(errors.GetCode(err)),
+			"step":       "dirty_check",
+		})
+		return err
+	}
+	if !isClean {
+		if !opts.AllowDirty {
+			appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
+				"error_code": string(errors.EDirtyWorktree),
+				"step":       "dirty_check",
+			})
+			return dirtyErrorWithContext(status)
+		}
+		appendPushEvent(eventsPath, repoID, meta.RunID, "dirty_allowed", map[string]any{
+			"cmd":    "push",
+			"status": status,
+		})
+		printDirtyWarning(stderr, status)
+	}
+
+	// Step 5: Ensure origin exists (spec: exact error message)
 	originURL := git.GetOriginURL(ctx, cr, meta.WorktreePath)
 	if originURL == "" {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
@@ -139,7 +166,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return errors.New(errors.ENoOrigin, "git remote 'origin' not configured")
 	}
 
-	// Step 5: Ensure origin host is exactly github.com (spec: exact error message)
+	// Step 6: Ensure origin host is exactly github.com (spec: exact error message)
 	originHost := git.ParseOriginHost(originURL)
 	if originHost != "github.com" {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
@@ -153,7 +180,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 
 	repoRef := resolveGHRepoRef(originURL)
 
-	// Step 6: Report gating
+	// Step 7: Report gating
 	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
 	reportEmpty, err := isReportEffectivelyEmpty(fsys, reportPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -173,14 +200,6 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 
 	if reportEmpty && opts.Force {
 		_, _ = fmt.Fprintf(stderr, "warning: report missing or empty; proceeding due to --force\n")
-	}
-
-	// Step 7: Dirty worktree warning (spec: exact string)
-	isClean, err := git.IsClean(ctx, cr, meta.WorktreePath)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "warning: failed to check worktree status: %v\n", err)
-	} else if !isClean {
-		_, _ = fmt.Fprintf(stderr, "warning: worktree has uncommitted changes; pushing commits anyway\n")
 	}
 
 	// Step 8: gh auth check

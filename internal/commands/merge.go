@@ -48,6 +48,9 @@ type MergeOpts struct {
 	// Force bypasses the verify-failed prompt (still runs verify, still records failure).
 	Force bool
 
+	// AllowDirty allows merge with a dirty worktree.
+	AllowDirty bool
+
 	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
 	Sleeper Sleeper
 
@@ -158,10 +161,34 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		}
 	}()
 
+	// === Precheck 2: dirty worktree gate ===
+	isClean, status, err := getDirtyStatus(ctx, cr, meta.WorktreePath)
+	if err != nil {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{
+			"error_code": string(errors.GetCode(err)),
+			"step":       "dirty_check",
+		})
+		return err
+	}
+	if !isClean {
+		if !opts.AllowDirty {
+			appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{
+				"error_code": string(errors.EDirtyWorktree),
+				"step":       "dirty_check",
+			})
+			return dirtyErrorWithContext(status)
+		}
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "dirty_allowed", map[string]any{
+			"cmd":    "merge",
+			"status": status,
+		})
+		printDirtyWarning(stderr, status)
+	}
+
 	// Print lock acquisition message (per spec, diagnostic output to stderr)
 	_, _ = fmt.Fprintln(stderr, "lock: acquired repo lock (held during verify/merge/archive)")
 
-	// === Precheck 2: origin exists ===
+	// === Precheck 3: origin exists ===
 	originURL, err := getOriginURLForMerge(ctx, cr, st, repoID, meta.WorktreePath)
 	if err != nil {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{
@@ -171,7 +198,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		return err
 	}
 
-	// === Precheck 3: origin host is github.com ===
+	// === Precheck 4: origin host is github.com ===
 	originHost := parseOriginHost(originURL)
 	if originHost != "github.com" {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{
@@ -183,7 +210,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 			map[string]string{"origin_url": originURL, "host": originHost})
 	}
 
-	// === Precheck 4: gh authenticated ===
+	// === Precheck 5: gh authenticated ===
 	if err := checkGhAuthForMerge(ctx, cr, meta.WorktreePath); err != nil {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{
 			"error_code": string(errors.GetCode(err)),
@@ -192,7 +219,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		return err
 	}
 
-	// === Precheck 5: resolve owner/repo for gh -R ===
+	// === Precheck 6: resolve owner/repo for gh -R ===
 	owner, repo, ok := identity.ParseGitHubOwnerRepo(originURL)
 	if !ok {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{

@@ -225,6 +225,7 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 		EPRNotOpen,
 		EReportInvalid,
 		EEmptyDiff,
+		EDirtyWorktree,
 	}
 
 	expectedStrings := map[Code]string{
@@ -238,6 +239,7 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 		EPRNotOpen:             "E_PR_NOT_OPEN",
 		EReportInvalid:         "E_REPORT_INVALID",
 		EEmptyDiff:             "E_EMPTY_DIFF",
+		EDirtyWorktree:         "E_DIRTY_WORKTREE",
 	}
 
 	for _, code := range codes {
@@ -265,6 +267,7 @@ func TestSlice3ErrorFormat(t *testing.T) {
 		{EPRNotOpen, "PR is closed", "E_PR_NOT_OPEN: PR is closed"},
 		{EReportInvalid, "report missing or empty", "E_REPORT_INVALID: report missing or empty"},
 		{EEmptyDiff, "no commits ahead", "E_EMPTY_DIFF: no commits ahead"},
+		{EDirtyWorktree, "worktree has uncommitted changes", "E_DIRTY_WORKTREE: worktree has uncommitted changes"},
 	}
 
 	for _, tt := range tests {
