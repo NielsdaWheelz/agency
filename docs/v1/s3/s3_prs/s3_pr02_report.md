@@ -207,7 +207,7 @@ cat "${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/meta.json" | jq '.last_pus
 ```
 feat(s3): implement agency push preflight + git fetch/ahead + git push
 
-Implement `agency push <run_id> [--force]` up through successful git push:
+Implement `agency push <run_id> [--allow-dirty] [--force]` up through successful git push:
 
 Preflight checks (in order):
 - resolve run_id and load metadata
@@ -216,7 +216,7 @@ Preflight checks (in order):
 - verify origin exists (E_NO_ORIGIN)
 - verify origin is github.com (E_UNSUPPORTED_ORIGIN_HOST)
 - report gating: missing/empty requires --force (E_REPORT_INVALID)
-- warn if worktree has uncommitted changes
+- fail if worktree has uncommitted changes unless `--allow-dirty` (E_DIRTY_WORKTREE)
 - verify gh auth status (E_GH_NOT_AUTHENTICATED)
 
 Git operations:

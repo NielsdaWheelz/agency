@@ -158,8 +158,9 @@ make “stdin blocked” a manual diagnostic
 this yields a professional UX without lying.
 i think we should at least have have an Agency system prompt, created on `init`, automatically included in all runner prompts (like a CLAUDE.md or AGENTS.md); more and clearer statuses on the runners; runner watchdog; runner status contract.
 
-XXX) if the worktree has uncommitted changes, push should at least be prompt-blocked, if not blocked entirely (without a --force). `push` shouldn't just emit a warning and proceed anyway if the worktree has uncommitted changes, no? that seems crazy. it should probably be prompt-blocked (e.g. require user to type 'reckless'). i think it should actually just require a `--force` or something, since this is very dangerous behaviour. 
+5) resolved: push now blocks on dirty worktree unless `--allow-dirty` is provided.
 
+6) resolved: dirty worktree no longer just warns; requires explicit `--allow-dirty`. 
 
 7) `merge` should be a little more protected, it's a dangerous action. should be prompt-blocked and require user to type 'merge' or something, no?
 

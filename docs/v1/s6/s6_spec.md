@@ -10,7 +10,7 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
 
 - `agency merge <run_id>`:
   - requires a pre-existing pr on GitHub for the run; pr discovery only resolves an existing pr
-  - prechecks: run exists, worktree present, origin host `github.com`, gh authed, pr open and not draft, mergeability known+ok, fetch origin branch succeeds, remote head up-to-date
+  - prechecks: run exists, worktree present, clean worktree unless `--allow-dirty`, origin host `github.com`, gh authed, pr open and not draft, mergeability known+ok, fetch origin branch succeeds, remote head up-to-date
   - always runs `scripts.verify` and records evidence (even if recently verified)
   - if verify fails: prompt to continue; `--force` bypasses this prompt only
   - requires explicit human confirmation (type `merge`)
@@ -21,6 +21,7 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
 - `agency clean <run_id>`:
   - archives without merging
   - marks run abandoned after successful archive
+  - requires clean worktree unless `--allow-dirty`
   - runs `scripts.archive`, kills tmux, deletes worktree
   - retains metadata/logs
 
@@ -43,17 +44,26 @@ finish the core loop: merge an **already-existing** github pr for a run (after v
 
 ### new/changed commands
 
-- `agency merge <run_id> [--squash|--merge|--rebase] [--force]`
-- `agency clean <run_id>` (if not already implemented)
+- `agency merge <run_id> [--squash|--merge|--rebase] [--allow-dirty] [--force]`
+- `agency clean <run_id> [--allow-dirty]` (if not already implemented)
 
 ### new flags (merge)
 
 - `--squash` (merge strategy)
 - `--merge` (merge strategy)
 - `--rebase` (merge strategy)
+- `--allow-dirty`:
+  - allow merge even if the run worktree has uncommitted changes
+  - without this flag: fail `E_DIRTY_WORKTREE` before any gh operations
 - `--force`:
   - bypasses only the “verify failed, continue?” prompt
   - **does not** bypass: missing pr, non-mergeable pr, unknown mergeability, unsupported origin host, remote out-of-date, pr not open, gh auth failure
+
+### new flags (clean)
+
+- `--allow-dirty`:
+  - allow clean even if the run worktree has uncommitted changes
+  - without this flag: fail `E_DIRTY_WORKTREE` before any confirmation prompt
 
 merge strategy rules (v1):
 - at most one of `--squash|--merge|--rebase` may be set

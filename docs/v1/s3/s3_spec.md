@@ -25,9 +25,12 @@ implement `agency push <run_id>`: push the run branch to `origin` on GitHub, cre
 ## public surface area added/changed
 
 ### commands
-- `agency push <run_id> [--force]`
+- `agency push <run_id> [--allow-dirty] [--force]`
 
 ### flags
+- `--allow-dirty`
+  - allow push even if worktree has uncommitted changes
+  - without this flag: fail `E_DIRTY_WORKTREE` before any network side effects
 - `--force`
   - allows creating/updating PR even if `.agency/report.md` is missing or effectively empty (still logs a warning)
   - does **not** bypass `E_EMPTY_DIFF`
@@ -35,7 +38,8 @@ implement `agency push <run_id>`: push the run branch to `origin` on GitHub, cre
 
 ### output
 - prints `pr: <url>` on success (single stdout line)
-- prints warnings (to stderr) for dirty worktree and missing/empty report (unless `--force` is used to proceed)
+- prints warnings (to stderr) for dirty worktree only when `--allow-dirty` is used
+- prints warnings (to stderr) for missing/empty report only when `--force` is used
 
 ## files created/modified
 
@@ -72,6 +76,7 @@ slice 03 does not create/modify `.agency/report.md` (created in slice 01).
 - `E_GH_PR_EDIT_FAILED` — `gh pr edit` non-zero exit
 - `E_GH_PR_VIEW_FAILED` — unable to `gh pr view ... --json ...` after successful `gh pr create` (after retries)
 - `E_PR_NOT_OPEN` — PR found for run/branch but `state != OPEN`
+- `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 
 (existing errors referenced)
 - `E_RUN_NOT_FOUND`
@@ -117,7 +122,9 @@ slice 03 does not create/modify `.agency/report.md` (created in slice 01).
 ### worktree cleanliness
 - given workspace has uncommitted changes
 - when `agency push <id>` runs
-- then it MUST warn (stderr) but MUST continue (push uses commits, not working tree state).
+- then it MUST:
+  - if `--allow-dirty` not set: fail `E_DIRTY_WORKTREE` before any network side effects
+  - if `--allow-dirty` set: warn to stderr and continue (push uses commits, not working tree state).
 
 ### report gating + force
 - given `.agency/report.md` is missing or effectively empty
@@ -133,6 +140,7 @@ slice 03 does not create/modify `.agency/report.md` (created in slice 01).
 
 **new error code**
 - `E_REPORT_INVALID` — report missing/empty without `--force`
+- `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 
 ### git push behavior
 - when pushing branch

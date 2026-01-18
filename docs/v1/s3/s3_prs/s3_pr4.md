@@ -57,8 +57,8 @@ all warnings MUST be printed to stderr and MUST begin with:
 
 required warning messages (exact strings):
 
-1) dirty worktree (uncommitted changes present in the workspace):
-- `warning: worktree has uncommitted changes; pushing commits anyway`
+1) dirty worktree (only when `--allow-dirty` is provided):
+- `warning: worktree has uncommitted changes; proceeding due to --allow-dirty`
 
 2) report missing/empty but continuing (only when `--force` is provided):
 - `warning: report missing or empty; proceeding due to --force`
@@ -76,6 +76,7 @@ required error message templates (exact strings):
 - `E_EMPTY_DIFF: no commits ahead of parent; make at least one commit`
 - `E_NO_ORIGIN: git remote 'origin' not configured`
 - `E_UNSUPPORTED_ORIGIN_HOST: origin host must be github.com`
+- `E_DIRTY_WORKTREE: worktree has uncommitted changes; use --allow-dirty to proceed`
 
 other error codes may follow the same format; do not reword the above.
 all other errors must still use the same `<ERROR_CODE>: <message>` first-line format and must not print stack traces by default.
@@ -157,7 +158,7 @@ add/adjust tests to validate output structure without snapshots.
 
 2) `agency push` formatting:
 - success prints exactly one stdout line starting with `pr: `
-- dirty worktree warning uses exact string (stderr contains it)
+- dirty worktree warning uses exact string (stderr contains it, with `--allow-dirty`)
 - report force warning uses exact string (stderr contains it)
 - error messages for the four specified templates match exactly
 - other errors still follow `<ERROR_CODE>: <message>` on the first stderr line
@@ -172,7 +173,7 @@ tests MUST:
 - do not change git/gh command argument construction
 - do not change when meta fields are written
 - moving output formatting into a shared helper and small callsite edits are allowed
-- no new flags
+- no new flags beyond `--allow-dirty`
 - no new docs files
 - keep PR small; if you find a real behavior bug, write it down and stop—do not fix it here
 

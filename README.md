@@ -467,11 +467,12 @@ agency resume <id> [--detached] [--restart]
                                   attach to tmux session (create if missing)
 agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
-agency push <id> [--force]        push + create/update PR
+agency push <id> [--allow-dirty] [--force]
+                                  push + create/update PR
 agency verify <id> [--timeout]    run verify script and record results
-agency merge <id> [--squash|--merge|--rebase] [--force]
+agency merge <id> [--squash|--merge|--rebase] [--allow-dirty] [--force]
                                   verify, confirm, merge PR, archive
-agency clean <id>                 archive without merging (abandon run)
+agency clean <id> [--allow-dirty] archive without merging (abandon run)
 agency doctor                     check prerequisites + show paths
 ```
 
@@ -978,23 +979,24 @@ pushes the run branch to origin and creates/updates a GitHub PR.
 
 **usage:**
 ```bash
-agency push <run_id> [--force]
+agency push <run_id> [--allow-dirty] [--force]
 ```
 
 **arguments:**
 - `run_id`: the run identifier (exact or unique prefix)
 
 **flags:**
+- `--allow-dirty`: proceed even if worktree has uncommitted changes
 - `--force`: proceed even if `.agency/report.md` is missing or effectively empty (< 20 chars)
 
 **preflight checks (in order):**
 1. resolve run_id and load metadata
 2. verify worktree exists on disk
 3. acquire repo lock (mutating command)
-4. verify `origin` remote exists
-5. verify origin host is exactly `github.com`
-6. report gating (missing/empty report requires `--force`)
-7. warn if worktree has uncommitted changes
+4. fail if worktree has uncommitted changes (unless `--allow-dirty`)
+5. verify `origin` remote exists
+6. verify origin host is exactly `github.com`
+7. report gating (missing/empty report requires `--force`)
 8. verify `gh auth status` succeeds
 
 **git operations (after preflight passes):**
@@ -1039,6 +1041,7 @@ pr: https://github.com/owner/repo/pull/123
 - `E_RUN_ID_AMBIGUOUS` — prefix matches multiple runs
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_REPO_LOCKED` — another agency process holds the lock
+- `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 - `E_NO_ORIGIN` — no origin remote configured
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
 - `E_REPORT_INVALID` — report missing/empty without `--force`
@@ -1060,11 +1063,13 @@ pr: https://github.com/owner/repo/pull/123
 - PR creation uses `--body-file` to preserve markdown formatting
 - PR title is NOT updated after creation (v1)
 - `--force` does NOT bypass `E_EMPTY_DIFF` (must have commits)
+- `--allow-dirty` prints a warning and dirty context
 
 **examples:**
 ```bash
 agency push 20260110120000-a3f2           # push branch + create/update PR
 agency push 20260110120000-a3f2 --force   # push with empty report (placeholder body)
+agency push 20260110120000-a3f2 --allow-dirty # push with dirty worktree
 agency push 20260110                       # unique prefix resolution
 ```
 

@@ -42,7 +42,7 @@ pr: <url>
 
 **stderr warnings:**
 ```
-warning: worktree has uncommitted changes; pushing commits anyway
+warning: worktree has uncommitted changes; proceeding due to --allow-dirty
 warning: report missing or empty; proceeding due to --force
 ```
 
@@ -99,13 +99,8 @@ this matches the spec's pattern of using "none" for missing values.
 
 ## deviations from spec
 
-### none
-the implementation follows the PR-4 spec exactly:
-- output formats match the required templates
-- warning messages use exact strings
-- error messages use exact templates
-- show output includes all required fields in correct order
-- blank line between worktree and tmux is present
+### update
+the current behavior now blocks dirty worktrees unless `--allow-dirty` is provided, and uses the updated warning string. documentation has been refreshed to reflect this.
 
 ## how to run new/changed commands
 
@@ -162,7 +157,7 @@ go test ./internal/commands/... -v -run 'Test(PushOutputFormat|WriteShowHuman)'
 
 ### manual verification
 1. `agency push <id>` prints exactly `pr: <url>` to stdout on success
-2. `agency push <id>` with dirty worktree prints `warning: worktree has uncommitted changes; pushing commits anyway` to stderr
+2. `agency push <id> --allow-dirty` with dirty worktree prints `warning: worktree has uncommitted changes; proceeding due to --allow-dirty` to stderr
 3. `agency push <id> --force` with empty report prints `warning: report missing or empty; proceeding due to --force` to stderr
 4. `agency show <id>` prints flat key/value format with blank line between worktree and tmux
 5. `agency show <id>` prints `pr: none (#-)` when no PR exists
@@ -193,7 +188,7 @@ complete slice 03 PR-04 by standardizing CLI output contracts:
 push output changes:
 - stdout success: exactly `pr: <url>` (removed created/updated distinction)
 - stderr warnings: exact spec strings
-  - worktree: "warning: worktree has uncommitted changes; pushing commits anyway"
+  - worktree: "warning: worktree has uncommitted changes; proceeding due to --allow-dirty"
   - report: "warning: report missing or empty; proceeding due to --force"
 - stderr errors: exact spec templates
   - E_REPORT_INVALID: report missing or empty; use --force to push anyway
