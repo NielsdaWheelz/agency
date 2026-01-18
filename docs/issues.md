@@ -186,6 +186,10 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 18) we need to run `make fmt` or something before verify. or before testing. or in the system prompt so the runner does it. otherwise verify always fails.
 
+19) generally agency should be available globally
+
+20) verify output should be more verbose. so should general error messages (push, merge)
+
 ---
 
 what i need from your codebase
