@@ -192,6 +192,8 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 21) Clean optional flag to delete branch
 
+22) on `error_code: E_PR_NOT_MERGEABLE PR #88 has conflicts and cannot be merged` we should provide some sort of affordance. a github link, a command to open it or something, etc.
+
 X) Merge should merge and delete branch. Or at least surface all the gh options
 
 X) empty agency ls should show something
