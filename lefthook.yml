@@ -1,0 +1,28 @@
+pre-commit:
+  parallel: false
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -w {files}
+      stage_fixed: true
+    golangci-lint:
+      glob: "*.go"
+      run: golangci-lint run --new-from-rev=HEAD
+
+pre-push:
+  parallel: false
+  commands:
+    verify:
+      run: scripts/agency_verify.sh
+    e2e:
+      run: |
+        if [ "${AGENCY_RUN_E2E:-}" = "1" ]; then
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "pre-push: GH_TOKEN missing; required for e2e" >&2
+            exit 1
+          fi
+          echo "pre-push: make e2e"
+          make e2e
+        else
+          echo "pre-push: skipping e2e (set AGENCY_RUN_E2E=1 to enable)"
+        fi

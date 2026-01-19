@@ -1366,6 +1366,17 @@ make e2e
 
 this creates, pushes, merges, and deletes a PR branch in the target repo.
 
+### lefthook (optional)
+
+```bash
+go install github.com/evilmartians/lefthook@latest
+lefthook install
+```
+
+pre-commit runs gofmt on staged Go files (re-stages) and `golangci-lint` on
+changes vs `HEAD`. pre-push runs `scripts/agency_verify.sh`. e2e runs on pre-push
+when `AGENCY_RUN_E2E=1` (requires `GH_TOKEN`).
+
 ### run from source
 
 ```bash

@@ -192,13 +192,13 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 21) Clean optional flag to delete branch
 
-22) Merge should merge and delete branch. Or at least surface all the gh options
+X) Merge should merge and delete branch. Or at least surface all the gh options
 
-23) empty agency ls should show something
+X) empty agency ls should show something
 
-24) attach by name doesn't work. `agency attach <run-name>` should work, i shouldn't have to do `agency attach <run-id>`
+X) attach by name doesn't work. `agency attach <run-name>` should work, i shouldn't have to do `agency attach <run-id>`
 
-don't make code changes yet. survey and explore the relevant parts of the codebase - start with the README.md and the docs/v1/constitution.md. think deeply on the following: is this a worthy goal? is there a better way of achieving this? is it achievable? explain the core problem, our options, and the professional, best practice gold standard solution. 
+don't make code changes yet. survey and explore the relevant parts of the codebase - start with the README.md and the docs/v1/constitution.md. think deeply on the following: is this a worthy goal? is there a better way of achieving this? is it achievable? explain the core problem, our options, and the professional, best practice gold standard solution.
 
 ---
 
