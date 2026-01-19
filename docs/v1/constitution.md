@@ -14,7 +14,7 @@ Core loop:
 3. Push branch + create PR (`agency push`).
 4. User reviews via PR or locally.
 5. User confirms merge.
-6. Agency merges via `gh pr merge` and archives.
+6. Agency merges via `gh pr merge --delete-branch` and archives.
 
 ---
 
@@ -528,7 +528,9 @@ Status is **composable**, not a flat enum:
 3. run `scripts.verify`, record result
 4. if verify failed: prompt "continue anyway?" (skip with `--force`)
 5. prompt for human confirmation (accept `strings.TrimSpace(input) == "merge"`)
-6. `gh pr merge` with exactly one strategy flag; if none provided default to `--squash` (more than one -> `E_USAGE`)
+6. `gh pr merge --delete-branch` with exactly one strategy flag; if none provided default to `--squash` (more than one -> `E_USAGE`)
+   - by default, the remote branch is deleted after merge
+   - use `--no-delete-branch` to preserve the branch
 7. archive workspace
 
 if not mergeable: `E_PR_NOT_MERGEABLE`. no auto-rebase.
@@ -598,8 +600,8 @@ agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
 agency push <id> [--allow-dirty] [--force]
                                   push + create/update PR
-agency merge <id> [--squash|--merge|--rebase] [--allow-dirty] [--force]
-                                  verify, confirm, merge, archive
+agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
+                                  verify, confirm, merge, delete branch, archive
 agency clean <id> [--allow-dirty] archive without merging
 agency doctor                     check prerequisites + show paths
 ```
