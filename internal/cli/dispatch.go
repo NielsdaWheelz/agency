@@ -573,7 +573,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 		RepoPath: *repoPath,
 		Runner:   *runner,
 		Parent:   *parent,
-		Attach: !*detached,
+		Attach:   !*detached,
 	}
 
 	return commands.Run(ctx, cr, fsys, cwd, opts, stdout, stderr)
