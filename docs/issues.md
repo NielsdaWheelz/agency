@@ -194,6 +194,8 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 22) Merge should merge and delete branch. Or at least surface all the gh options
 
+23) empty agency ls should show something
+
 ---
 
 what i need from your codebase
