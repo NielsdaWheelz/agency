@@ -21,6 +21,8 @@ import (
 
 // InitOpts holds options for the init command.
 type InitOpts struct {
+	// RepoPath is the optional --repo flag to target a specific repo.
+	RepoPath    string
 	NoGitignore bool
 	Force       bool
 }
@@ -39,9 +41,20 @@ type InitResult struct {
 // Init implements the `agency init` command.
 // Creates agency.json, stub scripts (if missing), and updates .gitignore (by default).
 func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts InitOpts, stdout, stderr io.Writer) error {
-	// Discover repo root
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	// Discover repo root (use --repo if provided, otherwise CWD)
+	targetPath := cwd
+	if opts.RepoPath != "" {
+		targetPath = opts.RepoPath
+	}
+	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)
 	if err != nil {
+		if opts.RepoPath != "" {
+			return errors.NewWithDetails(
+				errors.EInvalidRepoPath,
+				fmt.Sprintf("--repo path is not inside a git repository: %s", opts.RepoPath),
+				map[string]string{"path": opts.RepoPath},
+			)
+		}
 		return err
 	}
 

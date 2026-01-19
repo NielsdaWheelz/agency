@@ -23,6 +23,9 @@ import (
 
 // LSOpts holds options for the ls command.
 type LSOpts struct {
+	// RepoPath is the optional --repo flag to scope listing to a specific repo.
+	RepoPath string
+
 	// All includes archived runs in the output.
 	All bool
 
@@ -49,13 +52,25 @@ func LS(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string
 	var repoID string
 	var inRepo bool
 
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err == nil {
-		// We're inside a repo
+	// Handle explicit --repo flag first
+	if opts.RepoPath != "" {
+		repoRoot, repoIDFromPath, err := ResolveRepoContext(ctx, cr, cwd, opts.RepoPath)
+		if err != nil {
+			return err
+		}
 		inRepo = true
-		originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-		repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-		repoID = repoIdentity.RepoID
+		repoID = repoIDFromPath
+		_ = repoRoot // Not used for listing
+	} else {
+		// Try CWD-based repo discovery
+		repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+		if err == nil {
+			// We're inside a repo
+			inRepo = true
+			originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+			repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+			repoID = repoIdentity.RepoID
+		}
 	}
 
 	// --all-repos forces all-repos mode regardless of cwd

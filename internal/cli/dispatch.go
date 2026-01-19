@@ -47,30 +47,45 @@ run 'agency <command> --help' for command-specific help.
 
 const initUsageText = `usage: agency init [options]
 
-create agency.json template and stub scripts in the current repo.
+create agency.json template and stub scripts in a repo.
+defaults to current directory; use --repo to target a different repo.
 
 options:
+  --repo <path>    target a specific repo (default: current directory)
   --no-gitignore   do not modify .gitignore
   --force          overwrite existing agency.json
   -h, --help       show this help
+
+examples:
+  agency init
+  agency init --repo /path/to/repo
+  agency init --force
 `
 
-const doctorUsageText = `usage: agency doctor
+const doctorUsageText = `usage: agency doctor [options]
 
 check prerequisites and show resolved paths.
 verifies git, tmux, gh, runner command, and scripts are present and configured.
+defaults to current directory; use --repo to target a different repo.
 
 options:
-  -h, --help    show this help
+  --repo <path>   target a specific repo (default: current directory)
+  -h, --help      show this help
+
+examples:
+  agency doctor
+  agency doctor --repo /path/to/repo
 `
 
 const runUsageText = `usage: agency run --name <name> [options]
 
 create workspace, run setup, and start tmux runner session.
-requires cwd to be inside a git repo with agency.json.
+defaults to current directory; use --repo to target a different repo.
+requires the target repo to have agency.json.
 
 options:
   --name <string>     run name (required, 2-40 chars, lowercase alphanumeric with hyphens)
+  --repo <path>       target a specific repo (default: current directory)
   --runner <name>     runner name: claude or codex (default: user config defaults.runner)
   --parent <branch>   parent branch (default: current branch)
   --attach            attach to tmux session immediately after creation
@@ -80,34 +95,44 @@ examples:
   agency run --name my-feature
   agency run --name fix-bug-123 --runner claude
   agency run --name refactor-auth --attach
+  agency run --name feature-x --repo /path/to/repo
 `
 
-const attachUsageText = `usage: agency attach <run>
+const attachUsageText = `usage: agency attach <run> [options]
 
 attach to the tmux session for an existing run.
-requires cwd to be inside the target repo.
+works from any directory; resolves runs globally.
 
 arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
-  -h, --help    show this help
+  --repo <path>   scope name resolution to a specific repo
+  -h, --help      show this help
+
+resolution:
+  - run_id and prefix resolution is always global
+  - name resolution prefers current repo (if inside one)
+  - use --repo to disambiguate when names conflict across repos
 
 examples:
   agency attach my-feature
   agency attach 20260110120000-a3f2
+  agency attach my-feature --repo /path/to/repo
 `
 
-const stopUsageText = `usage: agency stop <run>
+const stopUsageText = `usage: agency stop <run> [options]
 
 send C-c to the runner in the tmux session (best-effort interrupt).
 sets needs_attention flag on the run.
+works from any directory; resolves runs globally.
 
 arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
-  -h, --help    show this help
+  --repo <path>   scope name resolution to a specific repo
+  -h, --help      show this help
 
 notes:
   - best-effort only; may not stop the runner if it is in the middle of an operation
@@ -116,37 +141,43 @@ notes:
 examples:
   agency stop my-feature
   agency stop 20260110120000-a3f2
+  agency stop my-feature --repo /path/to/repo
 `
 
-const killUsageText = `usage: agency kill <run>
+const killUsageText = `usage: agency kill <run> [options]
 
 kill the tmux session for a run.
 workspace remains intact.
+works from any directory; resolves runs globally.
 
 arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
-  -h, --help    show this help
+  --repo <path>   scope name resolution to a specific repo
+  -h, --help      show this help
 
 examples:
   agency kill my-feature
   agency kill 20260110120000-a3f2
+  agency kill my-feature --repo /path/to/repo
 `
 
 const resumeUsageText = `usage: agency resume <run> [options]
 
 attach to the tmux session for a run.
 if session is missing, creates one and starts the runner.
+works from any directory; resolves runs globally.
 
 arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
-  --detached    do not attach; return after ensuring session exists
-  --restart     kill existing session (if any) and recreate
-  --yes         skip confirmation prompt for --restart
-  -h, --help    show this help
+  --repo <path>   scope name resolution to a specific repo
+  --detached      do not attach; return after ensuring session exists
+  --restart       kill existing session (if any) and recreate
+  --yes           skip confirmation prompt for --restart
+  -h, --help      show this help
 
 notes:
   - resume never runs scripts (setup/verify/archive)
@@ -158,6 +189,7 @@ examples:
   agency resume my-feature --detached         # ensure session exists
   agency resume my-feature --restart          # force fresh runner
   agency resume my-feature --restart --yes    # non-interactive restart
+  agency resume my-feature --repo /path/to/repo
 `
 
 const pushUsageText = `usage: agency push <run> [options]
@@ -188,12 +220,13 @@ examples:
 const verifyUsageText = `usage: agency verify <run> [options]
 
 run the repo's scripts.verify for a run and record results.
-does not require being in the repo directory.
+works from any directory; resolves runs globally.
 
 arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
+  --repo <path>     scope name resolution to a specific repo
   --timeout <dur>   script timeout (default: 30m, Go duration format)
   -h, --help        show this help
 
@@ -205,6 +238,7 @@ behavior:
 examples:
   agency verify my-feature                 # run verify
   agency verify my-feature --timeout 10m
+  agency verify my-feature --repo /path/to/repo
 `
 
 const mergeUsageText = `usage: agency merge <run> [options]
@@ -246,10 +280,10 @@ examples:
   agency merge my-feature --force              # skip verify-fail prompt
 `
 
-const cleanUsageText = `usage: agency clean <run>
+const cleanUsageText = `usage: agency clean <run> [options]
 
 archive a run without merging (abandon).
-requires cwd to be inside the target repo.
+works from any directory; resolves runs globally.
 requires an interactive terminal for confirmation.
 
 arguments:
@@ -266,12 +300,14 @@ confirmation:
   you must type 'clean' to confirm the operation.
 
 options:
-  --allow-dirty  allow clean even if worktree has uncommitted changes
-  -h, --help    show this help
+  --repo <path>   scope name resolution to a specific repo
+  --allow-dirty   allow clean even if worktree has uncommitted changes
+  -h, --help      show this help
 
 examples:
   agency clean my-feature
   agency clean my-feature --allow-dirty
+  agency clean my-feature --repo /path/to/repo
 `
 
 const lsUsageText = `usage: agency ls [options]
@@ -281,6 +317,7 @@ by default, lists runs for the current repo (excludes archived).
 if not inside a git repo, lists runs across all repos.
 
 options:
+  --repo <path>   scope listing to a specific repo (alternative to CWD scoping)
   --all           include archived runs
   --all-repos     list runs across all repos (ignores current repo scope)
   --json          output as JSON (stable format)
@@ -291,6 +328,7 @@ examples:
   agency ls --all              # include archived runs
   agency ls --all-repos        # list all repos
   agency ls --json             # machine-readable output
+  agency ls --repo /path/to/repo
 `
 
 const showUsageText = `usage: agency show <run> [options]
@@ -418,6 +456,7 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("init", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	repoPath := flagSet.String("repo", "", "target a specific repo")
 	noGitignore := flagSet.Bool("no-gitignore", false, "do not modify .gitignore")
 	force := flagSet.Bool("force", false, "overwrite existing agency.json")
 
@@ -436,7 +475,7 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -445,6 +484,7 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.InitOpts{
+		RepoPath:    *repoPath,
 		NoGitignore: *noGitignore,
 		Force:       *force,
 	}
@@ -455,6 +495,8 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 func runDoctor(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "target a specific repo")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -471,7 +513,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -479,7 +521,11 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 
-	return commands.Doctor(ctx, cr, fsys, cwd, stdout, stderr)
+	opts := commands.DoctorOpts{
+		RepoPath: *repoPath,
+	}
+
+	return commands.Doctor(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
 
 func runRun(args []string, stdout, stderr io.Writer) error {
@@ -487,6 +533,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	flagSet.SetOutput(io.Discard)
 
 	name := flagSet.String("name", "", "run name (required)")
+	repoPath := flagSet.String("repo", "", "target a specific repo")
 	runner := flagSet.String("runner", "", "runner name (claude or codex)")
 	parent := flagSet.String("parent", "", "parent branch")
 	attach := flagSet.Bool("attach", false, "attach to tmux session immediately")
@@ -512,7 +559,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -521,10 +568,11 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.RunOpts{
-		Name:   *name,
-		Runner: *runner,
-		Parent: *parent,
-		Attach: *attach,
+		Name:     *name,
+		RepoPath: *repoPath,
+		Runner:   *runner,
+		Parent:   *parent,
+		Attach:   *attach,
 	}
 
 	return commands.Run(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -534,6 +582,7 @@ func runLS(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("ls", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	repoPath := flagSet.String("repo", "", "scope listing to a specific repo")
 	all := flagSet.Bool("all", false, "include archived runs")
 	allRepos := flagSet.Bool("all-repos", false, "list runs across all repos")
 	jsonOutput := flagSet.Bool("json", false, "output as JSON")
@@ -562,6 +611,7 @@ func runLS(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.LSOpts{
+		RepoPath: *repoPath,
 		All:      *all,
 		AllRepos: *allRepos,
 		JSON:     *jsonOutput,
@@ -702,6 +752,8 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("attach", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
+
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -725,7 +777,7 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -734,7 +786,8 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.AttachOpts{
-		RunID: runID,
+		RunID:    runID,
+		RepoPath: *repoPath,
 	}
 
 	err = commands.Attach(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -754,6 +807,8 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 func runStop(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("stop", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -778,7 +833,7 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -787,7 +842,8 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.StopOpts{
-		RunID: runID,
+		RunID:    runID,
+		RepoPath: *repoPath,
 	}
 
 	return commands.Stop(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -796,6 +852,8 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 func runKill(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("kill", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -820,7 +878,7 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -829,7 +887,8 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.KillOpts{
-		RunID: runID,
+		RunID:    runID,
+		RepoPath: *repoPath,
 	}
 
 	return commands.Kill(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -839,6 +898,7 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("resume", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 	detached := flagSet.Bool("detached", false, "do not attach; return after ensuring session exists")
 	restart := flagSet.Bool("restart", false, "kill existing session (if any) and recreate")
 	yes := flagSet.Bool("yes", false, "skip confirmation prompt for --restart")
@@ -866,7 +926,7 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -876,6 +936,7 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 
 	opts := commands.ResumeOpts{
 		RunID:    runID,
+		RepoPath: *repoPath,
 		Detached: *detached,
 		Restart:  *restart,
 		Yes:      *yes,
@@ -935,6 +996,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("verify", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 	timeoutStr := flagSet.String("timeout", "30m", "script timeout (Go duration format)")
 
 	// Handle help manually to return nil (exit 0)
@@ -968,7 +1030,14 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 		return errors.New(errors.EUsage, "timeout must be positive")
 	}
 
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+	}
+
 	// Create real implementations
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
 	// Set up cancellation context for user SIGINT
@@ -984,11 +1053,12 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	}()
 
 	opts := commands.VerifyOpts{
-		RunID:   runID,
-		Timeout: timeout,
+		RunID:    runID,
+		RepoPath: *repoPath,
+		Timeout:  timeout,
 	}
 
-	return commands.Verify(ctx, fsys, opts, stdout, stderr)
+	return commands.Verify(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
 
 func runMerge(args []string, stdout, stderr io.Writer) error {
@@ -1071,6 +1141,7 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	flagSet := flag.NewFlagSet("clean", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 	allowDirty := flagSet.Bool("allow-dirty", false, "allow clean even if worktree has uncommitted changes")
 
 	// Handle help manually to return nil (exit 0)
@@ -1096,7 +1167,7 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to get working directory", err)
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
 	}
 
 	// Create real implementations
@@ -1106,6 +1177,7 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 
 	opts := commands.CleanOpts{
 		RunID:      runID,
+		RepoPath:   *repoPath,
 		AllowDirty: *allowDirty,
 	}
 

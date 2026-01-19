@@ -401,28 +401,34 @@ this deletes the worktree and tmux session but does NOT merge anything.
 
 All commands that accept `<ref>` support **name-based resolution**: you can use the run name (e.g., `feature-x`) or run_id (e.g., `20260115143022-a3f2`) interchangeably.
 
+**global resolution**: most run-targeted commands now work from any directory. run_id and prefix resolution is always global; name resolution prefers the current repo if you're inside one, otherwise resolves globally.
+
 ```bash
 # === SETUP ===
 agency init                        # initialize repo for agency
+agency init --repo /path/to/repo   # initialize a specific repo
 agency doctor                      # check prerequisites
+agency doctor --repo /path/to/repo # check a specific repo
 
 # === LIFECYCLE ===
 agency run --name my-feature       # start new AI session
-agency attach <ref>                # enter tmux session
+agency run --name feat --repo /p   # start in specific repo
+agency attach <ref>                # enter tmux session (works from anywhere)
 # Ctrl+b, d                        # detach from tmux
 agency push <ref>                  # push branch + create/update PR
 agency merge <ref>                 # verify + merge + cleanup
 agency clean <ref>                 # abandon (no merge)
 
 # === OBSERVABILITY ===
-agency ls                          # list all runs
+agency ls                          # list runs (current repo or all)
+agency ls --repo /path/to/repo     # list runs for specific repo
 agency ls --all                    # include archived
-agency show <ref>                  # show details
+agency show <ref>                  # show details (global)
 agency show <ref> --path           # show paths only
 agency path <ref>                  # output worktree path (for scripting)
 agency open <ref>                  # open worktree in editor
 
-# === SESSION CONTROL ===
+# === SESSION CONTROL (global resolution) ===
 agency resume <ref>                # attach (create session if needed)
 agency resume <ref> --restart      # restart session (loses chat history)
 agency stop <ref>                  # send Ctrl+C
@@ -430,6 +436,11 @@ agency kill <ref>                  # kill session (keeps files)
 
 # === VERIFICATION ===
 agency verify <ref>                # run verify script manually
+
+# === DISAMBIGUATION ===
+# use --repo when names conflict across repos:
+agency attach my-feature --repo /path/to/repo
+agency resume my-feature --repo /path/to/repo
 ```
 
 ### environment variables available in scripts
@@ -482,19 +493,20 @@ popd                    # return to previous directory
 ## commands
 
 ```
-agency init [--no-gitignore] [--force]
+agency init [--repo] [--no-gitignore] [--force]
                                   create agency.json template + stub scripts
-agency run --name <name> [--runner] [--parent]
+agency run --name <name> [--repo] [--runner] [--parent]
                                   create workspace, setup, start tmux
-agency ls                         list runs + statuses
-agency show <id> [--path]         show run details
-agency path <id>                  output worktree path (for scripting)
-agency open <id> [--editor]       open worktree in editor
-agency attach <id>                attach to tmux session
-agency resume <id> [--detached] [--restart]
-                                  attach to tmux session (create if missing)
-agency stop <id>                  send C-c to runner (best-effort)
-agency kill <id>                  kill tmux session
+agency ls [--repo] [--all] [--all-repos]
+                                  list runs + statuses
+agency show <id> [--path]         show run details (global)
+agency path <id>                  output worktree path (for scripting, global)
+agency open <id> [--editor]       open worktree in editor (global)
+agency attach <id> [--repo]       attach to tmux session (global)
+agency resume <id> [--repo] [--detached] [--restart]
+                                  attach to tmux session (create if missing, global)
+agency stop <id> [--repo]         send C-c to runner (global)
+agency kill <id> [--repo]         kill tmux session (global)
 agency push <id> [--allow-dirty] [--force]
                                   push + create/update PR
 agency verify <id> [--timeout]    run verify script and record results
