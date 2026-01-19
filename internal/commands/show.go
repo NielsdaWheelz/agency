@@ -67,39 +67,10 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 	dataDir := dirs.DataDir
 
-	// Scan all runs (global resolution works regardless of cwd)
-	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to scan runs", err)
-	}
-
-	// Convert records to RunRefs for resolution
-	refs := make([]ids.RunRef, len(records))
-	for i, rec := range records {
-		refs[i] = ids.RunRef{
-			RepoID: rec.RepoID,
-			RunID:  rec.RunID,
-			Broken: rec.Broken,
-		}
-	}
-
-	// Resolve run ID (exact or unique prefix)
-	resolvedRef, err := ids.ResolveRunRef(opts.RunID, refs)
+	// Resolve run by name or ID globally
+	_, record, err := resolveRunGlobal(opts.RunID, dataDir)
 	if err != nil {
 		return handleResolveError(err, opts, stdout, stderr)
-	}
-
-	// Find the matching record
-	var record *store.RunRecord
-	for i := range records {
-		if records[i].RunID == resolvedRef.RunID && records[i].RepoID == resolvedRef.RepoID {
-			record = &records[i]
-			break
-		}
-	}
-	if record == nil {
-		// Should not happen if resolver worked correctly
-		return errors.New(errors.EInternal, "resolved run not found in records")
 	}
 
 	// Compute paths

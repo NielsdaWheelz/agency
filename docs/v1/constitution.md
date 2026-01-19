@@ -596,20 +596,33 @@ agency init                       create agency.json template
 agency run --name <name> [--runner] [--parent]
                                   create workspace, setup, start tmux
 agency ls                         list runs + statuses
-agency show <id> [--path]         show run details
-agency open <id> [--editor]       open run worktree in editor
-agency attach <id>                attach to tmux session
-agency resume <id> [--detached] [--restart]
+agency show <ref> [--path]        show run details
+agency open <ref> [--editor]      open run worktree in editor
+agency attach <ref>               attach to tmux session
+agency resume <ref> [--detached] [--restart]
                                   attach to tmux session (create if missing)
-agency stop <id>                  send C-c to runner (best-effort)
-agency kill <id>                  kill tmux session
-agency push <id> [--allow-dirty] [--force]
+agency stop <ref>                 send C-c to runner (best-effort)
+agency kill <ref>                 kill tmux session
+agency push <ref> [--allow-dirty] [--force]
                                   push + create/update PR
 agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
                                   verify, confirm, merge, delete branch, archive
 agency clean <id> [--allow-dirty] archive without merging
 agency doctor                     check prerequisites + show paths
 ```
+
+### Run reference resolution
+
+`<ref>` can be:
+- **name** — exact match against run name (active runs only; archived runs excluded)
+- **run_id** — exact match against full run_id
+- **prefix** — unique prefix of run_id
+
+Resolution priority: exact name → exact run_id → unique run_id prefix.
+
+For repo-scoped commands (`attach`, `resume`, `stop`, `kill`, `clean`), resolution is limited to the current repository. For global commands (`show`, `open`, `push`, `merge`), resolution spans all repositories.
+
+Archived runs are excluded from name matching but can still be resolved by run_id or prefix.
 
 ### Init semantics
 
@@ -639,11 +652,12 @@ Stub scripts:
 
 ### Resume semantics
 
-`agency resume <id>`:
-1. if tmux session exists: attach unless `--detached`
-2. if tmux session missing: create `tmux.SessionName(<run_id>)` with `cwd=worktree`, run runner, then attach unless `--detached`
+`agency resume <ref>`:
+1. resolve run within current repo by name, run_id, or prefix (see "Run reference resolution")
+2. if tmux session exists: attach unless `--detached`
+3. if tmux session missing: create `tmux.SessionName(<run_id>)` with `cwd=worktree`, run runner, then attach unless `--detached`
 
-`agency resume <id> --restart`:
+`agency resume <ref> --restart`:
 1. kill session (if exists)
 2. recreate session and run runner
 
@@ -651,22 +665,22 @@ no idle detection in v1; tmux session existence is the only signal.
 
 ### Open semantics
 
-`agency open <id>`:
-1. resolve run id globally (exact match or unique prefix)
+`agency open <ref>`:
+1. resolve run globally by name, run_id, or prefix (see "Run reference resolution")
 2. resolve editor from `config.json` defaults (override with `--editor`)
 3. execute editor command with worktree path as a single argument
 4. read-only: no repo lock, no meta mutations, no events
 
 ### Stop semantics
 
-`agency stop <id>`:
+`agency stop <ref>`:
 1. `tmux send-keys -t tmux.SessionName(<run_id>) C-c` (best-effort interrupt)
 2. sets `needs_attention` flag regardless of whether interrupt succeeded
 3. tmux session stays alive; use `agency resume --restart` to guarantee a fresh runner
 
 stop is best-effort: C-c may cancel an in-tool operation, exit the tool, or do nothing. it may not interrupt model work and can leave the tool in an inconsistent state; v1 accepts this risk.
 
-`agency kill <id>`:
+`agency kill <ref>`:
 - `tmux kill-session -t tmux.SessionName(<run_id>)`
 - workspace persists
 
@@ -745,6 +759,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_DIRTY_WORKTREE` — run worktree has uncommitted changes
 - `E_REPO_LOCKED` — another agency process holds the lock
 - `E_RUN_NOT_FOUND` — specified run does not exist
+- `E_RUN_ID_AMBIGUOUS` — run reference matches multiple runs
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_NO_PR` — no PR exists for the run
 - `E_REPORT_INVALID` — report missing/empty without `--force`

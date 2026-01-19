@@ -15,7 +15,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/runservice"
-	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
@@ -64,16 +63,17 @@ func AttachWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoID := repoIdentity.RepoID
 
-	// Create store and look up the run (verify it exists)
-	st := store.NewStore(fsys, dataDir, nil)
-	_, err = st.ReadMeta(repoID, opts.RunID)
+	// Resolve run by name or ID within this repo
+	resolved, _, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
 	if err != nil {
-		// E_RUN_NOT_FOUND is already the right error code from ReadMeta
 		return err
 	}
 
+	// Use the resolved run_id for session name
+	runID := resolved.RunID
+
 	// Compute session name from run_id (source of truth from tmux.SessionName)
-	sessionName := tmux.SessionName(opts.RunID)
+	sessionName := tmux.SessionName(runID)
 
 	// Check if tmux session actually exists using the TmuxClient
 	exists, err := tmuxClient.HasSession(ctx, sessionName)
@@ -87,9 +87,9 @@ func AttachWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 			errors.ESessionNotFound,
 			fmt.Sprintf("tmux session '%s' does not exist", sessionName),
 			map[string]string{
-				"run_id":     opts.RunID,
+				"run_id":     runID,
 				"session":    sessionName,
-				"suggestion": fmt.Sprintf("try: agency resume %s", opts.RunID),
+				"suggestion": fmt.Sprintf("try: agency resume %s", runID),
 			},
 		)
 	}

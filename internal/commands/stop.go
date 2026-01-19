@@ -65,16 +65,20 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoID := repoIdentity.RepoID
 
-	// Create store and look up the run
-	st := store.NewStore(fsys, dataDir, nil)
-	_, err = st.ReadMeta(repoID, opts.RunID)
+	// Resolve run by name or ID within this repo
+	resolved, _, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
 	if err != nil {
-		// E_RUN_NOT_FOUND is already the right error code from ReadMeta
 		return err
 	}
 
+	// Use the resolved run_id
+	runID := resolved.RunID
+
+	// Create store for later operations
+	st := store.NewStore(fsys, dataDir, nil)
+
 	// Compute session name from run_id (source of truth from tmux.SessionName)
-	sessionName := tmux.SessionName(opts.RunID)
+	sessionName := tmux.SessionName(runID)
 
 	// Check if tmux session actually exists
 	exists, err := tmuxClient.HasSession(ctx, sessionName)
@@ -83,7 +87,7 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	}
 	if !exists {
 		// Session doesn't exist - no-op, exit 0
-		_, _ = fmt.Fprintf(stderr, "no session for %s\n", opts.RunID)
+		_, _ = fmt.Fprintf(stderr, "no session for %s\n", runID)
 		return nil
 	}
 
@@ -96,7 +100,7 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 
 	// Set needs_attention flag in meta.json
 	// Note: if this fails, we continue to append the event and return the error afterward
-	metaErr := st.UpdateMeta(repoID, opts.RunID, func(m *store.RunMeta) {
+	metaErr := st.UpdateMeta(repoID, runID, func(m *store.RunMeta) {
 		if m.Flags == nil {
 			m.Flags = &store.RunMetaFlags{}
 		}
@@ -104,12 +108,12 @@ func StopWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	})
 
 	// Append stop event
-	eventsPath := filepath.Join(st.RunDir(repoID, opts.RunID), "events.jsonl")
+	eventsPath := filepath.Join(st.RunDir(repoID, runID), "events.jsonl")
 	eventErr := events.AppendEvent(eventsPath, events.Event{
 		SchemaVersion: "1.0",
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		RepoID:        repoID,
-		RunID:         opts.RunID,
+		RunID:         runID,
 		Event:         "stop",
 		Data: map[string]any{
 			"session_name": sessionName,

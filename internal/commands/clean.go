@@ -79,12 +79,28 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoID := repoIdentity.RepoID
 
-	// Create store and look up the run
-	st := store.NewStore(fsys, dataDir, time.Now)
-	meta, err := st.ReadMeta(repoID, opts.RunID)
+	// Resolve run by name or ID within this repo
+	resolved, record, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
 	if err != nil {
 		return err
 	}
+
+	// Check if run is broken
+	if resolved.Broken || record == nil || record.Meta == nil {
+		return errors.NewWithDetails(
+			errors.ERunBroken,
+			"run exists but meta.json is unreadable or invalid",
+			map[string]string{"run_id": resolved.RunID, "repo_id": repoID},
+		)
+	}
+
+	// Use the resolved run_id
+	runID := resolved.RunID
+	opts.RunID = runID // Update opts so later code uses the resolved ID
+	meta := record.Meta
+
+	// Create store for later operations
+	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// Check if already archived (idempotent)
 	if meta.Archive != nil && meta.Archive.ArchivedAt != "" {

@@ -61,22 +61,40 @@ func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Dur
 		timeout = 30 * time.Minute
 	}
 
-	// Step 1: Resolve run_id globally (cwd-independent)
+	// Step 1: Resolve run_id globally (cwd-independent) with name support
 	allRuns, err := store.ScanAllRuns(s.DataDir)
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to scan runs", err)
 	}
 
-	var refs []ids.RunRef
-	for _, run := range allRuns {
-		refs = append(refs, ids.RunRef{
+	// Build refs with Name populated for name-aware resolution
+	refs := make([]ids.RunRef, len(allRuns))
+	for i, run := range allRuns {
+		refs[i] = ids.RunRef{
 			RepoID: run.RepoID,
 			RunID:  run.RunID,
+			Name:   run.Name,
 			Broken: run.Broken,
-		})
+		}
 	}
 
-	resolved, err := ids.ResolveRunRef(runRef, refs)
+	// isActive predicate: a run is active if it's not archived
+	isActive := func(ref ids.RunRef) bool {
+		if ref.Broken {
+			return false
+		}
+		for _, run := range allRuns {
+			if run.RunID == ref.RunID && run.RepoID == ref.RepoID {
+				if run.Meta != nil && run.Meta.Archive != nil && run.Meta.Archive.ArchivedAt != "" {
+					return false
+				}
+				return true
+			}
+		}
+		return false
+	}
+
+	resolved, err := ids.ResolveRunRefWithName(runRef, refs, isActive)
 	if err != nil {
 		var notFound *ids.ErrNotFound
 		if stderrors.As(err, &notFound) {

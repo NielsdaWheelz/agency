@@ -318,46 +318,14 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 // resolveRunForPush resolves the run identifier and loads metadata.
 // Returns the run reference, metadata, repoID, and any error.
 func resolveRunForPush(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, st *store.Store, runID string) (ids.RunRef, *store.RunMeta, string, error) {
-	// Scan all runs - use the store's DataDir
-	allRuns, err := store.ScanAllRuns(st.DataDir)
+	// Resolve run by name or ID globally
+	runRef, record, err := resolveRunGlobal(runID, st.DataDir)
 	if err != nil {
-		return ids.RunRef{}, nil, "", errors.Wrap(errors.EInternal, "failed to scan runs", err)
-	}
-
-	// Build refs list
-	var refs []ids.RunRef
-	for _, run := range allRuns {
-		refs = append(refs, ids.RunRef{
-			RepoID: run.RepoID,
-			RunID:  run.RunID,
-			Broken: run.Broken,
-		})
-	}
-
-	// Resolve
-	runRef, err := ids.ResolveRunRef(runID, refs)
-	if err != nil {
-		var notFound *ids.ErrNotFound
-		if stderrors.As(err, &notFound) {
-			return ids.RunRef{}, nil, "", errors.New(errors.ERunNotFound, fmt.Sprintf("run not found: %s", runID))
-		}
-		var ambiguous *ids.ErrAmbiguous
-		if stderrors.As(err, &ambiguous) {
-			candidates := make([]string, len(ambiguous.Candidates))
-			for i, c := range ambiguous.Candidates {
-				candidates[i] = c.RunID
-			}
-			return ids.RunRef{}, nil, "", errors.NewWithDetails(
-				errors.ERunIDAmbiguous,
-				fmt.Sprintf("ambiguous run id %q matches multiple runs", runID),
-				map[string]string{"candidates": strings.Join(candidates, ", ")},
-			)
-		}
-		return ids.RunRef{}, nil, "", errors.Wrap(errors.EInternal, "failed to resolve run id", err)
+		return ids.RunRef{}, nil, "", err
 	}
 
 	// Check if broken
-	if runRef.Broken {
+	if runRef.Broken || record == nil || record.Meta == nil {
 		return ids.RunRef{}, nil, "", errors.NewWithDetails(
 			errors.ERunBroken,
 			"run exists but meta.json is unreadable or invalid",
@@ -365,13 +333,7 @@ func resolveRunForPush(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, c
 		)
 	}
 
-	// Load metadata
-	meta, err := st.ReadMeta(runRef.RepoID, runRef.RunID)
-	if err != nil {
-		return ids.RunRef{}, nil, "", err
-	}
-
-	return runRef, meta, runRef.RepoID, nil
+	return runRef, record.Meta, runRef.RepoID, nil
 }
 
 // isReportEffectivelyEmpty returns true if the report is missing or has < 20 trimmed chars.
