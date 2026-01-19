@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ -f "$AGENCY_REPO_ROOT/.env" ]; then
+  cp "$AGENCY_REPO_ROOT/.env" "$AGENCY_WORKSPACE_ROOT/.env"
+fi
+
 go mod download
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
