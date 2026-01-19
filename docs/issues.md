@@ -196,7 +196,7 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 23) empty agency ls should show something
 
-24) attach by name doesn't work
+24) attach by name doesn't work. `agency attach <run-name>` should work, i shouldn't have to do `agency attach <run-id>`
 
 ---
 
