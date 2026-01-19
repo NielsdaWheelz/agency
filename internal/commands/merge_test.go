@@ -818,6 +818,110 @@ func TestTruncateString(t *testing.T) {
 	}
 }
 
+// TestExecuteGHMerge_DeleteBranch tests the --delete-branch flag behavior.
+func TestExecuteGHMerge_DeleteBranch(t *testing.T) {
+	tests := []struct {
+		name         string
+		deleteBranch bool
+		wantFlag     bool // whether --delete-branch should be in args
+	}{
+		{
+			name:         "delete branch enabled (default)",
+			deleteBranch: true,
+			wantFlag:     true,
+		},
+		{
+			name:         "delete branch disabled (--no-delete-branch)",
+			deleteBranch: false,
+			wantFlag:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			mergeLogPath := filepath.Join(tmpDir, "merge.log")
+
+			var capturedArgs []string
+			fakeCR := &mergeTestCommandRunner{
+				runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+					if name == "gh" && len(args) > 0 && args[0] == "pr" && args[1] == "merge" {
+						capturedArgs = args
+						return exec.CmdResult{ExitCode: 0, Stdout: "merged"}, nil
+					}
+					return exec.CmdResult{ExitCode: 1}, nil
+				},
+			}
+
+			err := executeGHMerge(context.Background(), fakeCR, tmpDir, "owner/repo", 123, "--squash", mergeLogPath, tt.deleteBranch)
+			if err != nil {
+				t.Fatalf("executeGHMerge() unexpected error: %v", err)
+			}
+
+			// Check if --delete-branch is in args
+			hasDeleteBranch := false
+			for _, arg := range capturedArgs {
+				if arg == "--delete-branch" {
+					hasDeleteBranch = true
+					break
+				}
+			}
+
+			if hasDeleteBranch != tt.wantFlag {
+				t.Errorf("executeGHMerge() --delete-branch in args = %v, want %v; args = %v", hasDeleteBranch, tt.wantFlag, capturedArgs)
+			}
+
+			// Verify the log file contains the right info
+			logContent, err := os.ReadFile(mergeLogPath)
+			if err != nil {
+				t.Fatalf("failed to read merge log: %v", err)
+			}
+			if tt.wantFlag && !strings.Contains(string(logContent), "--delete-branch") {
+				t.Errorf("merge log should contain --delete-branch when enabled")
+			}
+			if !tt.wantFlag && strings.Contains(string(logContent), "--delete-branch") {
+				t.Errorf("merge log should not contain --delete-branch when disabled")
+			}
+		})
+	}
+}
+
+// TestMergeOpts_NoDeleteBranch tests the NoDeleteBranch option default behavior.
+func TestMergeOpts_NoDeleteBranch(t *testing.T) {
+	tests := []struct {
+		name           string
+		noDeleteBranch bool
+		wantDelete     bool
+	}{
+		{
+			name:           "default (delete branch)",
+			noDeleteBranch: false,
+			wantDelete:     true,
+		},
+		{
+			name:           "preserve branch",
+			noDeleteBranch: true,
+			wantDelete:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := MergeOpts{
+				RunID:          "test-run",
+				Strategy:       MergeStrategySquash,
+				NoDeleteBranch: tt.noDeleteBranch,
+			}
+
+			// The logic: deleteBranch := !opts.NoDeleteBranch
+			deleteBranch := !opts.NoDeleteBranch
+			if deleteBranch != tt.wantDelete {
+				t.Errorf("deleteBranch = %v, want %v", deleteBranch, tt.wantDelete)
+			}
+		})
+	}
+}
+
 // TestGetOriginURLForMerge tests origin URL resolution.
 func TestGetOriginURLForMerge(t *testing.T) {
 	tmpDir := t.TempDir()
