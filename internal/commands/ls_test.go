@@ -352,12 +352,11 @@ func TestWriteLSHuman_EmptyList_AllReposScope(t *testing.T) {
 func TestWriteLSHuman_WithRows(t *testing.T) {
 	rows := []render.RunSummaryHumanRow{
 		{
-			RunID:     "20260110-a3f2",
-			Name:      "test run",
-			Runner:    "claude",
-			CreatedAt: "2 hours ago",
-			Status:    "active",
-			PR:        "#123",
+			RunID:   "20260110-a3f2",
+			Name:    "test run",
+			Status:  "active",
+			Summary: "Implementing feature",
+			PR:      "#123",
 		},
 	}
 	ctx := render.LSContext{
@@ -379,8 +378,8 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 	if !bytes.Contains(buf.Bytes(), []byte("NAME")) {
 		t.Error("missing NAME header")
 	}
-	if !bytes.Contains(buf.Bytes(), []byte("RUNNER")) {
-		t.Error("missing RUNNER header")
+	if !bytes.Contains(buf.Bytes(), []byte("SUMMARY")) {
+		t.Error("missing SUMMARY header")
 	}
 
 	// Check row data exists
@@ -436,11 +435,8 @@ func TestFormatHumanRow_BrokenRun(t *testing.T) {
 	if row.Name != render.NameBroken {
 		t.Errorf("Title = %q, want %q", row.Name, render.NameBroken)
 	}
-	if row.Runner != "" {
-		t.Errorf("Runner = %q, want empty", row.Runner)
-	}
-	if row.CreatedAt != "" {
-		t.Errorf("CreatedAt = %q, want empty", row.CreatedAt)
+	if row.Summary != "-" {
+		t.Errorf("Summary = %q, want '-'", row.Summary)
 	}
 }
 

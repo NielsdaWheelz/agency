@@ -32,6 +32,8 @@ vendor/
 Thumbs.db
 
 # Agency workspace directories (per-repo)
+# Note: .agency/ contains runtime state (report.md, state/, out/, tmp/)
+# CLAUDE.md is committed and provides runner protocol instructions
 .agency/
 
 # Build artifacts

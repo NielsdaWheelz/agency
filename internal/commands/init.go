@@ -33,6 +33,7 @@ type InitResult struct {
 	GitignoreState  scaffold.GitignoreResult
 	UserConfigPath  string
 	UserConfigState string // "created" or "exists"
+	ClaudeMDState   string // "created" or "exists"
 }
 
 // Init implements the `agency init` command.
@@ -116,6 +117,16 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		}
 	}
 
+	// Create CLAUDE.md (runner protocol file)
+	claudeMDCreated, err := scaffold.WriteClaudeMD(fsys, repoRoot.Path)
+	if err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to create CLAUDE.md", err)
+	}
+	claudeMDState := "exists"
+	if claudeMDCreated {
+		claudeMDState = "created"
+	}
+
 	// Build result
 	result := InitResult{
 		RepoRoot:        repoRoot.Path,
@@ -124,6 +135,7 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		GitignoreState:  gitignoreState,
 		UserConfigPath:  userConfigPath,
 		UserConfigState: userConfigState,
+		ClaudeMDState:   claudeMDState,
 	}
 
 	// Output result
@@ -153,4 +165,5 @@ func writeInitOutput(w io.Writer, r InitResult) {
 	_, _ = fmt.Fprintf(w, "scripts_created: %s\n", scriptsCreated)
 
 	_, _ = fmt.Fprintf(w, "gitignore: %s\n", r.GitignoreState)
+	_, _ = fmt.Fprintf(w, "claude_md: %s\n", r.ClaudeMDState)
 }

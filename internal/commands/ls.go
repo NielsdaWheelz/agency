@@ -2,9 +2,9 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,8 +15,10 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/status"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/watchdog"
 )
 
 // LSOpts holds options for the ls command.
@@ -178,25 +180,60 @@ func recordToSummary(rec store.RunRecord, tmuxSessions map[string]bool, fsys fs.
 	summary.WorktreePresent = dirExists(meta.WorktreePath)
 	summary.Archived = !summary.WorktreePresent
 
-	// Get report bytes (0 if missing or worktree absent)
-	reportBytes := 0
+	// Load runner status and compute stall detection (only if worktree present)
+	var runnerStatus *runnerstatus.RunnerStatus
+	var stallResult *watchdog.StallResult
 	if summary.WorktreePresent {
-		reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
-		if info, err := os.Stat(reportPath); err == nil {
-			reportBytes = int(info.Size())
+		rs, modTime, err := runnerstatus.LoadWithModTime(meta.WorktreePath)
+		if err == nil && rs != nil {
+			// Validate the status file
+			if rs.Validate() == nil {
+				runnerStatus = rs
+				summary.Summary = &rs.Summary
+			}
+		}
+
+		// Compute stall detection
+		signals := watchdog.ActivitySignals{
+			TmuxSessionExists: summary.TmuxActive,
+		}
+		if !modTime.IsZero() {
+			signals.StatusFileModTime = &modTime
+		}
+		result := watchdog.CheckStallWithDefault(signals)
+		stallResult = &result
+
+		// Format stall duration for display
+		if result.IsStalled {
+			dur := formatStalledDuration(result.StalledDuration)
+			summary.StalledDuration = &dur
 		}
 	}
 
-	// Derive status
+	// Derive status using runner status and stall result
 	snapshot := status.Snapshot{
 		TmuxActive:      summary.TmuxActive,
 		WorktreePresent: summary.WorktreePresent,
-		ReportBytes:     reportBytes,
+		RunnerStatus:    runnerStatus,
+		StallResult:     stallResult,
 	}
 	derived := status.Derive(meta, snapshot)
 	summary.DerivedStatus = derived.DerivedStatus
 
 	return summary
+}
+
+// formatStalledDuration formats a stall duration for display (e.g., "45m", "2h").
+func formatStalledDuration(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	mins := int(d.Minutes()) % 60
+	if mins == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, mins)
 }
 
 // getTmuxSessions returns a set of active tmux session names.

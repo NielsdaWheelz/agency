@@ -115,6 +115,7 @@ this creates:
 ```
 your-repo/
 ├── agency.json                    # configuration
+├── CLAUDE.md                      # runner protocol (status reporting)
 └── scripts/
     ├── agency_setup.sh            # runs BEFORE ai starts (install deps)
     ├── agency_verify.sh           # runs to check work (tests/lint)
@@ -513,6 +514,7 @@ creates `agency.json` template and stub scripts in the current git repo.
 
 **files created:**
 - `agency.json` — configuration file with defaults
+- `CLAUDE.md` — runner protocol file (instructs runners on status reporting)
 - `scripts/agency_setup.sh` — stub setup script (exits 0)
 - `scripts/agency_verify.sh` — stub verify script (exits 1, must be replaced)
 - `scripts/agency_archive.sh` — stub archive script (exits 0)
@@ -524,6 +526,7 @@ repo_root: /path/to/repo
 agency_json: created
 scripts_created: scripts/agency_setup.sh, scripts/agency_verify.sh, scripts/agency_archive.sh
 gitignore: updated
+claude_md: created
 ```
 
 ### `agency doctor`
@@ -659,25 +662,36 @@ agency ls [--all] [--all-repos] [--json]
 **human output columns:**
 - `RUN_ID`: full run identifier
 - `NAME`: run name (truncated to 50 chars; `<broken>` for corrupt meta; `<untitled>` for empty)
-- `RUNNER`: runner name (empty for broken runs)
-- `CREATED`: relative timestamp (e.g., "2 hours ago")
 - `STATUS`: derived status (e.g., "active", "idle", "ready for review", "merged (archived)")
+- `SUMMARY`: runner-reported summary (truncated to 40 chars; shows stall duration for stalled runs; `-` if unavailable)
 - `PR`: PR number if exists (e.g., "#123")
+
+**example output:**
+```
+RUN_ID              NAME            STATUS            SUMMARY                    PR
+20260119-a3f2       auth-fix        needs input       Which auth library?        #123
+20260118-c5d2       bug-fix         stalled           (no activity for 45m)      -
+20260118-e7f3       feature-x       working           Implementing validation    -
+```
 
 **empty state:**
 - inside repo without `--all`: `no active runs (use --all to include archived)`
 - inside repo with `--all`: `no runs found`
 - outside repo / `--all-repos`: `no runs found`
 
-**status values:**
-- `active` / `active (pr)`: tmux session exists
-- `idle` / `idle (pr)`: no tmux session, worktree present
-- `ready for review`: PR exists, pushed, report non-empty
-- `needs attention`: verify failed, PR not mergeable, or stop requested
-- `failed`: setup script failed
+**status values** (in precedence order):
+- `broken`: meta.json is unreadable/invalid
 - `merged`: PR merged
 - `abandoned`: explicitly abandoned
-- `broken`: meta.json is unreadable/invalid
+- `failed`: setup script failed
+- `needs attention`: verify failed, PR not mergeable, or stop requested
+- `ready for review`: runner reports work complete
+- `needs input`: runner waiting for user answer
+- `blocked`: runner cannot proceed
+- `working`: runner actively making progress
+- `stalled`: no status update for 15+ minutes (tmux active)
+- `active`: tmux session exists (fallback when no runner status)
+- `idle`: no tmux session (fallback)
 - `(archived)` suffix: worktree no longer exists
 
 **json output:**
@@ -700,6 +714,7 @@ agency ls [--all] [--all-repos] [--json]
       "pr_number": 123,
       "pr_url": "https://github.com/owner/repo/pull/123",
       "derived_status": "ready for review",
+      "summary": "Implementing user authentication",
       "broken": false
     }
   ]
@@ -765,12 +780,21 @@ last_push_at: 2026-01-10T14:00:00Z
 last_report_sync_at: 2026-01-10T14:00:00Z
 report_hash: abc123def456...
 status: ready for review
+
+runner_status:
+  status: needs_input
+  updated: 5m ago
+  summary: Implementing OAuth but need clarification
+  questions:
+    - Which OAuth provider should I use?
+    - Should sessions persist across restarts?
 ```
 
 note: there is a blank line between `worktree:` and `tmux:`.
 
 when PR is missing: `pr: none (#-)`
 when timestamps are missing: `last_push_at: none`
+runner_status section only appears when `.agency/state/runner_status.json` exists and is valid.
 
 **json output:**
 ```json
@@ -787,7 +811,16 @@ when timestamps are missing: `last_push_at: none`
       "tmux_active": true,
       "worktree_present": true,
       "report": { "exists": true, "bytes": 256, "path": "..." },
-      "logs": { "setup_log_path": "...", "verify_log_path": "...", "archive_log_path": "..." }
+      "logs": { "setup_log_path": "...", "verify_log_path": "...", "archive_log_path": "..." },
+      "runner_status": {
+        "status": "needs_input",
+        "updated_at": "2026-01-10T14:00:00Z",
+        "summary": "Implementing OAuth but need clarification",
+        "questions": ["Which OAuth provider?"],
+        "blockers": [],
+        "how_to_test": "",
+        "risks": []
+      }
     },
     "paths": {
       "repo_root": "/path/to/repo",
@@ -1432,15 +1465,17 @@ agency/
 │   ├── pipeline/         # run pipeline orchestrator (step execution, error handling)
 │   ├── render/           # output formatting for ls/show (human tables + JSON envelopes)
 │   ├── repo/             # repo safety checks + CheckRepoSafe API
+│   ├── runnerstatus/     # runner status file parsing (S7) - .agency/state/runner_status.json
 │   ├── runservice/       # concrete RunService implementation (wires all steps, setup execution)
-│   ├── scaffold/         # agency.json template + stub script creation
-│   ├── status/           # pure status derivation from meta + local snapshot
+│   ├── scaffold/         # agency.json template + stub script creation + CLAUDE.md
+│   ├── status/           # pure status derivation from meta + runner status + stall detection
 │   ├── store/            # repo_index.json + repo.json + run meta.json + run scanning
 │   ├── tmux/             # tmux Client interface, exec-backed impl, session detection, scrollback capture, ANSI stripping
 │   ├── tty/              # TTY detection helpers for interactive prompts
 │   ├── verify/           # verify script execution engine + evidence recording
 │   ├── verifyservice/    # verify pipeline entrypoint (S5) + meta/events integration
 │   ├── version/          # build version
+│   ├── watchdog/         # stall detection (S7) - detects inactive runners
 │   └── worktree/         # git worktree creation + workspace scaffolding + removal
 └── docs/                 # specifications
 ```
@@ -1463,6 +1498,8 @@ agency/
 - [slice 5 PRs](docs/v1/s5/s5_prs.md) — slice 5 PR breakdown
 - [slice 6 spec](docs/v1/s6/s6_spec.md) — merge + archive slice detailed spec
 - [slice 6 PRs](docs/v1/s6/s6_prs.md) — slice 6 PR breakdown
+- [slice 7 spec](docs/v1/s7/s7_spec.md) — runner status contract + watchdog slice detailed spec
+- [slice 7 PRs](docs/v1/s7/s7_prs.md) — slice 7 PR breakdown
 
 ## license
 

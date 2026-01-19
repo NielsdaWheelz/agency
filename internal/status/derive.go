@@ -2,11 +2,11 @@
 // No filesystem, tmux, or network calls are made in this package.
 package status
 
-import "github.com/NielsdaWheelz/agency/internal/store"
-
-// ReportNonemptyThresholdBytes is the minimum byte count for a report to be considered non-empty.
-// Reports below this threshold are assumed to be template-only or effectively empty.
-const ReportNonemptyThresholdBytes = 64
+import (
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
+	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/watchdog"
+)
 
 // Derived status string constants (user-visible contract, must remain stable across v1.x).
 const (
@@ -16,9 +16,11 @@ const (
 	StatusFailed         = "failed"
 	StatusNeedsAttention = "needs attention"
 	StatusReadyForReview = "ready for review"
-	StatusActivePR       = "active (pr)"
+	StatusNeedsInput     = "needs input"
+	StatusBlocked        = "blocked"
+	StatusWorking        = "working"
+	StatusStalled        = "stalled"
 	StatusActive         = "active"
-	StatusIdlePR         = "idle (pr)"
 	StatusIdle           = "idle"
 )
 
@@ -31,9 +33,11 @@ type Snapshot struct {
 	// WorktreePresent is true iff the worktree path exists on disk.
 	WorktreePresent bool
 
-	// ReportBytes is the size of .agency/report.md in bytes.
-	// Set to 0 if the file is missing or unreadable.
-	ReportBytes int
+	// RunnerStatus is the parsed runner_status.json file, or nil if missing/invalid.
+	RunnerStatus *runnerstatus.RunnerStatus
+
+	// StallResult contains the result of stall detection, or nil if not computed.
+	StallResult *watchdog.StallResult
 }
 
 // Derived contains the computed status values.
@@ -44,78 +48,90 @@ type Derived struct {
 
 	// Archived is true iff the worktree is not present.
 	Archived bool
-
-	// ReportNonempty is true iff ReportBytes >= ReportNonemptyThresholdBytes.
-	ReportNonempty bool
 }
 
 // Derive computes the derived status from meta and local snapshot.
 // meta may be nil for broken runs; in that case DerivedStatus is "broken".
 // This function is pure and must not panic.
 func Derive(meta *store.RunMeta, in Snapshot) Derived {
-	// Clamp negative report bytes to 0
-	reportBytes := in.ReportBytes
-	if reportBytes < 0 {
-		reportBytes = 0
-	}
-
 	// Compute presence-derived fields (independent of meta)
 	archived := !in.WorktreePresent
-	reportNonempty := reportBytes >= ReportNonemptyThresholdBytes
 
 	// Handle broken runs (nil meta)
 	if meta == nil {
 		return Derived{
-			DerivedStatus:  StatusBroken,
-			Archived:       archived,
-			ReportNonempty: reportNonempty,
+			DerivedStatus: StatusBroken,
+			Archived:      archived,
 		}
 	}
 
 	// Compute derived status using precedence rules
-	status := deriveStatus(meta, in.TmuxActive, reportNonempty)
+	status := deriveStatus(meta, in)
 
 	return Derived{
-		DerivedStatus:  status,
-		Archived:       archived,
-		ReportNonempty: reportNonempty,
+		DerivedStatus: status,
+		Archived:      archived,
 	}
 }
 
 // deriveStatus implements the precedence rules for status derivation.
 // Precondition: meta is non-nil.
-func deriveStatus(meta *store.RunMeta, tmuxActive bool, reportNonempty bool) string {
-	// 1) Terminal outcome always wins
+//
+// Precedence (highest to lowest):
+//  1. broken           → meta.json unreadable (handled before this function)
+//  2. merged           → archive.merged_at set
+//  3. abandoned        → flags.abandoned set
+//  4. failed           → flags.setup_failed set
+//  5. needs attention  → flags.needs_attention set
+//  6. ready for review → runner_status.status == "ready_for_review"
+//  7. needs input      → runner_status.status == "needs_input"
+//  8. blocked          → runner_status.status == "blocked"
+//  9. working          → runner_status.status == "working"
+//  10. stalled         → watchdog.IsStalled && tmux exists
+//  11. active          → tmux exists (fallback)
+//  12. idle            → no tmux (fallback)
+func deriveStatus(meta *store.RunMeta, in Snapshot) string {
+	// 1) Terminal outcomes always win (broken handled above)
+	// 2) merged
 	if isMerged(meta) {
 		return StatusMerged
 	}
+	// 3) abandoned
 	if isAbandoned(meta) {
 		return StatusAbandoned
 	}
 
-	// 2) Open-run failure flags
+	// 4) setup_failed
 	if isSetupFailed(meta) {
 		return StatusFailed
 	}
+	// 5) needs_attention
 	if isNeedsAttention(meta) {
 		return StatusNeedsAttention
 	}
 
-	// 3) Ready for review (all predicates must be true)
-	if isReadyForReview(meta, reportNonempty) {
-		return StatusReadyForReview
+	// 6-9) Runner-reported status (if available and valid)
+	if in.RunnerStatus != nil && in.RunnerStatus.Status.IsValid() {
+		switch in.RunnerStatus.Status {
+		case runnerstatus.StatusReadyForReview:
+			return StatusReadyForReview
+		case runnerstatus.StatusNeedsInput:
+			return StatusNeedsInput
+		case runnerstatus.StatusBlocked:
+			return StatusBlocked
+		case runnerstatus.StatusWorking:
+			return StatusWorking
+		}
 	}
 
-	// 4) Activity fallbacks
-	hasPR := hasPRNumber(meta)
-	if tmuxActive && hasPR {
-		return StatusActivePR
+	// 10) Stalled detection
+	if in.StallResult != nil && in.StallResult.IsStalled && in.TmuxActive {
+		return StatusStalled
 	}
-	if tmuxActive {
+
+	// 11-12) Activity fallbacks
+	if in.TmuxActive {
 		return StatusActive
-	}
-	if hasPR {
-		return StatusIdlePR
 	}
 	return StatusIdle
 }
@@ -138,22 +154,4 @@ func isSetupFailed(meta *store.RunMeta) bool {
 // isNeedsAttention returns true if flags.needs_attention is set.
 func isNeedsAttention(meta *store.RunMeta) bool {
 	return meta.Flags != nil && meta.Flags.NeedsAttention
-}
-
-// hasPRNumber returns true if pr_number is set (non-zero).
-func hasPRNumber(meta *store.RunMeta) bool {
-	return meta.PRNumber != 0
-}
-
-// hasLastPushAt returns true if last_push_at is set (non-empty).
-func hasLastPushAt(meta *store.RunMeta) bool {
-	return meta.LastPushAt != ""
-}
-
-// isReadyForReview returns true if all ready-for-review predicates are met:
-// - pr_number is set
-// - last_push_at is set
-// - report is non-empty (>= 64 bytes)
-func isReadyForReview(meta *store.RunMeta, reportNonempty bool) bool {
-	return hasPRNumber(meta) && hasLastPushAt(meta) && reportNonempty
 }

@@ -12,6 +12,9 @@ const (
 	// NameMaxLen is the maximum display length for name in human output.
 	NameMaxLen = 50
 
+	// SummaryMaxLen is the maximum display length for summary in human output.
+	SummaryMaxLen = 40
+
 	// NameBroken is displayed for broken runs.
 	NameBroken = "<broken>"
 
@@ -42,12 +45,11 @@ type LSContext struct {
 // RunSummaryHumanRow holds the fields for a single human-output row.
 // This is separate from RunSummary to allow formatting before display.
 type RunSummaryHumanRow struct {
-	RunID     string
-	Name      string
-	Runner    string
-	CreatedAt string
-	Status    string
-	PR        string
+	RunID   string
+	Name    string
+	Status  string
+	Summary string
+	PR      string
 }
 
 // WriteLSHuman writes the ls output in human-readable format.
@@ -66,9 +68,8 @@ func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow, ctx LSContext) error {
 	header := formatRow(
 		"RUN_ID", widths.runID,
 		"NAME", widths.name,
-		"RUNNER", widths.runner,
-		"CREATED", widths.createdAt,
 		"STATUS", widths.status,
+		"SUMMARY", widths.summary,
 		"PR", widths.pr,
 	)
 	if _, err := fmt.Fprintln(w, header); err != nil {
@@ -80,9 +81,8 @@ func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow, ctx LSContext) error {
 		line := formatRow(
 			row.RunID, widths.runID,
 			row.Name, widths.name,
-			row.Runner, widths.runner,
-			row.CreatedAt, widths.createdAt,
 			row.Status, widths.status,
+			row.Summary, widths.summary,
 			row.PR, widths.pr,
 		)
 		if _, err := fmt.Fprintln(w, line); err != nil {
@@ -95,23 +95,21 @@ func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow, ctx LSContext) error {
 
 // colWidths holds the calculated column widths.
 type colWidths struct {
-	runID     int
-	name      int
-	runner    int
-	createdAt int
-	status    int
-	pr        int
+	runID   int
+	name    int
+	status  int
+	summary int
+	pr      int
 }
 
 // columnWidths calculates the maximum width for each column.
 func columnWidths(rows []RunSummaryHumanRow) colWidths {
 	widths := colWidths{
-		runID:     len("RUN_ID"),
-		name:      len("NAME"),
-		runner:    len("RUNNER"),
-		createdAt: len("CREATED"),
-		status:    len("STATUS"),
-		pr:        len("PR"),
+		runID:   len("RUN_ID"),
+		name:    len("NAME"),
+		status:  len("STATUS"),
+		summary: len("SUMMARY"),
+		pr:      len("PR"),
 	}
 
 	for _, row := range rows {
@@ -121,14 +119,11 @@ func columnWidths(rows []RunSummaryHumanRow) colWidths {
 		if len(row.Name) > widths.name {
 			widths.name = len(row.Name)
 		}
-		if len(row.Runner) > widths.runner {
-			widths.runner = len(row.Runner)
-		}
-		if len(row.CreatedAt) > widths.createdAt {
-			widths.createdAt = len(row.CreatedAt)
-		}
 		if len(row.Status) > widths.status {
 			widths.status = len(row.Status)
+		}
+		if len(row.Summary) > widths.summary {
+			widths.summary = len(row.Summary)
 		}
 		if len(row.PR) > widths.pr {
 			widths.pr = len(row.PR)
@@ -139,13 +134,12 @@ func columnWidths(rows []RunSummaryHumanRow) colWidths {
 }
 
 // formatRow formats a row with the given column values and widths.
-func formatRow(runID string, runIDW int, name string, nameW int, runner string, runnerW int, created string, createdW int, status string, statusW int, pr string, prW int) string {
-	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s  %s",
+func formatRow(runID string, runIDW int, name string, nameW int, status string, statusW int, summary string, summaryW int, pr string, prW int) string {
+	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %s",
 		runIDW, runID,
 		nameW, name,
-		runnerW, runner,
-		createdW, created,
 		statusW, status,
+		summaryW, summary,
 		pr,
 	)
 }
@@ -165,18 +159,11 @@ func FormatHumanRow(s RunSummary, now time.Time) RunSummaryHumanRow {
 		row.Name = truncateName(s.Name)
 	}
 
-	// Format runner (empty for broken)
-	if s.Runner != nil {
-		row.Runner = *s.Runner
-	}
-
-	// Format created_at
-	if s.CreatedAt != nil {
-		row.CreatedAt = formatRelativeTime(*s.CreatedAt, now)
-	}
-
 	// Format status with archived suffix
 	row.Status = formatStatus(s.DerivedStatus, s.Archived)
+
+	// Format summary
+	row.Summary = formatSummary(s.Summary, s.StalledDuration, s.DerivedStatus)
 
 	// Format PR
 	if s.PRNumber != nil {
@@ -184,6 +171,33 @@ func FormatHumanRow(s RunSummary, now time.Time) RunSummaryHumanRow {
 	}
 
 	return row
+}
+
+// formatSummary formats the summary field for display.
+// For stalled runs, shows "(no activity for Xm)" instead of summary.
+func formatSummary(summary *string, stalledDuration *string, status string) string {
+	// For stalled runs, show stall duration
+	if status == "stalled" && stalledDuration != nil {
+		return fmt.Sprintf("(no activity for %s)", *stalledDuration)
+	}
+
+	// If we have a summary, truncate it
+	if summary != nil && *summary != "" {
+		return truncateSummary(*summary)
+	}
+
+	// No summary available
+	return "-"
+}
+
+// truncateSummary truncates the summary to SummaryMaxLen, adding ellipsis if needed.
+func truncateSummary(summary string) string {
+	// Count runes for proper Unicode handling
+	runes := []rune(summary)
+	if len(runes) <= SummaryMaxLen {
+		return summary
+	}
+	return string(runes[:SummaryMaxLen-1]) + "…"
 }
 
 // truncateName truncates the name to NameMaxLen, adding ellipsis if needed.
@@ -202,46 +216,6 @@ func formatStatus(status string, archived bool) string {
 		return status + " (archived)"
 	}
 	return status
-}
-
-// formatRelativeTime formats a time as a human-friendly relative string.
-func formatRelativeTime(t time.Time, now time.Time) string {
-	diff := now.Sub(t)
-	if diff < 0 {
-		diff = -diff
-	}
-
-	switch {
-	case diff < time.Minute:
-		return "just now"
-	case diff < time.Hour:
-		mins := int(diff.Minutes())
-		if mins == 1 {
-			return "1 min ago"
-		}
-		return fmt.Sprintf("%d mins ago", mins)
-	case diff < 24*time.Hour:
-		hours := int(diff.Hours())
-		if hours == 1 {
-			return "1 hour ago"
-		}
-		return fmt.Sprintf("%d hours ago", hours)
-	case diff < 7*24*time.Hour:
-		days := int(diff.Hours() / 24)
-		if days == 1 {
-			return "1 day ago"
-		}
-		return fmt.Sprintf("%d days ago", days)
-	case diff < 30*24*time.Hour:
-		weeks := int(diff.Hours() / (24 * 7))
-		if weeks == 1 {
-			return "1 week ago"
-		}
-		return fmt.Sprintf("%d weeks ago", weeks)
-	default:
-		// Fall back to date format for older entries
-		return t.Format("2006-01-02")
-	}
 }
 
 // FormatHumanRows converts a slice of RunSummary to RunSummaryHumanRow.
