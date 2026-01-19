@@ -325,10 +325,10 @@ agency resume feature-x --restart      # restart with fresh claude session
 agency show 20260115143022-a3f2
 
 # open in your IDE (VS Code)
-code "$(agency show 2026 --path | grep worktree_root | cut -d' ' -f2)"
+agency open 20260115143022-a3f2
 
-# or cd into the worktree
-cd "$(agency show 2026 --path | grep worktree_root | cut -d' ' -f2)"
+# cd into the worktree
+cd "$(agency path 20260115143022-a3f2)"
 git log --oneline main..HEAD
 git diff main
 ```
@@ -418,6 +418,8 @@ agency ls                          # list all runs
 agency ls --all                    # include archived
 agency show <ref>                  # show details
 agency show <ref> --path           # show paths only
+agency path <ref>                  # output worktree path (for scripting)
+agency open <ref>                  # open worktree in editor
 
 # === SESSION CONTROL ===
 agency resume <ref>                # attach (create session if needed)
@@ -456,6 +458,26 @@ these are automatically set when agency runs your scripts:
 | `verify` | 30 minutes | run tests, lint, build |
 | `archive` | 5 minutes | cleanup before deletion |
 
+## shell integration
+
+add these functions to your `~/.bashrc` or `~/.zshrc` for fast worktree navigation:
+
+```bash
+# cd into a run's worktree
+acd() { cd "$(agency path "$1")" || return 1; }
+
+# pushd into a run's worktree (use popd to return)
+apushd() { pushd "$(agency path "$1")" || return 1; }
+```
+
+usage:
+```bash
+acd my-feature          # cd into the worktree
+git status              # run commands there
+apushd my-feature       # pushd for stack-based navigation
+popd                    # return to previous directory
+```
+
 ## commands
 
 ```
@@ -465,6 +487,8 @@ agency run --name <name> [--runner] [--parent]
                                   create workspace, setup, start tmux
 agency ls                         list runs + statuses
 agency show <id> [--path]         show run details
+agency path <id>                  output worktree path (for scripting)
+agency open <id> [--editor]       open worktree in editor
 agency attach <id>                attach to tmux session
 agency resume <id> [--detached] [--restart]
                                   attach to tmux session (create if missing)

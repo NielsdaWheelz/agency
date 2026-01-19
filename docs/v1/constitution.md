@@ -597,6 +597,7 @@ agency run --name <name> [--runner] [--parent]
                                   create workspace, setup, start tmux
 agency ls                         list runs + statuses
 agency show <ref> [--path]        show run details
+agency path <ref>                 output worktree path (for scripting)
 agency open <ref> [--editor]      open run worktree in editor
 agency attach <ref>               attach to tmux session
 agency resume <ref> [--detached] [--restart]
@@ -620,7 +621,7 @@ agency doctor                     check prerequisites + show paths
 
 Resolution priority: exact name → exact run_id → unique run_id prefix.
 
-For repo-scoped commands (`attach`, `resume`, `stop`, `kill`, `clean`), resolution is limited to the current repository. For global commands (`show`, `open`, `push`, `merge`), resolution spans all repositories.
+For repo-scoped commands (`attach`, `resume`, `stop`, `kill`, `clean`), resolution is limited to the current repository. For global commands (`show`, `path`, `open`, `push`, `merge`), resolution spans all repositories.
 
 Archived runs are excluded from name matching but can still be resolved by run_id or prefix.
 
@@ -663,6 +664,19 @@ Stub scripts:
 
 no idle detection in v1; tmux session existence is the only signal.
 
+### Path semantics
+
+`agency path <ref>`:
+1. resolve run globally by name, run_id, or prefix (see "Run reference resolution")
+2. verify worktree exists on disk
+3. output worktree path as a single line to stdout (no decoration, no trailing content)
+4. read-only: no repo lock, no meta mutations, no events
+
+Designed for shell scripting. Example shell integration:
+```bash
+acd() { cd "$(agency path "$1")" || return 1; }
+```
+
 ### Open semantics
 
 `agency open <ref>`:
@@ -696,7 +710,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `agency doctor` reports how to clear stale locks
 - lock only for mutating commands: `run`, `push`, `merge`, `clean`, `resume --restart`
 - `stop` and `kill` are best-effort and bypass the lock
-- read-only commands (`ls`, `show`, `open`, `attach`, `resume` without `--restart`, `doctor`) do not take the lock
+- read-only commands (`ls`, `show`, `path`, `open`, `attach`, `resume` without `--restart`, `doctor`) do not take the lock
 
 ---
 
