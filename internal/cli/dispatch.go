@@ -27,6 +27,7 @@ commands:
   run         create workspace, setup, and start tmux runner session
   ls          list runs and their statuses
   show        show run details
+  path        output worktree path for a run (for scripting)
   open        open run worktree in editor
   attach      attach to a tmux session for an existing run
   resume      attach to tmux session (create if missing)
@@ -332,6 +333,29 @@ examples:
   agency open my-feature --editor code
 `
 
+const pathUsageText = `usage: agency path <run>
+
+output the worktree path for a run (single line, for scripting).
+resolves globally (works from anywhere, not just inside a repo).
+
+arguments:
+  run           run name, run_id, or unique run_id prefix
+
+options:
+  -h, --help    show this help
+
+examples:
+  agency path my-feature
+  agency path 20260110120000-a3f2
+
+shell integration:
+  # add to your .bashrc or .zshrc:
+  acd() { cd "$(agency path "$1")" || return 1; }
+
+  # then use:
+  acd my-feature
+`
+
 // Run parses arguments and dispatches to the appropriate subcommand.
 // Returns an error if the command fails; the caller should print the error and exit.
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -364,6 +388,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runLS(cmdArgs, stdout, stderr)
 	case "show":
 		return runShow(cmdArgs, stdout, stderr)
+	case "path":
+		return runPath(cmdArgs, stdout, stderr)
 	case "open":
 		return runOpen(cmdArgs, stdout, stderr)
 	case "attach":
@@ -637,6 +663,39 @@ func runOpen(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Open(ctx, cr, fsys, cwd, opts, stdout, stderr)
+}
+
+func runPath(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("path", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			_, _ = fmt.Fprint(stdout, pathUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run reference is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		_, _ = fmt.Fprint(stderr, pathUsageText)
+		return errors.New(errors.EUsage, "run reference is required")
+	}
+	runRef := positionalArgs[0]
+
+	ctx := context.Background()
+
+	opts := commands.PathOpts{
+		RunRef: runRef,
+	}
+
+	return commands.Path(ctx, opts, stdout, stderr)
 }
 
 func runAttach(args []string, stdout, stderr io.Writer) error {
