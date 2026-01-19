@@ -82,17 +82,32 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoID := repoIdentity.RepoID
 
-	// Create store and look up the run
-	st := store.NewStore(fsys, dataDir, nil)
-	meta, err := st.ReadMeta(repoID, opts.RunID)
+	// Resolve run by name or ID within this repo
+	resolved, record, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
 	if err != nil {
-		// E_RUN_NOT_FOUND is already the right error code from ReadMeta
 		return err
 	}
 
+	// Check if run is broken
+	if resolved.Broken || record == nil || record.Meta == nil {
+		return errors.NewWithDetails(
+			errors.ERunBroken,
+			"run exists but meta.json is unreadable or invalid",
+			map[string]string{"run_id": resolved.RunID, "repo_id": repoID},
+		)
+	}
+
+	// Use the resolved run_id and update opts for helper functions
+	runID := resolved.RunID
+	opts.RunID = runID // Update opts so helper functions use the resolved ID
+	meta := record.Meta
+
+	// Create store for later operations
+	st := store.NewStore(fsys, dataDir, nil)
+
 	// Validate worktree path exists (before any tmux actions)
-	sessionName := tmux.SessionName(opts.RunID)
-	eventsPath := filepath.Join(st.RunDir(repoID, opts.RunID), "events.jsonl")
+	sessionName := tmux.SessionName(runID)
+	eventsPath := filepath.Join(st.RunDir(repoID, runID), "events.jsonl")
 
 	worktreeInfo, statErr := fsys.Stat(meta.WorktreePath)
 	worktreeExists := statErr == nil && worktreeInfo.IsDir()
@@ -110,7 +125,7 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 			SchemaVersion: "1.0",
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			RepoID:        repoID,
-			RunID:         opts.RunID,
+			RunID:         runID,
 			Event:         "resume_failed",
 			Data:          events.ResumeFailedData(sessionName, reason),
 		})
@@ -119,7 +134,7 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 			errors.EWorktreeMissing,
 			msg,
 			map[string]string{
-				"run_id":        opts.RunID,
+				"run_id":        runID,
 				"worktree_path": meta.WorktreePath,
 				"reason":        reason,
 			},
@@ -156,7 +171,7 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 			SchemaVersion: "1.0",
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			RepoID:        repoID,
-			RunID:         opts.RunID,
+			RunID:         runID,
 			Event:         "resume_attach",
 			Data:          events.ResumeData(sessionName, meta.Runner, opts.Detached, false),
 		})

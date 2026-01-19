@@ -7,9 +7,7 @@ import (
 	"io"
 	"os"
 	osexec "os/exec"
-	"strings"
 
-	stderrors "errors"
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -105,46 +103,6 @@ func Open(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 }
 
 func resolveRunForOpen(dataDir, runID string) (ids.RunRef, *store.RunRecord, error) {
-	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		return ids.RunRef{}, nil, errors.Wrap(errors.EInternal, "failed to scan runs", err)
-	}
-
-	refs := make([]ids.RunRef, len(records))
-	for i, rec := range records {
-		refs[i] = ids.RunRef{
-			RepoID: rec.RepoID,
-			RunID:  rec.RunID,
-			Broken: rec.Broken,
-		}
-	}
-
-	resolved, err := ids.ResolveRunRef(runID, refs)
-	if err != nil {
-		var notFound *ids.ErrNotFound
-		if stderrors.As(err, &notFound) {
-			return ids.RunRef{}, nil, errors.New(errors.ERunNotFound, "run not found: "+runID)
-		}
-		var ambiguous *ids.ErrAmbiguous
-		if stderrors.As(err, &ambiguous) {
-			candidates := make([]string, len(ambiguous.Candidates))
-			for i, c := range ambiguous.Candidates {
-				candidates[i] = c.RunID
-			}
-			return ids.RunRef{}, nil, errors.NewWithDetails(
-				errors.ERunIDAmbiguous,
-				"ambiguous run id '"+ambiguous.Input+"' matches multiple runs: "+strings.Join(candidates, ", "),
-				map[string]string{"input": ambiguous.Input},
-			)
-		}
-		return ids.RunRef{}, nil, errors.Wrap(errors.EInternal, "failed to resolve run id", err)
-	}
-
-	for i := range records {
-		if records[i].RunID == resolved.RunID && records[i].RepoID == resolved.RepoID {
-			return resolved, &records[i], nil
-		}
-	}
-
-	return ids.RunRef{}, nil, errors.New(errors.EInternal, "resolved run not found in records")
+	// Use the shared name-aware resolution helper
+	return resolveRunGlobal(runID, dataDir)
 }

@@ -208,3 +208,123 @@ func TestAttach_MissingRunID(t *testing.T) {
 		t.Errorf("error code = %q, want %q", code, errors.EUsage)
 	}
 }
+
+// setupAttachTestEnvWithName creates a test environment with a custom run name.
+func setupAttachTestEnvWithName(t *testing.T, runID, runName string, setupMeta bool) (string, string, string, *fakeCommandRunner, fs.FS) {
+	t.Helper()
+
+	// Create temp directories
+	tempDir := t.TempDir()
+	repoDir := filepath.Join(tempDir, "repo")
+	dataDir := filepath.Join(tempDir, "data")
+
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	originURL := "git@github.com:test/repo.git"
+
+	// Create fake command runner
+	cr := &fakeCommandRunner{
+		responses: map[string]fakeResponse{
+			"git rev-parse --show-toplevel":      {stdout: repoDir + "\n"},
+			"git config --get remote.origin.url": {stdout: originURL + "\n"},
+		},
+	}
+
+	fsys := fs.NewRealFS()
+
+	// Compute repo_id the same way the real code does
+	repoIdentity := identity.DeriveRepoIdentity(repoDir, originURL)
+	repoID := repoIdentity.RepoID
+
+	if setupMeta {
+		// Create store directories
+		runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Write meta.json with custom name
+		meta := &store.RunMeta{
+			SchemaVersion:   "1.0",
+			RunID:           runID,
+			RepoID:          repoID,
+			Name:            runName,
+			Runner:          "claude",
+			RunnerCmd:       "claude",
+			ParentBranch:    "main",
+			Branch:          "agency/test-run-" + runID[:4],
+			WorktreePath:    filepath.Join(dataDir, "repos", repoID, "worktrees", runID),
+			CreatedAt:       "2026-01-10T12:00:00Z",
+			TmuxSessionName: tmux.SessionName(runID),
+		}
+		metaBytes, _ := json.MarshalIndent(meta, "", "  ")
+		metaPath := filepath.Join(runDir, "meta.json")
+		if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Set environment for data dir resolution
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+
+	return repoDir, dataDir, repoID, cr, fsys
+}
+
+func TestAttach_ResolveByName(t *testing.T) {
+	runID := "20260110120000-a3f2"
+	runName := "my-cool-feature"
+	repoDir, _, _, cr, fsys := setupAttachTestEnvWithName(t, runID, runName, true)
+
+	fakeTmux := &attachFakeTmuxClient{
+		hasSessionResult: false, // Session missing
+	}
+
+	var stdout, stderr bytes.Buffer
+	// Use name instead of run_id
+	opts := AttachOpts{RunID: runName}
+
+	err := AttachWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, opts, &stdout, &stderr)
+
+	// We expect E_SESSION_NOT_FOUND because the run was found by name but session is missing
+	// This proves that name resolution worked (otherwise we'd get E_RUN_NOT_FOUND)
+	if err == nil {
+		t.Fatal("Attach() error = nil, want E_SESSION_NOT_FOUND")
+	}
+
+	code := errors.GetCode(err)
+	if code != errors.ESessionNotFound {
+		t.Errorf("error code = %q, want %q (name resolution should have found the run)", code, errors.ESessionNotFound)
+	}
+}
+
+func TestAttach_ResolveByRunIDPrefix(t *testing.T) {
+	runID := "20260110120000-a3f2"
+	repoDir, _, _, cr, fsys := setupAttachTestEnv(t, runID, true)
+
+	fakeTmux := &attachFakeTmuxClient{
+		hasSessionResult: false, // Session missing
+	}
+
+	var stdout, stderr bytes.Buffer
+	// Use run_id prefix instead of full run_id
+	opts := AttachOpts{RunID: "20260110120000-a3"}
+
+	err := AttachWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, opts, &stdout, &stderr)
+
+	// We expect E_SESSION_NOT_FOUND because the run was found by prefix but session is missing
+	if err == nil {
+		t.Fatal("Attach() error = nil, want E_SESSION_NOT_FOUND")
+	}
+
+	code := errors.GetCode(err)
+	if code != errors.ESessionNotFound {
+		t.Errorf("error code = %q, want %q (prefix resolution should have found the run)", code, errors.ESessionNotFound)
+	}
+}

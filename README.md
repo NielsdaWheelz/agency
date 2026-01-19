@@ -63,9 +63,9 @@ cd myrepo
 agency init       # create agency.json + stub scripts
 agency doctor     # verify prerequisites
 agency run --name feature-x
-agency attach <id>
-agency push <id>
-agency merge <id>
+agency attach feature-x    # attach by name or run_id
+agency push feature-x
+agency merge feature-x
 ```
 
 ## complete guide
@@ -311,11 +311,11 @@ claude will write code, make commits, etc.
 **other session commands:**
 ```bash
 agency ls                              # list all runs
-agency show 2026                       # show run details (prefix match)
-agency stop 2026                       # send Ctrl+C to claude
-agency kill 2026                       # kill tmux session (keeps files)
-agency resume 2026                     # reattach (creates session if needed)
-agency resume 2026 --restart           # restart with fresh claude session
+agency show feature-x                  # show run details (name or id)
+agency stop feature-x                  # send Ctrl+C to claude
+agency kill feature-x                  # kill tmux session (keeps files)
+agency resume feature-x                # reattach (creates session if needed)
+agency resume feature-x --restart      # restart with fresh claude session
 ```
 
 ### step 7: review the work
@@ -397,6 +397,8 @@ this deletes the worktree and tmux session but does NOT merge anything.
 
 ### command reference card
 
+All commands that accept `<ref>` support **name-based resolution**: you can use the run name (e.g., `feature-x`) or run_id (e.g., `20260115143022-a3f2`) interchangeably.
+
 ```bash
 # === SETUP ===
 agency init                        # initialize repo for agency
@@ -404,26 +406,26 @@ agency doctor                      # check prerequisites
 
 # === LIFECYCLE ===
 agency run --name my-feature       # start new AI session
-agency attach <id>                 # enter tmux session
+agency attach <ref>                # enter tmux session
 # Ctrl+b, d                        # detach from tmux
-agency push <id>                   # push branch + create/update PR
-agency merge <id>                  # verify + merge + cleanup
-agency clean <id>                  # abandon (no merge)
+agency push <ref>                  # push branch + create/update PR
+agency merge <ref>                 # verify + merge + cleanup
+agency clean <ref>                 # abandon (no merge)
 
 # === OBSERVABILITY ===
 agency ls                          # list all runs
 agency ls --all                    # include archived
-agency show <id>                   # show details
-agency show <id> --path            # show paths only
+agency show <ref>                  # show details
+agency show <ref> --path           # show paths only
 
 # === SESSION CONTROL ===
-agency resume <id>                 # attach (create session if needed)
-agency resume <id> --restart       # restart session (loses chat history)
-agency stop <id>                   # send Ctrl+C
-agency kill <id>                   # kill session (keeps files)
+agency resume <ref>                # attach (create session if needed)
+agency resume <ref> --restart      # restart session (loses chat history)
+agency stop <ref>                  # send Ctrl+C
+agency kill <ref>                  # kill session (keeps files)
 
 # === VERIFICATION ===
-agency verify <id>                 # run verify script manually
+agency verify <ref>                # run verify script manually
 ```
 
 ### environment variables available in scripts
