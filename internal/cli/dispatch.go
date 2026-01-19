@@ -216,31 +216,33 @@ arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
-  --squash      use squash merge strategy (default)
-  --merge       use regular merge strategy
-  --rebase      use rebase merge strategy
-  --allow-dirty allow merge even if worktree has uncommitted changes
-  --force       bypass verify-failed prompt (still runs verify)
-  -h, --help    show this help
+  --squash           use squash merge strategy (default)
+  --merge            use regular merge strategy
+  --rebase           use rebase merge strategy
+  --no-delete-branch preserve the remote branch after merge (default: delete)
+  --allow-dirty      allow merge even if worktree has uncommitted changes
+  --force            bypass verify-failed prompt (still runs verify)
+  -h, --help         show this help
 
 behavior:
   1. runs prechecks (origin, gh auth, PR exists, mergeable, etc.)
   2. runs scripts.verify (timeout: 30m)
   3. if verify fails: prompts to continue (unless --force)
   4. prompts for typed confirmation (must type 'merge')
-  5. merges PR via gh pr merge
+  5. merges PR via gh pr merge --delete-branch (unless --no-delete-branch)
   6. archives workspace (runs archive script, kills tmux, deletes worktree)
 
 notes:
   - PR must already exist (run 'agency push' first)
   - --force does NOT bypass: missing PR, non-mergeable PR, gh auth failure
   - at most one of --squash/--merge/--rebase may be set
+  - by default, the remote branch is deleted after merge
 
 examples:
-  agency merge my-feature                  # squash merge (default)
-  agency merge my-feature --merge          # regular merge
-  agency merge my-feature --force          # skip verify-fail prompt
-  agency merge my-feature --allow-dirty    # merge with dirty worktree
+  agency merge my-feature                      # squash merge, delete branch
+  agency merge my-feature --merge              # regular merge, delete branch
+  agency merge my-feature --no-delete-branch   # preserve remote branch
+  agency merge my-feature --force              # skip verify-fail prompt
 `
 
 const cleanUsageText = `usage: agency clean <run>
@@ -937,6 +939,7 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	squash := flagSet.Bool("squash", false, "use squash merge strategy (default)")
 	merge := flagSet.Bool("merge", false, "use regular merge strategy")
 	rebase := flagSet.Bool("rebase", false, "use rebase merge strategy")
+	noDeleteBranch := flagSet.Bool("no-delete-branch", false, "preserve remote branch after merge")
 	allowDirty := flagSet.Bool("allow-dirty", false, "allow merge even if worktree has uncommitted changes")
 	force := flagSet.Bool("force", false, "bypass verify-failed prompt")
 
@@ -995,10 +998,11 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.MergeOpts{
-		RunID:      runID,
-		Strategy:   strategy,
-		Force:      *force,
-		AllowDirty: *allowDirty,
+		RunID:          runID,
+		Strategy:       strategy,
+		Force:          *force,
+		AllowDirty:     *allowDirty,
+		NoDeleteBranch: *noDeleteBranch,
 	}
 
 	return commands.Merge(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)

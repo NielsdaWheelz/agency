@@ -14,7 +14,7 @@ Core loop:
 3. Push branch + create PR (`agency push`).
 4. User reviews via PR or locally.
 5. User confirms merge.
-6. Agency merges via `gh pr merge` and archives.
+6. Agency merges via `gh pr merge --delete-branch` and archives.
 
 ---
 
@@ -482,6 +482,11 @@ Status is **composable**, not a flat enum:
 
 `agency ls` defaults to current repo and excludes archived runs. use `--all` for archived and `--all-repos` for global view.
 
+**empty state output:**
+- inside repo without `--all`: `no active runs (use --all to include archived)`
+- inside repo with `--all`: `no runs found`
+- outside repo / `--all-repos`: `no runs found`
+
 ### Runner detection (v1)
 
 `active` = tmux session exists. no pid inspection in v1.
@@ -528,7 +533,9 @@ Status is **composable**, not a flat enum:
 3. run `scripts.verify`, record result
 4. if verify failed: prompt "continue anyway?" (skip with `--force`)
 5. prompt for human confirmation (accept `strings.TrimSpace(input) == "merge"`)
-6. `gh pr merge` with exactly one strategy flag; if none provided default to `--squash` (more than one -> `E_USAGE`)
+6. `gh pr merge --delete-branch` with exactly one strategy flag; if none provided default to `--squash` (more than one -> `E_USAGE`)
+   - by default, the remote branch is deleted after merge
+   - use `--no-delete-branch` to preserve the branch
 7. archive workspace
 
 if not mergeable: `E_PR_NOT_MERGEABLE`. no auto-rebase.
@@ -598,9 +605,9 @@ agency stop <ref>                 send C-c to runner (best-effort)
 agency kill <ref>                 kill tmux session
 agency push <ref> [--allow-dirty] [--force]
                                   push + create/update PR
-agency merge <ref> [--squash|--merge|--rebase] [--allow-dirty] [--force]
-                                  verify, confirm, merge, archive
-agency clean <ref> [--allow-dirty] archive without merging
+agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
+                                  verify, confirm, merge, delete branch, archive
+agency clean <id> [--allow-dirty] archive without merging
 agency doctor                     check prerequisites + show paths
 ```
 

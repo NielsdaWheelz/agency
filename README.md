@@ -375,10 +375,11 @@ log: /path/to/logs/archive.log
 **what just happened:**
 1. ran `scripts/agency_verify.sh` (tests, lint)
 2. prompted for confirmation
-3. merged the PR via `gh pr merge --squash`
-4. ran `scripts/agency_archive.sh`
-5. killed the tmux session
-6. deleted the worktree
+3. merged the PR via `gh pr merge --squash --delete-branch`
+4. deleted the remote branch
+5. ran `scripts/agency_archive.sh`
+6. killed the tmux session
+7. deleted the worktree
 
 ### alternative: abandon a run
 
@@ -472,8 +473,8 @@ agency kill <id>                  kill tmux session
 agency push <id> [--allow-dirty] [--force]
                                   push + create/update PR
 agency verify <id> [--timeout]    run verify script and record results
-agency merge <id> [--squash|--merge|--rebase] [--allow-dirty] [--force]
-                                  verify, confirm, merge PR, archive
+agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
+                                  verify, confirm, merge PR, delete branch, archive
 agency clean <id> [--allow-dirty] archive without merging (abandon run)
 agency doctor                     check prerequisites + show paths
 ```
@@ -638,6 +639,11 @@ agency ls [--all] [--all-repos] [--json]
 - `CREATED`: relative timestamp (e.g., "2 hours ago")
 - `STATUS`: derived status (e.g., "active", "idle", "ready for review", "merged (archived)")
 - `PR`: PR number if exists (e.g., "#123")
+
+**empty state:**
+- inside repo without `--all`: `no active runs (use --all to include archived)`
+- inside repo with `--all`: `no runs found`
+- outside repo / `--all-repos`: `no runs found`
 
 **status values:**
 - `active` / `active (pr)`: tmux session exists
@@ -1167,7 +1173,7 @@ requires an interactive terminal for confirmation.
 
 **usage:**
 ```bash
-agency merge <run_id> [--squash|--merge|--rebase] [--force]
+agency merge <run_id> [--squash|--merge|--rebase] [--no-delete-branch] [--force]
 ```
 
 **arguments:**
@@ -1177,6 +1183,7 @@ agency merge <run_id> [--squash|--merge|--rebase] [--force]
 - `--squash`: use squash merge strategy (default)
 - `--merge`: use regular merge strategy
 - `--rebase`: use rebase merge strategy
+- `--no-delete-branch`: preserve the remote branch after merge (default: delete)
 - `--force`: bypass verify-failed prompt (still runs verify, still records failure)
 
 **behavior:**
@@ -1191,7 +1198,7 @@ agency merge <run_id> [--squash|--merge|--rebase] [--force]
 2. runs `scripts.verify` (timeout: 30 minutes)
 3. if verify fails and no `--force`: prompts to continue (`[y/N]`)
 4. prompts for typed confirmation (must type `merge`)
-5. merges PR via `gh pr merge` with strategy flag
+5. merges PR via `gh pr merge --delete-branch` (deletes remote branch by default)
 6. archives workspace (runs archive script, kills tmux, deletes worktree)
 
 **confirmation prompts:**
@@ -1247,13 +1254,15 @@ log: /path/to/logs/archive.log
 - PR must exist before merge; agency does NOT call `push` implicitly
 - gh merge output is captured to `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/merge.log`
 - post-merge confirmation: agency verifies PR reached `MERGED` state with retries (250ms, 750ms, 1500ms backoff)
+- by default, the remote branch is deleted after merge; use `--no-delete-branch` to preserve it
 
 **examples:**
 ```bash
-agency merge 20260110120000-a3f2              # squash merge (default)
-agency merge 20260110120000-a3f2 --merge      # regular merge
-agency merge 20260110120000-a3f2 --rebase     # rebase merge
-agency merge 20260110120000-a3f2 --force      # skip verify-fail prompt
+agency merge 20260110120000-a3f2                       # squash merge, delete branch (default)
+agency merge 20260110120000-a3f2 --merge               # regular merge, delete branch
+agency merge 20260110120000-a3f2 --rebase              # rebase merge, delete branch
+agency merge 20260110120000-a3f2 --no-delete-branch    # squash merge, preserve branch
+agency merge 20260110120000-a3f2 --force               # skip verify-fail prompt
 ```
 
 ### `agency clean`
