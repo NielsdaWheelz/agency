@@ -109,6 +109,35 @@ func TestGHE2EPushMerge(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 
+	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/report.md"}, exec.RunOpts{
+		Dir: worktreePath,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		t.Fatalf("git check-ignore .agency/report.md: %v", err)
+	}
+	reportIgnored := false
+	switch result.ExitCode {
+	case 0:
+		reportIgnored = true
+	case 1:
+		reportIgnored = false
+	default:
+		t.Fatalf("git check-ignore .agency/report.md exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+
+	addPaths := []string{
+		"agency.json",
+		"scripts/agency_setup.sh",
+		"scripts/agency_verify.sh",
+		"scripts/agency_archive.sh",
+	}
+	if !reportIgnored {
+		addPaths = append(addPaths, ".agency/report.md")
+	}
+	runCmd(t, ctx, cr, worktreePath, "git", append([]string{"add"}, addPaths...)...)
+	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: add agency config")
+
 	changePath := filepath.Join(worktreePath, "e2e.txt")
 	if err := os.WriteFile(changePath, []byte(runID+"\n"), 0o644); err != nil {
 		t.Fatalf("write change: %v", err)
