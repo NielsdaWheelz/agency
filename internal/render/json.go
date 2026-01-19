@@ -54,6 +54,12 @@ type RunSummary struct {
 	// DerivedStatus is the human-readable status string.
 	DerivedStatus string `json:"derived_status"`
 
+	// Summary is the runner-reported summary (null if no runner_status.json).
+	Summary *string `json:"summary"`
+
+	// StalledDuration is the duration since last status update, if stalled (null if not stalled).
+	StalledDuration *string `json:"stalled_duration,omitempty"`
+
 	// Broken indicates whether meta.json is unreadable/invalid.
 	Broken bool `json:"broken"`
 }
@@ -131,6 +137,33 @@ type DerivedJSON struct {
 
 	// Logs contains log file paths.
 	Logs LogsJSON `json:"logs"`
+
+	// RunnerStatus contains runner-reported status (null if no runner_status.json).
+	RunnerStatus *RunnerStatusJSON `json:"runner_status,omitempty"`
+}
+
+// RunnerStatusJSON contains runner-reported status for show --json.
+type RunnerStatusJSON struct {
+	// Status is the runner-reported status (working, needs_input, blocked, ready_for_review).
+	Status string `json:"status"`
+
+	// UpdatedAt is the ISO 8601 timestamp of the last status update.
+	UpdatedAt string `json:"updated_at"`
+
+	// Summary is the runner-reported summary.
+	Summary string `json:"summary"`
+
+	// Questions are the questions the runner is waiting for (needs_input status).
+	Questions []string `json:"questions,omitempty"`
+
+	// Blockers are the blockers preventing progress (blocked status).
+	Blockers []string `json:"blockers,omitempty"`
+
+	// HowToTest is the testing instructions (ready_for_review status).
+	HowToTest string `json:"how_to_test,omitempty"`
+
+	// Risks are potential risks identified by the runner.
+	Risks []string `json:"risks,omitempty"`
 }
 
 // ReportJSON contains report file info for show --json.

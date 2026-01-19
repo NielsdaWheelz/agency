@@ -19,6 +19,30 @@ type ShowPathsData struct {
 	ReportPath     string
 }
 
+// RunnerStatusDisplay holds runner status data for human show output.
+type RunnerStatusDisplay struct {
+	// Status is the runner-reported status (working, needs_input, blocked, ready_for_review).
+	Status string
+
+	// UpdatedAt is the time since last update (e.g., "5m ago").
+	UpdatedAt string
+
+	// Summary is the runner-reported summary.
+	Summary string
+
+	// Questions are the questions the runner is waiting for (needs_input status).
+	Questions []string
+
+	// Blockers are the blockers preventing progress (blocked status).
+	Blockers []string
+
+	// HowToTest is the testing instructions (ready_for_review status).
+	HowToTest string
+
+	// Risks are potential risks identified by the runner.
+	Risks []string
+}
+
 // ShowHumanData holds the data for human show output.
 type ShowHumanData struct {
 	// Core
@@ -58,6 +82,9 @@ type ShowHumanData struct {
 	// Derived
 	DerivedStatus string
 	Archived      bool
+
+	// Runner status (nil if no runner_status.json or invalid)
+	RunnerStatus *RunnerStatusDisplay
 
 	// Warnings
 	RepoNotFoundWarning    bool
@@ -151,6 +178,44 @@ func WriteShowHuman(w io.Writer, data ShowHumanData) error {
 	_, _ = fmt.Fprintf(w, "last_report_sync_at: %s\n", lastReportSyncDisplay)
 	_, _ = fmt.Fprintf(w, "report_hash: %s\n", reportHashDisplay)
 	_, _ = fmt.Fprintf(w, "status: %s\n", statusDisplay)
+
+	// Runner status section (if available)
+	if data.RunnerStatus != nil {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "runner_status:")
+		_, _ = fmt.Fprintf(w, "  status: %s\n", data.RunnerStatus.Status)
+		_, _ = fmt.Fprintf(w, "  updated: %s\n", data.RunnerStatus.UpdatedAt)
+		_, _ = fmt.Fprintf(w, "  summary: %s\n", data.RunnerStatus.Summary)
+
+		// Show questions if present (needs_input status)
+		if len(data.RunnerStatus.Questions) > 0 {
+			_, _ = fmt.Fprintln(w, "  questions:")
+			for _, q := range data.RunnerStatus.Questions {
+				_, _ = fmt.Fprintf(w, "    - %s\n", q)
+			}
+		}
+
+		// Show blockers if present (blocked status)
+		if len(data.RunnerStatus.Blockers) > 0 {
+			_, _ = fmt.Fprintln(w, "  blockers:")
+			for _, b := range data.RunnerStatus.Blockers {
+				_, _ = fmt.Fprintf(w, "    - %s\n", b)
+			}
+		}
+
+		// Show how_to_test if present (ready_for_review status)
+		if data.RunnerStatus.HowToTest != "" {
+			_, _ = fmt.Fprintf(w, "  how_to_test: %s\n", data.RunnerStatus.HowToTest)
+		}
+
+		// Show risks if present
+		if len(data.RunnerStatus.Risks) > 0 {
+			_, _ = fmt.Fprintln(w, "  risks:")
+			for _, r := range data.RunnerStatus.Risks {
+				_, _ = fmt.Fprintf(w, "    - %s\n", r)
+			}
+		}
+	}
 
 	return nil
 }

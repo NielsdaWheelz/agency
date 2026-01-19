@@ -4,6 +4,7 @@ package worktree
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // Warning represents a non-fatal warning emitted during worktree operations.
@@ -158,14 +160,15 @@ func WorktreePath(dataDir, repoID, runID string) string {
 	return filepath.Join(dataDir, "repos", repoID, "worktrees", runID)
 }
 
-// scaffoldWorkspace creates the .agency/ directory structure and report.md.
-// This function is idempotent for directories but will not overwrite report.md.
+// scaffoldWorkspace creates the .agency/ directory structure, report.md, and runner_status.json.
+// This function is idempotent for directories but will not overwrite existing files.
 func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
-	// Create .agency/ directories
+	// Create .agency/ directories including state/
 	dirs := []string{
 		filepath.Join(worktreePath, ".agency"),
 		filepath.Join(worktreePath, ".agency", "out"),
 		filepath.Join(worktreePath, ".agency", "tmp"),
+		filepath.Join(worktreePath, ".agency", "state"),
 	}
 
 	for _, dir := range dirs {
@@ -180,6 +183,20 @@ func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
 		content := ReportTemplate(name)
 		if err := fsys.WriteFile(reportPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to create report.md: %w", err)
+		}
+	}
+
+	// Create runner_status.json with initial "working" status
+	statusPath := runnerstatus.StatusPath(worktreePath)
+	if _, err := fsys.Stat(statusPath); os.IsNotExist(err) {
+		initialStatus := runnerstatus.NewInitial()
+		data, err := json.MarshalIndent(initialStatus, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal initial runner status: %w", err)
+		}
+		data = append(data, '\n')
+		if err := fsys.WriteFile(statusPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to create runner_status.json: %w", err)
 		}
 	}
 

@@ -18,9 +18,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/status"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/NielsdaWheelz/agency/internal/watchdog"
 )
 
 // ShowOpts holds options for the show command.
@@ -122,11 +124,37 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	tmuxActive := tmuxSessions[sessionName]
 
-	// Derive status
+	// Load runner status and compute stall detection (only if worktree present)
+	var runnerStatus *runnerstatus.RunnerStatus
+	var runnerStatusModTime time.Time
+	var stallResult *watchdog.StallResult
+	if worktreePresent {
+		rs, modTime, err := runnerstatus.LoadWithModTime(worktreePath)
+		if err == nil && rs != nil {
+			// Validate the status file
+			if rs.Validate() == nil {
+				runnerStatus = rs
+				runnerStatusModTime = modTime
+			}
+		}
+
+		// Compute stall detection
+		signals := watchdog.ActivitySignals{
+			TmuxSessionExists: tmuxActive,
+		}
+		if !modTime.IsZero() {
+			signals.StatusFileModTime = &modTime
+		}
+		result := watchdog.CheckStallWithDefault(signals)
+		stallResult = &result
+	}
+
+	// Derive status using runner status and stall result
 	snapshot := status.Snapshot{
 		TmuxActive:      tmuxActive,
 		WorktreePresent: worktreePresent,
-		ReportBytes:     reportBytes,
+		RunnerStatus:    runnerStatus,
+		StallResult:     stallResult,
 	}
 	derived := status.Derive(record.Meta, snapshot)
 
@@ -148,11 +176,25 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	if opts.JSON {
-		return outputShowJSONWithCapture(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, captureRes)
+		return outputShowJSONWithCapture(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, captureRes, runnerStatus)
+	}
+
+	// Build runner status display if available
+	var runnerStatusDisplay *render.RunnerStatusDisplay
+	if runnerStatus != nil {
+		runnerStatusDisplay = &render.RunnerStatusDisplay{
+			Status:    string(runnerStatus.Status),
+			UpdatedAt: formatRelativeTimeForShow(runnerStatusModTime),
+			Summary:   runnerStatus.Summary,
+			Questions: runnerStatus.Questions,
+			Blockers:  runnerStatus.Blockers,
+			HowToTest: runnerStatus.HowToTest,
+			Risks:     runnerStatus.Risks,
+		}
 	}
 
 	// Human output
-	return outputShowHuman(stdout, record, repoRoot, runDir, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable)
+	return outputShowHuman(stdout, record, repoRoot, runDir, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable, runnerStatusDisplay)
 }
 
 // performCapture executes the capture flow: acquire lock, emit events, capture transcript.
@@ -464,7 +506,21 @@ func outputShowPaths(stdout io.Writer, repoRoot *string, worktreePath, runDir, l
 }
 
 // outputShowJSONWithCapture writes the --json output, optionally including capture result.
-func outputShowJSONWithCapture(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir, eventsPath, transcriptPath string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string, captureRes *captureResult) error {
+func outputShowJSONWithCapture(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir, eventsPath, transcriptPath string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string, captureRes *captureResult, runnerStatus *runnerstatus.RunnerStatus) error {
+	// Build runner status JSON if available
+	var runnerStatusJSON *render.RunnerStatusJSON
+	if runnerStatus != nil {
+		runnerStatusJSON = &render.RunnerStatusJSON{
+			Status:    string(runnerStatus.Status),
+			UpdatedAt: runnerStatus.UpdatedAt,
+			Summary:   runnerStatus.Summary,
+			Questions: runnerStatus.Questions,
+			Blockers:  runnerStatus.Blockers,
+			HowToTest: runnerStatus.HowToTest,
+			Risks:     runnerStatus.Risks,
+		}
+	}
+
 	detail := &render.RunDetail{
 		Meta:     record.Meta,
 		RepoID:   record.RepoID,
@@ -483,6 +539,7 @@ func outputShowJSONWithCapture(stdout io.Writer, record *store.RunRecord, repoRo
 				VerifyLogPath:  verifyLogPath,
 				ArchiveLogPath: archiveLogPath,
 			},
+			RunnerStatus: runnerStatusJSON,
 		},
 		Paths: render.PathsJSON{
 			RepoRoot:       repoRoot,
@@ -513,7 +570,7 @@ func outputShowJSONWithCapture(stdout io.Writer, record *store.RunRecord, repoRo
 }
 
 // outputShowHuman writes the human-readable output.
-func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable bool) error {
+func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable bool, runnerStatusDisplay *render.RunnerStatusDisplay) error {
 	meta := record.Meta
 
 	data := render.ShowHumanData{
@@ -553,6 +610,9 @@ func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string
 		DerivedStatus: derived.DerivedStatus,
 		Archived:      archived,
 
+		// Runner status
+		RunnerStatus: runnerStatusDisplay,
+
 		// Warnings
 		RepoNotFoundWarning:    repoNotFoundWarning,
 		WorktreeMissingWarning: worktreeMissingWarning,
@@ -568,4 +628,41 @@ func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string
 	}
 
 	return render.WriteShowHuman(stdout, data)
+}
+
+// formatRelativeTimeForShow formats a time as a relative string (e.g., "5m ago").
+func formatRelativeTimeForShow(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+
+	diff := time.Since(t)
+	if diff < 0 {
+		diff = -diff
+	}
+
+	switch {
+	case diff < time.Minute:
+		return "just now"
+	case diff < time.Hour:
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", mins)
+	case diff < 24*time.Hour:
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", hours)
+	case diff < 7*24*time.Hour:
+		days := int(diff.Hours() / 24)
+		if days == 1 {
+			return "1d ago"
+		}
+		return fmt.Sprintf("%dd ago", days)
+	default:
+		return t.Format("2006-01-02")
+	}
 }

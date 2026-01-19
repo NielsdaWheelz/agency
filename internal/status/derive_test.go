@@ -3,7 +3,9 @@ package status
 import (
 	"testing"
 
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/watchdog"
 )
 
 // Test helper: create a minimal valid RunMeta with optional modifications.
@@ -26,41 +28,51 @@ func mkMeta(fn func(*store.RunMeta)) *store.RunMeta {
 	return meta
 }
 
+// mkRunnerStatus creates a runner status for testing.
+func mkRunnerStatus(status runnerstatus.Status) *runnerstatus.RunnerStatus {
+	return &runnerstatus.RunnerStatus{
+		SchemaVersion: "1.0",
+		Status:        status,
+		UpdatedAt:     "2026-01-10T12:00:00Z",
+		Summary:       "Test summary",
+		Questions:     []string{},
+		Blockers:      []string{},
+		HowToTest:     "Run tests",
+		Risks:         []string{},
+	}
+}
+
 func TestDerive(t *testing.T) {
 	tests := []struct {
-		name               string
-		meta               *store.RunMeta
-		snapshot           Snapshot
-		wantDerivedStatus  string
-		wantArchived       bool
-		wantReportNonempty bool
+		name              string
+		meta              *store.RunMeta
+		snapshot          Snapshot
+		wantDerivedStatus string
+		wantArchived      bool
 	}{
 		// ============================================================
 		// 1. nil meta => broken
 		// ============================================================
 		{
-			name:               "nil meta, worktree present",
-			meta:               nil,
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusBroken,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name:              "nil meta, worktree present",
+			meta:              nil,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusBroken,
+			wantArchived:      false,
 		},
 		{
-			name:               "nil meta, worktree absent (archived)",
-			meta:               nil,
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: false, ReportBytes: 100},
-			wantDerivedStatus:  StatusBroken,
-			wantArchived:       true,
-			wantReportNonempty: true,
+			name:              "nil meta, worktree absent (archived)",
+			meta:              nil,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: false},
+			wantDerivedStatus: StatusBroken,
+			wantArchived:      true,
 		},
 		{
-			name:               "nil meta, tmux active (still broken)",
-			meta:               nil,
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 64},
-			wantDerivedStatus:  StatusBroken,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			name:              "nil meta, tmux active (still broken)",
+			meta:              nil,
+			snapshot:          Snapshot{TmuxActive: true, WorktreePresent: true},
+			wantDerivedStatus: StatusBroken,
+			wantArchived:      false,
 		},
 
 		// ============================================================
@@ -72,10 +84,9 @@ func TestDerive(t *testing.T) {
 				m.Archive = &store.RunMetaArchive{MergedAt: "2026-01-10T14:00:00Z"}
 				m.Flags = &store.RunMetaFlags{SetupFailed: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusMerged,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			snapshot:          Snapshot{TmuxActive: true, WorktreePresent: true},
+			wantDerivedStatus: StatusMerged,
+			wantArchived:      false,
 		},
 		{
 			name: "merged wins over needs_attention",
@@ -83,32 +94,18 @@ func TestDerive(t *testing.T) {
 				m.Archive = &store.RunMetaArchive{MergedAt: "2026-01-10T14:00:00Z"}
 				m.Flags = &store.RunMetaFlags{NeedsAttention: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 64},
-			wantDerivedStatus:  StatusMerged,
-			wantArchived:       false,
-			wantReportNonempty: true,
-		},
-		{
-			name: "merged wins over ready_for_review conditions",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.Archive = &store.RunMetaArchive{MergedAt: "2026-01-10T14:00:00Z"}
-				m.PRNumber = 123
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusMerged,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusMerged,
+			wantArchived:      false,
 		},
 		{
 			name: "merged with worktree absent (archived)",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Archive = &store.RunMetaArchive{MergedAt: "2026-01-10T14:00:00Z"}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: false, ReportBytes: 0},
-			wantDerivedStatus:  StatusMerged,
-			wantArchived:       true,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: false},
+			wantDerivedStatus: StatusMerged,
+			wantArchived:      true,
 		},
 
 		// ============================================================
@@ -119,30 +116,27 @@ func TestDerive(t *testing.T) {
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{Abandoned: true, SetupFailed: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusAbandoned,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusAbandoned,
+			wantArchived:      false,
 		},
 		{
 			name: "abandoned wins over needs_attention",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{Abandoned: true, NeedsAttention: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusAbandoned,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			snapshot:          Snapshot{TmuxActive: true, WorktreePresent: true},
+			wantDerivedStatus: StatusAbandoned,
+			wantArchived:      false,
 		},
 		{
 			name: "abandoned with worktree absent",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{Abandoned: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: false, ReportBytes: 64},
-			wantDerivedStatus:  StatusAbandoned,
-			wantArchived:       true,
-			wantReportNonempty: true,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: false},
+			wantDerivedStatus: StatusAbandoned,
+			wantArchived:      true,
 		},
 
 		// ============================================================
@@ -153,300 +147,235 @@ func TestDerive(t *testing.T) {
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{SetupFailed: true, NeedsAttention: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusFailed,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			snapshot:          Snapshot{TmuxActive: true, WorktreePresent: true},
+			wantDerivedStatus: StatusFailed,
+			wantArchived:      false,
 		},
 		{
 			name: "setup_failed alone",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{SetupFailed: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusFailed,
-			wantArchived:       false,
-			wantReportNonempty: false,
-		},
-		{
-			name: "setup_failed beats ready_for_review conditions",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.Flags = &store.RunMetaFlags{SetupFailed: true}
-				m.PRNumber = 123
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusFailed,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusFailed,
+			wantArchived:      false,
 		},
 
 		// ============================================================
-		// 5. needs_attention beats ready_for_review
+		// 5. needs_attention beats runner status
 		// ============================================================
 		{
-			name: "needs_attention beats ready_for_review",
+			name: "needs_attention beats runner status",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{NeedsAttention: true}
-				m.PRNumber = 123
-				m.LastPushAt = "2026-01-10T13:00:00Z"
 			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusNeedsAttention,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				RunnerStatus:    mkRunnerStatus(runnerstatus.StatusReadyForReview),
+			},
+			wantDerivedStatus: StatusNeedsAttention,
+			wantArchived:      false,
 		},
 		{
 			name: "needs_attention alone",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Flags = &store.RunMetaFlags{NeedsAttention: true}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusNeedsAttention,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusNeedsAttention,
+			wantArchived:      false,
 		},
 
 		// ============================================================
-		// 6. ready_for_review predicate (positive and negative cases)
+		// 6. Runner-reported statuses
 		// ============================================================
 		{
-			name: "ready_for_review: all predicates met (exact threshold)",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 123
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 64},
-			wantDerivedStatus:  StatusReadyForReview,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			name: "runner status: ready_for_review",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      false,
+				WorktreePresent: true,
+				RunnerStatus:    mkRunnerStatus(runnerstatus.StatusReadyForReview),
+			},
+			wantDerivedStatus: StatusReadyForReview,
+			wantArchived:      false,
 		},
 		{
-			name: "ready_for_review: all predicates met (above threshold)",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 456
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 1000},
-			wantDerivedStatus:  StatusReadyForReview,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			name: "runner status: needs_input",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				RunnerStatus:    mkRunnerStatus(runnerstatus.StatusNeedsInput),
+			},
+			wantDerivedStatus: StatusNeedsInput,
+			wantArchived:      false,
 		},
 		{
-			name: "NOT ready_for_review: missing pr_number",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 0 // not set
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: true,
+			name: "runner status: blocked",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				RunnerStatus:    mkRunnerStatus(runnerstatus.StatusBlocked),
+			},
+			wantDerivedStatus: StatusBlocked,
+			wantArchived:      false,
 		},
 		{
-			name: "NOT ready_for_review: missing last_push_at",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 123
-				m.LastPushAt = "" // not set
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusIdlePR,
-			wantArchived:       false,
-			wantReportNonempty: true,
-		},
-		{
-			name: "NOT ready_for_review: report too small (63 bytes)",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 123
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 63},
-			wantDerivedStatus:  StatusIdlePR,
-			wantArchived:       false,
-			wantReportNonempty: false,
-		},
-		{
-			name: "NOT ready_for_review: report missing (0 bytes)",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 123
-				m.LastPushAt = "2026-01-10T13:00:00Z"
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdlePR,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name: "runner status: working",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				RunnerStatus:    mkRunnerStatus(runnerstatus.StatusWorking),
+			},
+			wantDerivedStatus: StatusWorking,
+			wantArchived:      false,
 		},
 
 		// ============================================================
-		// 7. activity fallbacks
+		// 7. Stalled detection
 		// ============================================================
 		{
-			name: "active (pr): tmux_active=true, pr_number set",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 123
-			}),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusActivePR,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name: "stalled: tmux active, stall detected",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				StallResult:     &watchdog.StallResult{IsStalled: true, StalledDuration: 30 * 60e9}, // 30 min
+			},
+			wantDerivedStatus: StatusStalled,
+			wantArchived:      false,
 		},
 		{
-			name:               "active: tmux_active=true, no pr_number",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusActive,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name: "not stalled: tmux active, stall not detected",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				StallResult:     &watchdog.StallResult{IsStalled: false},
+			},
+			wantDerivedStatus: StatusActive,
+			wantArchived:      false,
 		},
 		{
-			name: "idle (pr): tmux_active=false, pr_number set",
-			meta: mkMeta(func(m *store.RunMeta) {
-				m.PRNumber = 123
-			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdlePR,
-			wantArchived:       false,
-			wantReportNonempty: false,
-		},
-		{
-			name:               "idle: tmux_active=false, no pr_number",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name: "not stalled: no tmux, even if stall flag set",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      false,
+				WorktreePresent: true,
+				StallResult:     &watchdog.StallResult{IsStalled: true},
+			},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
 		},
 
 		// ============================================================
-		// 8. archived boolean (worktree_present=false => Archived true)
+		// 8. Activity fallbacks (no runner status)
 		// ============================================================
 		{
-			name:               "archived: worktree_present=false",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: false, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       true,
-			wantReportNonempty: false,
+			name:              "active: tmux active, no runner status",
+			meta:              mkMeta(nil),
+			snapshot:          Snapshot{TmuxActive: true, WorktreePresent: true},
+			wantDerivedStatus: StatusActive,
+			wantArchived:      false,
 		},
 		{
-			name:               "not archived: worktree_present=true",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name:              "idle: tmux inactive, no runner status",
+			meta:              mkMeta(nil),
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
+		},
+
+		// ============================================================
+		// 9. Archived boolean (worktree_present=false => Archived true)
+		// ============================================================
+		{
+			name:              "archived: worktree_present=false",
+			meta:              mkMeta(nil),
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: false},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      true,
+		},
+		{
+			name:              "not archived: worktree_present=true",
+			meta:              mkMeta(nil),
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
 		},
 		{
 			name: "archived applies to all statuses (merged + archived)",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Archive = &store.RunMetaArchive{MergedAt: "2026-01-10T14:00:00Z"}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: false, ReportBytes: 0},
-			wantDerivedStatus:  StatusMerged,
-			wantArchived:       true,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: false},
+			wantDerivedStatus: StatusMerged,
+			wantArchived:      true,
 		},
 		{
-			name:               "archived applies to all statuses (active + archived)",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: true, WorktreePresent: false, ReportBytes: 0},
-			wantDerivedStatus:  StatusActive,
-			wantArchived:       true,
-			wantReportNonempty: false,
-		},
-
-		// ============================================================
-		// 9. report_nonempty boolean (threshold tests)
-		// ============================================================
-		{
-			name:               "report_nonempty: 0 bytes => false",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
-		},
-		{
-			name:               "report_nonempty: 63 bytes => false",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 63},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
-		},
-		{
-			name:               "report_nonempty: 64 bytes => true (threshold)",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 64},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: true,
-		},
-		{
-			name:               "report_nonempty: 100 bytes => true",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 100},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: true,
-		},
-		{
-			name:               "report_nonempty: negative bytes clamped to 0 => false",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: -1},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
-		},
-		{
-			name:               "report_nonempty: large negative clamped => false",
-			meta:               mkMeta(nil),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: -1000},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name:              "archived applies to all statuses (active + archived)",
+			meta:              mkMeta(nil),
+			snapshot:          Snapshot{TmuxActive: true, WorktreePresent: false},
+			wantDerivedStatus: StatusActive,
+			wantArchived:      true,
 		},
 
 		// ============================================================
 		// Edge cases: nil sub-structs in meta
 		// ============================================================
 		{
-			name:               "nil flags struct (not setup_failed)",
-			meta:               mkMeta(nil), // Flags is nil by default in mkMeta
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			name:              "nil flags struct (not setup_failed)",
+			meta:              mkMeta(nil), // Flags is nil by default in mkMeta
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
 		},
 		{
 			name: "nil archive struct (not merged)",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Archive = nil // explicitly nil
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
 		},
 		{
 			name: "empty merged_at string (not merged)",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Archive = &store.RunMetaArchive{MergedAt: ""}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
 		},
 		{
 			name: "archived_at set but not merged_at (not merged status)",
 			meta: mkMeta(func(m *store.RunMeta) {
 				m.Archive = &store.RunMetaArchive{ArchivedAt: "2026-01-10T14:00:00Z", MergedAt: ""}
 			}),
-			snapshot:           Snapshot{TmuxActive: false, WorktreePresent: true, ReportBytes: 0},
-			wantDerivedStatus:  StatusIdle,
-			wantArchived:       false,
-			wantReportNonempty: false,
+			snapshot:          Snapshot{TmuxActive: false, WorktreePresent: true},
+			wantDerivedStatus: StatusIdle,
+			wantArchived:      false,
+		},
+
+		// ============================================================
+		// Runner status takes precedence over stall detection
+		// ============================================================
+		{
+			name: "runner status beats stall detection",
+			meta: mkMeta(nil),
+			snapshot: Snapshot{
+				TmuxActive:      true,
+				WorktreePresent: true,
+				RunnerStatus:    mkRunnerStatus(runnerstatus.StatusWorking),
+				StallResult:     &watchdog.StallResult{IsStalled: true},
+			},
+			wantDerivedStatus: StatusWorking,
+			wantArchived:      false,
 		},
 	}
 
@@ -459,9 +388,6 @@ func TestDerive(t *testing.T) {
 			}
 			if got.Archived != tt.wantArchived {
 				t.Errorf("Archived = %v, want %v", got.Archived, tt.wantArchived)
-			}
-			if got.ReportNonempty != tt.wantReportNonempty {
-				t.Errorf("ReportNonempty = %v, want %v", got.ReportNonempty, tt.wantReportNonempty)
 			}
 		})
 	}
@@ -476,14 +402,7 @@ func TestDeriveNilMetaDoesNotPanic(t *testing.T) {
 		}
 	}()
 
-	_ = Derive(nil, Snapshot{TmuxActive: true, WorktreePresent: true, ReportBytes: 100})
-}
-
-// TestReportNonemptyThresholdConstant verifies the constant value.
-func TestReportNonemptyThresholdConstant(t *testing.T) {
-	if ReportNonemptyThresholdBytes != 64 {
-		t.Errorf("ReportNonemptyThresholdBytes = %d, want 64", ReportNonemptyThresholdBytes)
-	}
+	_ = Derive(nil, Snapshot{TmuxActive: true, WorktreePresent: true})
 }
 
 // TestStatusStringConstants verifies status strings match expected values.
@@ -496,9 +415,11 @@ func TestStatusStringConstants(t *testing.T) {
 		"StatusFailed":         "failed",
 		"StatusNeedsAttention": "needs attention",
 		"StatusReadyForReview": "ready for review",
-		"StatusActivePR":       "active (pr)",
+		"StatusNeedsInput":     "needs input",
+		"StatusBlocked":        "blocked",
+		"StatusWorking":        "working",
+		"StatusStalled":        "stalled",
 		"StatusActive":         "active",
-		"StatusIdlePR":         "idle (pr)",
 		"StatusIdle":           "idle",
 	}
 
@@ -509,9 +430,11 @@ func TestStatusStringConstants(t *testing.T) {
 		"StatusFailed":         StatusFailed,
 		"StatusNeedsAttention": StatusNeedsAttention,
 		"StatusReadyForReview": StatusReadyForReview,
-		"StatusActivePR":       StatusActivePR,
+		"StatusNeedsInput":     StatusNeedsInput,
+		"StatusBlocked":        StatusBlocked,
+		"StatusWorking":        StatusWorking,
+		"StatusStalled":        StatusStalled,
 		"StatusActive":         StatusActive,
-		"StatusIdlePR":         StatusIdlePR,
 		"StatusIdle":           StatusIdle,
 	}
 

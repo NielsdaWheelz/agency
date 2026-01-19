@@ -222,6 +222,7 @@ All global state lives under `${AGENCY_DATA_DIR}`.
 - `<worktree>/.agency/`
 - `<worktree>/.agency/out/`
 - `<worktree>/.agency/tmp/`
+- `<worktree>/.agency/state/`
 
 **environment** (injected by agency):
 - `AGENCY_RUN_ID`
@@ -465,20 +466,59 @@ Status is **composable**, not a flat enum:
 - `needs_attention` — verify failed OR PR not mergeable OR stop requested
 - `setup_failed` — setup script exited non-zero
 
+### Runner status contract (S7+)
+
+Runners communicate state via `.agency/state/runner_status.json`:
+
+| Status | When | Required Fields |
+|--------|------|-----------------|
+| `working` | Actively making progress | `summary` |
+| `needs_input` | Waiting for user answer | `summary`, `questions[]` |
+| `blocked` | Cannot proceed | `summary`, `blockers[]` |
+| `ready_for_review` | Work complete | `summary`, `how_to_test` |
+
+Schema:
+```json
+{
+  "schema_version": "1.0",
+  "status": "working",
+  "updated_at": "2026-01-19T12:00:00Z",
+  "summary": "Implementing user authentication",
+  "questions": [],
+  "blockers": [],
+  "how_to_test": "",
+  "risks": []
+}
+```
+
+Instructions are provided to runners via `CLAUDE.md` (created by `agency init`).
+
+### Stall detection
+
+A run is considered **stalled** when:
+- tmux session exists (runner should be active)
+- `runner_status.json` hasn't been modified for 15+ minutes
+
+Stall detection is a fallback; runner-reported status takes precedence.
+
 ### Display status
 
-`agency ls` shows a single derived string for UX. derive in layers:
-1. base outcome: `merged` | `abandoned` | `open`
-2. presence suffix: if `archived` -> append " (archived)"
-3. flags (for `open`):
-   - if `setup_failed` -> "failed" + presence suffix
-   - else if `needs_attention` -> "needs attention" + presence suffix
-4. else (for `open`):
-   - if PR exists and `last_push_at` recorded and report exists + non-empty -> "ready for review" + presence suffix
-   - else if `active` and PR open -> "active (report missing)" + presence suffix
-   - else if `active` -> "active" + presence suffix
-   - else if PR open -> "idle (pr open)" + presence suffix
-   - else -> "idle" + presence suffix
+`agency ls` shows a single derived string for UX. derive in layers (precedence order):
+
+1. `broken` — meta.json unreadable
+2. `merged` — archive.merged_at set
+3. `abandoned` — flags.abandoned set
+4. `failed` — flags.setup_failed set
+5. `needs attention` — flags.needs_attention set
+6. `ready for review` — runner_status.status == "ready_for_review"
+7. `needs input` — runner_status.status == "needs_input"
+8. `blocked` — runner_status.status == "blocked"
+9. `working` — runner_status.status == "working"
+10. `stalled` — no status update for 15+ min and tmux exists
+11. `active` — tmux exists (fallback when no runner_status.json)
+12. `idle` — no tmux (fallback)
+
+Presence suffix: if worktree deleted -> append " (archived)"
 
 `agency ls` defaults to current repo and excludes archived runs. use `--all` for archived and `--all-repos` for global view.
 
@@ -633,7 +673,10 @@ template includes `version` + `scripts` only; defaults/runners live in user conf
 - `scripts/agency_verify.sh` (print "replace scripts/agency_verify.sh" and exit 1)
 - `scripts/agency_archive.sh` (exit 0)
 
+`agency init` also creates `CLAUDE.md` (runner protocol file) if not present. this file instructs runners (claude/codex) how to communicate status via `.agency/state/runner_status.json`.
+
 Scripts are never overwritten by init.
+`CLAUDE.md` is never overwritten by init.
 `agency init` writes `agency.json` via atomic write (temp file + rename).
 Stub scripts:
 - path normalization: always under repo root (no absolute paths)
@@ -814,6 +857,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
   2. `agency_json` — `created` or `overwritten`
   3. `scripts_created` — comma-separated list or `none`
   4. `gitignore` — `updated`, `already_present`, `created`, or `skipped`
+  5. `claude_md` — `created` or `exists`
 - on `--no-gitignore`: prints `warning: gitignore_skipped`
 
 ---
