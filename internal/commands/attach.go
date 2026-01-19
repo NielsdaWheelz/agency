@@ -11,9 +11,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/runservice"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
@@ -22,10 +19,13 @@ import (
 type AttachOpts struct {
 	// RunID is the run identifier to attach to.
 	RunID string
+
+	// RepoPath is the optional --repo flag to scope name resolution.
+	RepoPath string
 }
 
 // Attach attaches to an existing tmux session for a run.
-// Requires cwd to be inside the target repo.
+// Works from any directory; resolves runs globally.
 func Attach(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts AttachOpts, stdout, stderr io.Writer) error {
 	// Create real tmux client
 	tmuxClient := tmux.NewExecClient(cr)
@@ -40,31 +40,14 @@ func AttachWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 
-	// Find repo root
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	// Build resolution context using the new global resolver
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
 	if err != nil {
 		return err
 	}
 
-	// Get origin info for repo identity
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-
-	// Get home directory for path resolution
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-
-	// Resolve data directory
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
-
-	// Compute repo identity
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-	repoID := repoIdentity.RepoID
-
-	// Resolve run by name or ID within this repo
-	resolved, _, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
+	// Resolve run globally (works from anywhere)
+	resolved, err := ResolveRun(rctx, opts.RunID)
 	if err != nil {
 		return err
 	}

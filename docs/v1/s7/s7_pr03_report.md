@@ -1,156 +1,144 @@
-# PR 7.3 Report: Documentation
+# PR Report: Global Run Resolution + Explicit Repo Targeting (spec3)
 
-## Summary of Changes
+## Summary
 
-This PR completes slice 7 (runner status contract + watchdog) by adding comprehensive E2E tests and verifying documentation is complete:
+This PR implements global run resolution for run-targeted commands, allowing them to work from any directory. It adds the `--repo <path>` flag for explicit repo targeting and disambiguation when names conflict across repositories.
 
-1. **E2E Test for Runner Status Lifecycle** (`internal/commands/runnerstatus_e2e_test.go`)
-   - Tests `agency init` creates `CLAUDE.md` and doesn't overwrite existing
-   - Tests worktree scaffold creates `.agency/state/runner_status.json` with initial `working` status
-   - Tests `agency ls` shows runner-reported statuses (`working`, `needs_input`, `blocked`, `ready_for_review`)
-   - Tests `agency ls` falls back to `idle`/`active` when no status file exists
-   - Tests `agency ls` handles invalid status files gracefully (no crash)
-   - Tests `agency show` displays runner status section with questions/blockers/how_to_test
-   - Tests `agency show --json` includes runner_status in output
-   - Tests stall detection code path (without real tmux)
-
-2. **Documentation Verification**
-   - Verified `docs/v1/constitution.md` is complete (section 11 has full runner status contract)
-   - Verified `README.md` is complete (runner status, CLAUDE.md, stalled detection documented)
-   - Verified `.gitignore` is correct (`.agency/` ignored, note about CLAUDE.md being committed)
-   - Verified project structure in README includes new packages (runnerstatus, watchdog, scaffold)
+**Key changes:**
+- Run-targeted commands (`attach`, `resume`, `stop`, `kill`, `clean`, `verify`) now work from any directory
+- Added `--repo <path>` flag to all affected commands for explicit targeting
+- Implemented deterministic resolution semantics: run_id/prefix resolves globally, names prefer current repo
+- Added new error codes for resolution failures (`E_INVALID_REPO_PATH`, `E_RUN_REF_AMBIGUOUS`, `E_REPO_NOT_FOUND`)
+- Updated help text to document the "works from anywhere" behavior
+- Updated README with global resolution documentation
 
 ## Problems Encountered
 
-1. **E2E Test Without tmux**: The test environment doesn't have a real tmux session, so we can't fully test the `stalled` status detection in E2E. However:
-   - Unit tests in `internal/watchdog/watchdog_test.go` fully cover the stall detection logic
-   - Unit tests in `internal/status/derive_test.go` cover the status derivation precedence including stalled
-   - E2E test verifies the code path doesn't crash with old status files
+1. **Run ID format mismatch**: The initial regex patterns for run_id validation used 8-digit timestamps (`20250109-a3f2`) based on the spec example, but the actual implementation uses 14-digit timestamps (`20260109013207-a3f2`). This caused all run resolution to fail initially.
 
-2. **Test Environment Setup**: Needed to create a mock user config and git repo for the E2E tests to work properly without relying on the real environment.
+2. **Test environment isolation**: The tests use custom data directories via `AGENCY_DATA_DIR` environment variable. The new resolver needed to respect this setting, which it already did through `paths.ResolveDirs()`, but the regex issue masked this.
+
+3. **Function signature changes**: The `Doctor` command gained a new `DoctorOpts` parameter which required updating all test files that call it directly.
+
+4. **Import cleanup**: After refactoring, some commands had unused imports that needed to be removed.
 
 ## Solutions Implemented
 
-1. **Comprehensive E2E Test Coverage**: Created `runnerstatus_e2e_test.go` that:
-   - Uses `AGENCY_E2E=1` environment variable to gate the tests (consistent with existing pattern)
-   - Creates isolated test environment with temp directories
-   - Simulates full lifecycle without requiring GitHub or real tmux
-   - Tests all four runner statuses and their display
-   - Tests fallback behavior when status file is missing or invalid
+1. **Fixed run_id regex patterns**: Updated the regex to accept 8-14 digit timestamps (`^\d{8,14}-[a-f0-9]{4}$`) for compatibility with both spec examples and actual implementation.
 
-2. **Test Organization**: Placed the E2E test in `internal/commands/` alongside the existing `gh_e2e_test.go` for consistency.
+2. **Created unified resolver**: Built a new `runresolver.go` file with:
+   - `ResolveRunContext()` - builds resolution context from CWD and optional `--repo` flag
+   - `ResolveRun()` - resolves run references using the deterministic algorithm from spec
+   - `ResolveRepoContext()` - resolves repo context for repo-required commands
+
+3. **Resolution algorithm**: Implemented the spec's resolution order:
+   1. Exact run_id match (global, `--repo` ignored)
+   2. Unique run_id prefix (global, `--repo` ignored)  
+   3. Explicit `--repo` scope (name within that repo only)
+   4. CWD repo scope (prefer names in current repo)
+   5. Global name resolution (across all repos, error if ambiguous)
+
+4. **Archived runs**: Excluded from name matching but still resolvable by run_id or prefix.
 
 ## Decisions Made
 
-1. **E2E vs Integration Tests**: Used the E2E test pattern (gated by `AGENCY_E2E=1`) rather than pure integration tests because:
-   - Allows testing the full command flow
-   - Consistent with existing `gh_e2e_test.go` pattern
-   - Can be run in CI when appropriate
+1. **No breaking changes to run_id format**: Rather than forcing a specific format, the resolver accepts the range of formats that might exist (8-14 digit timestamps).
 
-2. **No Changes to Documentation**: After thorough review, found that:
-   - Constitution section 11 already has the complete runner status contract
-   - README already documents CLAUDE.md, runner status, stalled detection, and ls/show output
-   - Project structure in README already includes new packages
-   - No changes were needed - the documentation was already complete from PRs 7.1 and 7.2
+2. **Directory change for `run` command**: When `--repo` is specified for `agency run`, the command temporarily changes the working directory to execute the pipeline in the target repo context, then restores it.
 
-3. **Stall Testing Strategy**: Decided not to try to mock tmux for stall testing because:
-   - Unit tests already provide 100% coverage of stall detection logic
-   - E2E test verifies the code path doesn't crash
-   - Adding tmux mocking would add complexity without significant benefit
+3. **Empty `--repo` means CWD**: When `--repo` is not specified, commands use CWD-based repo discovery as before. This maintains backward compatibility.
+
+4. **`--repo` is path-only**: Per the spec, `--repo` only accepts filesystem paths, not repo_id or other identifiers.
+
+5. **Repo path recovery deferred**: The spec mentions recovering repo paths via `repo_index.paths`, but basic path discovery already exists. Full recovery logic is not critical for this PR and is deferred.
 
 ## Deviations from Spec
 
-None. The spec for PR 7.3 stated:
-- Update `docs/v1/constitution.md` - ✓ Verified complete (no changes needed)
-- Update `README.md` - ✓ Verified complete (no changes needed)
-- E2E test - ✓ Created comprehensive E2E test
+1. **Regex format**: The spec examples showed 8-digit timestamps, but implementation uses 14-digit. The resolver accepts both.
+
+2. **No `E_REPO_NOT_FOUND` usage yet**: The error code was added but isn't actively used since basic path discovery is sufficient. Full repo relocation recovery (trying alternative paths from `repo_index.paths`) is deferred.
+
+3. **Integration tests not added**: The spec listed specific integration test scenarios. These would be valuable but require a more complex test harness. The existing unit tests cover the core functionality.
 
 ## How to Run Commands
 
-### Run all tests
+### New Global Resolution
+
 ```bash
-go test ./...
+# From any directory, operate on runs by run_id:
+agency attach 20260119220740-a3f2
+agency resume 20260119220740-a3f2  
+agency stop 20260119220740-a3f2
+agency kill 20260119220740-a3f2
+agency clean 20260119220740-a3f2
+agency verify 20260119220740-a3f2
+
+# From any directory, operate by name (if unique globally):
+agency attach my-feature
+agency resume my-feature
+
+# Disambiguate when name conflicts exist:
+agency attach my-feature --repo /path/to/repo
+agency resume my-feature --repo /path/to/repo
 ```
 
-### Run runner status E2E tests specifically
+### Explicit Repo Targeting
+
 ```bash
-AGENCY_E2E=1 go test -v -run TestRunnerStatus ./internal/commands/...
+# Initialize a specific repo without cd'ing into it:
+agency init --repo /path/to/repo
+
+# Check prerequisites for a specific repo:
+agency doctor --repo /path/to/repo
+
+# Start a run in a specific repo:
+agency run --name feature-x --repo /path/to/repo
+
+# List runs for a specific repo:
+agency ls --repo /path/to/repo
 ```
 
-### Run all E2E tests (requires GitHub setup for gh_e2e_test.go)
+## How to Test
+
 ```bash
-AGENCY_E2E=1 AGENCY_GH_E2E=1 AGENCY_GH_REPO=owner/repo go test -v ./internal/commands/...
-```
+# Build and run all tests
+go build ./...
+go test ./internal/... -short
 
-### Run unit tests for new slice 7 packages
-```bash
-go test -v ./internal/runnerstatus/...
-go test -v ./internal/watchdog/...
-go test -v ./internal/status/...
-```
+# Test specific resolution logic
+go test ./internal/commands/... -short -run "Resume|Stop|Kill|Attach"
 
-## How to Verify New Functionality
-
-### 1. Test init creates CLAUDE.md
-```bash
-mkdir /tmp/test-repo && cd /tmp/test-repo
-git init
-git commit --allow-empty -m "initial"
-go run ./cmd/agency init
-# Verify CLAUDE.md exists and contains runner protocol instructions
-cat CLAUDE.md
-```
-
-### 2. Test runner status in ls/show
-After running `agency run`, the runner can update `.agency/state/runner_status.json`:
-```json
-{
-  "schema_version": "1.0",
-  "status": "needs_input",
-  "updated_at": "2026-01-19T12:00:00Z",
-  "summary": "Which auth library?",
-  "questions": ["OAuth2 or JWT?"],
-  "blockers": [],
-  "how_to_test": "",
-  "risks": []
-}
-```
-
-Then run:
-```bash
-agency ls     # Shows "needs input" status and summary
-agency show <id>  # Shows runner_status section with questions
+# Test CLI flag parsing
+go test ./internal/cli/... -short
 ```
 
 ## Branch Name and Commit Message
 
-**Branch name**: `pr7/documentation-and-e2e`
+**Branch name:** `pr3/global-run-resolution`
 
-**Commit message**:
+**Commit message:**
 ```
-feat(s7): add E2E tests for runner status lifecycle
+feat(s7): implement global run resolution + explicit repo targeting
 
-Add comprehensive E2E tests for the slice 7 runner status contract:
+Decouple run-targeted commands from CWD-based repo discovery so that
+existing runs can be operated on from any directory.
 
-- Test `agency init` creates CLAUDE.md runner protocol file
-- Test worktree scaffold creates initial runner_status.json
-- Test `agency ls` displays runner-reported statuses (working, needs_input,
-  blocked, ready_for_review) with summary column
-- Test `agency ls` falls back to active/idle when no status file
-- Test `agency ls` handles invalid/malformed status files gracefully
-- Test `agency show` displays runner_status section with questions,
-  blockers, and how_to_test fields
-- Test `agency show --json` includes runner_status in output
+Changes:
+- Add unified run resolver (internal/commands/runresolver.go)
+- Update attach, resume, stop, kill, clean, verify for global resolution
+- Add --repo <path> flag to init, run, doctor, ls, and run-targeted commands
+- Add new error codes: E_INVALID_REPO_PATH, E_RUN_REF_AMBIGUOUS, E_REPO_NOT_FOUND
+- Update help text with "works from anywhere" semantics
+- Update README with global resolution documentation
 
-Verified documentation is complete:
-- Constitution section 11 has full runner status contract
-- README documents CLAUDE.md, runner statuses, stalled detection
-- Project structure includes runnerstatus, watchdog, scaffold packages
-- .gitignore properly ignores .agency/ (CLAUDE.md is committed)
+Resolution semantics (per spec):
+1. Exact run_id match - resolve globally (--repo ignored)
+2. Unique run_id prefix - resolve globally (--repo ignored)
+3. Explicit --repo scope - resolve name within that repo only
+4. CWD repo scope - prefer names in current repo
+5. Global name resolution - resolve across all repos, error if ambiguous
 
-Tests are gated by AGENCY_E2E=1 environment variable, consistent with
-the existing gh_e2e_test.go pattern.
+Archived runs are excluded from name matching but resolvable by run_id.
 
-Closes: PR 7.3 - Documentation
-Part of: Slice 7 - Runner Status Contract & Watchdog
+spec: docs/v1/s7/spec3.md
 ```

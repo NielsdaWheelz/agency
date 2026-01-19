@@ -16,8 +16,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/events"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -29,6 +27,9 @@ import (
 type ResumeOpts struct {
 	// RunID is the run identifier to resume.
 	RunID string
+
+	// RepoPath is the optional --repo flag to scope name resolution.
+	RepoPath string
 
 	// Detached means do not attach; return after ensuring session exists.
 	Detached bool
@@ -44,7 +45,7 @@ type ResumeOpts struct {
 var isInteractive = tty.IsInteractive
 
 // Resume ensures a tmux session exists for the run and optionally attaches.
-// Requires cwd to be inside the target repo.
+// Works from any directory; resolves runs globally.
 func Resume(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts ResumeOpts, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Create real tmux client
 	tmuxClient := tmux.NewExecClient(cr)
@@ -59,14 +60,26 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 
-	// Find repo root
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	// Build resolution context using the new global resolver
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
 	if err != nil {
 		return err
 	}
 
-	// Get origin info for repo identity
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	// Resolve run globally (works from anywhere)
+	resolved, err := ResolveRun(rctx, opts.RunID)
+	if err != nil {
+		return err
+	}
+
+	// Check if run is broken
+	if resolved.Broken || resolved.Record == nil || resolved.Record.Meta == nil {
+		return errors.NewWithDetails(
+			errors.ERunBroken,
+			"run exists but meta.json is unreadable or invalid",
+			map[string]string{"run_id": resolved.RunID, "repo_id": resolved.RepoID},
+		)
+	}
 
 	// Get home directory for path resolution
 	homeDir, err := os.UserHomeDir()
@@ -74,33 +87,15 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 
-	// Resolve data directory
+	// Resolve directories
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 	dataDir := dirs.DataDir
 
-	// Compute repo identity
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-	repoID := repoIdentity.RepoID
-
-	// Resolve run by name or ID within this repo
-	resolved, record, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
-	if err != nil {
-		return err
-	}
-
-	// Check if run is broken
-	if resolved.Broken || record == nil || record.Meta == nil {
-		return errors.NewWithDetails(
-			errors.ERunBroken,
-			"run exists but meta.json is unreadable or invalid",
-			map[string]string{"run_id": resolved.RunID, "repo_id": repoID},
-		)
-	}
-
 	// Use the resolved run_id and update opts for helper functions
 	runID := resolved.RunID
+	repoID := resolved.RepoID
 	opts.RunID = runID // Update opts so helper functions use the resolved ID
-	meta := record.Meta
+	meta := resolved.Record.Meta
 
 	// Create store for later operations
 	st := store.NewStore(fsys, dataDir, nil)
