@@ -97,7 +97,18 @@ func LS(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string
 	// Human output
 	now := time.Now()
 	rows := render.FormatHumanRows(summaries, now)
-	return render.WriteLSHuman(stdout, rows)
+
+	// Build context for empty state message
+	lsCtx := render.LSContext{
+		IncludesArchived: opts.All,
+	}
+	if useAllRepos {
+		lsCtx.Scope = render.LSScopeAllRepos
+	} else {
+		lsCtx.Scope = render.LSScopeRepo
+	}
+
+	return render.WriteLSHuman(stdout, rows, lsCtx)
 }
 
 // recordToSummary converts a RunRecord to a RunSummary with snapshot data.

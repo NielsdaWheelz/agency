@@ -482,6 +482,11 @@ Status is **composable**, not a flat enum:
 
 `agency ls` defaults to current repo and excludes archived runs. use `--all` for archived and `--all-repos` for global view.
 
+**empty state output:**
+- inside repo without `--all`: `no active runs (use --all to include archived)`
+- inside repo with `--all`: `no runs found`
+- outside repo / `--all-repos`: `no runs found`
+
 ### Runner detection (v1)
 
 `active` = tmux session exists. no pid inspection in v1.

@@ -292,17 +292,60 @@ func TestWriteLSJSON_NilSummaries(t *testing.T) {
 // Human output tests
 // ============================================================
 
-func TestWriteLSHuman_EmptyList(t *testing.T) {
+func TestWriteLSHuman_EmptyList_RepoScope(t *testing.T) {
 	var buf bytes.Buffer
 	rows := []render.RunSummaryHumanRow{}
+	ctx := render.LSContext{
+		Scope:            render.LSScopeRepo,
+		IncludesArchived: false,
+	}
 
-	if err := render.WriteLSHuman(&buf, rows); err != nil {
+	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
 		t.Fatalf("WriteLSHuman() error = %v", err)
 	}
 
-	// Empty list should produce no output
-	if buf.Len() != 0 {
-		t.Errorf("output = %q, want empty", buf.String())
+	// Empty list in repo scope without --all should suggest using --all
+	expected := "no active runs (use --all to include archived)\n"
+	if buf.String() != expected {
+		t.Errorf("output = %q, want %q", buf.String(), expected)
+	}
+}
+
+func TestWriteLSHuman_EmptyList_RepoScopeWithAll(t *testing.T) {
+	var buf bytes.Buffer
+	rows := []render.RunSummaryHumanRow{}
+	ctx := render.LSContext{
+		Scope:            render.LSScopeRepo,
+		IncludesArchived: true,
+	}
+
+	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
+		t.Fatalf("WriteLSHuman() error = %v", err)
+	}
+
+	// Empty list in repo scope with --all should just say no runs
+	expected := "no runs found\n"
+	if buf.String() != expected {
+		t.Errorf("output = %q, want %q", buf.String(), expected)
+	}
+}
+
+func TestWriteLSHuman_EmptyList_AllReposScope(t *testing.T) {
+	var buf bytes.Buffer
+	rows := []render.RunSummaryHumanRow{}
+	ctx := render.LSContext{
+		Scope:            render.LSScopeAllRepos,
+		IncludesArchived: false,
+	}
+
+	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
+		t.Fatalf("WriteLSHuman() error = %v", err)
+	}
+
+	// Empty list in all-repos scope should just say no runs
+	expected := "no runs found\n"
+	if buf.String() != expected {
+		t.Errorf("output = %q, want %q", buf.String(), expected)
 	}
 }
 
@@ -317,9 +360,13 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 			PR:        "#123",
 		},
 	}
+	ctx := render.LSContext{
+		Scope:            render.LSScopeRepo,
+		IncludesArchived: false,
+	}
 
 	var buf bytes.Buffer
-	if err := render.WriteLSHuman(&buf, rows); err != nil {
+	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
 		t.Fatalf("WriteLSHuman() error = %v", err)
 	}
 
