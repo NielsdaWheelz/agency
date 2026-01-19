@@ -51,6 +51,10 @@ type MergeOpts struct {
 	// AllowDirty allows merge with a dirty worktree.
 	AllowDirty bool
 
+	// NoDeleteBranch preserves the remote branch after merge.
+	// By default, the branch is deleted on merge (--delete-branch passed to gh pr merge).
+	NoDeleteBranch bool
+
 	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
 	Sleeper Sleeper
 
@@ -116,9 +120,10 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 
 	// Append merge_started event
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_started", map[string]any{
-		"run_id":   meta.RunID,
-		"strategy": string(opts.Strategy),
-		"force":    opts.Force,
+		"run_id":           meta.RunID,
+		"strategy":         string(opts.Strategy),
+		"force":            opts.Force,
+		"no_delete_branch": opts.NoDeleteBranch,
 	})
 
 	// === Precheck 1: worktree exists on disk ===
@@ -355,12 +360,13 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 
 	// === Execute gh pr merge ===
 	strategyFlag := "--" + string(opts.Strategy)
+	deleteBranch := !opts.NoDeleteBranch // Delete branch by default
 
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_started", events.GHMergeStartedData(pr.Number, pr.URL, string(opts.Strategy)))
 
 	// Capture merge output to logs/merge.log
 	mergeLogPath := filepath.Join(st.RunLogsDir(repoID, meta.RunID), "merge.log")
-	mergeErr := executeGHMerge(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, strategyFlag, mergeLogPath)
+	mergeErr := executeGHMerge(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, strategyFlag, mergeLogPath, deleteBranch)
 
 	if mergeErr != nil {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_finished", events.GHMergeFinishedData(false, pr.Number, pr.URL))
@@ -436,22 +442,32 @@ func handleAlreadyMergedPR(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 }
 
 // executeGHMerge runs gh pr merge and captures output to merge.log.
-func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int, strategyFlag, mergeLogPath string) error {
+// If deleteBranch is true, passes --delete-branch to gh pr merge.
+func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int, strategyFlag, mergeLogPath string, deleteBranch bool) error {
 	// Ensure logs directory exists (non-fatal; continue anyway)
 	logsDir := filepath.Dir(mergeLogPath)
 	_ = os.MkdirAll(logsDir, 0o700)
 
-	result, err := cr.Run(ctx, "gh", []string{
+	args := []string{
 		"pr", "merge", fmt.Sprintf("%d", prNumber),
 		"-R", ghRepo,
 		strategyFlag,
-	}, exec.RunOpts{
+	}
+	if deleteBranch {
+		args = append(args, "--delete-branch")
+	}
+
+	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
 
 	// Write output to merge.log regardless of result
-	logContent := fmt.Sprintf("=== gh pr merge %d -R %s %s ===\n", prNumber, ghRepo, strategyFlag)
+	deleteBranchStr := ""
+	if deleteBranch {
+		deleteBranchStr = " --delete-branch"
+	}
+	logContent := fmt.Sprintf("=== gh pr merge %d -R %s %s%s ===\n", prNumber, ghRepo, strategyFlag, deleteBranchStr)
 	logContent += fmt.Sprintf("Exit code: %d\n", result.ExitCode)
 	if result.Stdout != "" {
 		logContent += fmt.Sprintf("\n=== stdout ===\n%s", result.Stdout)
