@@ -196,6 +196,8 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 23) empty agency ls should show something
 
+24) attach by name doesn't work
+
 ---
 
 what i need from your codebase
