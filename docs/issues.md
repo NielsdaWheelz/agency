@@ -166,11 +166,11 @@ X) `merge` should be a little more protected, it's a dangerous action. should be
 
 8) should we add e2e tests for creating, pushing, and merging prs from off the non-main branch?
 
-9) we need to rethink the limitation that agency can only work inside a repo. most commands should work anywhere (ls, push, merge, clean, etc.). users should be able to just set `--repo` or `--parent` (branch) or whatever manually. especially when we one day add remote actions, so the user doesn't have to have the repo cloned locally to use agency. if such an option isn't set, it can default to the cwd, but it shouldn't rely on it OR use it exclusively (e.g. using a flag should override the default).
+X) we need to rethink the limitation that agency can only work inside a repo. most commands should work anywhere (ls, push, merge, clean, etc.). users should be able to just set `--repo` or `--parent` (branch) or whatever manually. especially when we one day add remote actions, so the user doesn't have to have the repo cloned locally to use agency. if such an option isn't set, it can default to the cwd, but it shouldn't rely on it OR use it exclusively (e.g. using a flag should override the default).
 
-10) the report.md still looks like the template after push and merge, and so do the commit and pr notes. it is never filled out. i guess that's something i have to tell the runner to do in the prompt? could we instead use the default agency prompt file (like AGENTs.md or CLAUDE.md system prompt), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
+X) the report.md still looks like the template after push and merge, and so do the commit and pr notes. it is never filled out. i guess that's something i have to tell the runner to do in the prompt? could we instead use the default agency prompt file (like AGENTs.md or CLAUDE.md system prompt), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
 
-11) `agency run` should, by default, start attached, not detached.
+X) `agency run` should, by default, start attached, not detached.
 
 12) agency clean deletes the worktree (and tmux) but does not delete git branches (local or remote), per the notes in README.md:1311. If you want the branch gone, you’d delete it manually with git.
 
@@ -182,9 +182,9 @@ X) `merge` should be a little more protected, it's a dangerous action. should be
 
 16) we should add headless mode, `--headless` (e.g. `claude -p "Find and fix the bug in auth.py" --allowedTools "Read,Edit,Bash"` and `codex exec`). this requires a lot of changes tho: we'd need to add an option to attach a text prompt (e.g. `--prompt "fix bug"`), we'd need to log all the outputs, etc.. see v1.5
 
-17) `push` needs to add/commit too.
+X) `push` needs to add/commit too.
 
-18) we need to run `make fmt` or something before verify. or before testing. or in the system prompt so the runner does it. otherwise verify always fails.
+X) we need to run `make fmt` or something before verify. or before testing. or in the system prompt so the runner does it. otherwise verify always fails.
 
 19) generally agency should be available globally
 
@@ -193,6 +193,11 @@ X) `merge` should be a little more protected, it's a dangerous action. should be
 21) Clean optional flag to delete branch
 
 22) on `error_code: E_PR_NOT_MERGEABLE PR #88 has conflicts and cannot be merged` we should provide some sort of affordance. a github link, a command to open it or something, etc.
+
+23) how do we make dealing with merge conflicts neater? `agency merge run-attached-default
+lock: acquired repo lock (held during verify/merge/archive)
+error_code: E_PR_NOT_MERGEABLE
+PR #93 has conflicts and cannot be merged` this is a good message, but doesn't make it simple or easy or clear. what does conductor do?
 
 X) Merge should merge and delete branch. Or at least surface all the gh options
 
