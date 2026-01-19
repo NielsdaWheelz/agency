@@ -190,6 +190,10 @@ i think we should at least have have an Agency system prompt, created on `init`,
 
 20) verify output should be more verbose. so should general error messages (push, merge)
 
+21) Clean optional flag to delete branch
+
+22) Merge should merge and delete branch. Or at least surface all the gh options
+
 ---
 
 what i need from your codebase
