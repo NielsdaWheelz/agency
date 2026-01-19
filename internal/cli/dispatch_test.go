@@ -199,8 +199,8 @@ func TestRun_RunHelp(t *testing.T) {
 			if !strings.Contains(stdout.String(), "--parent") {
 				t.Error("expected --parent in run usage")
 			}
-			if !strings.Contains(stdout.String(), "--attach") {
-				t.Error("expected --attach in run usage")
+			if !strings.Contains(stdout.String(), "--detached") {
+				t.Error("expected --detached in run usage")
 			}
 		})
 	}

@@ -68,18 +68,19 @@ const runUsageText = `usage: agency run --name <name> [options]
 
 create workspace, run setup, and start tmux runner session.
 requires cwd to be inside a git repo with agency.json.
+by default, attaches to the tmux session after creation.
 
 options:
   --name <string>     run name (required, 2-40 chars, lowercase alphanumeric with hyphens)
   --runner <name>     runner name: claude or codex (default: user config defaults.runner)
   --parent <branch>   parent branch (default: current branch)
-  --attach            attach to tmux session immediately after creation
+  --detached          do not attach to tmux session after creation
   -h, --help          show this help
 
 examples:
   agency run --name my-feature
   agency run --name fix-bug-123 --runner claude
-  agency run --name refactor-auth --attach
+  agency run --name refactor-auth --detached
 `
 
 const attachUsageText = `usage: agency attach <run>
@@ -489,7 +490,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 	name := flagSet.String("name", "", "run name (required)")
 	runner := flagSet.String("runner", "", "runner name (claude or codex)")
 	parent := flagSet.String("parent", "", "parent branch")
-	attach := flagSet.Bool("attach", false, "attach to tmux session immediately")
+	detached := flagSet.Bool("detached", false, "do not attach to tmux session after creation")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -524,7 +525,7 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 		Name:   *name,
 		Runner: *runner,
 		Parent: *parent,
-		Attach: *attach,
+		Attach: !*detached,
 	}
 
 	return commands.Run(ctx, cr, fsys, cwd, opts, stdout, stderr)
