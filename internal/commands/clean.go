@@ -16,8 +16,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/events"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -30,12 +28,15 @@ type CleanOpts struct {
 	// RunID is the run identifier to clean (required).
 	RunID string
 
+	// RepoPath is the optional --repo flag to scope name resolution.
+	RepoPath string
+
 	// AllowDirty allows clean with a dirty worktree.
 	AllowDirty bool
 }
 
 // Clean archives a run without merging.
-// Requires cwd to be inside the target repo.
+// Works from any directory; resolves runs globally.
 // Requires an interactive TTY for confirmation.
 func Clean(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts CleanOpts, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Create real tmux client
@@ -55,15 +56,26 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		return errors.New(errors.ENotInteractive, "clean requires an interactive terminal; stdin and stderr must be TTYs")
 	}
 
-	// Find repo root - clean requires being inside a repo
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	// Build resolution context using the new global resolver
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
 	if err != nil {
-		return errors.NewWithDetails(errors.ENoRepo, "not inside a git repository; cd into repo root and retry",
-			map[string]string{"hint": "cd into repo root and retry"})
+		return err
 	}
 
-	// Get origin info for repo identity
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	// Resolve run globally (works from anywhere)
+	resolved, err := ResolveRun(rctx, opts.RunID)
+	if err != nil {
+		return err
+	}
+
+	// Check if run is broken
+	if resolved.Broken || resolved.Record == nil || resolved.Record.Meta == nil {
+		return errors.NewWithDetails(
+			errors.ERunBroken,
+			"run exists but meta.json is unreadable or invalid",
+			map[string]string{"run_id": resolved.RunID, "repo_id": resolved.RepoID},
+		)
+	}
 
 	// Get home directory for path resolution
 	homeDir, err := os.UserHomeDir()
@@ -75,29 +87,20 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 	dataDir := dirs.DataDir
 
-	// Compute repo identity
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-	repoID := repoIdentity.RepoID
-
-	// Resolve run by name or ID within this repo
-	resolved, record, err := resolveRunInRepo(opts.RunID, repoID, dataDir)
-	if err != nil {
-		return err
-	}
-
-	// Check if run is broken
-	if resolved.Broken || record == nil || record.Meta == nil {
-		return errors.NewWithDetails(
-			errors.ERunBroken,
-			"run exists but meta.json is unreadable or invalid",
-			map[string]string{"run_id": resolved.RunID, "repo_id": repoID},
-		)
-	}
-
 	// Use the resolved run_id
 	runID := resolved.RunID
+	repoID := resolved.RepoID
 	opts.RunID = runID // Update opts so later code uses the resolved ID
-	meta := record.Meta
+	meta := resolved.Record.Meta
+
+	// Derive repo root from meta worktree path (best effort)
+	// Clean needs repo root for archive script but worktree is the key context
+	repoRoot := ""
+	if rctx.CWDRepoRoot != "" && rctx.CWDRepoID == repoID {
+		repoRoot = rctx.CWDRepoRoot
+	} else if rctx.ExplicitRepoRoot != "" && rctx.ExplicitRepoID == repoID {
+		repoRoot = rctx.ExplicitRepoRoot
+	}
 
 	// Create store for later operations
 	st := store.NewStore(fsys, dataDir, time.Now)
@@ -232,7 +235,7 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	// Run archive pipeline
 	archiveCfg := archive.Config{
 		Meta:          meta,
-		RepoRoot:      repoRoot.Path,
+		RepoRoot:      repoRoot,
 		DataDir:       dataDir,
 		ArchiveScript: agencyJSON.Scripts.Archive,
 		Timeout:       archive.DefaultArchiveTimeout,
