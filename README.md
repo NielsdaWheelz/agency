@@ -638,6 +638,11 @@ agency ls [--all] [--all-repos] [--json]
 - `STATUS`: derived status (e.g., "active", "idle", "ready for review", "merged (archived)")
 - `PR`: PR number if exists (e.g., "#123")
 
+**empty state:**
+- inside repo without `--all`: `no active runs (use --all to include archived)`
+- inside repo with `--all`: `no runs found`
+- outside repo / `--all-repos`: `no runs found`
+
 **status values:**
 - `active` / `active (pr)`: tmux session exists
 - `idle` / `idle (pr)`: no tmux session, worktree present

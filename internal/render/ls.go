@@ -19,6 +19,26 @@ const (
 	NameUntitled = "<untitled>"
 )
 
+// LSScope indicates the scope of the ls command.
+type LSScope string
+
+const (
+	// LSScopeRepo indicates ls is scoped to the current repo.
+	LSScopeRepo LSScope = "repo"
+
+	// LSScopeAllRepos indicates ls is showing all repos.
+	LSScopeAllRepos LSScope = "all-repos"
+)
+
+// LSContext provides context for formatting empty ls output.
+type LSContext struct {
+	// Scope indicates whether listing is repo-scoped or global.
+	Scope LSScope
+
+	// IncludesArchived indicates whether --all flag was used.
+	IncludesArchived bool
+}
+
 // RunSummaryHumanRow holds the fields for a single human-output row.
 // This is separate from RunSummary to allow formatting before display.
 type RunSummaryHumanRow struct {
@@ -32,9 +52,11 @@ type RunSummaryHumanRow struct {
 
 // WriteLSHuman writes the ls output in human-readable format.
 // Fields are separated by whitespace columns for easy scanning.
-func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow) error {
+func WriteLSHuman(w io.Writer, rows []RunSummaryHumanRow, ctx LSContext) error {
 	if len(rows) == 0 {
-		return nil
+		msg := emptyLSMessage(ctx)
+		_, err := fmt.Fprintln(w, msg)
+		return err
 	}
 
 	// Calculate column widths
@@ -249,4 +271,16 @@ func JoinStrings(sep string, strs ...string) string {
 		}
 	}
 	return strings.Join(parts, sep)
+}
+
+// emptyLSMessage returns the appropriate message for an empty ls result.
+func emptyLSMessage(ctx LSContext) string {
+	switch {
+	case ctx.Scope == LSScopeRepo && !ctx.IncludesArchived:
+		return "no active runs (use --all to include archived)"
+	case ctx.Scope == LSScopeAllRepos:
+		return "no runs found"
+	default:
+		return "no runs found"
+	}
 }
