@@ -633,8 +633,8 @@ Template:
 
 ```
 agency init                       create agency.json template
-agency run --name <name> [--runner] [--parent]
-                                  create workspace, setup, start tmux
+agency run --name <name> [--runner] [--parent] [--detached]
+                                  create workspace, setup, start tmux, attach
 agency ls                         list runs + statuses
 agency show <ref> [--path]        show run details
 agency path <ref>                 output worktree path (for scripting)

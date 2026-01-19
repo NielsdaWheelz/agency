@@ -124,15 +124,15 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		return errors.Wrap(errors.EInternal, "failed to read run result", err)
 	}
 
-	// Print success output
-	printRunSuccess(stdout, result)
+	// Print success output (show "next:" hint only when detached)
+	printRunSuccess(stdout, result, !opts.Attach)
 
 	// Print warnings to stderr
 	for _, w := range result.Warnings {
 		_, _ = fmt.Fprintf(stderr, "warning: %s\n", w.Message)
 	}
 
-	// Handle --attach if requested
+	// Handle attach (default) - skip if --detached was specified
 	if opts.Attach && result.TmuxSessionName != "" {
 		return attachToTmuxSessionRun(result.TmuxSessionName)
 	}
@@ -184,7 +184,8 @@ func getRunResult(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 // printRunSuccess prints the success output in the required format.
 // All writes use explicit error ignoring since this is informational output
 // where write failures cannot be meaningfully handled.
-func printRunSuccess(w io.Writer, result *RunResult) {
+// The detached parameter controls whether to print the "next:" hint.
+func printRunSuccess(w io.Writer, result *RunResult, detached bool) {
 	_, _ = fmt.Fprintf(w, "run_id: %s\n", result.RunID)
 	_, _ = fmt.Fprintf(w, "name: %s\n", result.Name)
 	_, _ = fmt.Fprintf(w, "runner: %s\n", result.Runner)
@@ -192,7 +193,9 @@ func printRunSuccess(w io.Writer, result *RunResult) {
 	_, _ = fmt.Fprintf(w, "branch: %s\n", result.Branch)
 	_, _ = fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
 	_, _ = fmt.Fprintf(w, "tmux: %s\n", result.TmuxSessionName)
-	_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.Name)
+	if detached {
+		_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.Name)
+	}
 }
 
 // printRunError prints error details for run failures.

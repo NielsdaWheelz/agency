@@ -11,10 +11,11 @@ func TestPrintRunSuccess(t *testing.T) {
 	tests := []struct {
 		name     string
 		result   *RunResult
+		detached bool
 		expected string
 	}{
 		{
-			name: "full result",
+			name: "full result detached",
 			result: &RunResult{
 				RunID:           "20260110120000-a3f2",
 				Name:            "test-run",
@@ -24,6 +25,7 @@ func TestPrintRunSuccess(t *testing.T) {
 				WorktreePath:    "/path/to/worktree",
 				TmuxSessionName: "agency_20260110120000-a3f2",
 			},
+			detached: true,
 			expected: `run_id: 20260110120000-a3f2
 name: test-run
 runner: claude
@@ -35,7 +37,28 @@ next: agency attach test-run
 `,
 		},
 		{
-			name: "another run",
+			name: "full result attached (no next hint)",
+			result: &RunResult{
+				RunID:           "20260110120000-a3f2",
+				Name:            "test-run",
+				Runner:          "claude",
+				Parent:          "main",
+				Branch:          "agency/test-run-a3f2",
+				WorktreePath:    "/path/to/worktree",
+				TmuxSessionName: "agency_20260110120000-a3f2",
+			},
+			detached: false,
+			expected: `run_id: 20260110120000-a3f2
+name: test-run
+runner: claude
+parent: main
+branch: agency/test-run-a3f2
+worktree: /path/to/worktree
+tmux: agency_20260110120000-a3f2
+`,
+		},
+		{
+			name: "another run detached",
 			result: &RunResult{
 				RunID:           "20260110130000-b4c5",
 				Name:            "fix-bug",
@@ -45,6 +68,7 @@ next: agency attach test-run
 				WorktreePath:    "/tmp/worktree",
 				TmuxSessionName: "agency_20260110130000-b4c5",
 			},
+			detached: true,
 			expected: `run_id: 20260110130000-b4c5
 name: fix-bug
 runner: codex
@@ -60,7 +84,7 @@ next: agency attach fix-bug
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			printRunSuccess(&buf, tt.result)
+			printRunSuccess(&buf, tt.result, tt.detached)
 			if buf.String() != tt.expected {
 				t.Errorf("printRunSuccess() output mismatch:\ngot:\n%s\nwant:\n%s", buf.String(), tt.expected)
 			}
@@ -77,7 +101,7 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 	// 5. branch
 	// 6. worktree
 	// 7. tmux
-	// 8. next
+	// 8. next (only when detached)
 
 	result := &RunResult{
 		RunID:           "id",
@@ -89,10 +113,11 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 		TmuxSessionName: "tmux",
 	}
 
+	// Test detached mode (includes next: hint)
 	var buf bytes.Buffer
-	printRunSuccess(&buf, result)
+	printRunSuccess(&buf, result, true)
 
-	expectedKeys := []string{
+	expectedKeysDetached := []string{
 		"run_id:",
 		"name:",
 		"runner:",
@@ -104,14 +129,43 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 	}
 
 	lines := bytes.Split(buf.Bytes(), []byte("\n"))
-	for i, key := range expectedKeys {
+	for i, key := range expectedKeysDetached {
 		if i >= len(lines) {
-			t.Errorf("missing line %d: expected key %s", i, key)
+			t.Errorf("detached: missing line %d: expected key %s", i, key)
 			continue
 		}
 		if !bytes.HasPrefix(lines[i], []byte(key)) {
-			t.Errorf("line %d: expected prefix %q, got %q", i, key, string(lines[i]))
+			t.Errorf("detached: line %d: expected prefix %q, got %q", i, key, string(lines[i]))
 		}
+	}
+
+	// Test attached mode (no next: hint)
+	buf.Reset()
+	printRunSuccess(&buf, result, false)
+
+	expectedKeysAttached := []string{
+		"run_id:",
+		"name:",
+		"runner:",
+		"parent:",
+		"branch:",
+		"worktree:",
+		"tmux:",
+	}
+
+	lines = bytes.Split(buf.Bytes(), []byte("\n"))
+	for i, key := range expectedKeysAttached {
+		if i >= len(lines) {
+			t.Errorf("attached: missing line %d: expected key %s", i, key)
+			continue
+		}
+		if !bytes.HasPrefix(lines[i], []byte(key)) {
+			t.Errorf("attached: line %d: expected prefix %q, got %q", i, key, string(lines[i]))
+		}
+	}
+	// Verify no extra lines (just the empty line from trailing newline)
+	if len(lines) > len(expectedKeysAttached)+1 {
+		t.Errorf("attached: expected %d lines, got %d", len(expectedKeysAttached)+1, len(lines))
 	}
 }
 
