@@ -109,6 +109,23 @@ func TestGHE2EPushMerge(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 
+	e2eDir := filepath.Join(worktreePath, "e2e")
+	if err := os.MkdirAll(e2eDir, 0o755); err != nil {
+		t.Fatalf("mkdir e2e dir: %v", err)
+	}
+	logPath := filepath.Join(e2eDir, "gh_e2e.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open e2e log: %v", err)
+	}
+	if _, err := fmt.Fprintf(logFile, "%s %s\n", runID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		_ = logFile.Close()
+		t.Fatalf("write e2e log: %v", err)
+	}
+	if err := logFile.Close(); err != nil {
+		t.Fatalf("close e2e log: %v", err)
+	}
+
 	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/report.md"}, exec.RunOpts{
 		Dir: worktreePath,
 		Env: nonInteractiveEnv(),
@@ -131,6 +148,7 @@ func TestGHE2EPushMerge(t *testing.T) {
 		"scripts/agency_setup.sh",
 		"scripts/agency_verify.sh",
 		"scripts/agency_archive.sh",
+		"e2e/gh_e2e.log",
 	}
 	if !reportIgnored {
 		addPaths = append(addPaths, ".agency/report.md")
@@ -194,7 +212,7 @@ func TestGHE2EPushMerge(t *testing.T) {
 	}
 
 	merged = true
-	runCmd(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)
+	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)
 }
 
 func runCmd(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name string, args ...string) {
@@ -207,6 +225,24 @@ func runCmd(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name 
 		t.Fatalf("%s %s: %v", name, strings.Join(args, " "), err)
 	}
 	if result.ExitCode != 0 {
+		t.Fatalf("%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
+	}
+}
+
+func runCmdAllowMissingRemoteRef(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name string, args ...string) {
+	t.Helper()
+	result, err := cr.Run(ctx, name, args, exec.RunOpts{
+		Dir: dir,
+		Env: nonInteractiveEnv(),
+	})
+	if err != nil {
+		t.Fatalf("%s %s: %v", name, strings.Join(args, " "), err)
+	}
+	if result.ExitCode != 0 {
+		msg := result.Stderr + result.Stdout
+		if strings.Contains(msg, "remote ref does not exist") {
+			return
+		}
 		t.Fatalf("%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
 	}
 }

@@ -66,7 +66,7 @@ XXX) i want a `agency code <run-id>` command. this would open the user's ide in 
 
 
 
-2) i want a command that opens a tmux terminal in the worktree directory, something like `agency open <run-id>`. probably just use tmux still, so the user can detach. tho, thinking on it, it makes more sense maybe to `cd` into the directory instead, since there's no easy way in the `agency` to them reattach with that terminal (unless we save it as a run, which doesn't seem good). what i want, fundamentally, is an easy and fast way for the user to jump in and out of the wortree directory so they can use the terminal there and run commands. 
+X) i want a command that opens a tmux terminal in the worktree directory, something like `agency open <run-id>`. probably just use tmux still, so the user can detach. tho, thinking on it, it makes more sense maybe to `cd` into the directory instead, since there's no easy way in the `agency` to them reattach with that terminal (unless we save it as a run, which doesn't seem good). what i want, fundamentally, is an easy and fast way for the user to jump in and out of the wortree directory so they can use the terminal there and run commands. 
 The Core Problem                                                     
 
 - A CLI cannot change the caller shell’s CWD; any “cd” must 
@@ -120,7 +120,7 @@ users who want detach/reattach without memorizing paths.
 
 3) should we be kicked out of tmux when the runner exits? i'm not convinced that is the best product choice. agency attach fails when runner is dead. at minimum, the error message should be more clear. should we be able to attach anyway without having to `resume` and start a new runner? relatedly, i don't think the tmux should exit if the runner exits/closes for some reason. e.g. what if i just want to work in the terminal there? or want to close claude, do stuff, then open claude again?
 
-4) we need to improve the statuses and logging. `idle` is not a clear descriptor. furthermore, we have too little information about the state of the runner, whether it needs user input, whether it's done, whether it's stuck, etc.:
+X) we need to improve the statuses and logging. `idle` is not a clear descriptor. furthermore, we have too little information about the state of the runner, whether it needs user input, whether it's done, whether it's stuck, etc.:
 i'm wondering if we should make the runner write status artifacts
 a) runner status contract (agency-owned, runner-updated)
 we already do this for scripts. do it for the runner too.
@@ -158,15 +158,15 @@ make “stdin blocked” a manual diagnostic
 this yields a professional UX without lying.
 i think we should at least have have an Agency system prompt, created on `init`, automatically included in all runner prompts (like a CLAUDE.md or AGENTS.md); more and clearer statuses on the runners; runner watchdog; runner status contract.
 
-5) resolved: push now blocks on dirty worktree unless `--allow-dirty` is provided.
+X) resolved: push now blocks on dirty worktree unless `--allow-dirty` is provided.
 
-6) resolved: dirty worktree no longer just warns; requires explicit `--allow-dirty`. 
+X) resolved: dirty worktree no longer just warns; requires explicit `--allow-dirty`. 
 
-7) `merge` should be a little more protected, it's a dangerous action. should be prompt-blocked and require user to type 'merge' or something, no?
+X) `merge` should be a little more protected, it's a dangerous action. should be prompt-blocked and require user to type 'merge' or something, no?
 
-8) we should add e2e tests for creating, pushing, and merging prs from off the non-main branch.
+8) should we add e2e tests for creating, pushing, and merging prs from off the non-main branch?
 
-9) we need to rethink the limitation that agency can only work inside a repo. most commands should work anywhere (ls, push, merge, clean, etc.). users should be able to just set `--repo` or `--parent` (branch) or whatever manually. especially when we one day add remote actions, so the user doesn't have to have the repo cloned locally to use agency.
+9) we need to rethink the limitation that agency can only work inside a repo. most commands should work anywhere (ls, push, merge, clean, etc.). users should be able to just set `--repo` or `--parent` (branch) or whatever manually. especially when we one day add remote actions, so the user doesn't have to have the repo cloned locally to use agency. if such an option isn't set, it can default to the cwd, but it shouldn't rely on it OR use it exclusively (e.g. using a flag should override the default).
 
 10) the report.md still looks like the template after push and merge, and so do the commit and pr notes. it is never filled out. i guess that's something i have to tell the runner to do in the prompt? could we instead use the default agency prompt file (like AGENTs.md or CLAUDE.md system prompt), which contains some info about agency and what to do? (e.g. 'make incremental commits, at the end update the report file with...' etc.)? and have this by default created on init so that new runs use this agent system prompt?
 
