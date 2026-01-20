@@ -16,18 +16,30 @@ jobs:
       - run: go test ./...
 
   e2e:
-    if: ${{ secrets.AGENCY_GH_TOKEN != '' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check for e2e token
+        id: check-token
+        run: |
+          if [ -n "${{ secrets.AGENCY_GH_TOKEN }}" ]; then
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=false" >> $GITHUB_OUTPUT
+            echo "::notice::Skipping e2e tests - AGENCY_GH_TOKEN not configured"
+          fi
       - uses: actions/checkout@v4
+        if: steps.check-token.outputs.has_token == 'true'
       - uses: actions/setup-go@v5
+        if: steps.check-token.outputs.has_token == 'true'
         with:
           go-version-file: go.mod
       - name: gh auth status
+        if: steps.check-token.outputs.has_token == 'true'
         env:
           GH_TOKEN: ${{ secrets.AGENCY_GH_TOKEN }}
         run: gh auth status
       - name: go test gh e2e
+        if: steps.check-token.outputs.has_token == 'true'
         env:
           GH_TOKEN: ${{ secrets.AGENCY_GH_TOKEN }}
           AGENCY_GH_E2E: "1"
