@@ -241,12 +241,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	// === Precheck 6: PR resolution ===
 	pr, err := resolvePRForMerge(ctx, cr, meta, ghRepo, repoRef, eventsPath, repoID, sleeper)
 	if err != nil {
-		if hint := hintFromError(err); hint != "" {
-			printHint(stderr, hint)
-		}
-		if shouldPrintPRViewHint(errors.GetCode(err)) {
-			printHint(stderr, prViewHint(repoRef, meta.Branch, meta.PRNumber))
-		}
+		// Hint is now printed automatically by errors.PrintWithOptions
 		return err
 	}
 
@@ -457,17 +452,20 @@ func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo 
 		args = append(args, "--delete-branch")
 	}
 
+	// Build command string for error details
+	deleteBranchStr := ""
+	if deleteBranch {
+		deleteBranchStr = " --delete-branch"
+	}
+	command := fmt.Sprintf("gh pr merge %d -R %s %s%s", prNumber, ghRepo, strategyFlag, deleteBranchStr)
+
 	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
 
 	// Write output to merge.log regardless of result
-	deleteBranchStr := ""
-	if deleteBranch {
-		deleteBranchStr = " --delete-branch"
-	}
-	logContent := fmt.Sprintf("=== gh pr merge %d -R %s %s%s ===\n", prNumber, ghRepo, strategyFlag, deleteBranchStr)
+	logContent := fmt.Sprintf("=== %s ===\n", command)
 	logContent += fmt.Sprintf("Exit code: %d\n", result.ExitCode)
 	if result.Stdout != "" {
 		logContent += fmt.Sprintf("\n=== stdout ===\n%s", result.Stdout)
@@ -478,12 +476,17 @@ func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo 
 	_ = os.WriteFile(mergeLogPath, []byte(logContent), 0o644)
 
 	if err != nil {
-		return errors.Wrap(errors.EGHPRMergeFailed, "gh pr merge failed", err)
+		return errors.WrapWithDetails(errors.EGHPRMergeFailed, "gh pr merge failed", err,
+			map[string]string{"command": command})
 	}
 	if result.ExitCode != 0 {
 		return errors.NewWithDetails(errors.EGHPRMergeFailed,
 			fmt.Sprintf("gh pr merge exited %d", result.ExitCode),
-			map[string]string{"stderr": truncateString(result.Stderr, 256)})
+			map[string]string{
+				"command":   command,
+				"exit_code": fmt.Sprintf("%d", result.ExitCode),
+				"stderr":    truncateString(result.Stderr, 256),
+			})
 	}
 
 	return nil

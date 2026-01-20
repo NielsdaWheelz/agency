@@ -337,12 +337,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 			"step":       "pr",
 			"error":      err.Error(),
 		})
-		if hint := hintFromError(err); hint != "" {
-			printHint(stderr, hint)
-		}
-		if shouldPrintPRViewHint(errors.GetCode(err)) {
-			printHint(stderr, prViewHint(repoRef, meta.Branch, meta.PRNumber))
-		}
+		// Hint is now printed automatically by errors.PrintWithOptions
 		return err
 	}
 
@@ -516,24 +511,25 @@ func computeAhead(ctx context.Context, cr exec.CommandRunner, workDir, parentRef
 
 // gitPushBranch pushes the workspace branch to origin with -u.
 func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch string, stderr io.Writer) error {
+	command := fmt.Sprintf("git push -u origin %s", branch)
 	result, err := cr.Run(ctx, "git", []string{"push", "-u", "origin", branch}, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
 	if err != nil {
-		return errors.Wrap(errors.EGitPushFailed, "git push failed to start", err)
+		return errors.WrapWithDetails(errors.EGitPushFailed, "git push failed to start", err,
+			map[string]string{"command": command})
 	}
 	if result.ExitCode != 0 {
-		// Surface stderr for actionable debugging
-		if result.Stderr != "" {
-			_, _ = fmt.Fprintf(stderr, "git push stderr:\n%s", result.Stderr)
-		}
+		// Stderr is now included in Details for structured error output
 		return errors.NewWithDetails(
 			errors.EGitPushFailed,
 			"git push -u origin failed",
 			map[string]string{
+				"command":   command,
 				"exit_code": fmt.Sprintf("%d", result.ExitCode),
 				"branch":    branch,
+				"stderr":    strings.TrimSpace(result.Stderr),
 			},
 		)
 	}
