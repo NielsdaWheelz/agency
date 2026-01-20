@@ -19,7 +19,7 @@ import (
 
 const usageText = `agency - local-first runner manager for AI coding sessions
 
-usage: agency <command> [options]
+usage: agency [--verbose] <command> [options]
 
 commands:
   init        create agency.json template and stub scripts
@@ -38,7 +38,8 @@ commands:
   merge       verify, confirm, merge PR, and archive workspace
   clean       archive without merging (abandon run)
 
-options:
+global options:
+  --verbose   show detailed error context
   -h, --help      show this help
   -v, --version   show version
 
@@ -395,6 +396,19 @@ shell integration:
   acd my-feature
 `
 
+// GlobalOpts holds global options parsed before subcommand dispatch.
+type GlobalOpts struct {
+	Verbose bool
+}
+
+// globalOpts stores the parsed global options for access by subcommands.
+var globalOpts GlobalOpts
+
+// GetGlobalOpts returns the parsed global options.
+func GetGlobalOpts() GlobalOpts {
+	return globalOpts
+}
+
 // Run parses arguments and dispatches to the appropriate subcommand.
 // Returns an error if the command fails; the caller should print the error and exit.
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -403,18 +417,40 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return errors.New(errors.EUsage, "no command specified")
 	}
 
-	cmd := args[0]
-	cmdArgs := args[1:]
-
-	// Handle global flags
-	if cmd == "-h" || cmd == "--help" {
+	// Handle global -h/--help and -v/--version BEFORE flag parsing
+	// These are special cases that should work even without a subcommand
+	if args[0] == "-h" || args[0] == "--help" {
 		_, _ = fmt.Fprint(stdout, usageText)
 		return nil
 	}
-	if cmd == "-v" || cmd == "--version" {
+	if args[0] == "-v" || args[0] == "--version" {
 		_, _ = fmt.Fprintf(stdout, "agency %s\n", version.Version)
 		return nil
 	}
+
+	// Parse global flags before subcommand
+	// Per spec: --verbose is a global flag that works regardless of position before subcommand
+	globalFlags := flag.NewFlagSet("agency", flag.ContinueOnError)
+	globalFlags.SetOutput(io.Discard)
+	verbose := globalFlags.Bool("verbose", false, "show detailed error context")
+
+	// Parse global flags - stop at first non-flag argument
+	// Errors are expected when args[0] is a command name, not a flag.
+	// We intentionally ignore parse errors here and fall through to normal command handling.
+	_ = globalFlags.Parse(args)
+
+	// Store parsed global options
+	globalOpts.Verbose = *verbose
+
+	// Get remaining args after global flags
+	subArgs := globalFlags.Args()
+	if len(subArgs) == 0 {
+		_, _ = fmt.Fprint(stderr, usageText)
+		return errors.New(errors.EUsage, "no command specified")
+	}
+
+	cmd := subArgs[0]
+	cmdArgs := subArgs[1:]
 
 	switch cmd {
 	case "init":

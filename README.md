@@ -479,6 +479,12 @@ popd                    # return to previous directory
 ## commands
 
 ```
+agency [--verbose] <command> [options]
+
+global options:
+  --verbose              show detailed error context
+
+commands:
 agency init [--repo] [--no-gitignore] [--force]
                                   create agency.json template + stub scripts
 agency run --name <name> [--runner] [--parent] [--detached]
@@ -1388,6 +1394,54 @@ log: /path/to/logs/archive.log
 **examples:**
 ```bash
 agency clean 20260110120000-a3f2    # archive without merging
+```
+
+## error output
+
+agency uses structured error output with stable error codes.
+
+### default error format
+
+```
+error_code: E_...
+<one-line message>
+
+<context (key: value pairs)>
+
+hint: <actionable guidance>
+```
+
+example (verify failure):
+
+```
+error_code: E_SCRIPT_FAILED
+verify failed (exit 1)
+
+script: scripts/agency_verify.sh
+exit_code: 1
+duration: 12.3s
+log: /path/to/verify.log
+record: /path/to/verify_record.json
+
+output (last 20 lines):
+  npm ERR! Test failed
+  npm ERR! code ELIFECYCLE
+  ...
+
+hint: fix the failing tests and run: agency verify my-feature
+```
+
+### `--verbose` mode
+
+use `agency --verbose <command>` to see additional context:
+
+- more context keys displayed
+- longer output tails (up to 100 lines)
+- extra details section with all remaining metadata
+
+```bash
+agency --verbose push my-feature
+agency --verbose merge my-feature
 ```
 
 ## development

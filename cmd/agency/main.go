@@ -11,7 +11,11 @@ import (
 func main() {
 	err := cli.Run(os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
-		errors.Print(os.Stderr, err)
+		// Use verbose mode if --verbose global flag was set
+		opts := errors.PrintOptions{
+			Verbose: cli.GetGlobalOpts().Verbose,
+		}
+		errors.PrintWithOptions(os.Stderr, err, opts)
 		os.Exit(errors.ExitCode(err))
 	}
 }

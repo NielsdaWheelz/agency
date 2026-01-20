@@ -217,20 +217,17 @@ func ExitCode(err error) int {
 	return 1
 }
 
-// Print writes the error to w in the stable stderr format:
+// Print writes the error to w in the stable stderr format.
+// This is the default error printer - uses Format() with default options.
+// Signature preserved for backward compatibility (zero churn).
+//
+// Output format:
 //
 //	error_code: <CODE>
 //	<message>
+//
+//	<context>
+//	<hint>
 func Print(w io.Writer, err error) {
-	if err == nil {
-		return
-	}
-	var ae *AgencyError
-	if errors.As(err, &ae) {
-		_, _ = fmt.Fprintf(w, "error_code: %s\n", ae.Code)
-		_, _ = fmt.Fprintln(w, ae.Msg)
-	} else {
-		// Fallback for non-AgencyError errors (should not happen in practice)
-		_, _ = fmt.Fprintln(w, err.Error())
-	}
+	PrintWithOptions(w, err, PrintOptions{})
 }

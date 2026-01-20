@@ -83,8 +83,9 @@ func TestPrint(t *testing.T) {
 		want string
 	}{
 		{"nil", nil, ""},
-		{"E_USAGE", New(EUsage, "bad args"), "error_code: E_USAGE\nbad args\n"},
-		{"E_NOT_IMPLEMENTED", New(ENotImplemented, "not ready"), "error_code: E_NOT_IMPLEMENTED\nnot ready\n"},
+		// Format now includes blank line after message (for context block)
+		{"E_USAGE", New(EUsage, "bad args"), "error_code: E_USAGE\nbad args\n\n"},
+		{"E_NOT_IMPLEMENTED", New(ENotImplemented, "not ready"), "error_code: E_NOT_IMPLEMENTED\nnot ready\n\n"},
 	}
 
 	for _, tt := range tests {
