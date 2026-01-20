@@ -54,14 +54,16 @@ type ResolvedRun struct {
 
 // Regular expressions for run_id format.
 // Exact run_id: 14 digits (yyyymmddhhmmss) + hyphen + 4 hex chars (e.g., "20260109013207-a3f2")
-// Prefix: 14 digits + hyphen + 1-4 hex chars (e.g., "20260109013207-a")
-// Also accept shorter formats for compatibility (8-14 digit timestamps)
+// Prefix patterns (must support partial prefixes like "20260115" or "20260115-a"):
+// - Just digits: could be a timestamp prefix
+// - Digits + hyphen + optional hex: partial run_id
 var (
 	exactRunIDRegex  = regexp.MustCompile(`^\d{8,14}-[a-f0-9]{4}$`)
-	prefixRunIDRegex = regexp.MustCompile(`^\d{8,14}-[a-f0-9]{1,4}$`)
+	prefixRunIDRegex = regexp.MustCompile(`^\d{8,14}(-[a-f0-9]{0,4})?$`)
 )
 
 // isRunIDFormat checks if input looks like a run_id (exact or prefix).
+// This includes partial prefixes like "20260115" (just timestamp digits).
 func isRunIDFormat(input string) bool {
 	return exactRunIDRegex.MatchString(input) || prefixRunIDRegex.MatchString(input)
 }
@@ -420,6 +422,138 @@ func formatAmbiguousError(input string, candidates []ids.RunRef, matchType strin
 		msg,
 		map[string]string{"input": input},
 	)
+}
+
+// resolveRunGlobal is a simplified global resolution function for commands that
+// don't need full scoping (CWD or --repo) and just resolve by run_id or name globally.
+// Returns the resolved RunRef, matching RunRecord, and error.
+//
+// Used by: show, path, open, push, resolve commands
+func resolveRunGlobal(input string, dataDir string) (ids.RunRef, *store.RunRecord, error) {
+	// Build a minimal resolution context (no CWD or explicit repo scoping)
+	rctx := &RunResolutionContext{
+		DataDir: dataDir,
+	}
+
+	resolved, err := ResolveRun(rctx, input)
+	if err != nil {
+		return ids.RunRef{}, nil, err
+	}
+
+	return resolved.RunRef, resolved.Record, nil
+}
+
+// resolveRunInRepo resolves a run within a specific repo by repo_id.
+// Used for commands with --repo flag that need scoped resolution.
+func resolveRunInRepo(input, repoID, dataDir string) (ids.RunRef, *store.RunRecord, error) {
+	// Build resolution context with explicit repo scope
+	rctx := &RunResolutionContext{
+		DataDir:        dataDir,
+		ExplicitRepoID: repoID,
+	}
+
+	resolved, err := ResolveRun(rctx, input)
+	if err != nil {
+		return ids.RunRef{}, nil, err
+	}
+
+	return resolved.RunRef, resolved.Record, nil
+}
+
+// resolveRunByNameOrID resolves a run from a pre-loaded list of records.
+// This is a simpler helper for cases where records are already loaded.
+// Returns raw ids errors (*ids.ErrNotFound, *ids.ErrAmbiguous) for caller to handle.
+//
+// Per spec: archived runs are excluded from name matching but can still be resolved by run_id.
+func resolveRunByNameOrID(input string, records []store.RunRecord) (ids.RunRef, *store.RunRecord, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return ids.RunRef{}, nil, &ids.ErrNotFound{Input: input}
+	}
+
+	// Build refs from records
+	refs := make([]ids.RunRef, len(records))
+	for i, rec := range records {
+		refs[i] = ids.RunRef{
+			RepoID: rec.RepoID,
+			RunID:  rec.RunID,
+			Name:   rec.Name,
+			Broken: rec.Broken,
+		}
+	}
+
+	// Try ID resolution first (includes all runs, even archived)
+	if isRunIDFormat(input) {
+		resolved, err := ids.ResolveRunRef(input, refs)
+		if err == nil {
+			for i := range records {
+				if records[i].RunID == resolved.RunID && records[i].RepoID == resolved.RepoID {
+					return resolved, &records[i], nil
+				}
+			}
+		}
+		// If not found by ID format but it looks like an ID, return not found
+		var notFound *ids.ErrNotFound
+		if stderrors.As(err, &notFound) {
+			// Fall through to name resolution
+		} else if err != nil {
+			return ids.RunRef{}, nil, err
+		}
+	}
+
+	// Try name resolution - exclude archived runs
+	var nameMatches []ids.RunRef
+	for i, ref := range refs {
+		if ref.Name == input {
+			// Check if run is archived
+			if isRecordArchived(&records[i]) {
+				continue
+			}
+			nameMatches = append(nameMatches, ref)
+		}
+	}
+
+	switch len(nameMatches) {
+	case 0:
+		return ids.RunRef{}, nil, &ids.ErrNotFound{Input: input}
+	case 1:
+		for i := range records {
+			if records[i].RunID == nameMatches[0].RunID && records[i].RepoID == nameMatches[0].RepoID {
+				return nameMatches[0], &records[i], nil
+			}
+		}
+		return ids.RunRef{}, nil, &ids.ErrNotFound{Input: input}
+	default:
+		return ids.RunRef{}, nil, &ids.ErrAmbiguous{Input: input, Candidates: nameMatches}
+	}
+}
+
+// isRecordArchived checks if a run record is archived.
+func isRecordArchived(rec *store.RunRecord) bool {
+	if rec.Meta != nil && rec.Meta.Archive != nil && rec.Meta.Archive.ArchivedAt != "" {
+		return true
+	}
+	return false
+}
+
+// handleResolveErr converts resolution errors to user-facing AgencyErrors.
+func handleResolveErr(err error, input string) error {
+	if err == nil {
+		return nil
+	}
+
+	var notFound *ids.ErrNotFound
+	if stderrors.As(err, &notFound) {
+		return errors.New(errors.ERunNotFound, fmt.Sprintf("run not found: %s", input))
+	}
+
+	var ambiguous *ids.ErrAmbiguous
+	if stderrors.As(err, &ambiguous) {
+		return formatAmbiguousError(input, ambiguous.Candidates, "run_id")
+	}
+
+	// Pass through other errors
+	return err
 }
 
 // ResolveRepoContext resolves a repo context for commands that need a repo.

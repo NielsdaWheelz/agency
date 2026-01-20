@@ -25,6 +25,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -59,6 +60,10 @@ type PushOpts struct {
 
 	// AllowDirty allows pushing with a dirty worktree.
 	AllowDirty bool
+
+	// ForceWithLease uses git push --force-with-lease instead of regular push.
+	// Required after rebasing or amending commits.
+	ForceWithLease bool
 
 	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
 	Sleeper Sleeper
@@ -302,11 +307,22 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 
 	// Step 12: git push -u origin <workspace_branch>
+	// Determine the ref to use in printed commands (same ref user invoked)
+	userRef := opts.RunID
+	if meta.Name != "" && meta.Name == opts.RunID {
+		userRef = meta.Name
+	}
+	// For prefix matches, fall back to run_id
+	if userRef != meta.Name && userRef != meta.RunID {
+		userRef = meta.RunID
+	}
+
 	pushStart := time.Now()
-	if err := gitPushBranch(ctx, cr, meta.WorktreePath, meta.Branch, stderr); err != nil {
+	if err := gitPushBranch(ctx, cr, meta.WorktreePath, meta.Branch, opts.ForceWithLease, userRef, stderr); err != nil {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
-			"error_code": string(errors.GetCode(err)),
-			"step":       "git_push",
+			"error_code":       string(errors.GetCode(err)),
+			"step":             "git_push",
+			"force_with_lease": opts.ForceWithLease,
 		})
 		return err
 	}
@@ -510,9 +526,21 @@ func computeAhead(ctx context.Context, cr exec.CommandRunner, workDir, parentRef
 }
 
 // gitPushBranch pushes the workspace branch to origin with -u.
-func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch string, stderr io.Writer) error {
-	command := fmt.Sprintf("git push -u origin %s", branch)
-	result, err := cr.Run(ctx, "git", []string{"push", "-u", "origin", branch}, exec.RunOpts{
+// If forceWithLease is true, uses --force-with-lease for safe force push after rebase.
+// Returns a special error with hint when non-fast-forward rejection is detected.
+func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch string, forceWithLease bool, runRef string, stderr io.Writer) error {
+	var args []string
+	var command string
+
+	if forceWithLease {
+		args = []string{"push", "--force-with-lease", "-u", "origin", branch}
+		command = fmt.Sprintf("git push --force-with-lease -u origin %s", branch)
+	} else {
+		args = []string{"push", "-u", "origin", branch}
+		command = fmt.Sprintf("git push -u origin %s", branch)
+	}
+
+	result, err := cr.Run(ctx, "git", args, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
 	})
@@ -521,7 +549,29 @@ func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch s
 			map[string]string{"command": command})
 	}
 	if result.ExitCode != 0 {
-		// Stderr is now included in Details for structured error output
+		stderrStr := strings.TrimSpace(result.Stderr)
+
+		// Check for non-fast-forward rejection (only hint when not using --force-with-lease)
+		if !forceWithLease && render.IsNonFastForwardError(stderrStr) {
+			// Print structured error with hint
+			_, _ = fmt.Fprintln(stderr, "error_code: E_GIT_PUSH_FAILED")
+			_, _ = fmt.Fprintln(stderr, "push rejected (non-fast-forward)")
+			_, _ = fmt.Fprintln(stderr)
+			_, _ = fmt.Fprint(stderr, render.FormatNonFastForwardHint(runRef))
+
+			return errors.NewWithDetails(
+				errors.EGitPushFailed,
+				"push rejected (non-fast-forward)",
+				map[string]string{
+					"command":   command,
+					"exit_code": fmt.Sprintf("%d", result.ExitCode),
+					"branch":    branch,
+					"hint":      fmt.Sprintf("branch was rebased or amended; retry with: agency push %s --force-with-lease", runRef),
+				},
+			)
+		}
+
+		// Generic push failure
 		return errors.NewWithDetails(
 			errors.EGitPushFailed,
 			"git push -u origin failed",
@@ -529,7 +579,7 @@ func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch s
 				"command":   command,
 				"exit_code": fmt.Sprintf("%d", result.ExitCode),
 				"branch":    branch,
-				"stderr":    strings.TrimSpace(result.Stderr),
+				"stderr":    stderrStr,
 			},
 		)
 	}

@@ -37,6 +37,7 @@ commands:
   verify      run scripts.verify and record results
   merge       verify, confirm, merge PR, and archive workspace
   clean       archive without merging (abandon run)
+  resolve     show conflict resolution guidance for a run
 
 global options:
   --verbose   show detailed error context
@@ -203,20 +204,23 @@ arguments:
   run           run name, run_id, or unique run_id prefix
 
 options:
-  --allow-dirty  allow push even if worktree has uncommitted changes
-  --force       proceed even if .agency/report.md is missing/empty
-  -h, --help    show this help
+  --allow-dirty       allow push even if worktree has uncommitted changes
+  --force             proceed even if .agency/report.md is missing/empty
+  --force-with-lease  use git push --force-with-lease (required after rebase)
+  -h, --help          show this help
 
 notes:
   - requires origin to be a github.com remote
   - requires gh to be authenticated
   - does NOT bypass E_EMPTY_DIFF (at least one commit required)
   - fails if worktree has uncommitted changes unless --allow-dirty
+  - use --force-with-lease after rebasing to update an existing branch safely
 
 examples:
-  agency push my-feature               # push branch
-  agency push my-feature --force       # push with empty report
-  agency push my-feature --allow-dirty # push with dirty worktree
+  agency push my-feature                     # push branch
+  agency push my-feature --force             # push with empty report
+  agency push my-feature --allow-dirty       # push with dirty worktree
+  agency push my-feature --force-with-lease  # force push after rebase
 `
 
 const verifyUsageText = `usage: agency verify <run> [options]
@@ -404,6 +408,32 @@ shell integration:
   acd my-feature
 `
 
+const resolveUsageText = `usage: agency resolve <run>
+
+show conflict resolution guidance for a run.
+provides step-by-step instructions to resolve merge conflicts via rebase.
+read-only: makes no git changes, does not require repo lock.
+
+arguments:
+  run           run name, run_id, or unique run_id prefix
+
+options:
+  -h, --help    show this help
+
+behavior:
+  - if worktree present: prints action card to stdout, exits 0
+  - if worktree missing: prints partial guidance to stderr, exits with E_WORKTREE_MISSING
+
+output includes:
+  - PR URL, base branch, run branch, worktree path
+  - numbered steps: open, fetch, rebase, resolve, push --force-with-lease, merge
+  - fallback cd command
+
+examples:
+  agency resolve my-feature
+  agency resolve 20260110120000-a3f2
+`
+
 // GlobalOpts holds global options parsed before subcommand dispatch.
 type GlobalOpts struct {
 	Verbose bool
@@ -491,6 +521,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runMerge(cmdArgs, stdout, stderr)
 	case "clean":
 		return runClean(cmdArgs, stdout, stderr)
+	case "resolve":
+		return runResolve(cmdArgs, stdout, stderr)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("unknown command: %s", cmd))
@@ -996,6 +1028,7 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 
 	allowDirty := flagSet.Bool("allow-dirty", false, "allow push even if worktree has uncommitted changes")
 	force := flagSet.Bool("force", false, "proceed even if report is missing/empty")
+	forceWithLease := flagSet.Bool("force-with-lease", false, "use git push --force-with-lease (required after rebase)")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -1029,9 +1062,10 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.PushOpts{
-		RunID:      runID,
-		Force:      *force,
-		AllowDirty: *allowDirty,
+		RunID:          runID,
+		Force:          *force,
+		AllowDirty:     *allowDirty,
+		ForceWithLease: *forceWithLease,
 	}
 
 	return commands.Push(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -1233,4 +1267,46 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Clean(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
+}
+
+func runResolve(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("resolve", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			_, _ = fmt.Fprint(stdout, resolveUsageText)
+			return nil
+		}
+	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
+	// run_id is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		_, _ = fmt.Fprint(stderr, resolveUsageText)
+		return errors.New(errors.EUsage, "run_id is required")
+	}
+	runID := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.ResolveOpts{
+		RunID: runID,
+	}
+
+	return commands.Resolve(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
