@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -83,14 +84,23 @@ func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
 	if cfg.Version != 1 {
 		t.Errorf("Version = %d, want 1", cfg.Version)
 	}
-	if cfg.Scripts.Setup != "scripts/agency_setup.sh" {
-		t.Errorf("Scripts.Setup = %q, want %q", cfg.Scripts.Setup, "scripts/agency_setup.sh")
+	if cfg.Scripts.Setup.Path != "scripts/agency_setup.sh" {
+		t.Errorf("Scripts.Setup.Path = %q, want %q", cfg.Scripts.Setup.Path, "scripts/agency_setup.sh")
 	}
-	if cfg.Scripts.Verify != "scripts/agency_verify.sh" {
-		t.Errorf("Scripts.Verify = %q, want %q", cfg.Scripts.Verify, "scripts/agency_verify.sh")
+	if cfg.Scripts.Setup.Timeout != 10*time.Minute {
+		t.Errorf("Scripts.Setup.Timeout = %v, want %v", cfg.Scripts.Setup.Timeout, 10*time.Minute)
 	}
-	if cfg.Scripts.Archive != "scripts/agency_archive.sh" {
-		t.Errorf("Scripts.Archive = %q, want %q", cfg.Scripts.Archive, "scripts/agency_archive.sh")
+	if cfg.Scripts.Verify.Path != "scripts/agency_verify.sh" {
+		t.Errorf("Scripts.Verify.Path = %q, want %q", cfg.Scripts.Verify.Path, "scripts/agency_verify.sh")
+	}
+	if cfg.Scripts.Verify.Timeout != 30*time.Minute {
+		t.Errorf("Scripts.Verify.Timeout = %v, want %v", cfg.Scripts.Verify.Timeout, 30*time.Minute)
+	}
+	if cfg.Scripts.Archive.Path != "scripts/agency_archive.sh" {
+		t.Errorf("Scripts.Archive.Path = %q, want %q", cfg.Scripts.Archive.Path, "scripts/agency_archive.sh")
+	}
+	if cfg.Scripts.Archive.Timeout != 5*time.Minute {
+		t.Errorf("Scripts.Archive.Timeout = %v, want %v", cfg.Scripts.Archive.Timeout, 5*time.Minute)
 	}
 }
 
@@ -101,7 +111,7 @@ func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
 		wantMsg string
 	}{
 		{"scripts as array", "wrong_types_scripts.json", "scripts must be an object"},
-		{"script verify as object", "wrong_types_script_verify.json", "scripts.verify must be a string"},
+		{"script verify missing path", "wrong_types_script_verify.json", "scripts.verify missing required field 'path'"},
 		{"version as string", "wrong_version_string.json", "version must be an integer"},
 		{"version as float", "wrong_version_float.json", "version must be an integer"},
 	}
@@ -232,7 +242,7 @@ func TestFirstValidationError_Stability(t *testing.T) {
 		fixture string
 		wantMsg string
 	}{
-		{"missing_scripts.json", "missing required field scripts.setup"},
+		{"missing_scripts.json", "missing required field scripts.setup.path"},
 		{"wrong_version.json", "version must be 1"},
 	}
 
@@ -324,8 +334,8 @@ func TestValidateForS1_FullConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("S1 validation should pass with full config: %v", err)
 	}
-	if validated.Scripts.Setup != "scripts/agency_setup.sh" {
-		t.Errorf("Scripts.Setup = %q, want %q", validated.Scripts.Setup, "scripts/agency_setup.sh")
+	if validated.Scripts.Setup.Path != "scripts/agency_setup.sh" {
+		t.Errorf("Scripts.Setup.Path = %q, want %q", validated.Scripts.Setup.Path, "scripts/agency_setup.sh")
 	}
 }
 
@@ -386,9 +396,18 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	configContent := `{
   "version": 1,
   "scripts": {
-    "setup": "scripts/setup.sh",
-    "verify": "scripts/verify.sh",
-    "archive": "scripts/archive.sh"
+    "setup": {
+      "path": "scripts/setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/archive.sh",
+      "timeout": "5m"
+    }
   }
 }`
 
@@ -406,7 +425,10 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	if cfg.Version != 1 {
 		t.Errorf("Version = %d, want 1", cfg.Version)
 	}
-	if cfg.Scripts.Setup != "scripts/setup.sh" {
-		t.Errorf("Scripts.Setup = %q, want %q", cfg.Scripts.Setup, "scripts/setup.sh")
+	if cfg.Scripts.Setup.Path != "scripts/setup.sh" {
+		t.Errorf("Scripts.Setup.Path = %q, want %q", cfg.Scripts.Setup.Path, "scripts/setup.sh")
+	}
+	if cfg.Scripts.Setup.Timeout != 10*time.Minute {
+		t.Errorf("Scripts.Setup.Timeout = %v, want %v", cfg.Scripts.Setup.Timeout, 10*time.Minute)
 	}
 }

@@ -29,17 +29,15 @@ type VerifyOpts struct {
 
 // Verify runs the repo's scripts.verify for a run and records results.
 // Works from any directory; resolves runs globally.
+// If opts.Timeout is 0, uses the timeout from agency.json config.
 func Verify(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts VerifyOpts, stdout, stderr io.Writer) error {
 	// Validate run_id provided
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
 	}
 
-	// Default timeout if not specified
+	// Timeout: if caller specified, use it; otherwise service will use config default
 	timeout := opts.Timeout
-	if timeout == 0 {
-		timeout = 30 * time.Minute
-	}
 
 	// Build resolution context using the new global resolver
 	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)

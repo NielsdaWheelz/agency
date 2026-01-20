@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
@@ -39,9 +40,18 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	agencyJSON := `{
   "version": 1,
   "scripts": {
-    "setup": "scripts/agency_setup.sh",
-    "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh"
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
   }
 }`
 	if err := os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0644); err != nil {
@@ -166,6 +176,7 @@ func TestService_CreateWorktree(t *testing.T) {
 	st.ParentBranch = "main"
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Now test CreateWorktree
 	err = svc.CreateWorktree(ctx, st)
@@ -535,6 +546,7 @@ func TestService_RunSetup_Success(t *testing.T) {
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
@@ -648,6 +660,7 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
@@ -743,6 +756,7 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
@@ -841,6 +855,7 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
@@ -930,6 +945,7 @@ func TestService_StartTmux_Success(t *testing.T) {
 	// Use 'sh' as the runner command (just opens a shell, which is safe for testing)
 	st.ResolvedRunnerCmd = "sh"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
@@ -1024,6 +1040,7 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 
 	st.ResolvedRunnerCmd = "sh"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
@@ -1119,6 +1136,7 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 
 	st.ResolvedRunnerCmd = "sh"
 	st.SetupScript = "scripts/agency_setup.sh"
+	st.SetupTimeout = 10 * time.Minute
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)

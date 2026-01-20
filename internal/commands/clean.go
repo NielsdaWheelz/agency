@@ -237,8 +237,8 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		Meta:          meta,
 		RepoRoot:      repoRoot,
 		DataDir:       dataDir,
-		ArchiveScript: agencyJSON.Scripts.Archive,
-		Timeout:       archive.DefaultArchiveTimeout,
+		ArchiveScript: agencyJSON.Scripts.Archive.Path,
+		Timeout:       agencyJSON.Scripts.Archive.Timeout,
 	}
 
 	archiveDeps := archive.Deps{

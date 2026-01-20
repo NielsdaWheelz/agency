@@ -95,9 +95,18 @@ func setupResumeTestEnv(t *testing.T, runID string, setupMeta, createWorktree bo
 	agencyJSON := `{
 		"version": 1,
 		"scripts": {
-			"setup": "scripts/agency_setup.sh",
-			"verify": "scripts/agency_verify.sh",
-			"archive": "scripts/agency_archive.sh"
+			"setup": {
+				"path": "scripts/agency_setup.sh",
+				"timeout": "10m"
+			},
+			"verify": {
+				"path": "scripts/agency_verify.sh",
+				"timeout": "30m"
+			},
+			"archive": {
+				"path": "scripts/agency_archive.sh",
+				"timeout": "5m"
+			}
 		}
 	}`
 	if err := os.WriteFile(filepath.Join(repoDir, "agency.json"), []byte(agencyJSON), 0644); err != nil {

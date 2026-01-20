@@ -51,15 +51,13 @@ type VerifyRunResult struct {
 
 // VerifyRun executes scripts.verify for an existing run and updates meta+events.
 // It must be cwd-independent; it resolves run via global store scan.
+// If timeout is 0, uses the timeout from agency.json config.
 //
 // Returns:
 //   - (result, nil) whenever verify ran and produced a record (even if ok=false)
 //   - (nil, error) only for infra failures (lock, missing workspace, persistence failure)
 func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Duration) (*VerifyRunResult, error) {
-	// Default timeout if not specified
-	if timeout == 0 {
-		timeout = 30 * time.Minute
-	}
+	// Note: timeout default is applied after loading agency.json (see below)
 
 	// Step 1: Resolve run_id globally (cwd-independent) with name support
 	allRuns, err := store.ScanAllRuns(s.DataDir)
@@ -173,12 +171,17 @@ func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Dur
 		}
 	}()
 
-	// Step 5: Load agency.json to get verify script path
+	// Step 5: Load agency.json to get verify script path and timeout
 	agencyJSON, err := config.LoadAgencyConfig(s.FS, worktreePath)
 	if err != nil {
 		return nil, err
 	}
-	verifyScript := agencyJSON.Scripts.Verify
+	verifyScript := agencyJSON.Scripts.Verify.Path
+
+	// Apply config timeout if caller didn't specify one
+	if timeout == 0 {
+		timeout = agencyJSON.Scripts.Verify.Timeout
+	}
 
 	// Build paths
 	runDir := st.RunDir(repoID, runID)

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
@@ -19,9 +20,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/NielsdaWheelz/agency/internal/worktree"
 )
-
-// DefaultArchiveTimeout is the default timeout for the archive script.
-const DefaultArchiveTimeout = 5 * time.Minute
 
 // Result holds the result of an archive operation.
 type Result struct {
@@ -92,7 +90,7 @@ func Archive(ctx context.Context, cfg Config, deps Deps, st *store.Store) *Resul
 	result := &Result{}
 
 	if cfg.Timeout == 0 {
-		cfg.Timeout = DefaultArchiveTimeout
+		cfg.Timeout = config.DefaultArchiveTimeout
 	}
 
 	runID := cfg.Meta.RunID
