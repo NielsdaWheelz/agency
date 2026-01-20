@@ -177,7 +177,18 @@ status: ok
 
 if you see errors, fix them before continuing.
 
-## step 5: start an ai coding session
+## step 5: commit agency files
+
+agency creates git worktrees from your current branch. worktrees only contain committed files, so you must commit the agency files before starting a run:
+
+```bash
+git add agency.json CLAUDE.md scripts/
+git commit -m "add agency configuration"
+```
+
+if you skip this step, `agency run` will fail because `agency.json` won't exist in the worktree.
+
+## step 6: start an ai coding session
 
 ```bash
 agency run --name add-user-auth
@@ -190,7 +201,7 @@ agency run --name add-user-auth
 4. started a tmux session with claude running inside the worktree
 5. attached you to the tmux session (you're now inside it!)
 
-## step 6: work with the ai
+## step 7: work with the ai
 
 you're now in a terminal with claude running. give it instructions:
 
@@ -212,7 +223,7 @@ agency resume add-user-auth            # reattach (creates session if needed)
 agency resume add-user-auth --restart  # restart with fresh claude session
 ```
 
-## step 7: review the work
+## step 8: review the work
 
 ```bash
 # see what claude did
@@ -227,7 +238,7 @@ git log --oneline main..HEAD
 git diff main
 ```
 
-## step 8: push and create PR
+## step 9: push and create PR
 
 ```bash
 agency push add-user-auth
@@ -247,7 +258,7 @@ you can now review the PR on GitHub, request changes, etc.
 
 **if you make more changes and push again**, agency updates the existing PR.
 
-## step 9: merge and cleanup
+## step 10: merge and cleanup
 
 ```bash
 agency merge add-user-auth
