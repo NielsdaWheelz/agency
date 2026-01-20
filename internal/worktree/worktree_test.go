@@ -82,7 +82,10 @@ func TestCreate_Success(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
 
 	// Resolve symlinks for comparison (macOS /var -> /private/var)
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
 
 	parentBranch := getCurrentBranch(t, repoRoot)
 	if parentBranch == "" {
@@ -187,7 +190,10 @@ func TestCreate_Success(t *testing.T) {
 func TestCreate_Collision_ReturnsError(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
 
 	parentBranch := getCurrentBranch(t, repoRoot)
 	if parentBranch == "" {
@@ -211,7 +217,7 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 	}
 
 	// First creation should succeed
-	_, err := Create(ctx, cr, fsys, opts)
+	_, err = Create(ctx, cr, fsys, opts)
 	if err != nil {
 		t.Fatalf("first Create failed: %v", err)
 	}
@@ -248,7 +254,10 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
 
 	ctx := context.Background()
 	cr := agencyexec.NewRealRunner()
@@ -257,7 +266,7 @@ func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
 	runID := "20260110120000-dead"
 	repoID := "abcd1234ef567890"
 
-	_, err := Create(ctx, cr, fsys, CreateOpts{
+	_, err = Create(ctx, cr, fsys, CreateOpts{
 		RunID:        runID,
 		Name:         "Test",
 		RepoRoot:     resolvedRepoRoot,
@@ -458,7 +467,10 @@ func TestInstructionsTemplate(t *testing.T) {
 func TestCreate_IgnoreWarning(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
 
 	parentBranch := getCurrentBranch(t, repoRoot)
 	if parentBranch == "" {
@@ -502,7 +514,10 @@ func TestCreate_IgnoreWarning(t *testing.T) {
 func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
 
-	resolvedRepoRoot, _ := filepath.EvalSymlinks(repoRoot)
+	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
 
 	parentBranch := getCurrentBranch(t, repoRoot)
 	if parentBranch == "" {
@@ -545,11 +560,4 @@ func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
 	if len(result.Warnings) > 0 {
 		t.Errorf("expected no warnings when .agency/ is ignored, got: %v", result.Warnings)
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
