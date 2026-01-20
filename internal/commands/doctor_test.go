@@ -209,7 +209,7 @@ func TestDoctor_Success(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("doctor failed: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error for unauthenticated gh")
 	}
@@ -316,7 +316,7 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error for non-executable script")
 	}
@@ -353,7 +353,7 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error for missing script")
 	}
@@ -384,7 +384,7 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	// Doctor should still succeed with missing origin
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("doctor should succeed without GitHub origin: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 
 	// Run doctor twice
 	var stdout1, stderr1 bytes.Buffer
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout1, &stderr1)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout1, &stderr1)
 	if err != nil {
 		t.Fatalf("first doctor run failed: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	var stdout2, stderr2 bytes.Buffer
-	err = Doctor(context.Background(), m, fsys, repoRoot, &stdout2, &stderr2)
+	err = Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout2, &stderr2)
 	if err != nil {
 		t.Fatalf("second doctor run failed: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, &stdout, &stderr)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("doctor failed: %v", err)
 	}

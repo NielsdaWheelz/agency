@@ -5,13 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/verifyservice"
 )
@@ -21,13 +20,16 @@ type VerifyOpts struct {
 	// RunID is the run identifier to verify (required).
 	RunID string
 
+	// RepoPath is the optional --repo flag to scope name resolution.
+	RepoPath string
+
 	// Timeout is the script timeout (default: 30m).
 	Timeout time.Duration
 }
 
 // Verify runs the repo's scripts.verify for a run and records results.
-// Does not require cwd to be inside a repo; resolves run globally.
-func Verify(ctx context.Context, fsys fs.FS, opts VerifyOpts, stdout, stderr io.Writer) error {
+// Works from any directory; resolves runs globally.
+func Verify(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts VerifyOpts, stdout, stderr io.Writer) error {
 	// Validate run_id provided
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
@@ -39,19 +41,24 @@ func Verify(ctx context.Context, fsys fs.FS, opts VerifyOpts, stdout, stderr io.
 		timeout = 30 * time.Minute
 	}
 
-	// Get home directory for path resolution
-	homeDir, err := os.UserHomeDir()
+	// Build resolution context using the new global resolver
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return err
 	}
 
-	// Resolve data directory
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
+	// Resolve run globally (works from anywhere)
+	resolved, err := ResolveRun(rctx, opts.RunID)
+	if err != nil {
+		return err
+	}
+
+	// Use the resolved run_id
+	runID := resolved.RunID
 
 	// Create verify service and run verification
-	svc := verifyservice.NewService(dataDir, fsys)
-	result, err := svc.VerifyRun(ctx, opts.RunID, timeout)
+	svc := verifyservice.NewService(rctx.DataDir, fsys)
+	result, err := svc.VerifyRun(ctx, runID, timeout)
 
 	// Handle the result/error based on spec output contract
 	return formatVerifyOutput(result, err, stdout, stderr)

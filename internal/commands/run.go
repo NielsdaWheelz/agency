@@ -24,6 +24,9 @@ type RunOpts struct {
 	// Name is the run name (required, validated).
 	Name string
 
+	// RepoPath is the optional --repo flag to target a specific repo.
+	RepoPath string
+
 	// Runner is the runner name (empty = use user config default).
 	Runner string
 
@@ -49,6 +52,50 @@ type RunResult struct {
 // Run executes the agency run command.
 // Creates a workspace, runs setup, starts tmux session.
 func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts RunOpts, stdout, stderr io.Writer) error {
+	// Handle --repo path: if provided, use it instead of cwd
+	targetCwd := cwd
+	if opts.RepoPath != "" {
+		// Validate the path exists
+		info, err := os.Stat(opts.RepoPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return errors.NewWithDetails(
+					errors.EInvalidRepoPath,
+					fmt.Sprintf("--repo path does not exist: %s", opts.RepoPath),
+					map[string]string{"path": opts.RepoPath},
+				)
+			}
+			return errors.Wrap(errors.EInvalidRepoPath, "failed to stat --repo path", err)
+		}
+		if !info.IsDir() {
+			return errors.NewWithDetails(
+				errors.EInvalidRepoPath,
+				fmt.Sprintf("--repo path is not a directory: %s", opts.RepoPath),
+				map[string]string{"path": opts.RepoPath},
+			)
+		}
+
+		// Verify it's inside a git repo
+		repoRoot, err := git.GetRepoRoot(ctx, cr, opts.RepoPath)
+		if err != nil {
+			return errors.NewWithDetails(
+				errors.EInvalidRepoPath,
+				fmt.Sprintf("--repo path is not inside a git repository: %s", opts.RepoPath),
+				map[string]string{"path": opts.RepoPath},
+			)
+		}
+		targetCwd = repoRoot.Path
+	}
+
+	// Change working directory for pipeline if --repo was specified
+	origWd, _ := os.Getwd()
+	if targetCwd != cwd {
+		if err := os.Chdir(targetCwd); err != nil {
+			return errors.Wrap(errors.EInternal, "failed to change directory", err)
+		}
+		defer func() { _ = os.Chdir(origWd) }()
+	}
+
 	// Create the run service with production dependencies
 	svc := runservice.New()
 
@@ -66,26 +113,26 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 	runID, err := p.Run(ctx, pipelineOpts)
 	if err != nil {
 		// Print error details for failures after worktree creation
-		printRunError(stderr, err, runID, cwd, fsys)
+		printRunError(stderr, err, runID, targetCwd, fsys)
 		return err
 	}
 
 	// Get final state from metadata
-	result, err := getRunResult(ctx, cr, fsys, cwd, runID)
+	result, err := getRunResult(ctx, cr, fsys, targetCwd, runID)
 	if err != nil {
 		// Pipeline succeeded but couldn't read result - internal error
 		return errors.Wrap(errors.EInternal, "failed to read run result", err)
 	}
 
-	// Print success output
-	printRunSuccess(stdout, result)
+	// Print success output (show "next:" hint only when detached)
+	printRunSuccess(stdout, result, !opts.Attach)
 
 	// Print warnings to stderr
 	for _, w := range result.Warnings {
 		_, _ = fmt.Fprintf(stderr, "warning: %s\n", w.Message)
 	}
 
-	// Handle --attach if requested
+	// Handle attach (default) - skip if --detached was specified
 	if opts.Attach && result.TmuxSessionName != "" {
 		return attachToTmuxSessionRun(result.TmuxSessionName)
 	}
@@ -137,7 +184,8 @@ func getRunResult(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 // printRunSuccess prints the success output in the required format.
 // All writes use explicit error ignoring since this is informational output
 // where write failures cannot be meaningfully handled.
-func printRunSuccess(w io.Writer, result *RunResult) {
+// The detached parameter controls whether to print the "next:" hint.
+func printRunSuccess(w io.Writer, result *RunResult, detached bool) {
 	_, _ = fmt.Fprintf(w, "run_id: %s\n", result.RunID)
 	_, _ = fmt.Fprintf(w, "name: %s\n", result.Name)
 	_, _ = fmt.Fprintf(w, "runner: %s\n", result.Runner)
@@ -145,7 +193,9 @@ func printRunSuccess(w io.Writer, result *RunResult) {
 	_, _ = fmt.Fprintf(w, "branch: %s\n", result.Branch)
 	_, _ = fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
 	_, _ = fmt.Fprintf(w, "tmux: %s\n", result.TmuxSessionName)
-	_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.Name)
+	if detached {
+		_, _ = fmt.Fprintf(w, "next: agency attach %s\n", result.Name)
+	}
 }
 
 // printRunError prints error details for run failures.

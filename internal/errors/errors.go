@@ -102,6 +102,10 @@ const (
 
 	// Report completeness error codes (S7)
 	EReportIncomplete Code = "E_REPORT_INCOMPLETE" // report exists but missing required sections
+	// Slice 7 global resolution error codes
+	EInvalidRepoPath Code = "E_INVALID_REPO_PATH" // --repo path does not exist or is not inside a git repo
+	ERunRefAmbiguous Code = "E_RUN_REF_AMBIGUOUS" // name matches multiple active runs (across repos)
+	ERepoNotFound    Code = "E_REPO_NOT_FOUND"    // run resolved but no valid repo path exists
 )
 
 // AgencyError is the standard error type for agency errors.

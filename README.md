@@ -62,8 +62,8 @@ agency requires:
 cd myrepo
 agency init       # create agency.json + stub scripts
 agency doctor     # verify prerequisites
-agency run --name feature-x
-agency attach feature-x    # attach by name or run_id
+agency run --name feature-x   # creates workspace and enters tmux session
+# Ctrl+b, d to detach from tmux when done working
 agency push feature-x
 agency merge feature-x
 ```
@@ -92,16 +92,18 @@ YOUR REPO                           AGENCY DATA DIR
 
 LIFECYCLE:
 
-  ┌──────────┐    ┌──────────────┐    ┌───────────┐    ┌──────────────┐
-  │agency run│───►│agency attach │───►│agency push│───►│agency merge  │
-  └────┬─────┘    └──────┬───────┘    └─────┬─────┘    └──────┬───────┘
-       │                 │                  │                 │
-       ▼                 ▼                  ▼                 ▼
-   creates           you enter          pushes to        runs verify,
-   worktree,         tmux with          GitHub +         merges PR,
-   runs setup        claude             creates PR       cleans up
+  ┌──────────┐    ┌───────────┐    ┌──────────────┐
+  │agency run│───►│agency push│───►│agency merge  │
+  └────┬─────┘    └─────┬─────┘    └──────┬───────┘
+       │                │                 │
+       ▼                ▼                 ▼
+   creates          pushes to        runs verify,
+   worktree,        GitHub +         merges PR,
+   runs setup,      creates PR       cleans up
+   enters tmux
 
   DETACH FROM TMUX: press Ctrl+b, then d (session keeps running)
+  RE-ATTACH: agency attach <name> or agency resume <name>
 ```
 
 ### step 1: initialize your repo
@@ -274,30 +276,14 @@ if you see errors, fix them before continuing.
 agency run --name add-user-auth
 ```
 
-output:
-```
-run_id: 20260115143022-a3f2
-name: add-user-auth
-runner: claude
-parent: main
-branch: agency/add-user-auth-a3f2
-worktree: ~/Library/Application Support/agency/repos/.../worktrees/20260115143022-a3f2
-tmux: agency_20260115143022-a3f2
-next: agency attach add-user-auth
-```
-
 **what just happened:**
 1. agency verified your repo is clean (no uncommitted changes)
-2. created a git worktree with a new branch `agency/add-user-authentication-a3f2`
+2. created a git worktree with a new branch `agency/add-user-auth-a3f2`
 3. ran `scripts/agency_setup.sh` (installed deps, copied env files)
 4. started a tmux session with claude running inside the worktree
+5. attached you to the tmux session (you're now inside it!)
 
 ### step 6: work with the ai
-
-```bash
-# enter the tmux session
-agency attach 20260115143022-a3f2
-```
 
 you're now in a terminal with claude running. give it instructions:
 
@@ -401,28 +387,34 @@ this deletes the worktree and tmux session but does NOT merge anything.
 
 All commands that accept `<ref>` support **name-based resolution**: you can use the run name (e.g., `feature-x`) or run_id (e.g., `20260115143022-a3f2`) interchangeably.
 
+**global resolution**: most run-targeted commands now work from any directory. run_id and prefix resolution is always global; name resolution prefers the current repo if you're inside one, otherwise resolves globally.
+
 ```bash
 # === SETUP ===
 agency init                        # initialize repo for agency
+agency init --repo /path/to/repo   # initialize a specific repo
 agency doctor                      # check prerequisites
+agency doctor --repo /path/to/repo # check a specific repo
 
 # === LIFECYCLE ===
-agency run --name my-feature       # start new AI session
-agency attach <ref>                # enter tmux session
+agency run --name my-feature       # start new AI session (attaches by default)
+agency run --name feat --repo /p   # start in specific repo
+agency attach <ref>                # enter tmux session (works from anywhere)
 # Ctrl+b, d                        # detach from tmux
 agency push <ref>                  # push branch + create/update PR
 agency merge <ref>                 # verify + merge + cleanup
 agency clean <ref>                 # abandon (no merge)
 
 # === OBSERVABILITY ===
-agency ls                          # list all runs
+agency ls                          # list runs (current repo or all)
+agency ls --repo /path/to/repo     # list runs for specific repo
 agency ls --all                    # include archived
-agency show <ref>                  # show details
+agency show <ref>                  # show details (global)
 agency show <ref> --path           # show paths only
 agency path <ref>                  # output worktree path (for scripting)
 agency open <ref>                  # open worktree in editor
 
-# === SESSION CONTROL ===
+# === SESSION CONTROL (global resolution) ===
 agency resume <ref>                # attach (create session if needed)
 agency resume <ref> --restart      # restart session (loses chat history)
 agency stop <ref>                  # send Ctrl+C
@@ -430,6 +422,11 @@ agency kill <ref>                  # kill session (keeps files)
 
 # === VERIFICATION ===
 agency verify <ref>                # run verify script manually
+
+# === DISAMBIGUATION ===
+# use --repo when names conflict across repos:
+agency attach my-feature --repo /path/to/repo
+agency resume my-feature --repo /path/to/repo
 ```
 
 ### environment variables available in scripts
@@ -482,19 +479,20 @@ popd                    # return to previous directory
 ## commands
 
 ```
-agency init [--no-gitignore] [--force]
+agency init [--repo] [--no-gitignore] [--force]
                                   create agency.json template + stub scripts
-agency run --name <name> [--runner] [--parent]
-                                  create workspace, setup, start tmux
-agency ls                         list runs + statuses
-agency show <id> [--path]         show run details
-agency path <id>                  output worktree path (for scripting)
-agency open <id> [--editor]       open worktree in editor
-agency attach <id>                attach to tmux session
-agency resume <id> [--detached] [--restart]
-                                  attach to tmux session (create if missing)
-agency stop <id>                  send C-c to runner (best-effort)
-agency kill <id>                  kill tmux session
+agency run --name <name> [--runner] [--parent] [--detached]
+                                  create workspace, setup, start tmux, attach
+agency ls [--repo] [--all] [--all-repos]
+                                  list runs + statuses
+agency show <id> [--path]         show run details (global)
+agency path <id>                  output worktree path (for scripting, global)
+agency open <id> [--editor]       open worktree in editor (global)
+agency attach <id> [--repo]       attach to tmux session (global)
+agency resume <id> [--repo] [--detached] [--restart]
+                                  attach to tmux session (create if missing, global)
+agency stop <id> [--repo]         send C-c to runner (global)
+agency kill <id> [--repo]         kill tmux session (global)
 agency push <id> [--allow-dirty] [--force]
                                   push + create/update PR (validates report completeness)
 agency verify <id> [--timeout]    run verify script and record results
@@ -586,17 +584,18 @@ status: ok
 ### `agency run`
 
 creates an isolated workspace and launches the runner in a tmux session.
+by default, attaches to the tmux session after creation.
 
 **usage:**
 ```bash
-agency run --name <name> [--runner <name>] [--parent <branch>] [--attach]
+agency run --name <name> [--runner <name>] [--parent <branch>] [--detached]
 ```
 
 **flags:**
 - `--name`: run name (required, 2-40 chars, lowercase alphanumeric with hyphens, must start with letter)
 - `--runner`: runner name: `claude` or `codex` (default: agency.json `defaults.runner`)
 - `--parent`: parent branch to branch from (default: agency.json `defaults.parent_branch`)
-- `--attach`: attach to tmux session immediately after creation
+- `--detached`: do not attach to tmux session after creation
 
 **behavior:**
 1. validates parent working tree is clean (`git status --porcelain`)
@@ -607,8 +606,9 @@ agency run --name <name> [--runner <name>] [--parent <branch>] [--attach]
 6. runs `scripts.setup` with injected environment variables (timeout: 10 minutes)
 7. creates tmux session `agency_<run_id>` running the runner command
 8. writes `meta.json` with run metadata
+9. attaches to tmux session (unless `--detached`)
 
-**success output:**
+**success output (with `--detached`):**
 ```
 run_id: 20260110120000-a3f2
 name: feature-x
@@ -619,6 +619,8 @@ worktree: ~/Library/Application Support/agency/repos/abc123/worktrees/2026011012
 tmux: agency_20260110120000-a3f2
 next: agency attach feature-x
 ```
+
+note: the `next:` line is only shown with `--detached`. when attached (default), you are placed directly into the tmux session.
 
 **error codes:**
 - `E_NO_REPO` — not inside a git repository
@@ -631,7 +633,7 @@ next: agency attach feature-x
 - `E_SCRIPT_FAILED` — setup script exited non-zero
 - `E_SCRIPT_TIMEOUT` — setup script timed out (>10 minutes)
 - `E_TMUX_FAILED` — tmux session creation failed
-- `E_TMUX_ATTACH_FAILED` — tmux attach failed (with `--attach`)
+- `E_TMUX_ATTACH_FAILED` — tmux attach failed
 
 **on failure:**
 
