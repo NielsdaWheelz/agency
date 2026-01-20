@@ -463,6 +463,65 @@ each script's timeout is configurable in `agency.json`. defaults:
 
 the `agency verify` command also accepts a `--timeout` flag to override the configured timeout.
 
+## shell completion
+
+agency supports tab completion for bash and zsh.
+
+### bash completion
+
+**option 1: with bash-completion package (recommended)**
+
+```bash
+agency completion bash > ~/.local/share/bash-completion/completions/agency
+```
+
+requires the `bash-completion` package to be installed. the directory is auto-sourced.
+
+**option 2: manual sourcing**
+
+```bash
+agency completion bash > ~/.agency-completion.bash
+echo 'source ~/.agency-completion.bash' >> ~/.bashrc
+```
+
+### zsh completion
+
+**option 1: using fpath (recommended)**
+
+```bash
+mkdir -p ~/.zsh/completions
+agency completion zsh > ~/.zsh/completions/_agency
+```
+
+ensure `~/.zsh/completions` is in your fpath (add to `.zshrc` before `compinit`):
+
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+**option 2: manual sourcing**
+
+```bash
+agency completion zsh > ~/.agency-completion.zsh
+echo 'source ~/.agency-completion.zsh' >> ~/.zshrc
+```
+
+### homebrew (macos)
+
+if you installed via homebrew, completion scripts are installed automatically:
+- zsh: `$(brew --prefix)/share/zsh/site-functions/_agency`
+- bash: `$(brew --prefix)/share/bash-completion/completions/agency`
+
+restart your shell after installation.
+
+### what gets completed
+
+- **commands**: `agency <TAB>` shows all subcommands
+- **run references**: `agency show <TAB>` completes run names and ids
+- **runners**: `agency run --runner <TAB>` completes runner names (claude, codex)
+- **merge strategies**: `agency merge x --<TAB>` completes `--squash`, `--merge`, `--rebase`
+
 ## shell integration
 
 add these functions to your `~/.bashrc` or `~/.zshrc` for fast worktree navigation:
@@ -513,6 +572,7 @@ agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirt
                                   verify, confirm, merge PR, delete branch, archive
 agency clean <id> [--allow-dirty] archive without merging (abandon run)
 agency doctor                     check prerequisites + show paths
+agency completion <shell>         generate shell completion scripts (bash, zsh)
 ```
 
 ### `agency init`
@@ -539,6 +599,31 @@ scripts_created: scripts/agency_setup.sh, scripts/agency_verify.sh, scripts/agen
 gitignore: updated
 claude_md: created
 ```
+
+### `agency completion`
+
+generates shell completion scripts for bash or zsh.
+
+**usage:**
+```bash
+agency completion <shell>
+```
+
+**arguments:**
+- `shell`: target shell (`bash` or `zsh`)
+
+**behavior:**
+- prints completion script to stdout
+- does not write files or mutate state
+- includes installation instructions as comments in the script
+
+**examples:**
+```bash
+agency completion bash > ~/.agency-completion.bash
+agency completion zsh > ~/.zsh/completions/_agency
+```
+
+see [shell completion](#shell-completion) for full installation instructions.
 
 ### `agency doctor`
 

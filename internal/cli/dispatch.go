@@ -37,6 +37,7 @@ commands:
   verify      run scripts.verify and record results
   merge       verify, confirm, merge PR, and archive workspace
   clean       archive without merging (abandon run)
+  completion  generate shell completion scripts
 
 global options:
   --verbose   show detailed error context
@@ -404,6 +405,41 @@ shell integration:
   acd my-feature
 `
 
+const completionUsageText = `usage: agency completion <shell>
+
+generate shell completion scripts.
+prints the script to stdout; does not write files.
+
+arguments:
+  shell         target shell: bash or zsh
+
+options:
+  -h, --help    show this help
+
+installation:
+
+  bash (with bash-completion package):
+    agency completion bash > ~/.local/share/bash-completion/completions/agency
+
+  bash (manual):
+    agency completion bash > ~/.agency-completion.bash
+    echo 'source ~/.agency-completion.bash' >> ~/.bashrc
+
+  zsh (with fpath):
+    agency completion zsh > ~/.zsh/completions/_agency
+    # ensure ~/.zsh/completions is in fpath before compinit
+
+  zsh (manual):
+    agency completion zsh > ~/.agency-completion.zsh
+    echo 'source ~/.agency-completion.zsh' >> ~/.zshrc
+
+after installation, restart your shell.
+
+examples:
+  agency completion bash
+  agency completion zsh
+`
+
 // GlobalOpts holds global options parsed before subcommand dispatch.
 type GlobalOpts struct {
 	Verbose bool
@@ -491,6 +527,10 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runMerge(cmdArgs, stdout, stderr)
 	case "clean":
 		return runClean(cmdArgs, stdout, stderr)
+	case "completion":
+		return runCompletion(cmdArgs, stdout, stderr)
+	case "__complete":
+		return runComplete(cmdArgs, stdout, stderr)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return errors.New(errors.EUsage, fmt.Sprintf("unknown command: %s", cmd))
@@ -1233,4 +1273,76 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return commands.Clean(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
+}
+
+func runCompletion(args []string, stdout, stderr io.Writer) error {
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			_, _ = fmt.Fprint(stdout, completionUsageText)
+			return nil
+		}
+	}
+
+	// Shell is a required positional argument
+	if len(args) < 1 {
+		_, _ = fmt.Fprint(stderr, completionUsageText)
+		return errors.New(errors.EUsage, "shell is required (bash or zsh)")
+	}
+	shell := args[0]
+
+	ctx := context.Background()
+	opts := commands.CompletionOpts{
+		Shell: shell,
+	}
+
+	return commands.Completion(ctx, opts, stdout, stderr)
+}
+
+func runComplete(args []string, stdout, stderr io.Writer) error {
+	// __complete is a hidden command for shell completion scripts.
+	// Usage: agency __complete <kind> [--all-repos] [--include-archived]
+	// Kinds: commands, runs, runners, merge_strategies
+	//
+	// Output: newline-separated candidates
+	// Error handling: silent failure (print nothing, exit 0) unless AGENCY_DEBUG_COMPLETION=1
+
+	flagSet := flag.NewFlagSet("__complete", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	allRepos := flagSet.Bool("all-repos", false, "include runs from all repos")
+	includeArchived := flagSet.Bool("include-archived", false, "include archived runs")
+
+	if err := flagSet.Parse(args); err != nil {
+		// Silent failure for shell UX
+		return nil
+	}
+
+	// Kind is a required positional argument
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
+		// Silent failure for shell UX
+		return nil
+	}
+	kind := positionalArgs[0]
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		// Silent failure for shell UX
+		return nil
+	}
+
+	// Create real implementations
+	cr := exec.NewRealRunner()
+	fsys := fs.NewRealFS()
+	ctx := context.Background()
+
+	opts := commands.CompleteOpts{
+		Kind:            commands.CompleteKind(kind),
+		AllRepos:        *allRepos,
+		IncludeArchived: *includeArchived,
+	}
+
+	return commands.Complete(ctx, cr, fsys, cwd, opts, stdout, stderr)
 }
