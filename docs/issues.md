@@ -186,11 +186,11 @@ X) `push` needs to add/commit too.
 
 X) we need to run `make fmt` or something before verify. or before testing. or in the system prompt so the runner does it. otherwise verify always fails.
 
-19) generally agency should be available globally
+X) generally agency should be available globally
 
-20) verify output should be more verbose. so should general error messages (push, merge)
+X) verify output should be more verbose. so should general error messages (push, merge)
 
-21) Clean optional flag to delete branch
+X) Clean should have a flag to delete the branch
 
 22) on `error_code: E_PR_NOT_MERGEABLE PR #88 has conflicts and cannot be merged` we should provide some sort of affordance. a github link, a command to open it or something, etc.
 
