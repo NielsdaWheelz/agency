@@ -52,10 +52,15 @@ go test ./...
 ### 2. run preflight verification
 
 ```bash
+# generate completions (goreleaser will also do this, but test locally first)
+make completions
+
+# run goreleaser in snapshot mode
 goreleaser release --snapshot --skip=publish --clean
 ```
 
 verify:
+- [ ] `make completions` succeeds and creates non-empty files
 - [ ] archives contain `completions/agency.bash` and `completions/_agency`
 - [ ] `./dist/agency_linux_amd64_v1/agency --version` shows correct version
 - [ ] no errors in goreleaser output

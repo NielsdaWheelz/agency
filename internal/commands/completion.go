@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -22,22 +23,48 @@ import (
 
 // CompletionOpts holds options for the completion command.
 type CompletionOpts struct {
-	Shell string // "bash" or "zsh"
+	Shell  string // "bash" or "zsh"
+	Output string // optional output file path; if empty, writes to stdout
 }
 
 // Completion generates shell completion scripts.
-// Prints the script to stdout; does not write files or mutate state.
+// If opts.Output is set, writes the script to that file (creating parent dirs);
+// otherwise prints to stdout.
 func Completion(_ context.Context, opts CompletionOpts, stdout, stderr io.Writer) error {
+	var script string
 	switch opts.Shell {
 	case "bash":
-		_, _ = fmt.Fprint(stdout, bashCompletionScript)
-		return nil
+		script = bashCompletionScript
 	case "zsh":
-		_, _ = fmt.Fprint(stdout, zshCompletionScript)
-		return nil
+		script = zshCompletionScript
 	default:
 		return errors.New(errors.EUsage, fmt.Sprintf("unsupported shell: %s (supported: bash, zsh)", opts.Shell))
 	}
+
+	// If no output file specified, write to stdout
+	if opts.Output == "" {
+		_, _ = fmt.Fprint(stdout, script)
+		return nil
+	}
+
+	// Create parent directories if needed
+	dir := filepath.Dir(opts.Output)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return errors.Wrap(errors.EInternal, fmt.Sprintf("failed to create directory %s", dir), err)
+	}
+
+	// Write to file atomically using temp file + rename
+	tmpPath := opts.Output + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(script), 0644); err != nil {
+		return errors.Wrap(errors.EInternal, fmt.Sprintf("failed to write %s", opts.Output), err)
+	}
+
+	if err := os.Rename(tmpPath, opts.Output); err != nil {
+		_ = os.Remove(tmpPath) // cleanup on error
+		return errors.Wrap(errors.EInternal, fmt.Sprintf("failed to rename to %s", opts.Output), err)
+	}
+
+	return nil
 }
 
 // CompleteKind is the type of completion to generate.

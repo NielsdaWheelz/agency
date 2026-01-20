@@ -6,10 +6,7 @@ before:
     - go mod tidy
     - go test ./...
     # Generate shell completion scripts before build
-    # Uses go run to avoid PATH issues in CI - completion generation doesn't depend on ldflags
-    - mkdir -p completions
-    - go run ./cmd/agency completion bash > completions/agency.bash
-    - go run ./cmd/agency completion zsh > completions/_agency
+    - make completions
 
 builds:
   - id: agency
@@ -43,8 +40,6 @@ archives:
       - README.md
       - LICENSE
       - completions/*
-      - completions/agency.bash
-      - completions/_agency
 
 checksum:
   name_template: "checksums.txt"

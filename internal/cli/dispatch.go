@@ -409,21 +409,24 @@ shell integration:
   acd my-feature
 `
 
-const completionUsageText = `usage: agency completion <shell>
+const completionUsageText = `usage: agency completion [options] <shell>
 
 generate shell completion scripts.
-prints the script to stdout; does not write files.
+by default, prints the script to stdout.
+use --output to write directly to a file.
 
 arguments:
-  shell         target shell: bash or zsh
+  shell              target shell: bash or zsh
 
 options:
-  -h, --help    show this help
+  --output <path>    write completion script to file instead of stdout
+  -h, --help         show this help
 
 installation:
 
   bash (with bash-completion package):
     agency completion bash > ~/.local/share/bash-completion/completions/agency
+    # or: agency completion --output ~/.local/share/bash-completion/completions/agency bash
 
   bash (manual):
     agency completion bash > ~/.agency-completion.bash
@@ -442,6 +445,8 @@ after installation, restart your shell.
 examples:
   agency completion bash
   agency completion zsh
+  agency completion --output completions/agency.bash bash
+  agency completion --output completions/_agency zsh
 `
 
 const resolveUsageText = `usage: agency resolve <run>
@@ -1310,6 +1315,11 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 }
 
 func runCompletion(args []string, stdout, stderr io.Writer) error {
+	flagSet := flag.NewFlagSet("completion", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	output := flagSet.String("output", "", "write completion script to file")
+
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1317,16 +1327,23 @@ func runCompletion(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	if err := flagSet.Parse(args); err != nil {
+		return errors.Wrap(errors.EUsage, "invalid flags", err)
+	}
+
 	// Shell is a required positional argument
-	if len(args) < 1 {
+	positionalArgs := flagSet.Args()
+	if len(positionalArgs) < 1 {
 		_, _ = fmt.Fprint(stderr, completionUsageText)
 		return errors.New(errors.EUsage, "shell is required (bash or zsh)")
 	}
-	shell := args[0]
+	shell := positionalArgs[0]
 
 	ctx := context.Background()
 	opts := commands.CompletionOpts{
-		Shell: shell,
+		Shell:  shell,
+		Output: *output,
 	}
 
 	return commands.Completion(ctx, opts, stdout, stderr)

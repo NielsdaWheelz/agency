@@ -1,4 +1,4 @@
-.PHONY: build test test-v lint fmt fmt-check e2e clean install run help check
+.PHONY: build test test-v lint fmt fmt-check e2e clean install run help check completions
 
 -include .env
 export
@@ -57,18 +57,28 @@ install:
 run:
 	go run ./cmd/agency
 
+# Generate shell completion scripts
+completions:
+	@mkdir -p completions
+	go run ./cmd/agency completion --output completions/agency.bash bash
+	go run ./cmd/agency completion --output completions/_agency zsh
+	@test -s completions/agency.bash || (echo "error: completions/agency.bash is empty" && exit 1)
+	@test -s completions/_agency || (echo "error: completions/_agency is empty" && exit 1)
+	@echo "completions generated: completions/agency.bash completions/_agency"
+
 # Show help
 help:
 	@echo "available targets:"
-	@echo "  build    - build the agency binary"
-	@echo "  check    - run all checks (fmt-check, lint, test, e2e, build)"
-	@echo "  fmt      - gofmt all Go files"
-	@echo "  fmt-check- check formatting without modifying files"
-	@echo "  lint     - run golangci-lint"
-	@echo "  test     - run tests"
-	@echo "  test-v   - run tests with verbose output"
-	@echo "  e2e      - run GH e2e test (requires GH_TOKEN)"
-	@echo "  clean    - clean build artifacts"
-	@echo "  install  - install to GOBIN"
-	@echo "  run      - run from source"
-	@echo "  help     - show this help"
+	@echo "  build      - build the agency binary"
+	@echo "  check      - run all checks (fmt-check, lint, test, e2e, build)"
+	@echo "  completions- generate shell completion scripts"
+	@echo "  fmt        - gofmt all Go files"
+	@echo "  fmt-check  - check formatting without modifying files"
+	@echo "  lint       - run golangci-lint"
+	@echo "  test       - run tests"
+	@echo "  test-v     - run tests with verbose output"
+	@echo "  e2e        - run GH e2e test (requires GH_TOKEN)"
+	@echo "  clean      - clean build artifacts"
+	@echo "  install    - install to GOBIN"
+	@echo "  run        - run from source"
+	@echo "  help       - show this help"
