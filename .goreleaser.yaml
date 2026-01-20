@@ -5,6 +5,11 @@ before:
   hooks:
     - go mod tidy
     - go test ./...
+    # Generate shell completion scripts before build
+    # Uses go run to avoid PATH issues in CI - completion generation doesn't depend on ldflags
+    - mkdir -p completions
+    - go run ./cmd/agency completion bash > completions/agency.bash
+    - go run ./cmd/agency completion zsh > completions/_agency
 
 builds:
   - id: agency
@@ -21,6 +26,7 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/NielsdaWheelz/agency/internal/version.Version={{.Version}}
+      - -X github.com/NielsdaWheelz/agency/internal/version.Commit={{.ShortCommit}}
 
 archives:
   - id: agency
@@ -34,6 +40,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - completions/*
 
 checksum:
   name_template: "checksums.txt"
@@ -56,16 +63,18 @@ release:
   prerelease: auto
   name_template: "{{.Tag}}"
 
-# Homebrew tap (uncomment after creating homebrew-tap repo)
-# brews:
-#   - name: agency
-#     repository:
-#       owner: NielsdaWheelz
-#       name: homebrew-tap
-#     homepage: "https://github.com/NielsdaWheelz/agency"
-#     description: "Local-first runner manager for AI coding sessions"
-#     license: "MIT"
-#     install: |
-#       bin.install "agency"
-#     test: |
-#       system "#{bin}/agency", "--version"
+brews:
+  - name: agency
+    repository:
+      owner: NielsdaWheelz
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/NielsdaWheelz/agency"
+    description: "Local-first runner manager for AI coding sessions"
+    license: "MIT"
+    install: |
+      bin.install "agency"
+      bash_completion.install "completions/agency.bash" => "agency"
+      zsh_completion.install "completions/_agency"
+    test: |
+      system "#{bin}/agency", "--version"

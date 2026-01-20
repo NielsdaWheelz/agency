@@ -4,49 +4,63 @@ local-first runner manager: creates isolated git workspaces, launches `claude`/`
 
 ## installation
 
+### homebrew (recommended for macos)
+
+```bash
+brew install NielsdaWheelz/tap/agency
+```
+
+installs the binary and shell completions automatically. restart your shell after installation.
+
+### github releases
+
+download prebuilt binaries from [GitHub releases](https://github.com/NielsdaWheelz/agency/releases):
+- darwin-amd64
+- darwin-arm64
+- linux-amd64
+- linux-arm64
+
+```bash
+# example: linux amd64
+curl -LO https://github.com/NielsdaWheelz/agency/releases/latest/download/agency_0.1.0_linux_amd64.tar.gz
+tar xzf agency_0.1.0_linux_amd64.tar.gz
+sudo mv agency /usr/local/bin/
+
+# enable shell completions (see shell completion section below)
+./agency completion bash > ~/.agency-completion.bash
+echo 'source ~/.agency-completion.bash' >> ~/.bashrc
+```
+
+archives include completions in `completions/` directory.
+
 ### from source (development)
 
 ```bash
 go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 ```
 
-Ensure your Go bin dir is on PATH (uses `GOBIN` if set, otherwise `GOPATH/bin`):
+ensure your Go bin dir is on PATH (uses `GOBIN` if set, otherwise `GOPATH/bin`):
 
 ```bash
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-For zsh, add this to `~/.zshrc` and restart your shell.
+for zsh, add this to `~/.zshrc` and restart your shell.
 
-
-### from releases (coming soon)
-
-prebuilt binaries available on [GitHub releases](https://github.com/NielsdaWheelz/agency/releases) for:
-- darwin-amd64
-- darwin-arm64
-- linux-amd64
-
-### homebrew (coming soon)
-
-```bash
-brew install NielsdaWheelz/tap/agency
-```
+note: `go install` builds show `agency dev` for version. completions must be enabled manually (see shell completion section).
 
 ## release (maintainers)
 
-release builds are tag-driven via `.github/workflows/release.yml` and `.goreleaser.yaml`.
+see [docs/releasing.md](docs/releasing.md) for the full release process.
 
-1) ensure main is green and committed
-2) tag and push:
+quick release:
 
 ```bash
-git tag -a v0.1.1 -m "v0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
 ```
 
-notes:
-- `go install github.com/NielsdaWheelz/agency/cmd/agency@latest` installs the latest semver tag, not the GitHub release binary.
-- `agency --version` will show `dev` for `go install` builds unless you pass ldflags or use release artifacts.
+the tag push triggers goreleaser which builds binaries, creates github releases, and updates the homebrew tap.
 
 ## prerequisites
 
@@ -509,13 +523,15 @@ agency completion zsh > ~/.agency-completion.zsh
 echo 'source ~/.agency-completion.zsh' >> ~/.zshrc
 ```
 
-### homebrew (macos)
+### homebrew (macos / linux)
 
 if you installed via homebrew, completion scripts are installed automatically:
 - zsh: `$(brew --prefix)/share/zsh/site-functions/_agency`
 - bash: `$(brew --prefix)/share/bash-completion/completions/agency`
 
 restart your shell after installation.
+
+note: on linux (homebrew on linux), completion auto-loading may be less consistent than macos. if completions don't work automatically, use the manual sourcing methods above.
 
 ### what gets completed
 
@@ -1737,6 +1753,7 @@ agency/
 
 - [constitution](docs/v1/constitution.md) — full v1 specification
 - [slice roadmap](docs/v1/slice_roadmap.md) — implementation plan
+- [releasing](docs/releasing.md) — how to cut releases
 - [slice 0 spec](docs/v1/s0/s0_spec.md) — bootstrap slice detailed spec
 - [slice 0 PRs](docs/v1/s0/s0_prs.md) — slice 0 PR breakdown
 - [slice 1 spec](docs/v1/s1/s1_spec.md) — run workspace slice detailed spec

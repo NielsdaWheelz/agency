@@ -1,10 +1,14 @@
-.PHONY: build test test-v lint fmt fmt-check e2e clean install run help
+.PHONY: build test test-v lint fmt fmt-check e2e clean install run help check
 
 -include .env
 export
 
 # Default target
 all: build
+
+# Run all checks strictly (CI-style)
+check: fmt fmt-check lint test e2e build
+	@echo "all checks passed"
 
 # Build the binary
 build:
@@ -57,6 +61,7 @@ run:
 help:
 	@echo "available targets:"
 	@echo "  build    - build the agency binary"
+	@echo "  check    - run all checks (fmt-check, lint, test, e2e, build)"
 	@echo "  fmt      - gofmt all Go files"
 	@echo "  fmt-check- check formatting without modifying files"
 	@echo "  lint     - run golangci-lint"

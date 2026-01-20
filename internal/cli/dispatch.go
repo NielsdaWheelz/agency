@@ -498,7 +498,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	if args[0] == "-v" || args[0] == "--version" {
-		_, _ = fmt.Fprintf(stdout, "agency %s\n", version.Version)
+		_, _ = fmt.Fprintf(stdout, "agency %s\n", version.FullVersion())
 		return nil
 	}
 
