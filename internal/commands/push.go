@@ -25,6 +25,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -181,25 +182,69 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	repoRef := resolveGHRepoRef(originURL)
 
 	// Step 7: Report gating
+	// Per S7 spec4:
+	// - Missing file → E_REPORT_INVALID (--force does NOT bypass)
+	// - Incomplete content → E_REPORT_INCOMPLETE (--force bypasses)
 	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
-	reportEmpty, err := isReportEffectivelyEmpty(fsys, reportPath)
-	if err != nil && !os.IsNotExist(err) {
-		// Unexpected error reading report - warn user but continue
-		_, _ = fmt.Fprintf(stderr, "warning: failed to read report: %v\n", err)
-		reportEmpty = true
+	reportContent, reportReadErr := fsys.ReadFile(reportPath)
+
+	if reportReadErr != nil {
+		if os.IsNotExist(reportReadErr) {
+			// Report file missing - hard error, no --force bypass
+			appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
+				"error_code": string(errors.EReportInvalid),
+				"step":       "report_gate",
+			})
+			// Per spec: exact error format with hint
+			_, _ = fmt.Fprintf(stderr, "error_code: %s\n", errors.EReportInvalid)
+			_, _ = fmt.Fprintf(stderr, "report: %s\n", reportPath)
+			_, _ = fmt.Fprintf(stderr, "hint: report file not found at %s\n", reportPath)
+			return errors.New(errors.EReportInvalid, fmt.Sprintf("report file not found at %s", reportPath))
+		}
+		// Unexpected error reading report - warn but continue
+		_, _ = fmt.Fprintf(stderr, "warning: failed to read report: %v\n", reportReadErr)
 	}
 
+	// Check report completeness if file exists
+	var reportIncomplete bool
+	var missingSections []string
+	if reportReadErr == nil {
+		completeness := report.CheckCompleteness(string(reportContent))
+		reportIncomplete = !completeness.Complete
+		missingSections = completeness.MissingSections
+	}
+
+	if reportIncomplete && !opts.Force {
+		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
+			"error_code":       string(errors.EReportIncomplete),
+			"step":             "report_gate",
+			"missing_sections": missingSections,
+		})
+		// Per spec: exact error output format
+		_, _ = fmt.Fprintf(stderr, "error_code: %s\n", errors.EReportIncomplete)
+		_, _ = fmt.Fprintf(stderr, "report: %s\n", reportPath)
+		_, _ = fmt.Fprintf(stderr, "missing: %s\n", strings.Join(missingSections, ", "))
+		_, _ = fmt.Fprintf(stderr, "hint: fill required sections or use --force\n")
+		_, _ = fmt.Fprintf(stderr, "hint: agency open %s\n", meta.Name)
+		return errors.New(errors.EReportIncomplete, fmt.Sprintf("report incomplete: missing %s", strings.Join(missingSections, ", ")))
+	}
+
+	if reportIncomplete && opts.Force {
+		_, _ = fmt.Fprintf(stderr, "warning: report incomplete (missing: %s); proceeding due to --force\n", strings.Join(missingSections, ", "))
+	}
+
+	// Keep backward compat: also check if report is effectively empty (< 20 chars)
+	// This handles edge cases like nearly empty files that aren't strictly "incomplete"
+	reportEmpty := reportReadErr == nil && len(strings.TrimSpace(string(reportContent))) < 20
 	if reportEmpty && !opts.Force {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
 			"error_code": string(errors.EReportInvalid),
 			"step":       "report_gate",
 		})
-		// spec: exact error message
-		return errors.New(errors.EReportInvalid, "report missing or empty; use --force to push anyway")
+		return errors.New(errors.EReportInvalid, "report effectively empty (< 20 chars); use --force to push anyway")
 	}
-
-	if reportEmpty && opts.Force {
-		_, _ = fmt.Fprintf(stderr, "warning: report missing or empty; proceeding due to --force\n")
+	if reportEmpty && opts.Force && !reportIncomplete {
+		_, _ = fmt.Fprintf(stderr, "warning: report effectively empty; proceeding due to --force\n")
 	}
 
 	// Step 8: gh auth check

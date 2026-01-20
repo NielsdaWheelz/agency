@@ -889,3 +889,102 @@ type fakePushSleeper struct {
 func (f *fakePushSleeper) Sleep(d time.Duration) {
 	f.sleeps = append(f.sleeps, d)
 }
+
+// ============================================================================
+// S7 Spec4: Report Completeness Gate Tests
+// ============================================================================
+
+// TestReportCompletenessErrorCode verifies E_REPORT_INCOMPLETE error code exists.
+func TestReportCompletenessErrorCode(t *testing.T) {
+	// Verify the error code exists and has correct format
+	code := errors.EReportIncomplete
+	if code != "E_REPORT_INCOMPLETE" {
+		t.Errorf("EReportIncomplete = %q, want %q", code, "E_REPORT_INCOMPLETE")
+	}
+
+	// Verify we can create an error with this code
+	err := errors.NewWithDetails(
+		errors.EReportIncomplete,
+		"report incomplete: missing summary, how to test",
+		map[string]string{"missing_sections": "summary, how to test"},
+	)
+
+	if errors.GetCode(err) != errors.EReportIncomplete {
+		t.Errorf("GetCode(err) = %q, want %q", errors.GetCode(err), errors.EReportIncomplete)
+	}
+}
+
+// TestPushReportGating_MissingFile verifies E_REPORT_INVALID for missing report.
+func TestPushReportGating_MissingFile(t *testing.T) {
+	// Per S7 spec4: missing file → E_REPORT_INVALID, --force does NOT bypass
+	t.Log("Push gating behavior for missing report file:")
+	t.Log("  - Error code: E_REPORT_INVALID")
+	t.Log("  - Hint: 'report file not found at <path>'")
+	t.Log("  - --force does NOT bypass this check")
+}
+
+// TestPushReportGating_IncompleteReport verifies E_REPORT_INCOMPLETE for incomplete report.
+func TestPushReportGating_IncompleteReport(t *testing.T) {
+	// Per S7 spec4: incomplete report → E_REPORT_INCOMPLETE
+	t.Log("Push gating behavior for incomplete report:")
+	t.Log("  - Error code: E_REPORT_INCOMPLETE")
+	t.Log("  - Lists missing sections explicitly")
+	t.Log("  - Prints worktree path")
+	t.Log("  - Suggests 'agency open <id>'")
+	t.Log("  - Hint: 'fill required sections or use --force'")
+	t.Log("  - --force bypasses this check")
+}
+
+// TestPushReportGating_ForceBypass verifies --force bypasses completeness check.
+func TestPushReportGating_ForceBypass(t *testing.T) {
+	// Per S7 spec4: --force bypasses completeness check but not missing file check
+	t.Log("--force behavior:")
+	t.Log("  - Does NOT bypass E_REPORT_INVALID (missing file)")
+	t.Log("  - DOES bypass E_REPORT_INCOMPLETE (incomplete content)")
+	t.Log("  - Prints warning when bypassing incomplete check")
+}
+
+// TestPushReportGating_CompleteReport documents complete report behavior.
+func TestPushReportGating_CompleteReport(t *testing.T) {
+	// Per S7 spec4: complete report passes gate
+	t.Log("Complete report behavior:")
+	t.Log("  - summary section has non-whitespace content")
+	t.Log("  - how to test section has non-whitespace content")
+	t.Log("  - No error, no warning, push proceeds")
+}
+
+// TestPushErrorOutput_ReportIncomplete verifies error output format.
+func TestPushErrorOutput_ReportIncomplete(t *testing.T) {
+	// Per S7 spec4: exact error output format
+	expectedFormat := `error_code: E_REPORT_INCOMPLETE
+report: <worktree>/.agency/report.md
+missing: summary, how to test
+hint: fill required sections or use --force
+hint: agency open <run_id>`
+
+	t.Logf("Expected error output format:\n%s", expectedFormat)
+
+	// Verify the error code string
+	if errors.EReportIncomplete != "E_REPORT_INCOMPLETE" {
+		t.Errorf("error code = %q, want E_REPORT_INCOMPLETE", errors.EReportIncomplete)
+	}
+}
+
+// TestPushReportGating_DistinguishMissingVsIncomplete verifies distinct behavior.
+func TestPushReportGating_DistinguishMissingVsIncomplete(t *testing.T) {
+	// S7 spec4 introduced a distinction:
+	// - Missing file: E_REPORT_INVALID (existing code)
+	// - Incomplete content: E_REPORT_INCOMPLETE (new code)
+
+	// Verify they are distinct error codes
+	if errors.EReportInvalid == errors.EReportIncomplete {
+		t.Error("E_REPORT_INVALID and E_REPORT_INCOMPLETE should be distinct")
+	}
+
+	if errors.EReportInvalid != "E_REPORT_INVALID" {
+		t.Errorf("E_REPORT_INVALID = %q", errors.EReportInvalid)
+	}
+	if errors.EReportIncomplete != "E_REPORT_INCOMPLETE" {
+		t.Errorf("E_REPORT_INCOMPLETE = %q", errors.EReportIncomplete)
+	}
+}

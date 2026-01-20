@@ -496,7 +496,7 @@ agency resume <id> [--detached] [--restart]
 agency stop <id>                  send C-c to runner (best-effort)
 agency kill <id>                  kill tmux session
 agency push <id> [--allow-dirty] [--force]
-                                  push + create/update PR
+                                  push + create/update PR (validates report completeness)
 agency verify <id> [--timeout]    run verify script and record results
 agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
                                   verify, confirm, merge PR, delete branch, archive
@@ -601,11 +601,12 @@ agency run --name <name> [--runner <name>] [--parent <branch>] [--attach]
 **behavior:**
 1. validates parent working tree is clean (`git status --porcelain`)
 2. creates git worktree + branch under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>/`
-3. creates `.agency/`, `.agency/out/`, `.agency/tmp/` directories
-4. creates `.agency/report.md` with template (name as heading)
-5. runs `scripts.setup` with injected environment variables (timeout: 10 minutes)
-6. creates tmux session `agency_<run_id>` running the runner command
-7. writes `meta.json` with run metadata
+3. creates `.agency/`, `.agency/out/`, `.agency/tmp/`, `.agency/state/` directories
+4. creates `.agency/INSTRUCTIONS.md` with runner guidance (overwritten on every run)
+5. creates `.agency/report.md` with template (name as heading, requires filling before push)
+6. runs `scripts.setup` with injected environment variables (timeout: 10 minutes)
+7. creates tmux session `agency_<run_id>` running the runner command
+8. writes `meta.json` with run metadata
 
 **success output:**
 ```
@@ -1052,7 +1053,7 @@ agency push <run_id> [--allow-dirty] [--force]
 
 **flags:**
 - `--allow-dirty`: proceed even if worktree has uncommitted changes
-- `--force`: proceed even if `.agency/report.md` is missing or effectively empty (< 20 chars)
+- `--force`: proceed even if report is incomplete (missing required sections); does NOT bypass missing file error
 
 **preflight checks (in order):**
 1. resolve run_id and load metadata
@@ -1061,7 +1062,10 @@ agency push <run_id> [--allow-dirty] [--force]
 4. fail if worktree has uncommitted changes (unless `--allow-dirty`)
 5. verify `origin` remote exists
 6. verify origin host is exactly `github.com`
-7. report gating (missing/empty report requires `--force`)
+7. report gating:
+   - fail if report file missing (`E_REPORT_INVALID`, no bypass)
+   - fail if report incomplete (`E_REPORT_INCOMPLETE`, bypassed by `--force`)
+   - incomplete = missing `## summary` or `## how to test` content
 8. verify `gh auth status` succeeds
 
 **git operations (after preflight passes):**
@@ -1109,7 +1113,8 @@ pr: https://github.com/owner/repo/pull/123
 - `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 - `E_NO_ORIGIN` — no origin remote configured
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
-- `E_REPORT_INVALID` — report missing/empty without `--force`
+- `E_REPORT_INVALID` — report file missing
+- `E_REPORT_INCOMPLETE` — report exists but missing required sections (summary, how to test)
 - `E_GH_NOT_INSTALLED` — gh CLI not found
 - `E_GH_NOT_AUTHENTICATED` — gh not authenticated
 - `E_PARENT_NOT_FOUND` — parent branch not found locally or on origin
@@ -1127,6 +1132,7 @@ pr: https://github.com/owner/repo/pull/123
   - `CI=1`
 - PR creation uses `--body-file` to preserve markdown formatting
 - PR title is NOT updated after creation (v1)
+- `--force` bypasses `E_REPORT_INCOMPLETE` (incomplete content) but NOT `E_REPORT_INVALID` (missing file)
 - `--force` does NOT bypass `E_EMPTY_DIFF` (must have commits)
 - `--allow-dirty` prints a warning and dirty context
 

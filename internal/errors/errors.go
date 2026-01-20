@@ -99,6 +99,9 @@ const (
 	// Name validation error codes
 	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run
 	EInvalidName Code = "E_INVALID_NAME" // name does not match validation rules
+
+	// Report completeness error codes (S7)
+	EReportIncomplete Code = "E_REPORT_INCOMPLETE" // report exists but missing required sections
 )
 
 // AgencyError is the standard error type for agency errors.
