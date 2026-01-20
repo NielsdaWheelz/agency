@@ -176,7 +176,7 @@ X) agency clean deletes the worktree (and tmux) but does not delete git branches
 
 X) agency attach currently only accepts an exact run_id. There’s no name/prefix resolution in the attach path, even though the usage text says there is. It calls ReadMeta with the provided string and builds the tmux session name from that, so agency attach <name> will fail with E_RUN_NOT_FOUND (internal/cli/dispatch.go, internal/commands/attach.go). we should patch this to support name/prefix resolution
 
-14) we need tab completion of run-ids, names, etc.
+X) we need tab completion of run-ids, names, etc.
 
 X) we should enable users to customize script timeouts. they shouldn't be hardcoded, users should be able to set them, ideally within the script itself (sice that's what they'll be editing).
 
@@ -192,9 +192,9 @@ X) verify output should be more verbose. so should general error messages (push,
 
 X) Clean should have a flag to delete the branch
 
-22) on `error_code: E_PR_NOT_MERGEABLE PR #88 has conflicts and cannot be merged` we should provide some sort of affordance. a github link, a command to open it or something, etc.
+X) on `error_code: E_PR_NOT_MERGEABLE PR #88 has conflicts and cannot be merged` we should provide some sort of affordance. a github link, a command to open it or something, etc.
 
-23) how do we make dealing with merge conflicts neater? `agency merge run-attached-default
+X) how do we make dealing with merge conflicts neater? `agency merge run-attached-default
 lock: acquired repo lock (held during verify/merge/archive)
 error_code: E_PR_NOT_MERGEABLE
 PR #93 has conflicts and cannot be merged` this is a good message, but doesn't make it simple or easy or clear. what does conductor do?

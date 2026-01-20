@@ -22,6 +22,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/NielsdaWheelz/agency/internal/verify"
@@ -265,7 +266,32 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	// === Precheck 8: mergeability ===
+	// Determine the ref to use in printed commands (same ref user invoked)
+	userRef := opts.RunID
+	if meta.Name != "" && meta.Name == opts.RunID {
+		userRef = meta.Name
+	}
+	// For prefix matches or ambiguous refs, fall back to run_id
+	if userRef != meta.Name && userRef != meta.RunID {
+		userRef = meta.RunID
+	}
+
 	if err := checkMergeability(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, sleeper, eventsPath, repoID, meta.RunID); err != nil {
+		// Check if this is a conflict error - print action card if so
+		if errors.GetCode(err) == errors.EPRNotMergeable {
+			// Release lock before printing guidance (spec requirement)
+			// Note: defer unlock() will be called when function returns,
+			// but we print guidance before returning the error
+			conflictInputs := render.ConflictCardInputs{
+				Ref:          userRef,
+				PRURL:        pr.URL,
+				PRNumber:     pr.Number,
+				Base:         meta.ParentBranch,
+				Branch:       meta.Branch,
+				WorktreePath: meta.WorktreePath,
+			}
+			render.WriteConflictError(stderr, conflictInputs)
+		}
 		return err
 	}
 

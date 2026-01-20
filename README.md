@@ -405,8 +405,10 @@ agency run --name feat --repo /p   # start in specific repo
 agency attach <ref>                # enter tmux session (works from anywhere)
 # Ctrl+b, d                        # detach from tmux
 agency push <ref>                  # push branch + create/update PR
+agency push <ref> --force-with-lease  # force push after rebase
 agency merge <ref>                 # verify + merge + cleanup
 agency clean <ref>                 # abandon (no merge)
+agency resolve <ref>               # show conflict resolution guidance
 
 # === OBSERVABILITY ===
 agency ls                          # list runs (current repo or all)
@@ -565,12 +567,13 @@ agency resume <id> [--repo] [--detached] [--restart]
                                   attach to tmux session (create if missing, global)
 agency stop <id> [--repo]         send C-c to runner (global)
 agency kill <id> [--repo]         kill tmux session (global)
-agency push <id> [--allow-dirty] [--force]
+agency push <id> [--allow-dirty] [--force] [--force-with-lease]
                                   push + create/update PR (validates report completeness)
 agency verify <id> [--timeout]    run verify script and record results
 agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
                                   verify, confirm, merge PR, delete branch, archive
 agency clean <id> [--allow-dirty] archive without merging (abandon run)
+agency resolve <id>               show conflict resolution guidance
 agency doctor                     check prerequisites + show paths
 agency completion <shell>         generate shell completion scripts (bash, zsh)
 ```
@@ -1235,6 +1238,19 @@ pr: https://github.com/owner/repo/pull/123
 - `--force` bypasses `E_REPORT_INCOMPLETE` (incomplete content) but NOT `E_REPORT_INVALID` (missing file)
 - `--force` does NOT bypass `E_EMPTY_DIFF` (must have commits)
 - `--allow-dirty` prints a warning and dirty context
+- `--force-with-lease` uses `git push --force-with-lease` for safe force push after rebase
+
+**non-fast-forward handling:**
+
+when push fails due to non-fast-forward (e.g., after rebasing), agency detects this and prints a helpful hint:
+
+```
+error_code: E_GIT_PUSH_FAILED
+push rejected (non-fast-forward)
+
+hint: branch was rebased or amended; retry with:
+  agency push <ref> --force-with-lease
+```
 
 **examples:**
 ```bash
@@ -1242,6 +1258,7 @@ agency push 20260110120000-a3f2           # push branch + create/update PR
 agency push 20260110120000-a3f2 --force   # push with empty report (placeholder body)
 agency push 20260110120000-a3f2 --allow-dirty # push with dirty worktree
 agency push 20260110                       # unique prefix resolution
+agency push my-feature --force-with-lease  # force push after rebase
 ```
 
 ### `agency verify`
@@ -1419,6 +1436,32 @@ log: /path/to/logs/archive.log
 - post-merge confirmation: agency verifies PR reached `MERGED` state with retries (250ms, 750ms, 1500ms backoff)
 - by default, the remote branch is deleted after merge; use `--no-delete-branch` to preserve it
 
+**merge conflict handling:**
+
+when merge fails due to conflicts, agency provides an actionable resolution path:
+
+```
+error_code: E_PR_NOT_MERGEABLE
+PR #93 has conflicts with main and cannot be merged.
+
+pr: https://github.com/owner/repo/pull/93
+base: main
+branch: agency/feature-x-a3f2
+worktree: /path/to/worktree
+
+next:
+
+1. agency open feature-x
+2. git fetch origin
+3. git rebase origin/main
+4. resolve conflicts, then:
+   git add -A && git rebase --continue
+5. agency push feature-x --force-with-lease
+6. agency merge feature-x
+
+alt: cd "/path/to/worktree"
+```
+
 **examples:**
 ```bash
 agency merge 20260110120000-a3f2                       # squash merge, delete branch (default)
@@ -1426,6 +1469,62 @@ agency merge 20260110120000-a3f2 --merge               # regular merge, delete b
 agency merge 20260110120000-a3f2 --rebase              # rebase merge, delete branch
 agency merge 20260110120000-a3f2 --no-delete-branch    # squash merge, preserve branch
 agency merge 20260110120000-a3f2 --force               # skip verify-fail prompt
+```
+
+### `agency resolve`
+
+shows conflict resolution guidance for a run.
+provides step-by-step instructions to resolve merge conflicts via rebase.
+read-only: makes no git changes, does not require repo lock.
+
+**usage:**
+```bash
+agency resolve <run_id>
+```
+
+**arguments:**
+- `run_id`: the run identifier (name, exact run_id, or unique prefix)
+
+**behavior:**
+- if worktree present: prints action card to stdout, exits 0
+- if worktree missing: prints partial guidance to stderr, exits with `E_WORKTREE_MISSING`
+
+**output (worktree present):**
+```
+pr: https://github.com/owner/repo/pull/93
+base: main
+branch: agency/feature-x-a3f2
+worktree: /path/to/worktree
+
+next:
+
+1. agency open feature-x
+2. git fetch origin
+3. git rebase origin/main
+4. resolve conflicts, then:
+   git add -A && git rebase --continue
+5. agency push feature-x --force-with-lease
+6. agency merge feature-x
+
+alt: cd "/path/to/worktree"
+```
+
+**output (worktree missing):**
+```
+error_code: E_WORKTREE_MISSING
+worktree archived or missing
+
+pr: https://github.com/owner/repo/pull/93
+base: main
+branch: agency/feature-x-a3f2
+
+hint: worktree no longer exists; resolve conflicts via GitHub web UI or restore locally
+```
+
+**examples:**
+```bash
+agency resolve my-feature
+agency resolve 20260110120000-a3f2
 ```
 
 ### `agency clean`

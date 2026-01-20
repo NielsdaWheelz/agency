@@ -2,147 +2,112 @@
 package commands
 
 import (
-	stderrors "errors"
-	"fmt"
-	"strings"
+	"context"
+	"io"
+	"os"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/ids"
+	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-// resolveRunByNameOrID resolves a run identifier (name or run_id) to a specific run.
-// It supports:
-//   - Exact name match among active (non-archived) runs
-//   - Exact run_id match
-//   - Unique run_id prefix match
-//
-// Parameters:
-//   - input: the user-provided identifier (name or run_id)
-//   - records: all discovered runs from store.ScanAllRuns or store.ScanRepoRuns
-//
-// Returns the resolved RunRef, the matching RunRecord, and any error.
-func resolveRunByNameOrID(input string, records []store.RunRecord) (ids.RunRef, *store.RunRecord, error) {
-	// Build refs with Name populated
-	refs := make([]ids.RunRef, len(records))
-	for i, rec := range records {
-		refs[i] = ids.RunRef{
-			RepoID: rec.RepoID,
-			RunID:  rec.RunID,
-			Name:   rec.Name,
-			Broken: rec.Broken,
-		}
-	}
-
-	// isActive predicate: a run is active if it's not archived
-	// A run is archived if:
-	// - meta.Archive.ArchivedAt is set, OR
-	// - the record is broken (can't determine archive state, treat as inactive for name matching)
-	isActive := func(ref ids.RunRef) bool {
-		if ref.Broken {
-			return false
-		}
-		// Find the record to check archive state
-		for i := range records {
-			if records[i].RunID == ref.RunID && records[i].RepoID == ref.RepoID {
-				if records[i].Meta != nil && records[i].Meta.Archive != nil && records[i].Meta.Archive.ArchivedAt != "" {
-					return false
-				}
-				return true
-			}
-		}
-		return false
-	}
-
-	// Resolve using name-aware resolution
-	resolved, err := ids.ResolveRunRefWithName(input, refs, isActive)
-	if err != nil {
-		return ids.RunRef{}, nil, err
-	}
-
-	// Find the matching record
-	for i := range records {
-		if records[i].RunID == resolved.RunID && records[i].RepoID == resolved.RepoID {
-			return resolved, &records[i], nil
-		}
-	}
-
-	// Should not happen if resolver worked correctly
-	return ids.RunRef{}, nil, stderrors.New("resolved run not found in records")
+// ResolveOpts holds options for the resolve command.
+type ResolveOpts struct {
+	// RunID is the run identifier (name, run_id, or prefix).
+	RunID string
 }
 
-// handleResolveErr converts ids resolution errors to agency errors.
-// Returns the appropriate agency error for the given resolution error.
-func handleResolveErr(err error, input string) error {
-	var notFound *ids.ErrNotFound
-	if stderrors.As(err, &notFound) {
-		return errors.New(errors.ERunNotFound, fmt.Sprintf("run not found: %s", input))
+// Resolve executes the agency resolve command.
+// Prints conflict resolution guidance to stdout (worktree present) or stderr (worktree missing).
+//
+// Per spec:
+// - Read-only: does not require repo lock, no meta mutations, no events
+// - Makes no git changes
+// - If worktree present: prints action card to stdout, exits 0
+// - If worktree missing: prints partial guidance to stderr, exits with E_WORKTREE_MISSING
+func Resolve(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts ResolveOpts, stdout, stderr io.Writer) error {
+	// Validate run_id provided
+	if opts.RunID == "" {
+		return errors.New(errors.EUsage, "run_id is required")
 	}
 
-	var ambiguous *ids.ErrAmbiguous
-	if stderrors.As(err, &ambiguous) {
-		candidates := make([]string, len(ambiguous.Candidates))
-		for i, c := range ambiguous.Candidates {
-			// Include name if available for better UX
-			if c.Name != "" {
-				candidates[i] = fmt.Sprintf("%s (%s)", c.RunID, c.Name)
-			} else {
-				candidates[i] = c.RunID
-			}
-		}
+	// Get home directory for path resolution
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+
+	// Resolve data directory
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dataDir := dirs.DataDir
+
+	// Create store
+	st := store.NewStore(fsys, dataDir, time.Now)
+
+	// Resolve run by name or ID globally (read-only, no lock needed)
+	runRef, record, err := resolveRunGlobal(opts.RunID, dataDir)
+	if err != nil {
+		return err
+	}
+
+	// Check if broken
+	if runRef.Broken || record == nil || record.Meta == nil {
 		return errors.NewWithDetails(
-			errors.ERunIDAmbiguous,
-			fmt.Sprintf("ambiguous identifier %q matches multiple runs: %s", input, strings.Join(candidates, ", ")),
-			map[string]string{"input": input},
+			errors.ERunBroken,
+			"run exists but meta.json is unreadable or invalid",
+			map[string]string{"run_id": runRef.RunID, "repo_id": runRef.RepoID},
 		)
 	}
 
-	return errors.Wrap(errors.EInternal, "failed to resolve run", err)
-}
+	meta := record.Meta
+	_ = st // silence unused warning; store used only for resolution
 
-// resolveRunInRepo resolves a run identifier within a specific repo.
-// This is used by commands that require being inside a repo (attach, resume, stop, kill, clean).
-//
-// Parameters:
-//   - input: the user-provided identifier (name or run_id)
-//   - repoID: the repo to search within
-//   - dataDir: the agency data directory
-//
-// Returns the resolved RunRef, the matching RunRecord, and any error.
-func resolveRunInRepo(input, repoID, dataDir string) (ids.RunRef, *store.RunRecord, error) {
-	// Scan runs in this repo only
-	records, err := store.ScanRunsForRepo(dataDir, repoID)
-	if err != nil {
-		return ids.RunRef{}, nil, errors.Wrap(errors.EInternal, "failed to scan repo runs", err)
+	// Build action card inputs using the ref the user invoked
+	// Per spec: use the same ref the user invoked in printed commands
+	ref := opts.RunID
+	if meta.Name != "" && meta.Name == opts.RunID {
+		ref = meta.Name
+	} else if meta.RunID == opts.RunID {
+		ref = meta.RunID
+	}
+	// For prefix matches, fall back to run_id which is always unambiguous
+	if ref != meta.Name && ref != meta.RunID {
+		ref = meta.RunID
 	}
 
-	resolved, record, err := resolveRunByNameOrID(input, records)
-	if err != nil {
-		return ids.RunRef{}, nil, handleResolveErr(err, input)
+	inputs := render.ConflictCardInputs{
+		Ref:          ref,
+		PRURL:        meta.PRURL,
+		PRNumber:     meta.PRNumber,
+		Base:         meta.ParentBranch,
+		Branch:       meta.Branch,
+		WorktreePath: meta.WorktreePath,
 	}
 
-	return resolved, record, nil
-}
-
-// resolveRunGlobal resolves a run identifier across all repos.
-// This is used by commands that don't require being inside a repo (show, push, open, verify).
-//
-// Parameters:
-//   - input: the user-provided identifier (name or run_id)
-//   - dataDir: the agency data directory
-//
-// Returns the resolved RunRef, the matching RunRecord, and any error.
-func resolveRunGlobal(input, dataDir string) (ids.RunRef, *store.RunRecord, error) {
-	// Scan all runs
-	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		return ids.RunRef{}, nil, errors.Wrap(errors.EInternal, "failed to scan runs", err)
+	// Check if worktree exists on disk
+	worktreeExists := false
+	if meta.WorktreePath != "" {
+		if _, err := os.Stat(meta.WorktreePath); err == nil {
+			worktreeExists = true
+		}
 	}
 
-	resolved, record, err := resolveRunByNameOrID(input, records)
-	if err != nil {
-		return ids.RunRef{}, nil, handleResolveErr(err, input)
+	if worktreeExists {
+		// Worktree present: print full action card to stdout, exit 0
+		render.WriteConflictCard(stdout, inputs)
+		return nil
 	}
 
-	return resolved, record, nil
+	// Worktree missing: print partial guidance to stderr, exit with E_WORKTREE_MISSING
+	// Per spec: error_code line first, then message, then partial card
+	_, _ = io.WriteString(stderr, "error_code: E_WORKTREE_MISSING\n")
+	_, _ = io.WriteString(stderr, "worktree archived or missing\n")
+	_, _ = io.WriteString(stderr, "\n")
+	render.WritePartialConflictCard(stderr, inputs)
+
+	return errors.New(errors.EWorktreeMissing, "worktree archived or missing")
 }
