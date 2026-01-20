@@ -30,17 +30,20 @@ builds:
 
 archives:
   - id: agency
-    builds:
+    ids:
       - agency
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats:
+      - tar.gz
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - README.md
       - LICENSE
-      - completions/*
+      - src: completions/*
+        dst: completions/
 
 checksum:
   name_template: "checksums.txt"
@@ -63,7 +66,7 @@ release:
   prerelease: auto
   name_template: "{{.Tag}}"
 
-brews:
+homebrew:
   - name: agency
     repository:
       owner: NielsdaWheelz
