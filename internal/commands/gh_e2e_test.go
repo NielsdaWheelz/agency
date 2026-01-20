@@ -90,9 +90,18 @@ func TestGHE2EPushMerge(t *testing.T) {
 	agencyJSON := `{
   "version": 1,
   "scripts": {
-    "setup": "scripts/agency_setup.sh",
-    "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh"
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
   }
 }
 `

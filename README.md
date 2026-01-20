@@ -131,25 +131,28 @@ the default `agency.json` works for most repos:
 ```json
 {
   "version": 1,
-  "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
-  },
   "scripts": {
-    "setup": "scripts/agency_setup.sh",
-    "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh"
-  },
-  "runners": {
-    "claude": "claude",
-    "codex": "codex"
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
   }
 }
 ```
 
-**customize if needed:**
-- change `parent_branch` to `master` or `dev` if that's your default
-- change `runner` to `codex` if you prefer OpenAI Codex
+**customize timeouts:**
+- `timeout` uses Go duration format: `10m`, `1h30m`, `90s`
+- minimum: 1 minute, maximum: 24 hours
+- increase `setup` timeout for repos with large dependencies
+- increase `verify` timeout for extensive test suites
 
 ### step 3: configure scripts
 
@@ -450,11 +453,15 @@ these are automatically set when agency runs your scripts:
 
 ### script timeouts
 
-| script | timeout | purpose |
-|--------|---------|---------|
+each script's timeout is configurable in `agency.json`. defaults:
+
+| script | default timeout | purpose |
+|--------|-----------------|---------|
 | `setup` | 10 minutes | install deps, copy env files |
 | `verify` | 30 minutes | run tests, lint, build |
 | `archive` | 5 minutes | cleanup before deletion |
+
+the `agency verify` command also accepts a `--timeout` flag to override the configured timeout.
 
 ## shell integration
 
@@ -1165,13 +1172,13 @@ agency verify <run_id> [--timeout <dur>]
 - `run_id`: the run identifier (exact or unique prefix)
 
 **flags:**
-- `--timeout`: script timeout (default: `30m`, Go duration format like `10m`, `90s`)
+- `--timeout`: script timeout override (Go duration format like `10m`, `90s`); defaults to `agency.json` configured timeout
 
 **behavior:**
 1. resolve run_id globally (works from anywhere, not just inside a repo)
 2. validate workspace exists (not archived)
 3. acquire repo lock for the duration of verification
-4. run `scripts.verify` with L0 environment variables (timeout: 30m default)
+4. run `scripts.verify` with L0 environment variables (timeout from config)
 5. read optional `.agency/out/verify.json` structured output
 6. write canonical `verify_record.json` with full evidence
 7. update `meta.json` with `last_verify_at` and `flags.needs_attention`

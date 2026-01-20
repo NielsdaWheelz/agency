@@ -145,15 +145,15 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	// 10. Check scripts exist and are executable
-	scriptSetup, err := checkScript(fsys, cfg.Scripts.Setup, repoRoot.Path, "setup")
+	scriptSetup, err := checkScript(fsys, cfg.Scripts.Setup.Path, repoRoot.Path, "setup")
 	if err != nil {
 		return err
 	}
-	scriptVerify, err := checkScript(fsys, cfg.Scripts.Verify, repoRoot.Path, "verify")
+	scriptVerify, err := checkScript(fsys, cfg.Scripts.Verify.Path, repoRoot.Path, "verify")
 	if err != nil {
 		return err
 	}
-	scriptArchive, err := checkScript(fsys, cfg.Scripts.Archive, repoRoot.Path, "archive")
+	scriptArchive, err := checkScript(fsys, cfg.Scripts.Archive.Path, repoRoot.Path, "archive")
 	if err != nil {
 		return err
 	}

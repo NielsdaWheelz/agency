@@ -1,7 +1,13 @@
 {
   "version": 1,
   "scripts": {
-    "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh"
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
   }
 }

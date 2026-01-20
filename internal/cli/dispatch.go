@@ -229,7 +229,8 @@ arguments:
 
 options:
   --repo <path>     scope name resolution to a specific repo
-  --timeout <dur>   script timeout (default: 30m, Go duration format)
+  --timeout <dur>   script timeout override (Go duration format, e.g., '30m')
+                    defaults to timeout in agency.json scripts.verify.timeout
   -h, --help        show this help
 
 behavior:
@@ -1041,7 +1042,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	flagSet.SetOutput(io.Discard)
 
 	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-	timeoutStr := flagSet.String("timeout", "30m", "script timeout (Go duration format)")
+	timeoutStr := flagSet.String("timeout", "", "script timeout override (Go duration format, e.g., '30m'); defaults to agency.json config")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -1063,15 +1064,19 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	}
 	runID := positionalArgs[0]
 
-	// Parse timeout
-	timeout, err := time.ParseDuration(*timeoutStr)
-	if err != nil {
-		_, _ = fmt.Fprint(stderr, verifyUsageText)
-		return errors.New(errors.EUsage, fmt.Sprintf("invalid timeout: %s", *timeoutStr))
-	}
-	if timeout <= 0 {
-		_, _ = fmt.Fprint(stderr, verifyUsageText)
-		return errors.New(errors.EUsage, "timeout must be positive")
+	// Parse timeout: if empty, use 0 (service will use config default)
+	var timeout time.Duration
+	if *timeoutStr != "" {
+		var err error
+		timeout, err = time.ParseDuration(*timeoutStr)
+		if err != nil {
+			_, _ = fmt.Fprint(stderr, verifyUsageText)
+			return errors.New(errors.EUsage, fmt.Sprintf("invalid timeout: %s", *timeoutStr))
+		}
+		if timeout <= 0 {
+			_, _ = fmt.Fprint(stderr, verifyUsageText)
+			return errors.New(errors.EUsage, "timeout must be positive")
+		}
 	}
 
 	// Get current working directory

@@ -57,6 +57,7 @@ type PipelineState struct {
 	// Populated by LoadAgencyConfig
 	ResolvedRunnerCmd string
 	SetupScript       string
+	SetupTimeout      time.Duration
 	ParentBranch      string // resolved from --parent or current branch
 
 	// Populated by CreateWorktree

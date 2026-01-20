@@ -131,19 +131,34 @@ All global state lives under `${AGENCY_DATA_DIR}`.
 {
   "version": 1,
   "scripts": {
-    "setup": "scripts/agency_setup.sh",
-    "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh"
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
   }
 }
 ```
 
 **required fields**:
-- `scripts.setup`, `scripts.verify`, `scripts.archive`
+- `scripts.setup.path`, `scripts.verify.path`, `scripts.archive.path`
+
+**optional fields**:
+- `scripts.*.timeout`: Go duration format (e.g., `10m`, `1h30m`, `90s`)
+  - defaults: setup=10m, verify=30m, archive=5m
+  - minimum: 1m, maximum: 24h
+  - `agency verify --timeout` flag overrides verify timeout
 
 **validation (v1)**:
 - `version` must be integer `1`
-- `scripts.setup|verify|archive` must be non-empty strings
+- each script must be an object with `path` (non-empty string) and optional `timeout`
 - any other top-level key is invalid (including `defaults` and `runners`)
 
 **schema versioning (v1)** (applies to `agency.json`, `config.json`, `meta.json`, `events.jsonl`):
@@ -214,7 +229,7 @@ All global state lives under `${AGENCY_DATA_DIR}`.
 - non-interactive (stdin is `/dev/null`)
 - idempotent
 - run outside tmux (subprocess, not in runner pane)
-- timeouts: setup 10m, verify 30m, archive 5m
+- configurable timeouts (defaults: setup 10m, verify 30m, archive 5m)
 
 **semantics**: exit 0 = pass, non-zero = fail. stdout/stderr logged.
 

@@ -283,7 +283,8 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 	// Populate state
 	st.Runner = runnerName // Store the resolved runner name (may differ from CLI input)
 	st.ResolvedRunnerCmd = resolvedRunnerCmd
-	st.SetupScript = cfg.Scripts.Setup
+	st.SetupScript = cfg.Scripts.Setup.Path
+	st.SetupTimeout = cfg.Scripts.Setup.Timeout
 	st.ParentBranch = parentBranch
 
 	return nil
@@ -396,9 +397,6 @@ func (s *Service) WriteMeta(ctx context.Context, st *pipeline.PipelineState) err
 	return nil
 }
 
-// SetupTimeout is the timeout for the setup script (10 minutes per spec).
-const SetupTimeout = 10 * time.Minute
-
 // RunSetup executes the setup script with timeout.
 // Runs the configured setup script via `sh -lc <setup_script>` in the worktree.
 // Captures stdout/stderr to logs/setup.log (truncated on each attempt).
@@ -424,7 +422,7 @@ func (s *Service) RunSetup(ctx context.Context, st *pipeline.PipelineState) erro
 	env := buildSetupEnv(st, logsDir)
 
 	// Execute setup script
-	result := executeSetupScript(ctx, st.SetupScript, st.WorktreePath, env, logPath, SetupTimeout)
+	result := executeSetupScript(ctx, st.SetupScript, st.WorktreePath, env, logPath, st.SetupTimeout)
 
 	// Parse optional setup.json if it exists
 	setupJSONPath := filepath.Join(st.WorktreePath, ".agency", "out", "setup.json")
@@ -470,7 +468,7 @@ func (s *Service) RunSetup(ctx context.Context, st *pipeline.PipelineState) erro
 	if result.TimedOut {
 		return errors.NewWithDetails(
 			errors.EScriptTimeout,
-			"setup script timed out after "+SetupTimeout.String(),
+			"setup script timed out after "+st.SetupTimeout.String(),
 			map[string]string{
 				"command":  "sh -lc " + st.SetupScript,
 				"log_path": logPath,

@@ -29,14 +29,14 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	}
 
 	// Validate required fields in scripts
-	if cfg.Scripts.Setup == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.setup")
+	if cfg.Scripts.Setup.Path == "" {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.setup.path")
 	}
-	if cfg.Scripts.Verify == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.verify")
+	if cfg.Scripts.Verify.Path == "" {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.verify.path")
 	}
-	if cfg.Scripts.Archive == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.archive")
+	if cfg.Scripts.Archive.Path == "" {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.archive.path")
 	}
 
 	return cfg, nil
@@ -104,8 +104,8 @@ func ValidateForS1(cfg AgencyConfig) (AgencyConfig, error) {
 	}
 
 	// Validate scripts.setup only (S1 requirement)
-	if cfg.Scripts.Setup == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.setup")
+	if cfg.Scripts.Setup.Path == "" {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.setup.path")
 	}
 
 	return cfg, nil

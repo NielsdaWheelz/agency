@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -60,10 +61,10 @@ const GracePeriod = 3 * time.Second
 // Verify failure (non-zero exit, timeout, cancel) is represented in
 // VerifyRecord.OK/ExitCode, NOT as a returned error.
 func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
-	// Default timeout if not specified
+	// Timeout should be set by caller from config; this is defensive fallback
 	timeout := cfg.Timeout
 	if timeout == 0 {
-		timeout = 30 * time.Minute
+		timeout = config.DefaultVerifyTimeout
 	}
 
 	record := store.VerifyRecord{

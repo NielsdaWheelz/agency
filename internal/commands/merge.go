@@ -562,8 +562,8 @@ func runArchivePipeline(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, 
 		Meta:          meta,
 		RepoRoot:      repoRootPath,
 		DataDir:       dataDir,
-		ArchiveScript: agencyJSON.Scripts.Archive,
-		Timeout:       archive.DefaultArchiveTimeout,
+		ArchiveScript: agencyJSON.Scripts.Archive.Path,
+		Timeout:       agencyJSON.Scripts.Archive.Timeout,
 	}
 
 	archiveDeps := archive.Deps{
@@ -1203,14 +1203,16 @@ func runVerifyForMerge(ctx context.Context, fsys fs.FS, st *store.Store, meta *s
 	recordPath := st.VerifyRecordPath(repoID, meta.RunID)
 	verifyJSONPath := filepath.Join(worktreePath, ".agency", "out", "verify.json")
 
-	// Load agency.json to get verify script
+	// Load agency.json to get verify script and timeout
 	agencyJSON, err := config.LoadAgencyConfig(fsys, worktreePath)
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to load agency.json for verify", err)
 	}
 
+	// Use verify timeout from config
+	timeout := agencyJSON.Scripts.Verify.Timeout
+
 	// Emit verify_started event
-	timeout := 30 * time.Minute
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "verify_started", map[string]any{
 		"timeout_ms": timeout.Milliseconds(),
 	})
@@ -1223,7 +1225,7 @@ func runVerifyForMerge(ctx context.Context, fsys fs.FS, st *store.Store, meta *s
 		RepoID:         repoID,
 		RunID:          meta.RunID,
 		WorkDir:        worktreePath,
-		Script:         agencyJSON.Scripts.Verify,
+		Script:         agencyJSON.Scripts.Verify.Path,
 		Env:            env,
 		Timeout:        timeout,
 		LogPath:        logPath,

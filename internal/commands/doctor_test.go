@@ -100,9 +100,18 @@ func setupTestRepo(t *testing.T) string {
 	agencyJSON := `{
   "version": 1,
   "scripts": {
-    "setup": "scripts/agency_setup.sh",
-    "verify": "scripts/agency_verify.sh",
-    "archive": "scripts/agency_archive.sh"
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
   }
 }`
 	if err := os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644); err != nil {
