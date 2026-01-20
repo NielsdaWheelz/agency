@@ -16,11 +16,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/events"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/tty"
 )
 
 // CleanOpts holds options for the clean command.
@@ -33,6 +33,10 @@ type CleanOpts struct {
 
 	// AllowDirty allows clean with a dirty worktree.
 	AllowDirty bool
+
+	// DeleteBranch deletes the local and remote branch after archiving.
+	// Also closes any associated PR.
+	DeleteBranch bool
 }
 
 // Clean archives a run without merging.
@@ -52,7 +56,7 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	}
 
 	// Check for interactive TTY (stdin and stderr must be TTYs)
-	if !tty.IsInteractive() {
+	if !isInteractive() {
 		return errors.New(errors.ENotInteractive, "clean requires an interactive terminal; stdin and stderr must be TTYs")
 	}
 
@@ -289,14 +293,27 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		}
 	}
 
+	// Handle --delete-branch after successful archive
+	var branchResult *branchDeletionResult
+	if opts.DeleteBranch && result.Success() {
+		branchResult = deleteBranchAndClosePR(ctx, cr, meta, repoRoot, eventsPath, repoID, stderr)
+	}
+
 	// Append clean_finished event
+	cleanFinishedData := events.CleanFinishedData(result.Success())
+	if branchResult != nil {
+		cleanFinishedData["delete_branch"] = true
+		cleanFinishedData["local_branch_deleted"] = branchResult.LocalDeleted
+		cleanFinishedData["remote_branch_deleted"] = branchResult.RemoteDeleted
+		cleanFinishedData["pr_closed"] = branchResult.PRClosed
+	}
 	_ = events.AppendEvent(eventsPath, events.Event{
 		SchemaVersion: "1.0",
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		RepoID:        repoID,
 		RunID:         opts.RunID,
 		Event:         "clean_finished",
-		Data:          events.CleanFinishedData(result.Success()),
+		Data:          cleanFinishedData,
 	})
 
 	// Return error if archive failed
@@ -309,8 +326,173 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	if result.LogPath != "" {
 		_, _ = fmt.Fprintf(stdout, "log: %s\n", result.LogPath)
 	}
+	if branchResult != nil {
+		if branchResult.LocalDeleted {
+			_, _ = fmt.Fprintf(stdout, "local_branch: deleted %s\n", meta.Branch)
+		}
+		if branchResult.RemoteDeleted {
+			_, _ = fmt.Fprintf(stdout, "remote_branch: deleted origin/%s\n", meta.Branch)
+		}
+		if branchResult.PRClosed {
+			_, _ = fmt.Fprintf(stdout, "pr: closed #%d\n", meta.PRNumber)
+		}
+	}
 
 	return nil
+}
+
+// branchDeletionResult holds the results of branch deletion operations.
+type branchDeletionResult struct {
+	LocalDeleted  bool
+	RemoteDeleted bool
+	PRClosed      bool
+}
+
+// deleteBranchAndClosePR deletes the local and remote branch and closes the PR.
+// All operations are best-effort; failures are logged but don't fail the clean.
+func deleteBranchAndClosePR(
+	ctx context.Context,
+	cr agencyexec.CommandRunner,
+	meta *store.RunMeta,
+	repoRoot string,
+	eventsPath string,
+	repoID string,
+	stderr io.Writer,
+) *branchDeletionResult {
+	result := &branchDeletionResult{}
+	branch := meta.Branch
+
+	// 1. Delete local branch
+	// We need to run this from the main repo root, not the worktree (which is deleted)
+	if repoRoot != "" && branch != "" {
+		localResult, err := cr.Run(ctx, "git", []string{
+			"-C", repoRoot,
+			"branch", "-D", branch,
+		}, agencyexec.RunOpts{})
+
+		if err == nil && localResult.ExitCode == 0 {
+			result.LocalDeleted = true
+			_ = events.AppendEvent(eventsPath, events.Event{
+				SchemaVersion: "1.0",
+				Timestamp:     time.Now().UTC().Format(time.RFC3339),
+				RepoID:        repoID,
+				RunID:         meta.RunID,
+				Event:         "branch_deleted",
+				Data: map[string]any{
+					"branch": branch,
+					"type":   "local",
+				},
+			})
+		} else {
+			// Log warning but continue
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
+			} else {
+				errMsg = strings.TrimSpace(localResult.Stderr)
+			}
+			_, _ = fmt.Fprintf(stderr, "warning: failed to delete local branch: %s\n", errMsg)
+		}
+	}
+
+	// 2. Try to get origin URL and delete remote branch
+	if repoRoot != "" && branch != "" {
+		originResult, err := cr.Run(ctx, "git", []string{
+			"-C", repoRoot,
+			"config", "--get", "remote.origin.url",
+		}, agencyexec.RunOpts{})
+
+		if err == nil && originResult.ExitCode == 0 {
+			originURL := strings.TrimSpace(originResult.Stdout)
+			originHost := parseOriginHost(originURL)
+
+			// Only attempt remote operations for github.com
+			if originHost == "github.com" {
+				// Delete remote branch
+				remoteResult, err := cr.Run(ctx, "git", []string{
+					"-C", repoRoot,
+					"push", "origin", "--delete", branch,
+				}, agencyexec.RunOpts{
+					Env: nonInteractiveEnv(),
+				})
+
+				if err == nil && remoteResult.ExitCode == 0 {
+					result.RemoteDeleted = true
+					_ = events.AppendEvent(eventsPath, events.Event{
+						SchemaVersion: "1.0",
+						Timestamp:     time.Now().UTC().Format(time.RFC3339),
+						RepoID:        repoID,
+						RunID:         meta.RunID,
+						Event:         "branch_deleted",
+						Data: map[string]any{
+							"branch": branch,
+							"type":   "remote",
+						},
+					})
+				} else {
+					// Log warning - remote branch may not exist
+					errMsg := ""
+					if err != nil {
+						errMsg = err.Error()
+					} else {
+						errMsg = strings.TrimSpace(remoteResult.Stderr)
+					}
+					// Only warn if it's not a "branch doesn't exist" error
+					if !strings.Contains(errMsg, "remote ref does not exist") {
+						_, _ = fmt.Fprintf(stderr, "warning: failed to delete remote branch: %s\n", errMsg)
+					}
+				}
+
+				// 3. Close PR if it exists
+				if meta.PRNumber != 0 {
+					owner, repo, ok := identity.ParseGitHubOwnerRepo(originURL)
+					if ok {
+						ghRepo := fmt.Sprintf("%s/%s", owner, repo)
+						prResult, err := cr.Run(ctx, "gh", []string{
+							"pr", "close",
+							fmt.Sprintf("%d", meta.PRNumber),
+							"-R", ghRepo,
+							"--comment", "Closed via `agency clean --delete-branch`",
+						}, agencyexec.RunOpts{
+							Dir: repoRoot,
+							Env: nonInteractiveEnv(),
+						})
+
+						if err == nil && prResult.ExitCode == 0 {
+							result.PRClosed = true
+							_ = events.AppendEvent(eventsPath, events.Event{
+								SchemaVersion: "1.0",
+								Timestamp:     time.Now().UTC().Format(time.RFC3339),
+								RepoID:        repoID,
+								RunID:         meta.RunID,
+								Event:         "pr_closed",
+								Data: map[string]any{
+									"pr_number": meta.PRNumber,
+									"pr_url":    meta.PRURL,
+								},
+							})
+						} else {
+							// Log warning - PR may already be closed or merged
+							errMsg := ""
+							if err != nil {
+								errMsg = err.Error()
+							} else {
+								errMsg = strings.TrimSpace(prResult.Stderr)
+							}
+							// Only warn if not already closed/merged
+							if !strings.Contains(errMsg, "already closed") &&
+								!strings.Contains(errMsg, "already merged") &&
+								!strings.Contains(errMsg, "Pull request #") {
+								_, _ = fmt.Fprintf(stderr, "warning: failed to close PR #%d: %s\n", meta.PRNumber, errMsg)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // isLockError checks if err is a lock.ErrLocked and assigns it to target.

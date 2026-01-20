@@ -297,16 +297,23 @@ behavior:
   - retains metadata and logs
   - marks run as abandoned
 
+  with --delete-branch:
+  - deletes local git branch
+  - deletes remote branch (if pushed)
+  - closes PR (if exists)
+
 confirmation:
   you must type 'clean' to confirm the operation.
 
 options:
-  --repo <path>   scope name resolution to a specific repo
-  --allow-dirty   allow clean even if worktree has uncommitted changes
-  -h, --help      show this help
+  --repo <path>     scope name resolution to a specific repo
+  --allow-dirty     allow clean even if worktree has uncommitted changes
+  --delete-branch   delete local/remote branch and close PR
+  -h, --help        show this help
 
 examples:
   agency clean my-feature
+  agency clean my-feature --delete-branch
   agency clean my-feature --allow-dirty
   agency clean my-feature --repo /path/to/repo
 `
@@ -1144,6 +1151,7 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 
 	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 	allowDirty := flagSet.Bool("allow-dirty", false, "allow clean even if worktree has uncommitted changes")
+	deleteBranch := flagSet.Bool("delete-branch", false, "delete local and remote branch, close PR")
 
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
@@ -1177,9 +1185,10 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	opts := commands.CleanOpts{
-		RunID:      runID,
-		RepoPath:   *repoPath,
-		AllowDirty: *allowDirty,
+		RunID:        runID,
+		RepoPath:     *repoPath,
+		AllowDirty:   *allowDirty,
+		DeleteBranch: *deleteBranch,
 	}
 
 	return commands.Clean(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
