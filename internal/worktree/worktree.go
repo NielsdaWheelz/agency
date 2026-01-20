@@ -160,8 +160,9 @@ func WorktreePath(dataDir, repoID, runID string) string {
 	return filepath.Join(dataDir, "repos", repoID, "worktrees", runID)
 }
 
-// scaffoldWorkspace creates the .agency/ directory structure, report.md, and runner_status.json.
-// This function is idempotent for directories but will not overwrite existing files.
+// scaffoldWorkspace creates the .agency/ directory structure, report.md, INSTRUCTIONS.md, and runner_status.json.
+// This function is idempotent for directories but will not overwrite existing files (except INSTRUCTIONS.md).
+// INSTRUCTIONS.md is unconditionally overwritten on every run per spec.
 func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
 	// Create .agency/ directories including state/
 	dirs := []string{
@@ -175,6 +176,13 @@ func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
 		if err := fsys.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
+	}
+
+	// Create INSTRUCTIONS.md - unconditionally overwritten on every run per spec
+	instructionsPath := filepath.Join(worktreePath, ".agency", "INSTRUCTIONS.md")
+	instructionsContent := InstructionsTemplate()
+	if err := fsys.WriteFile(instructionsPath, []byte(instructionsContent), 0644); err != nil {
+		return fmt.Errorf("failed to create INSTRUCTIONS.md: %w", err)
 	}
 
 	// Create report.md if it doesn't exist
@@ -237,27 +245,77 @@ func checkIgnored(ctx context.Context, cr exec.CommandRunner, worktreePath strin
 
 // ReportTemplate returns the report.md template with the given name.
 // The template follows the standard agency report format.
+// Per spec, it includes a reference to INSTRUCTIONS.md right after the title.
 func ReportTemplate(name string) string {
 	return fmt.Sprintf(`# %s
 
-## summary of changes
-- ...
+runner: read `+"`"+`.agency/INSTRUCTIONS.md`+"`"+` before starting.
+
+## summary
+- what changed (high level)
+- why (intent)
+
+## scope
+- completed
+- explicitly not done / deferred
+
+## decisions
+- important choices + rationale
+- tradeoffs
+
+## deviations
+- where it diverged from spec + why
 
 ## problems encountered
-- ...
-
-## solutions implemented
-- ...
-
-## decisions made
-- ...
-
-## deviations from spec
-- ...
+- failing tests, tricky bugs, constraints
 
 ## how to test
-- ...
+- exact commands
+- expected output
+
+## review notes
+- files deserving scrutiny
+- potential risks
+
+## follow-ups
+- blockers or questions
 `, name)
+}
+
+// InstructionsTemplate returns the INSTRUCTIONS.md content.
+// This file is tool-owned, never committed, and overwritten on each run.
+// It contains short, imperative, checklist-style guidance for runners.
+func InstructionsTemplate() string {
+	return `# Agency Runner Instructions
+
+**Read this before starting work.**
+
+## Workflow
+
+- [ ] Make incremental, focused commits
+- [ ] Keep commits buildable (tests should pass after each commit)
+- [ ] Update ` + "`" + `.agency/report.md` + "`" + ` before finishing
+
+## Report Requirements
+
+Fill in at least these sections in ` + "`" + `.agency/report.md` + "`" + `:
+- [ ] ` + "`" + `## summary` + "`" + ` — describe what changed and why
+- [ ] ` + "`" + `## how to test` + "`" + ` — provide exact commands and expected output
+
+## Status Tracking
+
+If supported, record your status in ` + "`" + `.agency/state/runner_status.json` + "`" + `:
+- ` + "`" + `working` + "`" + ` — actively making progress (include summary)
+- ` + "`" + `needs_input` + "`" + ` — waiting for user answer (include questions[])
+- ` + "`" + `blocked` + "`" + ` — cannot proceed (include blockers[])
+- ` + "`" + `ready_for_review` + "`" + ` — work complete (include how_to_test)
+
+## Notes
+
+- This file is advisory only; no correctness depends on it
+- Do not commit this file (it is in .gitignore via .agency/)
+- This file is regenerated on every ` + "`" + `agency run` + "`" + `
+`
 }
 
 // ScaffoldWorkspaceOnly scaffolds the .agency/ directories and report.md

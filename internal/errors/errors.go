@@ -100,6 +100,8 @@ const (
 	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run
 	EInvalidName Code = "E_INVALID_NAME" // name does not match validation rules
 
+	// Report completeness error codes (S7)
+	EReportIncomplete Code = "E_REPORT_INCOMPLETE" // report exists but missing required sections
 	// Slice 7 global resolution error codes
 	EInvalidRepoPath Code = "E_INVALID_REPO_PATH" // --repo path does not exist or is not inside a git repo
 	ERunRefAmbiguous Code = "E_RUN_REF_AMBIGUOUS" // name matches multiple active runs (across repos)

@@ -104,7 +104,15 @@ func TestGHE2EPushMerge(t *testing.T) {
 	if err := os.MkdirAll(reportDir, 0o755); err != nil {
 		t.Fatalf("mkdir report: %v", err)
 	}
-	report := "e2e report: verifying push/merge works"
+	// Report must include ## summary and ## how to test sections per S7 spec4
+	report := `# e2e test
+
+## summary
+e2e report: verifying push/merge works
+
+## how to test
+This is an automated e2e test - no manual testing required.
+`
 	if err := os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(report), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}

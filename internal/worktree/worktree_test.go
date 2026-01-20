@@ -153,6 +153,22 @@ func TestCreate_Success(t *testing.T) {
 		t.Errorf("report.md should start with '# test-run\\n', got: %q", string(reportContent)[:min(50, len(reportContent))])
 	}
 
+	// Verify report.md references INSTRUCTIONS.md (per S7 spec4)
+	if !strings.Contains(string(reportContent), "runner: read `.agency/INSTRUCTIONS.md` before starting.") {
+		t.Error("report.md should reference INSTRUCTIONS.md")
+	}
+
+	// Verify INSTRUCTIONS.md exists and has expected content
+	instructionsPath := filepath.Join(agencyDir, "INSTRUCTIONS.md")
+	instructionsContent, err := os.ReadFile(instructionsPath)
+	if err != nil {
+		t.Fatalf("failed to read INSTRUCTIONS.md: %v", err)
+	}
+
+	if !strings.Contains(string(instructionsContent), "# Agency Runner Instructions") {
+		t.Error("INSTRUCTIONS.md should have runner instructions title")
+	}
+
 	// Verify git worktree list shows the new worktree
 	cmd := exec.Command("git", "-C", resolvedRepoRoot, "worktree", "list")
 	output, err := cmd.Output()
@@ -303,6 +319,52 @@ func TestScaffoldWorkspaceOnly_ReportNotOverwritten(t *testing.T) {
 	}
 }
 
+func TestScaffoldWorkspaceOnly_InstructionsAlwaysOverwritten(t *testing.T) {
+	// Per S7 spec4: INSTRUCTIONS.md should be unconditionally overwritten on every run
+	dir := t.TempDir()
+	fsys := fs.NewRealFS()
+
+	// First call creates INSTRUCTIONS.md
+	if err := ScaffoldWorkspaceOnly(fsys, dir, "First Title"); err != nil {
+		t.Fatalf("first scaffold failed: %v", err)
+	}
+
+	instructionsPath := filepath.Join(dir, ".agency", "INSTRUCTIONS.md")
+	content1, err := os.ReadFile(instructionsPath)
+	if err != nil {
+		t.Fatalf("failed to read INSTRUCTIONS.md: %v", err)
+	}
+
+	// Verify initial content
+	if !strings.Contains(string(content1), "# Agency Runner Instructions") {
+		t.Error("INSTRUCTIONS.md should have standard content")
+	}
+
+	// Write custom content to INSTRUCTIONS.md
+	customContent := "# Custom Instructions\nThis should be overwritten.\n"
+	if err := os.WriteFile(instructionsPath, []byte(customContent), 0644); err != nil {
+		t.Fatalf("failed to write custom content: %v", err)
+	}
+
+	// Second call SHOULD overwrite INSTRUCTIONS.md
+	if err := ScaffoldWorkspaceOnly(fsys, dir, "Second Title"); err != nil {
+		t.Fatalf("second scaffold failed: %v", err)
+	}
+
+	content2, err := os.ReadFile(instructionsPath)
+	if err != nil {
+		t.Fatalf("failed to read INSTRUCTIONS.md after second scaffold: %v", err)
+	}
+
+	// Verify INSTRUCTIONS.md was overwritten with standard content
+	if !strings.Contains(string(content2), "# Agency Runner Instructions") {
+		t.Error("INSTRUCTIONS.md should be overwritten with standard content")
+	}
+	if strings.Contains(string(content2), "Custom Instructions") {
+		t.Error("INSTRUCTIONS.md should NOT contain custom content after second scaffold")
+	}
+}
+
 func TestWorktreePath(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -345,18 +407,50 @@ func TestReportTemplate(t *testing.T) {
 		t.Errorf("template should start with '# My Test Run\\n'")
 	}
 
-	// Check required sections exist
+	// Check for instructions reference (per S7 spec4)
+	if !strings.Contains(template, "runner: read `.agency/INSTRUCTIONS.md` before starting.") {
+		t.Error("template should reference INSTRUCTIONS.md after title")
+	}
+
+	// Check required sections exist (updated per constitution)
 	requiredSections := []string{
-		"## summary of changes",
+		"## summary",
+		"## scope",
+		"## decisions",
+		"## deviations",
 		"## problems encountered",
-		"## solutions implemented",
-		"## decisions made",
-		"## deviations from spec",
 		"## how to test",
+		"## review notes",
+		"## follow-ups",
 	}
 	for _, section := range requiredSections {
 		if !strings.Contains(template, section) {
 			t.Errorf("template should contain %q", section)
+		}
+	}
+}
+
+func TestInstructionsTemplate(t *testing.T) {
+	template := InstructionsTemplate()
+
+	// Check title
+	if !strings.Contains(template, "# Agency Runner Instructions") {
+		t.Error("template should have Agency Runner Instructions title")
+	}
+
+	// Check required content per spec
+	requiredContent := []string{
+		"Make incremental, focused commits",
+		"Keep commits buildable",
+		"Update `.agency/report.md` before finishing",
+		"`## summary`",
+		"`## how to test`",
+		"runner_status.json",
+		"This file is advisory only",
+	}
+	for _, content := range requiredContent {
+		if !strings.Contains(template, content) {
+			t.Errorf("template should contain %q", content)
 		}
 	}
 }
