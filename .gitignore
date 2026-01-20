@@ -42,3 +42,6 @@ bin/
 
 # Local environment variables
 .env
+
+# completions
+completions/
