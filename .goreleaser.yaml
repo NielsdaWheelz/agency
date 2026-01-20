@@ -42,8 +42,9 @@ archives:
     files:
       - README.md
       - LICENSE
-      - src: completions/*
-        dst: completions/
+      - completions/*
+      - completions/agency.bash
+      - completions/_agency
 
 checksum:
   name_template: "checksums.txt"
