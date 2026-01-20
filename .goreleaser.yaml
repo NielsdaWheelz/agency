@@ -68,7 +68,7 @@ brews:
     repository:
       owner: NielsdaWheelz
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/NielsdaWheelz/agency"
     description: "Local-first runner manager for AI coding sessions"
     license: "MIT"
