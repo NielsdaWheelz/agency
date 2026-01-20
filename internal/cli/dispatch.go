@@ -444,7 +444,6 @@ examples:
   agency completion zsh
 `
 
-
 const resolveUsageText = `usage: agency resolve <run>
 
 show conflict resolution guidance for a run.
@@ -1315,7 +1314,7 @@ func runCompletion(args []string, stdout, stderr io.Writer) error {
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
 			_, _ = fmt.Fprint(stdout, completionUsageText)
-      return nil
+			return nil
 		}
 	}
 	// Shell is a required positional argument
@@ -1359,14 +1358,14 @@ func runComplete(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	kind := positionalArgs[0]
-  
-  // Get current working directory
+
+	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
-    // Silent failure for shell UX
+		// Silent failure for shell UX
 		return nil
 	}
-  // Create real implementations
+	// Create real implementations
 	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
@@ -1388,7 +1387,7 @@ func runResolve(args []string, stdout, stderr io.Writer) error {
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
 			_, _ = fmt.Fprint(stdout, resolveUsageText)
-      return nil
+			return nil
 		}
 	}
 
