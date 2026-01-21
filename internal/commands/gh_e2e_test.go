@@ -130,17 +130,11 @@ This is an automated e2e test - no manual testing required.
 	if err := os.MkdirAll(e2eDir, 0o755); err != nil {
 		t.Fatalf("mkdir e2e dir: %v", err)
 	}
-	logPath := filepath.Join(e2eDir, "gh_e2e.log")
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatalf("open e2e log: %v", err)
-	}
-	if _, err := fmt.Fprintf(logFile, "%s %s\n", runID, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		_ = logFile.Close()
+	// Use unique log file per run to avoid merge conflicts when tests run concurrently
+	logPath := filepath.Join(e2eDir, fmt.Sprintf("gh_e2e_%s.log", runID))
+	logContent := fmt.Sprintf("%s %s\n", runID, time.Now().UTC().Format(time.RFC3339))
+	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
 		t.Fatalf("write e2e log: %v", err)
-	}
-	if err := logFile.Close(); err != nil {
-		t.Fatalf("close e2e log: %v", err)
 	}
 
 	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/report.md"}, exec.RunOpts{
@@ -165,7 +159,7 @@ This is an automated e2e test - no manual testing required.
 		"scripts/agency_setup.sh",
 		"scripts/agency_verify.sh",
 		"scripts/agency_archive.sh",
-		"e2e/gh_e2e.log",
+		fmt.Sprintf("e2e/gh_e2e_%s.log", runID),
 	}
 	if !reportIgnored {
 		addPaths = append(addPaths, ".agency/report.md")
