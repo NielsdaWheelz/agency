@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
@@ -488,6 +489,41 @@ func GetGlobalOpts() GlobalOpts {
 	return globalOpts
 }
 
+// reorderFlagsBeforeArgs reorders command arguments so flags appear before
+// positional arguments. This works around Go's flag package stopping at the
+// first non-flag argument, allowing syntax like "cmd arg --flag" to work.
+//
+// boolFlags is a set of flag names (without leading dashes) that are boolean
+// and don't take values. All other flags are assumed to take a value argument.
+func reorderFlagsBeforeArgs(args []string, boolFlags map[string]bool) []string {
+	var flags []string
+	var positional []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+
+			// Extract flag name (handle both -flag and --flag, and --flag=value)
+			flagName := strings.TrimLeft(arg, "-")
+			if eqIdx := strings.Index(flagName, "="); eqIdx >= 0 {
+				// --flag=value form, value already included
+				continue
+			}
+
+			// If not a bool flag, next arg is the value (if it exists and isn't a flag)
+			if !boolFlags[flagName] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				flags = append(flags, args[i])
+			}
+		} else {
+			positional = append(positional, arg)
+		}
+	}
+
+	return append(flags, positional...)
+}
+
 // Run parses arguments and dispatches to the appropriate subcommand.
 // Returns an error if the command fails; the caller should print the error and exit.
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -743,13 +779,6 @@ func runLS(args []string, stdout, stderr io.Writer) error {
 }
 
 func runShow(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("show", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	jsonOutput := flagSet.Bool("json", false, "output as JSON")
-	pathOutput := flagSet.Bool("path", false, "output only resolved paths")
-	capture := flagSet.Bool("capture", false, "capture tmux scrollback to transcript files")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -757,6 +786,22 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"json":    true,
+		"path":    true,
+		"capture": true,
+		"h":       true,
+		"help":    true,
+	})
+
+	flagSet := flag.NewFlagSet("show", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	jsonOutput := flagSet.Bool("json", false, "output as JSON")
+	pathOutput := flagSet.Bool("path", false, "output only resolved paths")
+	capture := flagSet.Bool("capture", false, "capture tmux scrollback to transcript files")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -793,11 +838,6 @@ func runShow(args []string, stdout, stderr io.Writer) error {
 }
 
 func runOpen(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("open", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	editor := flagSet.String("editor", "", "editor name")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -805,6 +845,18 @@ func runOpen(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --editor takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("open", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	editor := flagSet.String("editor", "", "editor name")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -838,9 +890,6 @@ func runOpen(args []string, stdout, stderr io.Writer) error {
 }
 
 func runPath(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("path", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -848,6 +897,15 @@ func runPath(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("path", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -871,11 +929,6 @@ func runPath(args []string, stdout, stderr io.Writer) error {
 }
 
 func runAttach(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("attach", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -883,6 +936,18 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --repo takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("attach", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -927,11 +992,6 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 }
 
 func runStop(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("stop", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -939,6 +999,18 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --repo takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("stop", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -972,11 +1044,6 @@ func runStop(args []string, stdout, stderr io.Writer) error {
 }
 
 func runKill(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("kill", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -984,6 +1051,18 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --repo takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("kill", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1017,14 +1096,6 @@ func runKill(args []string, stdout, stderr io.Writer) error {
 }
 
 func runResume(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("resume", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-	detached := flagSet.Bool("detached", false, "do not attach; return after ensuring session exists")
-	restart := flagSet.Bool("restart", false, "kill existing session (if any) and recreate")
-	yes := flagSet.Bool("yes", false, "skip confirmation prompt for --restart")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1032,6 +1103,24 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --repo takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"detached": true,
+		"restart":  true,
+		"yes":      true,
+		"h":        true,
+		"help":     true,
+	})
+
+	flagSet := flag.NewFlagSet("resume", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
+	detached := flagSet.Bool("detached", false, "do not attach; return after ensuring session exists")
+	restart := flagSet.Bool("restart", false, "kill existing session (if any) and recreate")
+	yes := flagSet.Bool("yes", false, "skip confirmation prompt for --restart")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1068,13 +1157,6 @@ func runResume(args []string, stdout, stderr io.Writer) error {
 }
 
 func runPush(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("push", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	allowDirty := flagSet.Bool("allow-dirty", false, "allow push even if worktree has uncommitted changes")
-	force := flagSet.Bool("force", false, "proceed even if report is missing/empty")
-	forceWithLease := flagSet.Bool("force-with-lease", false, "use git push --force-with-lease (required after rebase)")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1082,6 +1164,22 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"allow-dirty":      true,
+		"force":            true,
+		"force-with-lease": true,
+		"h":                true,
+		"help":             true,
+	})
+
+	flagSet := flag.NewFlagSet("push", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	allowDirty := flagSet.Bool("allow-dirty", false, "allow push even if worktree has uncommitted changes")
+	force := flagSet.Bool("force", false, "proceed even if report is missing/empty")
+	forceWithLease := flagSet.Bool("force-with-lease", false, "use git push --force-with-lease (required after rebase)")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1117,12 +1215,6 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 }
 
 func runVerify(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("verify", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-	timeoutStr := flagSet.String("timeout", "", "script timeout override (Go duration format, e.g., '30m'); defaults to agency.json config")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1130,6 +1222,19 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --repo and --timeout take values, so they're not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("verify", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
+	timeoutStr := flagSet.String("timeout", "", "script timeout override (Go duration format, e.g., '30m'); defaults to agency.json config")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1190,6 +1295,26 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 }
 
 func runMerge(args []string, stdout, stderr io.Writer) error {
+	// Handle help manually to return nil (exit 0)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			_, _ = fmt.Fprint(stdout, mergeUsageText)
+			return nil
+		}
+	}
+
+	// Reorder args so flags can appear after positional arguments
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"squash":           true,
+		"merge":            true,
+		"rebase":           true,
+		"no-delete-branch": true,
+		"allow-dirty":      true,
+		"force":            true,
+		"h":                true,
+		"help":             true,
+	})
+
 	flagSet := flag.NewFlagSet("merge", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
@@ -1199,14 +1324,6 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 	noDeleteBranch := flagSet.Bool("no-delete-branch", false, "preserve remote branch after merge")
 	allowDirty := flagSet.Bool("allow-dirty", false, "allow merge even if worktree has uncommitted changes")
 	force := flagSet.Bool("force", false, "bypass verify-failed prompt")
-
-	// Handle help manually to return nil (exit 0)
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" {
-			_, _ = fmt.Fprint(stdout, mergeUsageText)
-			return nil
-		}
-	}
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1266,13 +1383,6 @@ func runMerge(args []string, stdout, stderr io.Writer) error {
 }
 
 func runClean(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("clean", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
-	allowDirty := flagSet.Bool("allow-dirty", false, "allow clean even if worktree has uncommitted changes")
-	deleteBranch := flagSet.Bool("delete-branch", false, "delete local and remote branch, close PR")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1280,6 +1390,22 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --repo takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"allow-dirty":   true,
+		"delete-branch": true,
+		"h":             true,
+		"help":          true,
+	})
+
+	flagSet := flag.NewFlagSet("clean", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	repoPath := flagSet.String("repo", "", "scope name resolution to a specific repo")
+	allowDirty := flagSet.Bool("allow-dirty", false, "allow clean even if worktree has uncommitted changes")
+	deleteBranch := flagSet.Bool("delete-branch", false, "delete local and remote branch, close PR")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1315,11 +1441,6 @@ func runClean(args []string, stdout, stderr io.Writer) error {
 }
 
 func runCompletion(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("completion", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	output := flagSet.String("output", "", "write completion script to file")
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1327,6 +1448,18 @@ func runCompletion(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	// --output takes a value, so it's not in boolFlags
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("completion", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+
+	output := flagSet.String("output", "", "write completion script to file")
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)
@@ -1356,6 +1489,12 @@ func runComplete(args []string, stdout, stderr io.Writer) error {
 	//
 	// Output: newline-separated candidates
 	// Error handling: silent failure (print nothing, exit 0) unless AGENCY_DEBUG_COMPLETION=1
+
+	// Reorder args so flags can appear after positional arguments
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"all-repos":        true,
+		"include-archived": true,
+	})
 
 	flagSet := flag.NewFlagSet("__complete", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
@@ -1397,9 +1536,6 @@ func runComplete(args []string, stdout, stderr io.Writer) error {
 }
 
 func runResolve(args []string, stdout, stderr io.Writer) error {
-	flagSet := flag.NewFlagSet("resolve", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
 	// Handle help manually to return nil (exit 0)
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -1407,6 +1543,15 @@ func runResolve(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+
+	// Reorder args so flags can appear after positional arguments
+	args = reorderFlagsBeforeArgs(args, map[string]bool{
+		"h":    true,
+		"help": true,
+	})
+
+	flagSet := flag.NewFlagSet("resolve", flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
 
 	if err := flagSet.Parse(args); err != nil {
 		return errors.Wrap(errors.EUsage, "invalid flags", err)

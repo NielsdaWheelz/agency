@@ -327,3 +327,83 @@ func TestRun_VerifyInvalidTimeout(t *testing.T) {
 }
 
 // Note: Negative timeout like "-30m" can't be easily tested because it looks like a flag to the parser.
+
+func TestReorderFlagsBeforeArgs(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		boolFlags map[string]bool
+		want      []string
+	}{
+		{
+			name:      "flags already before args",
+			args:      []string{"--force", "my-run"},
+			boolFlags: map[string]bool{"force": true},
+			want:      []string{"--force", "my-run"},
+		},
+		{
+			name:      "flags after args",
+			args:      []string{"my-run", "--force"},
+			boolFlags: map[string]bool{"force": true},
+			want:      []string{"--force", "my-run"},
+		},
+		{
+			name:      "multiple bool flags after arg",
+			args:      []string{"my-run", "--force", "--allow-dirty"},
+			boolFlags: map[string]bool{"force": true, "allow-dirty": true},
+			want:      []string{"--force", "--allow-dirty", "my-run"},
+		},
+		{
+			name:      "value flag after arg",
+			args:      []string{"my-run", "--repo", "/some/path"},
+			boolFlags: map[string]bool{},
+			want:      []string{"--repo", "/some/path", "my-run"},
+		},
+		{
+			name:      "mixed bool and value flags after arg",
+			args:      []string{"my-run", "--force", "--repo", "/some/path"},
+			boolFlags: map[string]bool{"force": true},
+			want:      []string{"--force", "--repo", "/some/path", "my-run"},
+		},
+		{
+			name:      "flag with equals syntax",
+			args:      []string{"my-run", "--repo=/some/path"},
+			boolFlags: map[string]bool{},
+			want:      []string{"--repo=/some/path", "my-run"},
+		},
+		{
+			name:      "no flags",
+			args:      []string{"my-run"},
+			boolFlags: map[string]bool{},
+			want:      []string{"my-run"},
+		},
+		{
+			name:      "empty args",
+			args:      []string{},
+			boolFlags: map[string]bool{},
+			want:      []string{},
+		},
+		{
+			name:      "hyphenated flag name",
+			args:      []string{"my-run", "--force-with-lease"},
+			boolFlags: map[string]bool{"force-with-lease": true},
+			want:      []string{"--force-with-lease", "my-run"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reorderFlagsBeforeArgs(tt.args, tt.boolFlags)
+			if len(got) != len(tt.want) {
+				t.Errorf("reorderFlagsBeforeArgs() = %v, want %v", got, tt.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("reorderFlagsBeforeArgs() = %v, want %v", got, tt.want)
+					return
+				}
+			}
+		})
+	}
+}
