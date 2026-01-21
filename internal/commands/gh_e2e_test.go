@@ -78,15 +78,20 @@ func TestGHE2EPushMerge(t *testing.T) {
 	runCmd(t, ctx, cr, repoRoot, "git", "fetch", "origin", defaultBranch)
 	runCmd(t, ctx, cr, repoRoot, "git", "worktree", "add", "-b", branch, worktreePath, "origin/"+defaultBranch)
 
+	// Infrastructure files (agency.json, scripts/) use FIXED content so concurrent
+	// test runs don't conflict - Git auto-merges identical content.
+	// Only the e2e/<runID>/ directory contains unique-per-run data.
 	scriptsDir := filepath.Join(worktreePath, "scripts")
 	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
 		t.Fatalf("mkdir scripts: %v", err)
 	}
 
+	// Fixed script content - same every run
 	writeScript(t, filepath.Join(scriptsDir, "agency_setup.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 	writeScript(t, filepath.Join(scriptsDir, "agency_verify.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 	writeScript(t, filepath.Join(scriptsDir, "agency_archive.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 
+	// Fixed agency.json content - same every run
 	agencyJSON := `{
   "version": 1,
   "scripts": {
@@ -109,11 +114,12 @@ func TestGHE2EPushMerge(t *testing.T) {
 		t.Fatalf("write agency.json: %v", err)
 	}
 
+	// Report goes in worktree .agency/ (required location for push command)
+	// Fixed content - same every run
 	reportDir := filepath.Join(worktreePath, ".agency")
 	if err := os.MkdirAll(reportDir, 0o755); err != nil {
 		t.Fatalf("mkdir report: %v", err)
 	}
-	// Report must include ## summary and ## how to test sections per S7 spec4
 	report := `# e2e test
 
 ## summary
@@ -126,12 +132,12 @@ This is an automated e2e test - no manual testing required.
 		t.Fatalf("write report: %v", err)
 	}
 
-	e2eDir := filepath.Join(worktreePath, "e2e")
-	if err := os.MkdirAll(e2eDir, 0o755); err != nil {
-		t.Fatalf("mkdir e2e dir: %v", err)
+	// Unique test data under e2e/<runID>/ - this is the only unique-per-run content
+	e2eRunDir := filepath.Join(worktreePath, "e2e", runID)
+	if err := os.MkdirAll(e2eRunDir, 0o755); err != nil {
+		t.Fatalf("mkdir e2e run dir: %v", err)
 	}
-	// Use unique log file per run to avoid merge conflicts when tests run concurrently
-	logPath := filepath.Join(e2eDir, fmt.Sprintf("gh_e2e_%s.log", runID))
+	logPath := filepath.Join(e2eRunDir, "log.txt")
 	logContent := fmt.Sprintf("%s %s\n", runID, time.Now().UTC().Format(time.RFC3339))
 	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
 		t.Fatalf("write e2e log: %v", err)
@@ -154,24 +160,18 @@ This is an automated e2e test - no manual testing required.
 		t.Fatalf("git check-ignore .agency/report.md exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
 
+	// Add fixed infrastructure files + unique run data
 	addPaths := []string{
 		"agency.json",
 		"scripts/agency_setup.sh",
 		"scripts/agency_verify.sh",
 		"scripts/agency_archive.sh",
-		fmt.Sprintf("e2e/gh_e2e_%s.log", runID),
+		fmt.Sprintf("e2e/%s/", runID),
 	}
 	if !reportIgnored {
 		addPaths = append(addPaths, ".agency/report.md")
 	}
 	runCmd(t, ctx, cr, worktreePath, "git", append([]string{"add"}, addPaths...)...)
-	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: add agency config")
-
-	changePath := filepath.Join(worktreePath, "e2e.txt")
-	if err := os.WriteFile(changePath, []byte(runID+"\n"), 0o644); err != nil {
-		t.Fatalf("write change: %v", err)
-	}
-	runCmd(t, ctx, cr, worktreePath, "git", "add", "e2e.txt")
 	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
