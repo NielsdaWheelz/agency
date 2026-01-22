@@ -1,7 +1,7 @@
 # Agency L2: Slice 03 — Push (git push + gh pr create/update + report sync)
 
 ## goal
-implement `agency push <run_id>`: push the run branch to `origin` on GitHub, create a PR if missing, and sync `.agency/report.md` to the PR body — deterministically and non-interactively.
+implement `agency push <run_id>`: push the run branch to `origin` on GitHub, create a PR if missing, and sync a PR body (report or auto-generated) — deterministically and non-interactively.
 
 ## scope
 - `agency push <id>`:
@@ -10,7 +10,7 @@ implement `agency push <run_id>`: push the run branch to `origin` on GitHub, cre
   - refuses to push if the run branch has **0 commits ahead** of the configured parent
   - pushes branch using `git push -u origin <branch>`
   - creates PR via `gh pr create` if missing
-  - updates PR body via `gh pr edit --body-file` on every push if report is present + non-empty
+  - updates PR body via `gh pr edit --body-file` on every push (report when complete, otherwise auto-generated)
   - persists PR metadata (`pr_number`, `pr_url`) and timestamps into `meta.json`
 
 ## non-scope
@@ -32,14 +32,14 @@ implement `agency push <run_id>`: push the run branch to `origin` on GitHub, cre
   - allow push even if worktree has uncommitted changes
   - without this flag: fail `E_DIRTY_WORKTREE` before any network side effects
 - `--force`
-  - allows creating/updating PR even if `.agency/report.md` is missing or effectively empty (still logs a warning)
+  - retained for compatibility (no-op for report checks)
   - does **not** bypass `E_EMPTY_DIFF`
   - does **not** enable force-push
 
 ### output
 - prints `pr: <url>` on success (single stdout line)
 - prints warnings (to stderr) for dirty worktree only when `--allow-dirty` is used
-- prints warnings (to stderr) for missing/empty report only when `--force` is used
+- prints warnings (to stderr) when auto-generated body is used
 
 ## files created/modified
 
@@ -49,8 +49,8 @@ implement `agency push <run_id>`: push the run branch to `origin` on GitHub, cre
     - `pr_number`
     - `pr_url`
     - `last_push_at`
-    - `last_report_sync_at` (only when report synced)
-    - `last_report_hash` (sha256 of `.agency/report.md`, only when report synced)
+    - `last_report_sync_at` (only when body synced)
+    - `last_report_hash` (sha256 of PR body file, only when body synced)
 
 - `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/events.jsonl`
   - append events:
@@ -126,20 +126,17 @@ slice 03 does not create/modify `.agency/report.md` (created in slice 01).
   - if `--allow-dirty` not set: fail `E_DIRTY_WORKTREE` before any network side effects
   - if `--allow-dirty` set: warn to stderr and continue (push uses commits, not working tree state).
 
-### report gating + force
-- given `.agency/report.md` is missing or effectively empty
+### report check (warning only)
+- given `.agency/report.md` is missing, empty, or incomplete
 - when `agency push <id>` runs
 - then it MUST:
-  - if `--force` not set: abort before any network side effects (git fetch/push/gh) with a warning + non-zero exit (no new error code; reuse `E_SCRIPT_FAILED` is disallowed; use `E_REPORT_INVALID`)
-  - if `--force` set: continue, but:
-    - PR creation uses a minimal placeholder body string
-    - PR body sync is skipped unless file exists (never invent content)
+  - warn to stderr and continue
+  - use an auto-generated PR body instead of the report
 
 **definition: effectively empty**
 - file missing OR trimmed content length `< 20` characters
 
 **new error code**
-- `E_REPORT_INVALID` — report missing/empty without `--force`
 - `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 
 ### git push behavior
@@ -171,8 +168,8 @@ slice 03 does not create/modify `.agency/report.md` (created in slice 01).
   - `--head <workspace_branch>` (or run in the branch context and still pass `--head` explicitly)
   - `--title "[agency] <title>"`
   - body source:
-    - if report exists and non-empty: `--body-file <worktree>/.agency/report.md`  [oai_citation:2‡GitHub CLI](https://cli.github.com/manual/gh_pr_create?utm_source=chatgpt.com)
-    - else (only allowed with `--force`): `--body "agency: report missing/empty; see workspace .agency/report.md"`
+    - if report is complete: `--body-file <worktree>/.agency/report.md`  [oai_citation:2‡GitHub CLI](https://cli.github.com/manual/gh_pr_create?utm_source=chatgpt.com)
+    - else: `--body-file <worktree>/.agency/tmp/pr_body.md` (auto-generated)
 - after create, it MUST fetch PR metadata via:
   - `gh pr view --head <workspace_branch> --json number,url,state`
 - it SHOULD retry the post-create view (small backoff, no long sleeps); if it still fails: `E_GH_PR_VIEW_FAILED`
@@ -183,11 +180,11 @@ slice 03 does not create/modify `.agency/report.md` (created in slice 01).
 - on failure => `E_GH_PR_CREATE_FAILED` with captured stderr.
 
 ### PR body sync (update)
-- given a PR exists and report exists and is non-empty
+- given a PR exists and a body file is available
 - when `agency push <id>` runs
-- then it MUST update PR body to match the report using:
-  - `gh pr edit <pr_number> --body-file <report_path>`  [oai_citation:3‡GitHub CLI](https://cli.github.com/manual/gh_pr_edit?utm_source=chatgpt.com)
-- if the computed report hash matches `meta.last_report_hash`, it SHOULD skip the edit (no event, no timestamp update)
+- then it MUST update PR body to match the body file using:
+  - `gh pr edit <pr_number> --body-file <body_path>`  [oai_citation:3‡GitHub CLI](https://cli.github.com/manual/gh_pr_edit?utm_source=chatgpt.com)
+- if the computed body hash matches `meta.last_report_hash`, it SHOULD skip the edit (no event, no timestamp update)
 - title is NOT updated after creation in v1.
 - on failure => `E_GH_PR_EDIT_FAILED`.
 
@@ -216,9 +213,8 @@ slice 03 writes:
     - local missing but origin/<parent> exists → use it
     - neither exists → `E_PARENT_NOT_FOUND`
   - ahead==0 → `E_EMPTY_DIFF` even with `--force`
-  - report gating:
-    - missing/empty without `--force` → `E_REPORT_INVALID`
-    - missing/empty with `--force` → proceeds (but no body-file sync)
+  - report check:
+    - missing/empty/incomplete → warning + auto-generated body
   - PR idempotency selection:
     - meta.pr_number present and view succeeds → use it
     - meta.pr_number present and view fails → fallback to branch lookup
@@ -231,7 +227,7 @@ slice 03 writes:
 1) create a GitHub repo with `origin` on `github.com` and `gh` authenticated.
 2) `agency run --title "push demo" --runner claude` (slice 01)
 3) in the run, make a commit on the workspace branch.
-4) ensure `.agency/report.md` is non-empty.
+4) optionally fill `.agency/report.md` for a custom PR body.
 5) `agency push <id>`:
    - should push branch
    - should create PR

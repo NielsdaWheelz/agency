@@ -1,3 +1,13 @@
+1) switch to cobra from go stdlib
+
+2) reports should be json, be simpler, no be required, no 'how to test' or other basic shit
+
+3) cleaner flags, confirmation
+
+4) short flags, easier commands
+
+5) add a flag to run --open (to open in ide right away)
+
 1) repo_id collision handling is overkill, but you’re missing the real collision: repo moves + path-key
 
 you already track multiple paths. good. but your fallback key uses sha256(abs_path), so moving the repo generates a new repo_key and therefore a new repo_id. you’ll “lose history” on move.

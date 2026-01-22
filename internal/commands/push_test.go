@@ -600,29 +600,10 @@ func TestPRTitleGeneration(t *testing.T) {
 	}
 }
 
-// TestPRPlaceholderBody verifies the placeholder body format.
-func TestPRPlaceholderBody(t *testing.T) {
-	runID := "20260114120000-a3f2"
-	branch := "agency/test-feature-a3f2"
-
-	placeholder := fmt.Sprintf(
-		"agency: report missing/empty (run_id=%s, branch=%s). see workspace .agency/report.md",
-		runID, branch,
-	)
-
-	// Verify format matches spec
-	if !strings.Contains(placeholder, "agency:") {
-		t.Error("placeholder should start with 'agency:'")
-	}
-	if !strings.Contains(placeholder, runID) {
-		t.Errorf("placeholder should contain run_id %s", runID)
-	}
-	if !strings.Contains(placeholder, branch) {
-		t.Errorf("placeholder should contain branch %s", branch)
-	}
-	if !strings.Contains(placeholder, ".agency/report.md") {
-		t.Error("placeholder should mention .agency/report.md")
-	}
+// TestPRFallbackSummary documents fallback summary expectations.
+func TestPRFallbackSummary(t *testing.T) {
+	t.Log("Fallback body summary uses first commit subject when available")
+	t.Log("Fallback body summary uses 'auto-generated summary' when commits unavailable")
 }
 
 // TestPRRetryDelays verifies the retry delay pattern.
@@ -669,7 +650,7 @@ func TestPRStateValidation(t *testing.T) {
 // TestReportHashSkipsEdit documents that unchanged hash skips edit.
 func TestReportHashSkipsEdit(t *testing.T) {
 	// Document the behavior
-	t.Log("When meta.last_report_hash equals computed report hash:")
+	t.Log("When meta.last_report_hash equals computed body hash:")
 	t.Log("  - gh pr edit is NOT called")
 	t.Log("  - no pr_body_synced event is appended")
 	t.Log("  - last_report_sync_at is NOT updated")
@@ -685,10 +666,6 @@ func TestPushOutputFormat_ErrorMessages(t *testing.T) {
 		code        errors.Code
 		wantMessage string
 	}{
-		{
-			code:        errors.EReportInvalid,
-			wantMessage: "report missing or empty; use --force to push anyway",
-		},
 		{
 			code:        errors.EEmptyDiff,
 			wantMessage: "no commits ahead of parent; make at least one commit",
@@ -725,7 +702,10 @@ func TestPushOutputFormat_WarningMessages(t *testing.T) {
 	// These are the exact warning strings required by the spec
 	warnings := []string{
 		"warning: worktree has uncommitted changes; proceeding due to --allow-dirty",
-		"warning: report missing or empty; proceeding due to --force",
+		"warning: report file missing; using auto-generated PR body",
+		"warning: report unreadable (error); using auto-generated PR body",
+		"warning: report empty (<20 chars); using auto-generated PR body",
+		"warning: report incomplete (missing: summary, how to test); using auto-generated PR body",
 	}
 
 	for _, w := range warnings {
@@ -914,60 +894,38 @@ func TestReportCompletenessErrorCode(t *testing.T) {
 	}
 }
 
-// TestPushReportGating_MissingFile verifies E_REPORT_INVALID for missing report.
+// TestPushReportGating_MissingFile documents warning behavior for missing report.
 func TestPushReportGating_MissingFile(t *testing.T) {
-	// Per S7 spec4: missing file → E_REPORT_INVALID, --force does NOT bypass
-	t.Log("Push gating behavior for missing report file:")
-	t.Log("  - Error code: E_REPORT_INVALID")
-	t.Log("  - Hint: 'report file not found at <path>'")
-	t.Log("  - --force does NOT bypass this check")
+	t.Log("Push behavior for missing report file:")
+	t.Log("  - Emits warning")
+	t.Log("  - Uses auto-generated PR body")
+	t.Log("  - Push proceeds")
 }
 
-// TestPushReportGating_IncompleteReport verifies E_REPORT_INCOMPLETE for incomplete report.
+// TestPushReportGating_IncompleteReport documents warning behavior for incomplete report.
 func TestPushReportGating_IncompleteReport(t *testing.T) {
-	// Per S7 spec4: incomplete report → E_REPORT_INCOMPLETE
-	t.Log("Push gating behavior for incomplete report:")
-	t.Log("  - Error code: E_REPORT_INCOMPLETE")
-	t.Log("  - Lists missing sections explicitly")
-	t.Log("  - Prints worktree path")
-	t.Log("  - Suggests 'agency open <id>'")
-	t.Log("  - Hint: 'fill required sections or use --force'")
-	t.Log("  - --force bypasses this check")
+	t.Log("Push behavior for incomplete report:")
+	t.Log("  - Emits warning with missing sections")
+	t.Log("  - Uses auto-generated PR body")
+	t.Log("  - Push proceeds")
 }
 
-// TestPushReportGating_ForceBypass verifies --force bypasses completeness check.
+// TestPushReportGating_ForceBypass documents --force behavior.
 func TestPushReportGating_ForceBypass(t *testing.T) {
-	// Per S7 spec4: --force bypasses completeness check but not missing file check
 	t.Log("--force behavior:")
-	t.Log("  - Does NOT bypass E_REPORT_INVALID (missing file)")
-	t.Log("  - DOES bypass E_REPORT_INCOMPLETE (incomplete content)")
-	t.Log("  - Prints warning when bypassing incomplete check")
+	t.Log("  - No report gating remains (flag is no-op for report checks)")
 }
 
-// TestPushReportGating_CompleteReport documents complete report behavior.
+// TestPushReportGating_CompleteReport documents report behavior.
 func TestPushReportGating_CompleteReport(t *testing.T) {
-	// Per S7 spec4: complete report passes gate
 	t.Log("Complete report behavior:")
-	t.Log("  - summary section has non-whitespace content")
-	t.Log("  - how to test section has non-whitespace content")
-	t.Log("  - No error, no warning, push proceeds")
+	t.Log("  - Report body is used directly")
+	t.Log("  - No report warnings printed")
 }
 
 // TestPushErrorOutput_ReportIncomplete verifies error output format.
 func TestPushErrorOutput_ReportIncomplete(t *testing.T) {
-	// Per S7 spec4: exact error output format
-	expectedFormat := `error_code: E_REPORT_INCOMPLETE
-report: <worktree>/.agency/report.md
-missing: summary, how to test
-hint: fill required sections or use --force
-hint: agency open <run_id>`
-
-	t.Logf("Expected error output format:\n%s", expectedFormat)
-
-	// Verify the error code string
-	if errors.EReportIncomplete != "E_REPORT_INCOMPLETE" {
-		t.Errorf("error code = %q, want E_REPORT_INCOMPLETE", errors.EReportIncomplete)
-	}
+	t.Log("Report completeness no longer blocks push; warnings are printed instead")
 }
 
 // TestPushReportGating_DistinguishMissingVsIncomplete verifies distinct behavior.

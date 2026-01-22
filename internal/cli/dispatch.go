@@ -207,7 +207,7 @@ arguments:
 
 options:
   --allow-dirty       allow push even if worktree has uncommitted changes
-  --force             proceed even if .agency/report.md is missing/empty
+  --force             retained for compatibility (no-op for report checks)
   --force-with-lease  use git push --force-with-lease (required after rebase)
   -h, --help          show this help
 
@@ -216,11 +216,11 @@ notes:
   - requires gh to be authenticated
   - does NOT bypass E_EMPTY_DIFF (at least one commit required)
   - fails if worktree has uncommitted changes unless --allow-dirty
+  - uses report as PR body when complete; otherwise auto-generates a PR body
   - use --force-with-lease after rebasing to update an existing branch safely
 
 examples:
   agency push my-feature                     # push branch
-  agency push my-feature --force             # push with empty report
   agency push my-feature --allow-dirty       # push with dirty worktree
   agency push my-feature --force-with-lease  # force push after rebase
 `
@@ -1178,7 +1178,7 @@ func runPush(args []string, stdout, stderr io.Writer) error {
 	flagSet.SetOutput(io.Discard)
 
 	allowDirty := flagSet.Bool("allow-dirty", false, "allow push even if worktree has uncommitted changes")
-	force := flagSet.Bool("force", false, "proceed even if report is missing/empty")
+	force := flagSet.Bool("force", false, "retained for compatibility (no-op for report checks)")
 	forceWithLease := flagSet.Bool("force-with-lease", false, "use git push --force-with-lease (required after rebase)")
 
 	if err := flagSet.Parse(args); err != nil {
