@@ -70,7 +70,7 @@ const (
 	EGHPREditFailed        Code = "E_GH_PR_EDIT_FAILED"       // gh pr edit non-zero exit
 	EGHPRViewFailed        Code = "E_GH_PR_VIEW_FAILED"       // gh pr view failed after create retries
 	EPRNotOpen             Code = "E_PR_NOT_OPEN"             // PR exists but is not open (CLOSED or MERGED)
-	EReportInvalid         Code = "E_REPORT_INVALID"          // report missing/empty without --force
+	EReportInvalid         Code = "E_REPORT_INVALID"          // report missing/empty (legacy; push uses fallback body)
 	EEmptyDiff             Code = "E_EMPTY_DIFF"              // no commits ahead of parent branch
 	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
 	EDirtyWorktree         Code = "E_DIRTY_WORKTREE"          // run worktree has uncommitted changes

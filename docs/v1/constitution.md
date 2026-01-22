@@ -422,8 +422,8 @@ Optional fields:
 - `pr_number`
 - `pr_url`
 - `last_push_at`
-- `last_report_sync_at` — set when PR body updated from report
-- `last_report_hash` — sha256 of report contents when synced
+- `last_report_sync_at` — set when PR body updated from the selected body file
+- `last_report_hash` — sha256 of PR body contents when synced
 - `last_verify_at`
 - `flags.needs_attention`
 - `flags.setup_failed`
@@ -443,7 +443,7 @@ Append-only. each line is a JSON object:
 
 ### Workspace-local (`<worktree>/.agency/`)
 
-- `.agency/report.md` — synced to PR body on push
+- `.agency/report.md` — used as PR body when complete; fallback body used otherwise
 - `.agency/out/` — script outputs
 - `.agency/tmp/` — scratch space
 
@@ -578,7 +578,7 @@ Presence suffix: if worktree deleted -> append " (archived)"
 4. if no PR exists and commits ahead > 0: create PR via `gh pr create`
 5. PR identity: repo + head branch in origin (`gh pr view --head <workspace_branch> --json number,url`)
 6. on update, prefer stored PR number; fallback to branch lookup
-7. if `.agency/report.md` exists and non-empty: sync to PR body
+7. PR body source: use `.agency/report.md` when complete; otherwise auto-generate a PR body from git metadata
 8. store PR url/number in metadata
 
 ### Merge behavior
@@ -640,7 +640,8 @@ Template:
 
 **push validation**:
 - requires a clean worktree unless `--allow-dirty`
-- warns if `.agency/report.md` is missing or effectively empty; use `--force` to push anyway.
+- warns if `.agency/report.md` is missing, empty, or incomplete; push proceeds with auto-generated PR body.
+- auto-generated bodies summarize commits, diffstat, file list, and metadata.
 
 ---
 
@@ -834,7 +835,7 @@ implementation: coarse repo-level lock file (`${AGENCY_DATA_DIR}/repos/<repo_id>
 - `E_RUN_ID_AMBIGUOUS` — run reference matches multiple runs
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_NO_PR` — no PR exists for the run
-- `E_REPORT_INVALID` — report missing/empty without `--force`
+- `E_REPORT_INVALID` — report missing/empty (legacy; push uses fallback body)
 - `E_GIT_FETCH_FAILED` — git fetch failed
 - `E_PR_MISMATCH` — resolved PR does not match expected branch
 - `E_GH_REPO_PARSE_FAILED` — failed to parse owner/repo from origin

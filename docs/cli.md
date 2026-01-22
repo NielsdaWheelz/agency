@@ -22,7 +22,7 @@ agency resume <id> [--repo] [--detached] [--restart]
 agency stop <id> [--repo]         send C-c to runner (global)
 agency kill <id> [--repo]         kill tmux session (global)
 agency push <id> [--allow-dirty] [--force] [--force-with-lease]
-                                  push + create/update PR (validates report completeness)
+                                  push + create/update PR (report or auto-generated body)
 agency verify <id> [--timeout]    run verify script and record results
 agency merge <id> [--squash|--merge|--rebase] [--no-delete-branch] [--allow-dirty] [--force]
                                   verify, confirm, merge PR, delete branch, archive
@@ -155,7 +155,7 @@ agency run --name <name> [--runner <name>] [--parent <branch>] [--detached]
 2. creates git worktree + branch under `${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<run_id>/`
 3. creates `.agency/`, `.agency/out/`, `.agency/tmp/`, `.agency/state/` directories
 4. creates `.agency/INSTRUCTIONS.md` with runner guidance (overwritten on every run)
-5. creates `.agency/report.md` with template (name as heading, requires filling before push)
+5. creates `.agency/report.md` with template (name as heading, used for PR body when complete)
 6. runs `scripts.setup` with injected environment variables (timeout: 10 minutes)
 7. creates tmux session `agency_<run_id>` running the runner command
 8. writes `meta.json` with run metadata
@@ -607,7 +607,7 @@ agency push <run_id> [--allow-dirty] [--force]
 
 **flags:**
 - `--allow-dirty`: proceed even if worktree has uncommitted changes
-- `--force`: proceed even if report is incomplete (missing required sections); does NOT bypass missing file error
+- `--force`: retained for compatibility (no-op for report checks)
 
 **preflight checks (in order):**
 1. resolve run_id and load metadata
@@ -616,10 +616,7 @@ agency push <run_id> [--allow-dirty] [--force]
 4. fail if worktree has uncommitted changes (unless `--allow-dirty`)
 5. verify `origin` remote exists
 6. verify origin host is exactly `github.com`
-7. report gating:
-   - fail if report file missing (`E_REPORT_INVALID`, no bypass)
-   - fail if report incomplete (`E_REPORT_INCOMPLETE`, bypassed by `--force`)
-   - incomplete = missing `## summary` or `## how to test` content
+7. check report completeness to decide PR body source (warnings only)
 8. verify `gh auth status` succeeds
 
 **git operations (after preflight passes):**
@@ -636,9 +633,9 @@ agency push <run_id> [--allow-dirty] [--force]
 2. if PR exists but not OPEN (CLOSED or MERGED): fail with `E_PR_NOT_OPEN`
 3. if no PR exists: create via `gh pr create`
    - title: `[agency] <run_name>`
-   - body: contents of `.agency/report.md` (or placeholder with `--force`)
-4. sync report to PR body:
-   - compute sha256 hash of report
+   - body: `.agency/report.md` when complete, otherwise auto-generated PR body
+4. sync PR body:
+   - compute sha256 hash of the body file used
    - if hash unchanged from `last_report_hash`: skip sync
    - else: update PR body via `gh pr edit --body-file`
 
@@ -667,8 +664,6 @@ pr: https://github.com/owner/repo/pull/123
 - `E_DIRTY_WORKTREE` — worktree has uncommitted changes without `--allow-dirty`
 - `E_NO_ORIGIN` — no origin remote configured
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
-- `E_REPORT_INVALID` — report file missing
-- `E_REPORT_INCOMPLETE` — report exists but missing required sections (summary, how to test)
 - `E_GH_NOT_INSTALLED` — gh CLI not found
 - `E_GH_NOT_AUTHENTICATED` — gh not authenticated
 - `E_PARENT_NOT_FOUND` — parent branch not found locally or on origin
@@ -686,7 +681,8 @@ pr: https://github.com/owner/repo/pull/123
   - `CI=1`
 - PR creation uses `--body-file` to preserve markdown formatting
 - PR title is NOT updated after creation (v1)
-- `--force` bypasses `E_REPORT_INCOMPLETE` (incomplete content) but NOT `E_REPORT_INVALID` (missing file)
+- report completeness only affects PR body source; push does not block on report state
+- auto-generated PR bodies include commit subjects, diffstat, files, and meta
 - `--force` does NOT bypass `E_EMPTY_DIFF` (must have commits)
 - `--allow-dirty` prints a warning and dirty context
 - `--force-with-lease` uses `git push --force-with-lease` for safe force push after rebase
@@ -706,7 +702,6 @@ hint: branch was rebased or amended; retry with:
 **examples:**
 ```bash
 agency push my-feature                 # push branch + create/update PR
-agency push my-feature --force         # push with incomplete report (placeholder body)
 agency push my-feature --allow-dirty   # push with dirty worktree
 agency push my-feature --force-with-lease  # force push after rebase
 ```

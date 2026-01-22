@@ -54,8 +54,8 @@ type PushOpts struct {
 	// RunID is the run identifier (exact or unique prefix).
 	RunID string
 
-	// Force allows pushing with missing/empty report.
-	// Does NOT bypass E_EMPTY_DIFF.
+	// Force is retained for CLI compatibility.
+	// Report gating no longer blocks push.
 	Force bool
 
 	// AllowDirty allows pushing with a dirty worktree.
@@ -186,70 +186,38 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 
 	repoRef := resolveGHRepoRef(originURL)
 
-	// Step 7: Report gating
-	// Per S7 spec4:
-	// - Missing file → E_REPORT_INVALID (--force does NOT bypass)
-	// - Incomplete content → E_REPORT_INCOMPLETE (--force bypasses)
+	// Step 7: Report check (non-blocking)
 	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
 	reportContent, reportReadErr := fsys.ReadFile(reportPath)
 
+	reportMissing := false
+	reportUnreadable := false
+	reportEmpty := false
+	reportIncomplete := false
+	var missingSections []string
+
 	if reportReadErr != nil {
 		if os.IsNotExist(reportReadErr) {
-			// Report file missing - hard error, no --force bypass
-			appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
-				"error_code": string(errors.EReportInvalid),
-				"step":       "report_gate",
-			})
-			// Per spec: exact error format with hint
-			_, _ = fmt.Fprintf(stderr, "error_code: %s\n", errors.EReportInvalid)
-			_, _ = fmt.Fprintf(stderr, "report: %s\n", reportPath)
-			_, _ = fmt.Fprintf(stderr, "hint: report file not found at %s\n", reportPath)
-			return errors.New(errors.EReportInvalid, fmt.Sprintf("report file not found at %s", reportPath))
+			reportMissing = true
+		} else {
+			reportUnreadable = true
 		}
-		// Unexpected error reading report - warn but continue
-		_, _ = fmt.Fprintf(stderr, "warning: failed to read report: %v\n", reportReadErr)
-	}
-
-	// Check report completeness if file exists
-	var reportIncomplete bool
-	var missingSections []string
-	if reportReadErr == nil {
+	} else {
 		completeness := report.CheckCompleteness(string(reportContent))
 		reportIncomplete = !completeness.Complete
 		missingSections = completeness.MissingSections
+		reportEmpty = len(strings.TrimSpace(string(reportContent))) < 20
 	}
 
-	if reportIncomplete && !opts.Force {
-		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
-			"error_code":       string(errors.EReportIncomplete),
-			"step":             "report_gate",
-			"missing_sections": missingSections,
-		})
-		// Per spec: exact error output format
-		_, _ = fmt.Fprintf(stderr, "error_code: %s\n", errors.EReportIncomplete)
-		_, _ = fmt.Fprintf(stderr, "report: %s\n", reportPath)
-		_, _ = fmt.Fprintf(stderr, "missing: %s\n", strings.Join(missingSections, ", "))
-		_, _ = fmt.Fprintf(stderr, "hint: fill required sections or use --force\n")
-		_, _ = fmt.Fprintf(stderr, "hint: agency open %s\n", meta.Name)
-		return errors.New(errors.EReportIncomplete, fmt.Sprintf("report incomplete: missing %s", strings.Join(missingSections, ", ")))
-	}
-
-	if reportIncomplete && opts.Force {
-		_, _ = fmt.Fprintf(stderr, "warning: report incomplete (missing: %s); proceeding due to --force\n", strings.Join(missingSections, ", "))
-	}
-
-	// Keep backward compat: also check if report is effectively empty (< 20 chars)
-	// This handles edge cases like nearly empty files that aren't strictly "incomplete"
-	reportEmpty := reportReadErr == nil && len(strings.TrimSpace(string(reportContent))) < 20
-	if reportEmpty && !opts.Force {
-		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
-			"error_code": string(errors.EReportInvalid),
-			"step":       "report_gate",
-		})
-		return errors.New(errors.EReportInvalid, "report effectively empty (< 20 chars); use --force to push anyway")
-	}
-	if reportEmpty && opts.Force && !reportIncomplete {
-		_, _ = fmt.Fprintf(stderr, "warning: report effectively empty; proceeding due to --force\n")
+	reportUsable := reportReadErr == nil && !reportEmpty && !reportIncomplete
+	if reportMissing {
+		_, _ = fmt.Fprintln(stderr, "warning: report file missing; using auto-generated PR body")
+	} else if reportUnreadable {
+		_, _ = fmt.Fprintf(stderr, "warning: report unreadable (%v); using auto-generated PR body\n", reportReadErr)
+	} else if reportEmpty {
+		_, _ = fmt.Fprintln(stderr, "warning: report empty (<20 chars); using auto-generated PR body")
+	} else if reportIncomplete {
+		_, _ = fmt.Fprintf(stderr, "warning: report incomplete (missing: %s); using auto-generated PR body\n", strings.Join(missingSections, ", "))
 	}
 
 	// Step 8: gh auth check
@@ -306,7 +274,25 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return errors.New(errors.EEmptyDiff, "no commits ahead of parent; make at least one commit")
 	}
 
-	// Step 12: git push -u origin <workspace_branch>
+	// Step 12: Prepare PR body (report or fallback)
+	bodyPath := reportPath
+	bodyHash := ""
+	if reportUsable {
+		bodyHash = computeReportHash(fsys, reportPath)
+	} else {
+		fallbackPath, fallbackHash, err := writeFallbackPRBody(ctx, cr, fsys, meta.WorktreePath, parentRef, meta.Branch, meta)
+		if err != nil {
+			appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
+				"error_code": string(errors.EInternal),
+				"step":       "pr_body",
+			})
+			return errors.Wrap(errors.EInternal, "failed to write fallback PR body", err)
+		}
+		bodyPath = fallbackPath
+		bodyHash = fallbackHash
+	}
+
+	// Step 13: git push -u origin <workspace_branch>
 	// Determine the ref to use in printed commands (same ref user invoked)
 	userRef := opts.RunID
 	if meta.Name != "" && meta.Name == opts.RunID {
@@ -331,7 +317,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		"duration_ms": pushDurationMs,
 	})
 
-	// Step 13: Update last_push_at immediately after git push
+	// Step 14: Update last_push_at immediately after git push
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
 		m.LastPushAt = now
@@ -340,13 +326,13 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json: %v\n", err)
 	}
 
-	// Step 14: PR lookup / create / update
+	// Step 15: PR lookup / create / update
 	sleeper := opts.Sleeper
 	if sleeper == nil {
 		sleeper = realSleeper{}
 	}
 
-	prResult, err := handlePR(ctx, cr, fsys, st, meta, repoID, reportPath, reportEmpty, repoRef, opts.Force, sleeper, eventsPath, stderr)
+	prResult, err := handlePR(ctx, cr, fsys, st, meta, repoID, bodyPath, bodyHash, repoRef, sleeper, eventsPath, stderr)
 	if err != nil {
 		appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
 			"error_code": string(errors.GetCode(err)),
@@ -600,8 +586,8 @@ func appendPushEvent(eventsPath, repoID, runID, eventName string, data map[strin
 	_ = events.AppendEvent(eventsPath, e)
 }
 
-// computeReportHash computes the sha256 hash of the report file.
-// Returns empty string if report doesn't exist or can't be read.
+// computeReportHash computes the sha256 hash of a file.
+// Returns empty string if the file doesn't exist or can't be read.
 func computeReportHash(fsys fs.FS, reportPath string) string {
 	data, err := fsys.ReadFile(reportPath)
 	if err != nil {
@@ -627,10 +613,9 @@ func handlePR(
 	st *store.Store,
 	meta *store.RunMeta,
 	repoID string,
-	reportPath string,
-	reportEmpty bool,
+	bodyPath string,
+	bodyHash string,
 	repoRef ghRepoRef,
-	force bool,
 	sleeper Sleeper,
 	eventsPath string,
 	stderr io.Writer,
@@ -659,7 +644,7 @@ func handlePR(
 	// Step 2: Create PR if not found
 	prCreated := false
 	if pr == nil {
-		createdPR, created, err := createPR(ctx, cr, fsys, meta, reportPath, reportEmpty, repoRef, repoID, eventsPath, force, sleeper, workDir)
+		createdPR, created, err := createPR(ctx, cr, meta, bodyPath, repoRef, repoID, eventsPath, sleeper, workDir)
 		if err != nil {
 			return nil, err
 		}
@@ -689,27 +674,24 @@ func handlePR(
 	if prCreated {
 		action = "created"
 		// If we just created with --body-file, we already synced the body
-		if !reportEmpty {
-			reportHash := computeReportHash(fsys, reportPath)
+		if bodyHash != "" {
 			if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
 				m.LastReportSyncAt = now
-				m.LastReportHash = reportHash
+				m.LastReportHash = bodyHash
 			}); err != nil {
 				_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
 			}
 		}
 	} else {
-		// PR existed, potentially sync body
-		if !reportEmpty {
-			bodySynced, err := syncPRBody(ctx, cr, fsys, st, meta, repoID, reportPath, pr.Number, eventsPath, stderr)
-			if err != nil {
-				return nil, err
-			}
-			if bodySynced {
-				appendPushEvent(eventsPath, repoID, meta.RunID, "pr_body_synced", map[string]any{
-					"pr_number": pr.Number,
-				})
-			}
+		// PR existed, sync body
+		bodySynced, err := syncPRBody(ctx, cr, fsys, st, meta, repoID, bodyPath, bodyHash, pr.Number, eventsPath, stderr)
+		if err != nil {
+			return nil, err
+		}
+		if bodySynced {
+			appendPushEvent(eventsPath, repoID, meta.RunID, "pr_body_synced", map[string]any{
+				"pr_number": pr.Number,
+			})
 		}
 	}
 
@@ -876,18 +858,15 @@ func viewPRByURL(ctx context.Context, cr exec.CommandRunner, workDir, url string
 }
 
 // createPR creates a new PR and returns its info.
-// Uses --body-file if report is non-empty, otherwise placeholder body (with --force).
+// Always uses --body-file.
 func createPR(
 	ctx context.Context,
 	cr exec.CommandRunner,
-	fsys fs.FS,
 	meta *store.RunMeta,
-	reportPath string,
-	reportEmpty bool,
+	bodyPath string,
 	repoRef ghRepoRef,
 	repoID string,
 	eventsPath string,
-	force bool,
 	sleeper Sleeper,
 	workDir string,
 ) (*ghPRView, bool, error) {
@@ -905,17 +884,8 @@ func createPR(
 		"--title", title,
 	}
 
-	// Body: use --body-file if report exists and non-empty, else placeholder
-	if !reportEmpty {
-		args = append(args, "--body-file", reportPath)
-	} else {
-		// Only allowed with --force (already validated in preflight)
-		placeholder := fmt.Sprintf(
-			"agency: report missing/empty (run_id=%s, branch=%s). see workspace .agency/report.md",
-			meta.RunID, meta.Branch,
-		)
-		args = append(args, "--body", placeholder)
-	}
+	// Body: always use --body-file
+	args = append(args, "--body-file", bodyPath)
 
 	// Run gh pr create
 	result, err := cr.Run(ctx, "gh", args, exec.RunOpts{
@@ -1056,20 +1026,23 @@ func syncPRBody(
 	st *store.Store,
 	meta *store.RunMeta,
 	repoID string,
-	reportPath string,
+	bodyPath string,
+	bodyHash string,
 	prNumber int,
 	eventsPath string,
 	stderr io.Writer,
 ) (bool, error) {
-	// Compute current report hash
-	reportHash := computeReportHash(fsys, reportPath)
-	if reportHash == "" {
+	// Compute current body hash
+	if bodyHash == "" {
+		bodyHash = computeReportHash(fsys, bodyPath)
+	}
+	if bodyHash == "" {
 		// Report doesn't exist or can't be read; skip sync
 		return false, nil
 	}
 
 	// Check if hash matches meta.last_report_hash
-	if reportHash == meta.LastReportHash {
+	if bodyHash == meta.LastReportHash {
 		// No change, skip edit
 		return false, nil
 	}
@@ -1078,7 +1051,7 @@ func syncPRBody(
 	workDir := meta.WorktreePath
 	result, err := cr.Run(ctx, "gh", []string{
 		"pr", "edit", fmt.Sprintf("%d", prNumber),
-		"--body-file", reportPath,
+		"--body-file", bodyPath,
 	}, exec.RunOpts{
 		Dir: workDir,
 		Env: nonInteractiveEnv(),
@@ -1102,7 +1075,7 @@ func syncPRBody(
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := st.UpdateMeta(repoID, meta.RunID, func(m *store.RunMeta) {
 		m.LastReportSyncAt = now
-		m.LastReportHash = reportHash
+		m.LastReportHash = bodyHash
 	}); err != nil {
 		_, _ = fmt.Fprintf(stderr, "warning: failed to update meta.json with report sync info: %v\n", err)
 	}

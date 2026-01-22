@@ -83,42 +83,29 @@ all other sections are optional.
 
 ---
 
-## 4) enforce report completeness on `agency push`
+## 4) warn on report completeness for `agency push`
 
 ### behavior
 
 - if report file is missing:
-  - abort push
-  - return error `E_REPORT_INVALID` (existing error code)
-  - hint: "report file not found at `<path>`"
+  - warn and continue
+  - use auto-generated PR body
 
 - if report is incomplete (file exists but missing required sections):
-  - abort push
-  - return error `E_REPORT_INCOMPLETE`
-  - list missing sections explicitly
-  - print worktree path and suggest `agency open <id>` for quick editing
-  - hint: "fill required sections or re-run with --force"
+  - warn (include missing sections)
+  - use auto-generated PR body
 
-- allow bypass with `--force`
+- `--force` does not change report behavior (retained for compatibility)
 
 ### output format
 
-per constitution section 16.5, error output:
-```
-error_code: E_REPORT_INCOMPLETE
-report: <worktree>/.agency/report.md
-missing: summary, how to test
-hint: fill required sections or use --force
-hint: agency open <run_id>
-```
-
-exits non-zero.
+warnings are printed to stderr when fallback bodies are used.
 
 ### notes
 
-- this is a hard gate for push only
+- this is a warning-only check for push
 - merge behavior is unchanged
-- `--force` bypasses completeness check but not missing file check
+- `--force` does not affect report handling
 
 ---
 
@@ -128,10 +115,10 @@ exits non-zero.
 
 | code | when | notes |
 |------|------|-------|
-| `E_REPORT_INVALID` | report file missing | existing code, reused |
-| `E_REPORT_INCOMPLETE` | report exists but missing required sections | new code |
+| `E_REPORT_INVALID` | report file missing | retained; not used by push |
+| `E_REPORT_INCOMPLETE` | report exists but missing required sections | retained; not used by push |
 
-`E_REPORT_INCOMPLETE` must be added to constitution error codes (section 16.5).
+`E_REPORT_INCOMPLETE` is retained for compatibility but not used by push.
 
 ---
 
@@ -171,11 +158,10 @@ exits non-zero.
 9. case variations (`## Summary`, `## SUMMARY`) → normalized correctly
 10. trailing punctuation (`## summary:`) → stripped, matches
 
-**push gating logic:**
-1. missing report file → fails with `E_REPORT_INVALID`
-2. incomplete report → fails with `E_REPORT_INCOMPLETE`
-3. incomplete report + `--force` → allowed
-4. complete report → allowed
+**push body source logic:**
+1. missing report file → warning + auto-generated body
+2. incomplete report → warning + auto-generated body
+3. complete report → use report body
 
 tests must not depend on git, tmux, or gh.
 
@@ -185,9 +171,8 @@ tests must not depend on git, tmux, or gh.
 
 - `.agency/INSTRUCTIONS.md` is created on every run (overwritten unconditionally)
 - report template references instructions
-- push fails on missing report with `E_REPORT_INVALID`
-- push fails on incomplete report with `E_REPORT_INCOMPLETE` unless `--force`
-- error messages include report path, missing sections, and `agency open` hint
+- push never fails due to report completeness
+- warnings include missing sections when incomplete
 - heading parsing handles aliases, normalization, and code fences
 - no assumptions about repo tooling are introduced
 - behavior is identical for claude and codex runners
