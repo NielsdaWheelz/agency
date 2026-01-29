@@ -217,9 +217,9 @@ There is no `sandboxes/<id>/meta.json`. The invocation meta.json is the single s
 ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/
 ├── checkpoints.json    # Checkpoint records for this invocation
 ├── logs/
-│   ├── stdout.log      # Raw stdout
-│   ├── stderr.log      # Raw stderr
-│   └── stream.jsonl    # Parsed structured events (if format known)
+│   ├── raw.jsonl       # Verbatim runner stdout (JSONL as emitted)
+│   ├── stderr.log      # Runner stderr (errors, warnings)
+│   └── stream.jsonl    # Normalized events (written by stream parser)
 └── tree/               # Actual git worktree (runner executes here)
     ├── .git            # Worktree git link
     ├── .agency/        # Agency state inside sandbox
@@ -371,7 +371,7 @@ agency agent attach <invocation_id|prefix>
 agency agent stop <invocation_id|prefix>
 agency agent kill <invocation_id|prefix>
 agency agent diff <invocation_id|prefix>
-agency agent land <invocation_id|prefix> [--strategy cherry-pick|merge] [--require-base]
+agency agent land <invocation_id|prefix> [--apply] [--require-base]
 agency agent discard <invocation_id|prefix>
 agency agent open <invocation_id|prefix>
 agency agent logs <invocation_id|prefix> [--follow]
@@ -400,9 +400,9 @@ agency agent logs <invocation_id|prefix> [--follow]
 - `diff` — show what the sandbox changed:
   - File diff: `git diff <base_commit>..<sandbox_branch>` (two-dot: base vs tip)
   - Commit list: `git log --oneline <base_commit>..<sandbox_branch>`
-- `land` — apply sandbox commits into integration branch, then delete sandbox tree
-  - `--strategy cherry-pick` (default): cherry-pick sandbox commits onto current integration HEAD
-  - `--strategy merge`: merge sandbox branch into integration
+- `land` — apply sandbox changes into integration branch, then delete sandbox tree
+  - Default: cherry-pick sandbox commits onto current integration HEAD
+  - `--apply`: if no commits exist, apply working tree diff instead (see Landing Workflow)
   - `--require-base`: fail if integration has diverged from `base_commit` (strict mode)
 - `discard` — delete sandbox tree without applying changes
 - `open` — open sandbox directory in editor (for manual inspection)
@@ -420,9 +420,27 @@ agency agent logs <invocation_id|prefix> [--follow]
 - `--no-include-untracked` excludes untracked files from checkpoint snapshots
 - `land` fails if invocation is still running
 - `land` cherry-picks onto current integration HEAD by default (allows parallel landing)
-- `land` reports conflicts and aborts if cherry-pick/merge fails (sandbox preserved for manual resolution)
+- `land` reports conflicts and aborts if cherry-pick fails (sandbox preserved for manual resolution)
+- `land` with no commits and dirty tree requires `--apply` (diff-based landing)
+- `land` with no commits and clean tree errors with hint
 - `land --require-base` fails if integration branch has diverged from `base_commit`
 - `discard` can be used on running invocations (stops first, then discards)
+
+---
+
+### Checkpoints
+
+```
+agency checkpoint ls --invocation <invocation_id|prefix>
+agency checkpoint apply --invocation <invocation_id|prefix> <checkpoint_id>
+```
+
+**Rules:**
+
+- `ls` shows checkpoint history for an invocation (id, timestamp, diffstat)
+- `apply` restores the sandbox to a checkpoint state (`git reset --hard` + `git checkout <snapshot_commit> -- .`)
+- `apply` fails if invocation is still running (stop first)
+- `apply` does **not** resume the invocation — user starts a new one after rollback
 
 ---
 
@@ -497,38 +515,67 @@ This remains the happy-path demo command.
 
 | Runner | Base Command | Notes |
 |--------|--------------|-------|
-| Claude Code | `claude --print --output-format stream-json` | Structured JSON to stdout |
-| Codex CLI | `codex exec` | Preserves codex config defaults |
+| Claude Code | `claude -p --output-format stream-json --verbose` | JSONL to stdout |
+| Codex CLI | `codex exec -C <dir> --json` | JSONL to stdout |
 
 ### Claude Headless Invocation
 
 ```bash
 cd <sandbox_path>
-claude --print \
+claude -p \
   --output-format stream-json \
-  --include-partial-messages \
+  --verbose \
   "<prompt>"
 ```
 
-**Flags:**
+**Flags (verified against claude 2.1.x):**
 
-- `--print` — non-interactive mode, prompt passed as positional argument
-- `--output-format stream-json` — structured JSON output
-- `--include-partial-messages` — smoother streaming (shows work in progress)
+- `-p` / `--print` — non-interactive mode, prompt as positional argument
+- `--output-format stream-json` — JSONL streaming output (**requires `--verbose`**)
+- `--verbose` — required by stream-json; without it claude exits with an error
+
+**Optional flags:**
+
+- `--include-partial-messages` — emit partial message chunks as they arrive (finer-grained streaming)
 
 **CWD:** Always set to **sandbox** tree path. Never the integration tree.
 
 **Policy:** Agency does not set `--permission-mode` or impose safety policy. User's Claude config applies.
 
-**NOTE:** The exact invocation syntax above is provisional. Before implementation, verify against `claude --help` for the shipping version. In particular: whether `--print` takes a positional prompt vs stdin, interaction with `--output-format`, and whether `--include-partial-messages` is still supported. Add a pre-implementation task to run the real CLI and confirm flags.
+**JSONL event types (stdout):**
+
+| `type` | Description |
+|--------|-------------|
+| `system` (subtype `init`) | Session metadata: cwd, session_id, model, tools |
+| `assistant` | Model turn: content is `tool_use` or `text` |
+| `user` | Tool result feedback |
+| `result` (subtype `success`/`error`) | Final outcome: duration, cost, usage |
 
 ### Codex Headless Invocation
 
 ```bash
-codex exec --cd <sandbox_path> "<prompt>"
+codex exec -C <sandbox_path> --json "<prompt>"
 ```
 
+**Flags (verified against codex 0.x):**
+
+- `exec` — non-interactive subcommand
+- `-C` / `--cd` — set working directory
+- `--json` — JSONL streaming output to stdout
+- Prompt is a positional argument (or stdin if `-` or omitted)
+
 **Policy:** Preserve codex config defaults for sandbox and approval settings. Agency does not impose policy in v2.
+
+**JSONL event types (stdout):**
+
+| `type` | Description |
+|--------|-------------|
+| `thread.started` | Session metadata: thread_id |
+| `turn.started` | Turn boundary |
+| `item.completed` (type `reasoning`) | Model reasoning step |
+| `item.started` / `item.completed` (type `command_execution`) | Command exec with exit_code |
+| `item.completed` (type `agent_message`) | Final text response |
+| `turn.completed` | Turn end with token usage |
 
 ### Passing Additional Runner Flags
 
@@ -589,11 +636,27 @@ Used when present to derive semantic status (`working`, `needs_input`, `blocked`
 
 ---
 
+### Invocation Reaper (Headed Finished Detection)
+
+Headed invocations don't have exit codes. "Finished" = tmux session no longer exists.
+
+A lightweight `reconcileInvocationState()` function handles this:
+
+- Checks `tmux has-session -t <session_name>`
+- If session missing AND `status == "running"` → set `status = "finished"`, `finished_at = now`, `exit_reason = "exited"`
+- Called lazily on every read path: `agent ls`, `agent show`, `watch` refresh
+- No daemon, no background goroutine — reconcile on demand
+- Must be idempotent (safe to call multiple times)
+
+This avoids needing a persistent watcher while ensuring state is always correct when observed.
+
+---
+
 ### Derived Display Status
 
 Computed from:
 
-- Invocation lifecycle state
+- Invocation lifecycle state (after reaper reconciliation)
 - Landing status
 - tmux presence (headed)
 - Recent stdout/stderr activity (`last_output_at`)
@@ -614,9 +677,9 @@ For every invocation, logs are stored in the sandbox:
 
 ```
 ${DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/
-├── stdout.log      # Raw stdout
-├── stderr.log      # Raw stderr
-└── stream.jsonl    # Parsed structured events (if format known)
+├── raw.jsonl       # Verbatim runner stdout (JSONL as emitted by claude/codex)
+├── stderr.log      # Runner stderr (errors, warnings)
+└── stream.jsonl    # Normalized events (written by stream parser, PR-05)
 ```
 
 Agency events are stored in the invocation record:
@@ -627,11 +690,11 @@ ${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/events.jsonl
 
 **Requirements:**
 
-- **Headless logs:** Complete. stdout/stderr pipes captured directly from subprocess.
+- **Headless logs:** Complete. `raw.jsonl` = verbatim copy of runner stdout, appended as chunks arrive. `stderr.log` = runner stderr, appended as chunks arrive.
 - **Headed logs:** Best-effort. Periodic `tmux capture-pane` sampling. TUI escape codes make raw capture unreliable; `attach` (via watch or CLI) is the primary viewing mechanism for headed invocations.
-- Streaming output appended as it arrives
-- No reliance on tmux scrollback for headless
-- Watch uses tailing of log files for headless; attach for headed
+- `last_output_at` updated on **every chunk** written to `raw.jsonl` (not batched)
+- `stream.jsonl` is NOT written by the logging layer — reserved for the stream parser (PR-05)
+- Watch uses tailing of `raw.jsonl` for headless; attach for headed
 
 ---
 
@@ -848,7 +911,7 @@ git log --oneline <base_commit>..<sandbox_branch>
 
 Both outputs are shown to the user.
 
-### `agency agent land <invocation> [--strategy cherry-pick|merge] [--require-base]`
+### `agency agent land <invocation> [--apply] [--require-base]`
 
 **Preconditions:**
 
@@ -856,13 +919,13 @@ Both outputs are shown to the user.
 
 **Default behavior (no `--require-base`):**
 
-Landing cherry-picks/merges onto the **current** integration HEAD, regardless of whether it has moved since `base_commit`. This is essential for parallel sandbox workflows where landing one sandbox moves the integration HEAD before others land.
+Landing cherry-picks onto the **current** integration HEAD, regardless of whether it has moved since `base_commit`. This is essential for parallel sandbox workflows where landing one sandbox moves the integration HEAD before others land.
 
 **With `--require-base` (strict mode):**
 
 Fail if integration branch HEAD != `base_commit`. User must rebase or resolve manually.
 
-**cherry-pick (default):**
+**Case 1: Commits exist** (default)
 
 ```bash
 cd <integration_tree_path>
@@ -871,14 +934,26 @@ git cherry-pick <base_commit>..<sandbox_branch>
 
 If cherry-pick conflicts: abort the cherry-pick, report conflicting files, leave sandbox intact for manual resolution. The user can inspect with `agent open` and retry.
 
-**merge:**
+**Case 2: No commits, dirty tree** (`--apply` required)
+
+Runners often modify files without committing. When `<base_commit>..<sandbox_branch>` is empty but the sandbox working tree is dirty:
 
 ```bash
+cd <sandbox_path>
+git diff <base_commit> -- . > /tmp/patch
+
 cd <integration_tree_path>
-git merge <sandbox_branch> --no-ff -m "agency: land invocation <invocation_id>"
+git apply /tmp/patch
+git commit -m "agency: land invocation <invocation_id>"
 ```
 
-If merge conflicts: abort the merge, report conflicting files, leave sandbox intact.
+`agent land` without `--apply` in this case errors with a hint: "no commits to cherry-pick; use --apply to land working tree changes."
+
+**Case 3: No commits, clean tree**
+
+Error: "nothing to land — sandbox has no commits and no uncommitted changes."
+
+**Merge strategy: deferred.** Cherry-pick is the only landing strategy in slice 8. Merge pulls sandbox branch history into integration, which is a footgun for this model. Defer `--strategy merge` unless a compelling use case emerges.
 
 **Post-land (success only):**
 
@@ -933,9 +1008,9 @@ ${AGENCY_DATA_DIR}/repos/<repo_id>/
 ├── sandboxes/<invocation_id>/              # Operational artifacts only
 │   ├── checkpoints.json                    # Checkpoint records
 │   ├── logs/
-│   │   ├── stdout.log
-│   │   ├── stderr.log
-│   │   └── stream.jsonl
+│   │   ├── raw.jsonl                       # Verbatim runner stdout
+│   │   ├── stderr.log                      # Runner stderr
+│   │   └── stream.jsonl                    # Normalized events (stream parser)
 │   └── tree/                               # Sandbox git worktree (runner CWD)
 │       ├── .git
 │       ├── .agency/
@@ -1004,8 +1079,7 @@ Slice 8 is complete when:
 
 ## Pre-Implementation Tasks
 
-- **Verify Claude CLI invocation syntax:** Run `claude --help` on the shipping version and confirm: `--print` prompt passing (positional arg vs stdin vs `--input-format`), `--output-format stream-json` compatibility, `--include-partial-messages` availability. Update spec to match.
-- **Verify Codex CLI invocation syntax:** Run `codex --help` and confirm `exec --cd` semantics.
+- **Pin minimum CLI versions:** Record the minimum claude/codex versions tested against so future breakage is detectable.
 
 ---
 
