@@ -124,8 +124,19 @@ go run ./cmd/agency --help
 agency/
 ├── cmd/agency/           # main entry point
 ├── internal/             # implementation packages
+│   ├── cli/cobra/        # Cobra CLI command tree
+│   └── commands/         # command implementations
 └── docs/                 # documentation
 ```
+
+## cli framework
+
+agency uses [Cobra](https://github.com/spf13/cobra) for command-line parsing. This provides:
+- auto-generated shell completions (bash, zsh)
+- built-in help for all commands
+- consistent flag parsing
+
+new v2 commands (`worktree`, `agent`, `watch`) are registered but not yet implemented - see [slice 8 spec](docs/v1/s8/s8_spec.md) for the roadmap.
 
 ## versioning
 
