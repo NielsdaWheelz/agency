@@ -1,10 +1,10 @@
-# Agency — Slice 8: Worktrees, Agents, Headless Execution, and Watch
+# Agency — Slice 8: Integration Worktrees, Sandbox Isolation, Agents, and Watch
 
 ## Goal
 
-Introduce first-class **worktrees** and **agent invocations** as independent primitives, support **headed and headless runners**, enable **frequent reversible checkpoints**, and provide a **live watch interface**, while preserving a simple happy-path wrapper.
+Introduce **integration worktrees** (stable branches you open and merge), **sandbox worktrees** (ephemeral per-invocation execution directories), **agent invocations** running safely inside sandboxes, **headed and headless runners**, **per-sandbox checkpointing** via private refs, a **landing workflow** to move sandbox results into integration, and a **live watch interface**.
 
-This slice modernizes Agency from "run = everything" into a composable orchestration system suitable for managing multiple parallel AI agents safely.
+This slice moves Agency from "run = everything" into a composable orchestration system where multiple agents can work concurrently on the same integration branch without interference.
 
 ---
 
@@ -30,28 +30,78 @@ Explicitly out of scope:
 **Slice 8 changes the on-disk layout.** Existing v1 `runs/<run_id>/` directories remain as legacy records but are not used by new commands.
 
 New commands create:
-- Worktree records under `worktrees/<worktree_id>/`
+- Integration worktree records under `worktrees/<worktree_id>/`
+- Sandbox artifacts under `sandboxes/<invocation_id>/`
 - Invocation records under `invocations/<invocation_id>/`
 
 No automatic migration of v1 runs. Users can continue using v1 commands for existing runs.
 
 ---
 
-## Core Concepts (New / Clarified)
+## Core Concepts
 
-### Worktree
+### Integration Worktree
 
-A **worktree** is a named workspace tied to a repository and branch.
+An **integration worktree** is the stable branch you intend to merge, push, or PR. It is what you open in your editor.
 
 **Properties:**
 
+- Named workspace tied to a repository and branch
 - Independent of any agent invocation
-- Can host multiple sequential agent invocations
+- **Never modified by a runner directly** — agents execute in sandboxes
+- Can have multiple concurrent agent invocations (each in its own sandbox)
 - Has a stable identity even if no agent is running
+- Created via `git worktree add -b` from a parent branch
+- Contains `.agency/INTEGRATION_MARKER` to identify it as an integration tree
 
 ---
 
-### Worktree Lifecycle
+### Sandbox Worktree
+
+A **sandbox worktree** is an ephemeral per-invocation workspace derived from the integration branch. It is where runners actually execute.
+
+**Properties:**
+
+- One sandbox per invocation (1:1 relationship)
+- Created automatically when an invocation starts
+- Branched from the integration worktree's branch at invocation time
+- Deleted when the invocation is discarded or after landing
+- Two invocations never write to the same directory
+
+**Rationale:** Sandboxes eliminate shared-directory concurrency. Each agent gets its own isolated filesystem. The integration worktree stays clean and human-owned.
+
+---
+
+### Agent Invocation
+
+An **agent invocation** is one execution of a runner (Claude, Codex, etc.) inside a sandbox worktree.
+
+**Properties:**
+
+- Exactly one runner
+- Either headed (tmux) or headless (subprocess)
+- Produces logs, status, checkpoints, and an exit outcome
+- Owns its sandbox worktree (sandbox lifetime = invocation lifetime)
+- Does **not** own the integration worktree
+
+---
+
+### Relationship Diagram
+
+```
+integration worktree (branch: agency/my-feature-a3f2)
+├── sandbox 1 (invocation 20260128120500-b7c9, branch: agency/sandbox-20260128120500-b7c9)  [active]
+├── sandbox 2 (invocation 20260128130000-d4e5, branch: agency/sandbox-20260128130000-d4e5)  [landed]
+└── sandbox 3 (invocation 20260128140000-f1g2, branch: agency/sandbox-20260128140000-f1g2)  [discarded]
+```
+
+Multiple agents can work on the same integration branch concurrently. Each gets its own sandbox. Results are "landed" into the integration branch when ready.
+
+---
+
+## Integration Worktree Details
+
+### Lifecycle
 
 ```
 create → present
@@ -73,14 +123,13 @@ rm     → archived (record retained, tree removed)
 
 **When archived:**
 
-- `path` field points to former tree location (no longer exists)
-- Checkpoints remain in record (stash commits still valid in parent repo)
+- Checkpoint snapshot refs remain valid in the parent repo
 - Name becomes available for reuse
-- Invocation history preserved
+- Invocation history preserved in invocation records
 
 ---
 
-### Worktree Fields
+### Integration Worktree Fields
 
 | Field | Description |
 |-------|-------------|
@@ -89,7 +138,7 @@ rm     → archived (record retained, tree removed)
 | `repo_id` | Associated repository |
 | `branch` | `agency/<name>-<shortid>` where shortid is last 4 chars of worktree_id |
 | `parent_branch` | Branch this was created from |
-| `tree_path` | Filesystem path to the git worktree (the actual code directory) |
+| `tree_path` | Filesystem path to the integration git worktree |
 | `created_at` | Creation timestamp (RFC3339) |
 | `last_used_at` | Last activity timestamp (RFC3339) |
 | `state` | `present` or `archived` |
@@ -98,30 +147,30 @@ rm     → archived (record retained, tree removed)
 
 ---
 
-### Worktree Storage Layout
+### Integration Worktree Storage
 
 ```
 ${AGENCY_DATA_DIR}/repos/<repo_id>/worktrees/<worktree_id>/
-├── meta.json           # Worktree metadata (record)
-├── checkpoints.json    # Checkpoint records
-└── tree/               # Actual git worktree (the code)
+├── meta.json           # Integration worktree metadata (record)
+└── tree/               # Actual git worktree (the code you open)
     ├── .git            # Worktree git link
-    ├── .agency/        # Agency state inside worktree
-    │   └── state/
-    │       └── runner_status.json
+    ├── .agency/
+    │   └── INTEGRATION_MARKER   # Prevents runners from executing here
     └── <project files>
 ```
 
 **Key distinction:**
 
-- **Record directory:** `worktrees/<id>/` — contains `meta.json`, `checkpoints.json`
+- **Record directory:** `worktrees/<id>/` — contains `meta.json`
 - **Tree directory:** `worktrees/<id>/tree/` — the actual git worktree with project files
 
 The `tree_path` field in `meta.json` points to the tree directory.
 
+**Note:** No `checkpoints.json` or `runner_status.json` in the integration worktree. Checkpoints and runner state live in sandboxes.
+
 ---
 
-### Worktree meta.json Schema
+### Integration Worktree meta.json Schema
 
 ```json
 {
@@ -134,34 +183,74 @@ The `tree_path` field in `meta.json` points to the tree directory.
   "tree_path": "/path/to/data/repos/.../worktrees/20260128120000-a3f2/tree",
   "created_at": "2026-01-28T12:00:00Z",
   "last_used_at": "2026-01-28T14:30:00Z",
-  "state": "present",
-  "flags": {
-    "checkpoint_degraded": false
-  }
+  "state": "present"
 }
 ```
 
 ---
 
-### Agent Invocation
+## Sandbox Worktree Details
 
-An **agent invocation** is one execution of a runner (Claude, Codex, etc.) inside a worktree.
+### Lifecycle
 
-**Properties:**
+```
+agent start → sandbox created (active)
+agent land  → sandbox removed (landed)
+agent discard → sandbox removed (discarded)
+```
 
-- Exactly one runner
-- Either headed (tmux) or headless (subprocess)
-- Produces logs, status, checkpoints, and an exit outcome
-- Does **not** own the worktree
+A sandbox exists only while the invocation needs it. After landing or discarding, the sandbox tree is deleted.
 
 ---
 
+### Sandbox Fields
+
+Sandbox metadata is stored in the **invocation** record (see Invocation Fields below). The sandbox directory contains only operational artifacts: tree, logs, and checkpoints.
+
+There is no `sandboxes/<id>/meta.json`. The invocation meta.json is the single source of truth for sandbox state.
+
+---
+
+### Sandbox Storage (Operational Artifacts Only)
+
+```
+${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/
+├── checkpoints.json    # Checkpoint records for this invocation
+├── logs/
+│   ├── stdout.log      # Raw stdout
+│   ├── stderr.log      # Raw stderr
+│   └── stream.jsonl    # Parsed structured events (if format known)
+└── tree/               # Actual git worktree (runner executes here)
+    ├── .git            # Worktree git link
+    ├── .agency/        # Agency state inside sandbox
+    │   └── state/
+    │       └── runner_status.json
+    └── <project files>
+```
+
+**Key points:**
+
+- Sandbox `tree/` is the CWD for runner execution
+- `runner_status.json` lives in the sandbox, not integration worktree
+- Logs are per-sandbox (per-invocation)
+- Checkpoints are per-sandbox
+- **No meta.json here** — invocation meta.json is canonical
+
+---
+
+## Invocation Details
+
 ### Invocation Fields
+
+The invocation record is the **single source of truth** for both invocation lifecycle and sandbox state.
 
 | Field | Description |
 |-------|-------------|
 | `invocation_id` | `<yyyymmddhhmmss>-<4hex>` (same format as run_id) |
-| `worktree_id` | Associated worktree |
+| `integration_worktree_id` | Target integration worktree |
+| `sandbox_path` | Filesystem path to sandbox tree (CWD for runner) |
+| `sandbox_branch` | `agency/sandbox-<invocation_id>` (full invocation ID) |
+| `base_commit` | Integration branch commit at invocation start |
 | `runner` | Runner type (`claude`, `codex`) |
 | `mode` | `headed` or `headless` |
 | `pid` | Process ID (headless only, null for headed) |
@@ -172,6 +261,7 @@ An **agent invocation** is one execution of a runner (Claude, Codex, etc.) insid
 | `exit_reason` | `exited` / `killed` / `stopped` / `unknown` (null if running) |
 | `exit_code` | Integer exit code (headless only, null for headed or if running) |
 | `last_output_at` | Last stdout/stderr activity (RFC3339) |
+| `landing_status` | `pending` / `landed` / `discarded` (null if still running) |
 
 **Mode-specific behavior:**
 
@@ -189,16 +279,28 @@ An **agent invocation** is one execution of a runner (Claude, Codex, etc.) insid
 
 ---
 
+### Invocation Terminal States
+
+| State | Meaning |
+|-------|---------|
+| `finished` | Runner exited normally |
+| `failed` | Runner crashed or was killed |
+| `landed` | Sandbox changes applied to integration branch |
+| `discarded` | Sandbox deleted without landing |
+
+`landed` and `discarded` are set by the landing workflow after the invocation has finished.
+
+---
+
 ### Invocation Storage
 
 ```
 ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/
-├── meta.json
-├── events.jsonl
-├── stdout.log
-├── stderr.log
-└── stream.jsonl (if runner supports structured output)
+├── meta.json           # Canonical record (invocation + sandbox state)
+└── events.jsonl        # Agency events (start, stop, checkpoint, land, etc.)
 ```
+
+Logs and checkpoints live under the sandbox directory (same invocation_id key).
 
 ---
 
@@ -208,7 +310,10 @@ ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/
 {
   "schema_version": "1.0",
   "invocation_id": "20260128120500-b7c9",
-  "worktree_id": "20260128120000-a3f2",
+  "integration_worktree_id": "20260128120000-a3f2",
+  "sandbox_path": "/path/to/data/repos/.../sandboxes/20260128120500-b7c9/tree",
+  "sandbox_branch": "agency/sandbox-20260128120500-b7c9",
+  "base_commit": "789abc...",
   "runner": "claude",
   "mode": "headless",
   "pid": 12345,
@@ -219,6 +324,7 @@ ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/
   "exit_reason": null,
   "exit_code": null,
   "last_output_at": "2026-01-28T12:10:00Z",
+  "landing_status": null,
   "prompt_source": "file",
   "prompt_path": "/path/to/prompt.md"
 }
@@ -242,11 +348,14 @@ agency worktree rm <name|id|prefix> [--force]
 
 **Rules:**
 
+- `create` creates integration branch + integration directory (does **not** start runners)
+- `create` writes `.agency/INTEGRATION_MARKER` into the tree
 - `create` fails if name already exists (among non-archived worktrees)
-- `rm` fails if an active agent invocation exists (unless `--force`)
-- `rm --force` executes: stop → wait 5s → kill → remove
-- `path` outputs the tree path only (for scripting: `` cd `agency worktree path foo` ``)
-- `--open` opens in configured editor
+- `rm` fails if any active agent invocations exist (unless `--force`)
+- `rm --force` executes: stop all invocations → wait 5s → kill → discard sandboxes → remove integration tree
+- `path` outputs the integration tree path only (for scripting: `` cd `agency worktree path foo` ``)
+- `open` opens integration directory in configured editor
+- `--open` on create opens in configured editor after creation
 - Resolution accepts name, worktree_id, or unique prefix
 - `--all` includes archived worktrees in listing
 
@@ -261,7 +370,22 @@ agency agent show <invocation_id|prefix> [--json]
 agency agent attach <invocation_id|prefix>
 agency agent stop <invocation_id|prefix>
 agency agent kill <invocation_id|prefix>
+agency agent diff <invocation_id|prefix>
+agency agent land <invocation_id|prefix> [--strategy cherry-pick|merge] [--require-base]
+agency agent discard <invocation_id|prefix>
+agency agent open <invocation_id|prefix>
+agency agent logs <invocation_id|prefix> [--follow]
 ```
+
+**`start` behavior:**
+
+1. Verify target is an integration worktree (`.agency/INTEGRATION_MARKER` exists)
+2. Create sandbox worktree branched from integration branch
+3. Run runner inside sandbox directory (CWD = sandbox tree path)
+4. If `--detached`: return immediately
+5. If not `--detached` and headed: attach to tmux session
+
+**`start` must refuse** if sandbox path resolution fails and would fall back to integration path. No code path may execute a runner with CWD = integration tree.
 
 **Prompt resolution (headless mode):**
 
@@ -271,15 +395,34 @@ agency agent kill <invocation_id|prefix>
 
 **Headed mode:** Prompt is provided interactively after attach.
 
+**Landing workflow:**
+
+- `diff` — show what the sandbox changed:
+  - File diff: `git diff <base_commit>..<sandbox_branch>` (two-dot: base vs tip)
+  - Commit list: `git log --oneline <base_commit>..<sandbox_branch>`
+- `land` — apply sandbox commits into integration branch, then delete sandbox tree
+  - `--strategy cherry-pick` (default): cherry-pick sandbox commits onto current integration HEAD
+  - `--strategy merge`: merge sandbox branch into integration
+  - `--require-base`: fail if integration has diverged from `base_commit` (strict mode)
+- `discard` — delete sandbox tree without applying changes
+- `open` — open sandbox directory in editor (for manual inspection)
+- `logs` — tail sandbox logs; `--follow` for streaming
+
 **Rules:**
 
-- Only one active invocation per worktree at a time
+- Many active invocations per integration worktree, each in its own sandbox
+- One active invocation per sandbox (trivially enforced: 1:1 relationship)
 - `stop` is graceful (SIGINT / C-c via tmux)
 - `kill` is forceful (SIGKILL / tmux kill-session)
 - `attach` only applies to headed invocations
 - `--detached` starts but does not attach (headed mode only)
 - `--runner-arg` passes additional flags to the runner command (repeatable)
-- `--no-include-untracked` disables `-u` flag on checkpoint stashes
+- `--no-include-untracked` excludes untracked files from checkpoint snapshots
+- `land` fails if invocation is still running
+- `land` cherry-picks onto current integration HEAD by default (allows parallel landing)
+- `land` reports conflicts and aborts if cherry-pick/merge fails (sandbox preserved for manual resolution)
+- `land --require-base` fails if integration branch has diverged from `base_commit`
+- `discard` can be used on running invocations (stops first, then discards)
 
 ---
 
@@ -289,29 +432,45 @@ agency agent kill <invocation_id|prefix>
 agency watch [--repo]
 ```
 
-**Interactive TUI:**
+**Interactive TUI with hierarchical view:**
 
-- Live-refresh list of worktrees + invocations
-- Derived status display
-- Select an invocation
+```
+my-feature (agency/my-feature-a3f2) [present]
+├── inv-b7c9  claude  headless  running   3m ago  [active]
+├── inv-d4e5  codex   headed    finished  10m ago [ready to land]
+└── inv-f1g2  claude  headless  finished  1h ago  [landed]
 
-**Keybindings:**
+bugfix-auth (agency/bugfix-auth-c8d3) [present]
+└── inv-h3i4  claude  headed    running   1m ago  [active]
+```
 
-| Key | Action |
-|-----|--------|
-| `Enter` | Attach (if headed) |
-| `o` | Open worktree |
-| `l` | View logs (tail) |
-| `s` | Stop |
-| `k` | Kill |
-| `q` | Quit |
+**View model:**
+
+- Top level: integration worktrees
+- Nested: invocations (agents) per worktree
+
+**Actions depend on selection:**
+
+| Context | Key | Action |
+|---------|-----|--------|
+| Invocation | `Enter` | Attach (if headed) |
+| Invocation | `d` | Diff sandbox vs integration |
+| Invocation | `L` | Land changes |
+| Invocation | `D` | Discard sandbox |
+| Invocation | `l` | View logs (tail) |
+| Invocation | `s` | Stop |
+| Invocation | `k` | Kill |
+| Worktree | `o` | Open integration worktree in editor |
+| Worktree | `S` | Shell into integration worktree |
+| Global | `q` | Quit |
 
 **Implementation:**
 
 - Bubbletea TUI library
-- Filesystem polling for status updates (no fsnotify)
+- Filesystem polling for status updates (no fsnotify for watch)
 - tmux `has-session` for presence detection
 - Log viewing via file tailing
+- For headed invocations: `attach` (Enter key) is the primary viewing mechanism
 
 Note: Watch uses **polling**. Checkpointing uses **fsnotify + periodic fallback**. Do not conflate.
 
@@ -344,27 +503,29 @@ This remains the happy-path demo command.
 ### Claude Headless Invocation
 
 ```bash
-cd <tree_path>
+cd <sandbox_path>
 claude --print \
   --output-format stream-json \
   --include-partial-messages \
-  < prompt.txt
+  "<prompt>"
 ```
 
 **Flags:**
 
-- `--print` — non-interactive mode, accepts prompt from stdin
+- `--print` — non-interactive mode, prompt passed as positional argument
 - `--output-format stream-json` — structured JSON output
 - `--include-partial-messages` — smoother streaming (shows work in progress)
 
-**CWD:** Always set to worktree tree path.
+**CWD:** Always set to **sandbox** tree path. Never the integration tree.
 
 **Policy:** Agency does not set `--permission-mode` or impose safety policy. User's Claude config applies.
+
+**NOTE:** The exact invocation syntax above is provisional. Before implementation, verify against `claude --help` for the shipping version. In particular: whether `--print` takes a positional prompt vs stdin, interaction with `--output-format`, and whether `--include-partial-messages` is still supported. Add a pre-implementation task to run the real CLI and confirm flags.
 
 ### Codex Headless Invocation
 
 ```bash
-codex exec --cd <tree_path> "<prompt>"
+codex exec --cd <sandbox_path> "<prompt>"
 ```
 
 **Policy:** Preserve codex config defaults for sandbox and approval settings. Agency does not impose policy in v2.
@@ -382,9 +543,9 @@ agency agent start --worktree foo --headless \
 
 ---
 
-### Status Model
+## Status Model
 
-Two-layer model:
+### Two-Layer Model
 
 #### 1. Invocation Status (orchestrator-owned)
 
@@ -397,10 +558,11 @@ Two-layer model:
 - `last_output_at`
 - `exit_code` (headless only)
 - `exit_reason`
+- `landing_status` (`pending` / `landed` / `discarded`)
 
 #### 2. Runner Status (optional, improves quality)
 
-**Location:** `<tree_path>/.agency/state/runner_status.json`
+**Location:** `<sandbox_path>/.agency/state/runner_status.json`
 
 Used when present to derive semantic status (`working`, `needs_input`, `blocked`, `ready_for_review`).
 
@@ -412,10 +574,11 @@ Used when present to derive semantic status (`working`, `needs_input`, `blocked`
 
 **Lifecycle correctness** (no runner cooperation required):
 
-- Create/start invocation
+- Create/start invocation + sandbox
 - Stop/kill invocation
 - Log capture (stdout/stderr)
 - Checkpoint creation and rollback
+- Land/discard workflow
 - Cleanup on remove
 
 **Semantic status** (improved by runner cooperation or stream parsing):
@@ -431,53 +594,66 @@ Used when present to derive semantic status (`working`, `needs_input`, `blocked`
 Computed from:
 
 - Invocation lifecycle state
+- Landing status
 - tmux presence (headed)
 - Recent stdout/stderr activity (`last_output_at`)
 - `runner_status.json` (if present)
 - Stall detector (no output + process alive > threshold)
 
+**Summary per integration worktree:**
+
+- Number of active invocations
+- Number ready to land (finished, not yet landed/discarded)
+- Number needing input (from runner status)
+
 ---
 
 ## Logging
 
-For every invocation:
+For every invocation, logs are stored in the sandbox:
 
 ```
-${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/
-├── stdout.log      # Raw stdout, always captured
-├── stderr.log      # Raw stderr, always captured
-├── stream.jsonl    # Parsed structured events (if format known)
-└── events.jsonl    # Agency events (start, stop, checkpoint, etc.)
+${DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/
+├── stdout.log      # Raw stdout
+├── stderr.log      # Raw stderr
+└── stream.jsonl    # Parsed structured events (if format known)
+```
+
+Agency events are stored in the invocation record:
+
+```
+${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/events.jsonl
 ```
 
 **Requirements:**
 
-- **Raw logs always captured** for both headed and headless
-- **Best-effort parsing** into `stream.jsonl` when output format is known (e.g., Claude's stream-json)
+- **Headless logs:** Complete. stdout/stderr pipes captured directly from subprocess.
+- **Headed logs:** Best-effort. Periodic `tmux capture-pane` sampling. TUI escape codes make raw capture unreliable; `attach` (via watch or CLI) is the primary viewing mechanism for headed invocations.
 - Streaming output appended as it arrives
 - No reliance on tmux scrollback for headless
-- Watch uses tailing of these files
+- Watch uses tailing of log files for headless; attach for headed
 
 ---
 
-## Checkpointing (Critical)
+## Checkpointing
+
+### Scope
+
+Checkpoints are **per-sandbox** (per-invocation). Each sandbox has its own checkpoint history.
 
 ### Primitive
 
-**Git stash snapshots** are the sole checkpoint mechanism.
+**Private ref snapshots** are the checkpoint mechanism. Each checkpoint is a commit stored under a private ref namespace.
 
-**Rationale:**
+**Why not git stash:** Stash is repo-global (`refs/stash` + reflog). All worktrees share the same stash list. Concurrent sandboxes would race on `stash@{0}` and require message-based lookup hacks. Private refs avoid this entirely.
 
-- Captures tracked + untracked changes
-- Reversible
-- No branch pollution
-- Matches industry practice (e.g., Conductor)
+**Ref namespace:** `refs/agency/snapshots/<invocation_id>/<n>`
 
-**Important:** Stashes are **global per repository**, not per worktree. Multiple concurrent worktrees share the stash list. This is handled by using stable commit hashes and message-based lookup.
+Each checkpoint commit captures the full working tree state (tracked changes + untracked files) without polluting the branch history.
 
 ### Trigger Policy (Defaults)
 
-**Primary:** fsnotify watcher on worktree tree directory
+**Primary:** fsnotify watcher on sandbox tree directory
 
 - Debounce: **3 seconds of inactivity**
 - Rate limit: **max one checkpoint every 10 seconds**
@@ -507,61 +683,101 @@ ${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/
   "checkpoints": [
     {
       "id": 1,
-      "stash_commit": "abc123def456789...",
+      "snapshot_ref": "refs/agency/snapshots/20260128120500-b7c9/1",
+      "snapshot_commit": "abc123def456789...",
       "head_sha": "789xyz...",
       "created_at": "2026-01-28T12:10:00Z",
-      "invocation_id": "20260128120500-b7c9",
-      "worktree_id": "20260128120000-a3f2",
+      "includes_untracked": true,
       "diffstat": "+42 -15 in 3 files"
     }
   ]
 }
 ```
 
-**Storage:** `worktrees/<worktree_id>/checkpoints.json`
+**Storage:** `sandboxes/<invocation_id>/checkpoints.json`
 
 ### Mechanics
 
 **Creating a checkpoint:**
 
 ```bash
-# Must run from inside the tree directory
-cd <tree_path>
+cd <sandbox_path>
 
-# Create stash with identifying message
-git stash push -u -m "agency checkpoint <worktree_id> <invocation_id> <n>"
+# 1. Create a temporary index capturing current working tree state
+export TEMP_INDEX=$(mktemp)
+cp "$(git rev-parse --git-dir)/index" "$TEMP_INDEX"
 
-# Resolve commit hash by searching stash list for our message
-# (Do NOT assume stash@{0} is ours - concurrent stashes may exist)
-stash_commit=$(git stash list --format='%H %s' | grep "agency checkpoint <worktree_id> <invocation_id> <n>" | head -1 | cut -d' ' -f1)
+# 2. Run denylist check BEFORE staging untracked files
+#    (see Untracked Files Policy — if denylisted files found, abort checkpoint)
+denylisted=$(git ls-files -o --exclude-standard | grep -E '\.env|\.key|\.pem|credentials\.json|secrets\.json')
+if [ -n "$denylisted" ]; then
+  # emit checkpoint_failed event, skip this checkpoint, return
+  exit 0
+fi
 
-# Record stash_commit in checkpoints.json
+# 3. Stage all changes (tracked + untracked) into the temp index
+GIT_INDEX_FILE="$TEMP_INDEX" git add -A
+
+# 4. Write the tree object from the temp index
+tree_hash=$(GIT_INDEX_FILE="$TEMP_INDEX" git write-tree)
+rm "$TEMP_INDEX"
+
+# 5. Create a snapshot commit (not on any branch)
+snapshot_commit=$(git commit-tree "$tree_hash" \
+  -p HEAD \
+  -m "agency snapshot <invocation_id> <n>")
+
+# 6. Store under private ref
+git update-ref "refs/agency/snapshots/<invocation_id>/<n>" "$snapshot_commit"
+
+# 7. Record in checkpoints.json
 ```
 
-**Why message-based lookup:** Multiple worktrees may checkpoint concurrently. Another stash could land between our `stash push` and hash resolution. Searching by message ensures we find our specific stash.
+**If `--no-include-untracked`:** Skip step 2 (denylist check) and replace step 3 with `GIT_INDEX_FILE="$TEMP_INDEX" git add -u` (only tracked files).
+
+**Ordering matters:** The denylist check (step 2) runs **before** anything is staged into the temp index. This ensures denylisted files are never written into a snapshot tree object, even transiently.
+
+**Why this works:**
+
+- Private refs are namespaced per invocation — no collisions
+- No branch pollution (refs don't appear in `git log` or `git branch`)
+- Commit objects are immutable and GC-safe while refs point to them
+- No interference with the working index (temp index used)
 
 ### Rollback
 
-Rollback restores the worktree to a checkpoint state:
+Rollback restores the sandbox to a checkpoint state:
 
 ```bash
-cd <tree_path>
+cd <sandbox_path>
 
-# 1. Clean tracked files to branch HEAD
+# 1. Clean working tree to branch HEAD
 git reset --hard
-
-# 2. Remove untracked files (required if checkpoint used -u)
 git clean -fd
 
-# 3. Apply the checkpoint by its recorded commit hash
-git stash apply <stash_commit>
+# 2. Restore full tree state from the snapshot commit
+git checkout <snapshot_commit> -- .
 ```
+
+**How step 2 works:** The snapshot commit's tree contains all files (tracked + formerly untracked). `git checkout <sha> -- .` overwrites the working tree with every file in that tree. After step 1 cleaned everything, this restores the exact snapshot state.
 
 **Post-rollback:**
 
 - Rollback does **not** resume the same invocation
 - User starts a new invocation after rollback
-- The applied stash remains in stash list (not popped)
+- Snapshot refs remain valid for future rollback
+
+### Cleanup
+
+When a sandbox is deleted (via `land` or `discard`):
+
+```bash
+# Remove all snapshot refs for this invocation
+git for-each-ref --format='%(refname)' "refs/agency/snapshots/<invocation_id>/" | \
+  xargs -I{} git update-ref -d {}
+```
+
+This allows git GC to eventually clean up the snapshot commit objects.
 
 ---
 
@@ -584,12 +800,11 @@ The following patterns are denied from checkpoints:
 2. Check results against denylist
 3. If any denylisted files found:
    - Skip checkpoint creation
-   - Set `flags.checkpoint_degraded = true` in worktree meta
    - Emit `checkpoint_failed` event with reason
    - Log warning
    - **Invocation continues** (non-fatal)
 
-**Escape hatch:** `--no-include-untracked` flag on `agent start` to disable `-u` on stash (only checkpoint tracked files).
+**Escape hatch:** `--no-include-untracked` flag on `agent start` to exclude untracked files from snapshots entirely.
 
 ---
 
@@ -606,58 +821,150 @@ On failure:
      "data": {
        "reason": "denylisted_file",
        "files": [".env"],
-       "invocation_id": "...",
-       "worktree_id": "..."
+       "invocation_id": "..."
      }
    }
    ```
 
-2. Set flag in worktree meta:
-   ```json
-   {
-     "flags": {
-       "checkpoint_degraded": true
-     }
-   }
-   ```
-
-3. Continue invocation execution
+2. Continue invocation execution
 
 ---
 
-## Storage Layout
+## Landing Workflow
+
+Landing is the process of applying sandbox changes back to the integration branch.
+
+### `agency agent diff <invocation>`
+
+Shows what the sandbox changed:
+
+```bash
+# File diff: base_commit vs sandbox tip (two-dot = direct comparison)
+git diff <base_commit>..<sandbox_branch>
+
+# Commit list
+git log --oneline <base_commit>..<sandbox_branch>
+```
+
+Both outputs are shown to the user.
+
+### `agency agent land <invocation> [--strategy cherry-pick|merge] [--require-base]`
+
+**Preconditions:**
+
+- Invocation must be finished (not running)
+
+**Default behavior (no `--require-base`):**
+
+Landing cherry-picks/merges onto the **current** integration HEAD, regardless of whether it has moved since `base_commit`. This is essential for parallel sandbox workflows where landing one sandbox moves the integration HEAD before others land.
+
+**With `--require-base` (strict mode):**
+
+Fail if integration branch HEAD != `base_commit`. User must rebase or resolve manually.
+
+**cherry-pick (default):**
+
+```bash
+cd <integration_tree_path>
+git cherry-pick <base_commit>..<sandbox_branch>
+```
+
+If cherry-pick conflicts: abort the cherry-pick, report conflicting files, leave sandbox intact for manual resolution. The user can inspect with `agent open` and retry.
+
+**merge:**
+
+```bash
+cd <integration_tree_path>
+git merge <sandbox_branch> --no-ff -m "agency: land invocation <invocation_id>"
+```
+
+If merge conflicts: abort the merge, report conflicting files, leave sandbox intact.
+
+**Post-land (success only):**
+
+1. Set `landing_status = "landed"` in invocation meta
+2. Delete sandbox tree (keep invocation record + checkpoint refs)
+3. Update `last_used_at` on integration worktree
+
+### `agency agent discard <invocation>`
+
+**Behavior:**
+
+- If invocation is running: stop → wait 5s → kill
+- Set `landing_status = "discarded"` in invocation meta
+- Delete sandbox tree (keep invocation record)
+- Clean up snapshot refs for this invocation
+
+---
+
+## Isolation Invariants (Slice 8)
+
+These invariants **must** hold and must not be "optimized" away:
+
+1. **Each invocation gets its own sandbox worktree directory.** No sharing.
+2. **Two invocations never write to the same directory.** Enforced by 1:1 sandbox-to-invocation mapping.
+3. **Integration worktree is never modified by a runner directly.** Only the landing workflow writes to the integration tree.
+4. **Landing is human-triggered.** No automatic merging of sandbox results (v2: may add auto-land with approval gates).
+5. **Deleting an invocation deletes only its sandbox.** Integration worktree and other sandboxes are unaffected.
+6. **Sandbox tree is the CWD for all runner execution.** Runners never execute in the integration tree.
+7. **No code path may execute a runner with CWD = integration tree.** Enforced by:
+   - Integration trees contain `.agency/INTEGRATION_MARKER`
+   - `agent start` checks that the resolved sandbox path does not contain `INTEGRATION_MARKER`
+   - If sandbox creation fails, `agent start` aborts rather than falling back to the integration tree
+
+These invariants prevent race conditions by design, rather than by locking.
+
+---
+
+## Full Storage Layout
 
 ```
 ${AGENCY_DATA_DIR}/repos/<repo_id>/
 ├── repo.json
 ├── .lock
-├── runs/<run_id>/              # v1 legacy, untouched
+├── runs/<run_id>/                          # v1 legacy, untouched
 ├── worktrees/<worktree_id>/
-│   ├── meta.json               # Worktree record
-│   ├── checkpoints.json        # Checkpoint records
-│   └── tree/                   # Actual git worktree
+│   ├── meta.json                           # Integration worktree record
+│   └── tree/                               # Integration git worktree
+│       ├── .git
+│       ├── .agency/
+│       │   └── INTEGRATION_MARKER
+│       └── <project files>
+├── sandboxes/<invocation_id>/              # Operational artifacts only
+│   ├── checkpoints.json                    # Checkpoint records
+│   ├── logs/
+│   │   ├── stdout.log
+│   │   ├── stderr.log
+│   │   └── stream.jsonl
+│   └── tree/                               # Sandbox git worktree (runner CWD)
 │       ├── .git
 │       ├── .agency/
 │       │   └── state/
 │       │       └── runner_status.json
 │       └── <project files>
 └── invocations/<invocation_id>/
-    ├── meta.json
-    ├── events.jsonl
-    ├── stdout.log
-    ├── stderr.log
-    └── stream.jsonl
+    ├── meta.json                           # Canonical record (invocation + sandbox state)
+    └── events.jsonl                        # Agency events
+```
+
+**Git refs (in main repo):**
+
+```
+refs/agency/snapshots/<invocation_id>/<n>   # Checkpoint snapshot commits
 ```
 
 ---
 
 ## Concurrency Rules
 
-- One active invocation per worktree
-- Repo-level lock applies to:
-  - Worktree create/remove
-  - Agent start/kill
-- Read-only commands are lock-free
+- Many active invocations per integration worktree (each in its own sandbox)
+- One active invocation per sandbox (trivially enforced: 1:1 mapping)
+- Repo-level lock is held **only** for:
+  - `git worktree add` / `git worktree remove` operations
+  - Atomic writes to meta.json files
+  - Landing into integration branch (cherry-pick / merge)
+- Lock is **never** held while a runner is executing
+- Read-only commands (`ls`, `show`, `diff`, `logs`) are lock-free
 
 ---
 
@@ -667,10 +974,12 @@ ${AGENCY_DATA_DIR}/repos/<repo_id>/
 |----------|----------|
 | Runner crash | Invocation marked failed, exit_code captured (headless) or exit_reason=unknown (headed) |
 | Stalled output | `stalled` status derived |
-| Corrupted worktree | Explicit error, no auto-repair |
-| Checkpoint failure | `checkpoint_degraded` flag set, invocation continues |
+| Corrupted sandbox | Explicit error, no auto-repair |
+| Checkpoint failure | Event logged, invocation continues |
 | Denylisted file in untracked | Checkpoint skipped, warning logged |
 | fsnotify miss | Periodic fallback catches dirty state |
+| Land conflict (cherry-pick/merge fails) | Abort operation, report conflicts, sandbox preserved |
+| Sandbox creation fails | `agent start` aborts, no fallback to integration tree |
 
 ---
 
@@ -678,21 +987,36 @@ ${AGENCY_DATA_DIR}/repos/<repo_id>/
 
 Slice 8 is complete when:
 
-- [ ] Users can create named worktrees independent of agents
-- [ ] Users can run both headed and headless agents
-- [ ] Frequent checkpoints allow safe rollback
-- [ ] `agency watch` provides live visibility
-- [ ] Lifecycle correctness without runner cooperation (create, stop, kill, logs, checkpoints)
+- [ ] Users can create named integration worktrees independent of agents
+- [ ] Users can run multiple agents concurrently on the same integration worktree (each in sandbox)
+- [ ] Both headed and headless agents are supported
+- [ ] Per-sandbox checkpoints (via private refs) allow safe rollback
+- [ ] Landing workflow (diff/land/discard) moves sandbox results to integration
+- [ ] Parallel landing works: cherry-pick onto moved integration HEAD by default
+- [ ] `agency watch` provides hierarchical live visibility (worktrees → invocations)
+- [ ] Lifecycle correctness without runner cooperation (create, stop, kill, logs, checkpoints, land)
+- [ ] Integration worktrees are never modified by runners directly (enforced by INTEGRATION_MARKER)
 - [ ] The system remains reversible and inspectable
-- [ ] Raw logs are always captured for all invocations
+- [ ] Headless logs are complete (stdout/stderr captured directly)
+- [ ] Headed logs are best-effort (periodic capture-pane; attach is the primary viewing mechanism)
+
+---
+
+## Pre-Implementation Tasks
+
+- **Verify Claude CLI invocation syntax:** Run `claude --help` on the shipping version and confirm: `--print` prompt passing (positional arg vs stdin vs `--input-format`), `--output-format stream-json` compatibility, `--include-partial-messages` availability. Update spec to match.
+- **Verify Codex CLI invocation syntax:** Run `codex --help` and confirm `exec --cd` semantics.
 
 ---
 
 ## Open Questions (Deferred)
 
 - Append-prompt mid-invocation (continuation)
-- Multi-agent per worktree concurrency
 - Semantic tool telemetry
 - Structured diff visualization
 - Cobra migration details (completion, output stability)
 - `worktree rm --purge` to delete record entirely
+- Auto-land with approval gates
+- Rebase workflow when integration branch diverges during sandbox execution
+- Sandbox branch cleanup (prune old branches)
+- Snapshot ref GC strategy for long-lived repos
