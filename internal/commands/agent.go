@@ -1,5 +1,5 @@
 // Package commands implements agency CLI commands.
-// This file implements agent commands (Slice 8 PR-02).
+// This file implements agent commands (Slice 8 PR-02/03).
 package commands
 
 import (
@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -19,6 +20,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // AgentStartOpts holds options for the agent start command.
@@ -34,10 +36,17 @@ type AgentStartOpts struct {
 
 	// InvocationName is an optional human-readable label.
 	InvocationName string
+
+	// Detached starts but does not attach (headed mode only).
+	Detached bool
+
+	// TmuxClient is the tmux client to use (optional, uses real client if nil).
+	TmuxClient tmux.Client
 }
 
 // AgentStart starts a new agent invocation.
-// PR-02 creates the sandbox and invocation record but does NOT execute the runner.
+// For headed mode (default): creates sandbox, launches tmux session, optionally attaches.
+// For headless mode: creates sandbox (runner execution added in PR-04).
 func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -125,7 +134,115 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	// Output result
+	// For headed mode, launch tmux session
+	if mode == store.RunnerModeHeaded {
+		// Resolve runner command
+		userCfg, _, _ := config.LoadUserConfig(fsys, dirs.ConfigDir)
+		runnerCmd, err := config.ResolveRunnerCmd(cr, fsys, dirs.ConfigDir, userCfg, runner)
+		if err != nil {
+			// Mark invocation as failed
+			_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "start_failed"
+				meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			})
+			return err
+		}
+
+		// Get tmux client
+		tmuxClient := opts.TmuxClient
+		if tmuxClient == nil {
+			tmuxClient = tmux.NewExecClient(cr)
+		}
+
+		sessionName := tmux.SessionName(result.InvocationID)
+
+		// Preflight: check if session already exists (guards against leaked sessions)
+		exists, err := tmuxClient.HasSession(ctx, sessionName)
+		if err != nil {
+			// Non-fatal error checking, proceed anyway
+			_, _ = fmt.Fprintf(stderr, "warning: could not check for existing tmux session: %v\n", err)
+		} else if exists {
+			// Mark invocation as failed
+			_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "start_failed"
+				meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			})
+			return errors.NewWithDetails(
+				errors.ETmuxSessionExists,
+				"tmux session already exists",
+				map[string]string{
+					"session_name":  sessionName,
+					"invocation_id": result.InvocationID,
+					"hint":          "a tmux session with this name already exists; kill it with 'tmux kill-session -t " + sessionName + "' or use a different invocation",
+				},
+			)
+		}
+
+		// Create tmux session with CWD = sandbox tree, argv = [runnerCmd]
+		// No shell wrapping - pass runner command directly to tmux
+		err = tmuxClient.NewSession(ctx, sessionName, result.SandboxPath, []string{runnerCmd})
+		if err != nil {
+			// Mark invocation as failed
+			_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "start_failed"
+				meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			})
+			return errors.WrapWithDetails(
+				errors.EInvocationStartFailed,
+				"failed to create tmux session",
+				err,
+				map[string]string{
+					"session_name":  sessionName,
+					"sandbox_path":  result.SandboxPath,
+					"runner_cmd":    runnerCmd,
+					"invocation_id": result.InvocationID,
+				},
+			)
+		}
+
+		// Update invocation meta: status = "running", tmux_session set
+		err = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusRunning
+			meta.TmuxSession = sessionName
+		})
+		if err != nil {
+			// Best-effort: try to kill the session we just created
+			_ = tmuxClient.KillSession(ctx, sessionName)
+			return err
+		}
+
+		// Output result
+		_, _ = fmt.Fprintf(stdout, "Started agent invocation\n")
+		_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", result.InvocationID)
+		if opts.InvocationName != "" {
+			_, _ = fmt.Fprintf(stdout, "  name:           %s\n", opts.InvocationName)
+		}
+		_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
+		_, _ = fmt.Fprintf(stdout, "  mode:           %s\n", mode)
+		_, _ = fmt.Fprintf(stdout, "  worktree:       %s (%s)\n", wtRecord.Meta.Name, wtRecord.WorktreeID)
+		_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", result.SandboxPath)
+		_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", sessionName)
+
+		// If not detached, attach to the session
+		if !opts.Detached {
+			_, _ = fmt.Fprintf(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)\n")
+			if err := tmuxClient.Attach(ctx, sessionName); err != nil {
+				// Attach failed but session exists - not a fatal error
+				_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
+				_, _ = fmt.Fprintf(stderr, "Use 'agency agent attach %s' to attach later.\n", result.InvocationID[:8])
+			}
+		} else {
+			_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
+			_, _ = fmt.Fprintf(stdout, "Use 'agency agent attach %s' to attach.\n", result.InvocationID[:8])
+		}
+
+		return nil
+	}
+
+	// Headless mode - sandbox created, runner execution in PR-04
 	_, _ = fmt.Fprintf(stdout, "Created agent invocation\n")
 	_, _ = fmt.Fprintf(stdout, "  invocation_id: %s\n", result.InvocationID)
 	if opts.InvocationName != "" {
@@ -138,7 +255,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	_, _ = fmt.Fprintf(stdout, "  sandbox_branch: %s\n", result.SandboxBranch)
 	_, _ = fmt.Fprintf(stdout, "  base_commit:   %s\n", result.BaseCommit[:12])
 
-	_, _ = fmt.Fprintf(stderr, "\nNote: Runner execution not yet implemented (PR-02 creates sandbox only).\n")
+	_, _ = fmt.Fprintf(stderr, "\nNote: Headless runner execution not yet implemented (PR-04).\n")
 	_, _ = fmt.Fprintf(stderr, "Use 'agency agent show %s' to view invocation details.\n", result.InvocationID[:8])
 
 	return nil
@@ -422,9 +539,323 @@ func writeAgentShowHuman(w io.Writer, r *store.InvocationRecord) error {
 	if r.Meta.FinishedAt != "" {
 		_, _ = fmt.Fprintf(w, "finished_at:            %s\n", r.Meta.FinishedAt)
 	}
+	if r.Meta.TmuxSession != "" {
+		_, _ = fmt.Fprintf(w, "tmux_session:           %s\n", r.Meta.TmuxSession)
+	}
 	_, _ = fmt.Fprintf(w, "base_commit:            %s\n", r.Meta.BaseCommit)
 	_, _ = fmt.Fprintf(w, "sandbox_branch:         %s\n", r.Meta.SandboxBranch)
 	_, _ = fmt.Fprintf(w, "sandbox_path:           %s\n", r.Meta.SandboxPath)
 	_, _ = fmt.Fprintf(w, "sandbox_exists:         %v\n", r.SandboxExists)
+	return nil
+}
+
+// AgentAttachOpts holds options for the agent attach command.
+type AgentAttachOpts struct {
+	// InvocationRef is the invocation reference (id or prefix).
+	InvocationRef string
+
+	// TmuxClient is the tmux client to use (optional, uses real client if nil).
+	TmuxClient tmux.Client
+}
+
+// AgentAttach attaches to a running headed invocation's tmux session.
+// This is only supported for headed invocations.
+func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentAttachOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true, // allow attaching to see final state
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	// Verify this is a headed invocation
+	if record.Meta.Mode != store.RunnerModeHeaded {
+		return errors.NewWithDetails(
+			errors.EInvocationInvalidMode,
+			"invocation is headless; attach is only supported for headed invocations",
+			map[string]string{
+				"invocation_id": record.InvocationID,
+				"mode":          string(record.Meta.Mode),
+				"hint":          "use 'agency agent logs' to view headless invocation output",
+			},
+		)
+	}
+
+	// Get tmux client
+	tmuxClient := opts.TmuxClient
+	if tmuxClient == nil {
+		tmuxClient = tmux.NewExecClient(cr)
+	}
+
+	// Get session name
+	sessionName := record.Meta.TmuxSession
+	if sessionName == "" {
+		// Fall back to computed name if not in meta (shouldn't happen for properly started invocations)
+		sessionName = tmux.SessionName(record.InvocationID)
+	}
+
+	// Check if session exists
+	exists, err := tmuxClient.HasSession(ctx, sessionName)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: could not check tmux session status: %v\n", err)
+	}
+	if !exists {
+		return errors.NewWithDetails(
+			errors.ETmuxSessionMissing,
+			"tmux session not found",
+			map[string]string{
+				"session_name":  sessionName,
+				"invocation_id": record.InvocationID,
+				"hint":          "session may have exited; use 'agency agent kill' to finalize or 'agency agent start' to create a new invocation",
+			},
+		)
+	}
+
+	// Attach to session
+	if err := tmuxClient.Attach(ctx, sessionName); err != nil {
+		return errors.WrapWithDetails(
+			errors.ETmuxAttachFailed,
+			"failed to attach to tmux session",
+			err,
+			map[string]string{
+				"session_name":  sessionName,
+				"invocation_id": record.InvocationID,
+			},
+		)
+	}
+
+	return nil
+}
+
+// AgentStopOpts holds options for the agent stop command.
+type AgentStopOpts struct {
+	// InvocationRef is the invocation reference (id or prefix).
+	InvocationRef string
+
+	// TmuxClient is the tmux client to use (optional, uses real client if nil).
+	TmuxClient tmux.Client
+}
+
+// AgentStop sends a graceful stop signal (Ctrl-C) to a running headed invocation.
+// This does not guarantee termination - the runner may ignore the signal.
+// For headed mode: sends C-c via tmux send-keys.
+// For headless mode: not yet implemented (PR-04).
+func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStopOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: false, // can only stop running invocations
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	// Only headed mode is supported for now
+	if record.Meta.Mode != store.RunnerModeHeaded {
+		return errors.NewWithDetails(
+			errors.EInvocationInvalidMode,
+			"stop is not yet supported for headless invocations",
+			map[string]string{
+				"invocation_id": record.InvocationID,
+				"mode":          string(record.Meta.Mode),
+				"hint":          "headless stop will be implemented in PR-04",
+			},
+		)
+	}
+
+	// Get tmux client
+	tmuxClient := opts.TmuxClient
+	if tmuxClient == nil {
+		tmuxClient = tmux.NewExecClient(cr)
+	}
+
+	// Get session name
+	sessionName := record.Meta.TmuxSession
+	if sessionName == "" {
+		sessionName = tmux.SessionName(record.InvocationID)
+	}
+
+	// Send C-c to the session
+	err = tmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC})
+	if err != nil {
+		// Session might be missing - log warning but still update meta
+		_, _ = fmt.Fprintf(stderr, "warning: could not send interrupt to tmux session: %v\n", err)
+	}
+
+	// Update invocation meta: set stop_requested_at and flags.needs_attention
+	// Note: status remains "running", exit_reason remains null
+	// Actual termination is observed via reconcile (future) or kill
+	now := time.Now().UTC().Format(time.RFC3339)
+	err = st.UpdateInvocationMeta(repoIdentity.RepoID, record.InvocationID, func(meta *store.InvocationMeta) {
+		meta.StopRequestedAt = now
+		meta.Flags.NeedsAttention = true
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(stdout, "Stop signal sent to invocation %s\n", record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "Note: The runner may ignore the interrupt. Use 'agency agent kill' to force termination.\n")
+
+	return nil
+}
+
+// AgentKillOpts holds options for the agent kill command.
+type AgentKillOpts struct {
+	// InvocationRef is the invocation reference (id or prefix).
+	InvocationRef string
+
+	// TmuxClient is the tmux client to use (optional, uses real client if nil).
+	TmuxClient tmux.Client
+}
+
+// AgentKill forcefully terminates a running invocation.
+// For headed mode: kills the tmux session.
+// For headless mode: not yet implemented (PR-04).
+func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentKillOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true, // allow killing already-finished to finalize state
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	// Only headed mode is supported for now
+	if record.Meta.Mode != store.RunnerModeHeaded {
+		return errors.NewWithDetails(
+			errors.EInvocationInvalidMode,
+			"kill is not yet supported for headless invocations",
+			map[string]string{
+				"invocation_id": record.InvocationID,
+				"mode":          string(record.Meta.Mode),
+				"hint":          "headless kill will be implemented in PR-04",
+			},
+		)
+	}
+
+	// Get tmux client
+	tmuxClient := opts.TmuxClient
+	if tmuxClient == nil {
+		tmuxClient = tmux.NewExecClient(cr)
+	}
+
+	// Get session name
+	sessionName := record.Meta.TmuxSession
+	if sessionName == "" {
+		sessionName = tmux.SessionName(record.InvocationID)
+	}
+
+	// Kill the session
+	err = tmuxClient.KillSession(ctx, sessionName)
+	if err != nil {
+		// Session might already be gone - log warning but still update meta
+		if !tmux.IsNoSessionErr(err) {
+			_, _ = fmt.Fprintf(stderr, "warning: could not kill tmux session: %v\n", err)
+		}
+	}
+
+	// Update invocation meta: status = "failed", exit_reason = "killed", finished_at = now
+	// Note: tmux_session is kept as historical value (not nulled)
+	now := time.Now().UTC().Format(time.RFC3339)
+	err = st.UpdateInvocationMeta(repoIdentity.RepoID, record.InvocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFailed
+		meta.ExitReason = "killed"
+		meta.FinishedAt = now
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(stdout, "Killed invocation %s\n", record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "Sandbox preserved at: %s\n", record.Meta.SandboxPath)
+
 	return nil
 }

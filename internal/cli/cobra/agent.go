@@ -26,9 +26,9 @@ Subcommands:
   start     Start a new agent invocation
   ls        List agent invocations
   show      Show details of an invocation
-  attach    Attach to a running invocation (future)
-  stop      Stop an invocation gracefully (future)
-  kill      Kill an invocation forcefully (future)
+  attach    Attach to a running headed invocation
+  stop      Stop an invocation gracefully (Ctrl-C)
+  kill      Kill an invocation forcefully
   diff      Show sandbox changes (future)
   land      Apply sandbox changes to integration (future)
   discard   Discard sandbox changes (future)
@@ -45,6 +45,9 @@ Subcommands:
 		newAgentStartCmd(),
 		newAgentLSCmd(),
 		newAgentShowCmd(),
+		newAgentAttachCmd(),
+		newAgentStopCmd(),
+		newAgentKillCmd(),
 	)
 
 	return cmd
@@ -55,6 +58,7 @@ func newAgentStartCmd() *cobra.Command {
 	var runner string
 	var headless bool
 	var name string
+	var detached bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -64,13 +68,17 @@ func newAgentStartCmd() *cobra.Command {
 An agent invocation runs a runner (Claude, Codex, etc.) inside an isolated
 sandbox worktree derived from the integration branch.
 
-This creates the sandbox and invocation record but does NOT execute the runner
-(runner execution will be added in a future PR).
+For headed mode (default): creates sandbox, launches tmux session, and attaches.
+Use --detached to start without attaching.
+
+For headless mode: creates sandbox (full execution coming in PR-04).
 
 Example:
   agency agent start --worktree my-feature
-  agency agent start --worktree my-feature --runner claude --headless
-  agency agent start --worktree my-feature --name arch-agent`,
+  agency agent start --worktree my-feature --runner claude
+  agency agent start --worktree my-feature --detached
+  agency agent start --worktree my-feature --name arch-agent
+  agency agent start --worktree my-feature --headless`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if worktree == "" {
@@ -91,6 +99,7 @@ Example:
 				Runner:         runner,
 				Headless:       headless,
 				InvocationName: name,
+				Detached:       detached,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -99,6 +108,7 @@ Example:
 	cmd.Flags().StringVar(&runner, "runner", "claude", "Runner to use (claude, codex)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional name for the invocation")
+	cmd.Flags().BoolVar(&detached, "detached", false, "Start but do not attach (headed mode only)")
 
 	return cmd
 }
@@ -181,6 +191,101 @@ Example:
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+
+	return cmd
+}
+
+func newAgentAttachCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "attach <invocation_id|prefix>",
+		Short: "Attach to a running headed invocation",
+		Long: `Attach to a running headed invocation's tmux session.
+
+This is only supported for headed (interactive) invocations.
+Detach from the session with Ctrl+b, d.
+
+Example:
+  agency agent attach 20260131
+  agency agent attach my-inv-id`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentAttach(ctx, cr, fsys, cwd, commands.AgentAttachOpts{
+				InvocationRef: args[0],
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return cmd
+}
+
+func newAgentStopCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "stop <invocation_id|prefix>",
+		Short: "Stop an invocation gracefully",
+		Long: `Send a graceful stop signal (Ctrl-C) to a running invocation.
+
+For headed invocations, this sends C-c via tmux send-keys.
+The runner may ignore the signal; use 'kill' for forceful termination.
+
+Example:
+  agency agent stop 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentStop(ctx, cr, fsys, cwd, commands.AgentStopOpts{
+				InvocationRef: args[0],
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return cmd
+}
+
+func newAgentKillCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "kill <invocation_id|prefix>",
+		Short: "Kill an invocation forcefully",
+		Long: `Forcefully terminate a running invocation.
+
+For headed invocations, this kills the tmux session.
+The invocation is marked as failed with exit_reason="killed".
+The sandbox is preserved for inspection.
+
+Example:
+  agency agent kill 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentKill(ctx, cr, fsys, cwd, commands.AgentKillOpts{
+				InvocationRef: args[0],
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
 
 	return cmd
 }

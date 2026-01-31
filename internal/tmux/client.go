@@ -12,6 +12,10 @@ const (
 	KeyCtrlC Key = "C-c"
 )
 
+// Note: SessionName(id string) string is defined in capture.go
+// Format: agency_<id>
+// This is the canonical naming function for tmux sessions.
+
 // Client is the interface for tmux operations.
 // All methods accept a context for cancellation (no hidden timeouts).
 // Implementations must be safe for testing without tmux installed.
