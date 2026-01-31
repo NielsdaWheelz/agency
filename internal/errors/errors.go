@@ -113,6 +113,16 @@ const (
 	EWorktreeBroken       Code = "E_WORKTREE_BROKEN"        // worktree exists but meta.json is unreadable
 	EWorktreeDirExists    Code = "E_WORKTREE_DIR_EXISTS"    // worktree directory already exists
 	EWorktreeRemoveFailed Code = "E_WORKTREE_REMOVE_FAILED" // git worktree remove failed
+
+	// Slice 8 invocation/sandbox error codes (PR-02)
+	EInvocationNotFound       Code = "E_INVOCATION_NOT_FOUND"       // invocation does not exist
+	EInvocationIDAmbiguous    Code = "E_INVOCATION_ID_AMBIGUOUS"    // invocation id/prefix matches multiple
+	EInvocationBroken         Code = "E_INVOCATION_BROKEN"          // invocation exists but meta.json is unreadable
+	EInvocationDirExists      Code = "E_INVOCATION_DIR_EXISTS"      // invocation directory already exists
+	EInvocationCreateFailed   Code = "E_INVOCATION_CREATE_FAILED"   // invocation creation failed
+	ESandboxCreateFailed      Code = "E_SANDBOX_CREATE_FAILED"      // sandbox worktree creation failed
+	EIntegrationMarkerMissing Code = "E_INTEGRATION_MARKER_MISSING" // target is not an integration worktree
+	ESandboxPathUnsafe        Code = "E_SANDBOX_PATH_UNSAFE"        // sandbox path resolves to integration tree
 )
 
 // AgencyError is the standard error type for agency errors.

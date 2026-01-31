@@ -156,7 +156,28 @@ agency worktree shell my-feature
 agency worktree rm my-feature
 ```
 
-See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including agents, sandboxes, and the watch TUI.
+## Agent Invocations (v2)
+
+Agent invocations are executions of runners (Claude, Codex, etc.) inside isolated sandbox worktrees. Each invocation is independent and runs in its own sandbox derived from an integration worktree's branch.
+
+```bash
+# Start an agent (creates sandbox - runner execution coming in PR-03/04)
+agency agent start --worktree my-feature
+
+# List agent invocations
+agency agent ls
+agency agent ls --worktree my-feature  # filter by worktree
+
+# Show invocation details
+agency agent show 20260131
+```
+
+Key concepts:
+- **Sandbox**: Isolated worktree per invocation (runners never touch integration trees)
+- **Invocation**: Single agent execution with its own logs, checkpoints, and outcomes
+- **Landing**: Apply sandbox changes back to integration branch (coming in PR-07)
+
+See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including runners, checkpoints, and the watch TUI.
 
 ## cli framework
 
