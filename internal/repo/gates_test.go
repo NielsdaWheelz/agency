@@ -11,6 +11,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
 // Integration tests for CheckRepoSafe.
@@ -20,6 +21,7 @@ import (
 // Returns the repo root path. Cleanup is handled automatically by t.TempDir().
 func setupTempRepo(t *testing.T) string {
 	t.Helper()
+	testutil.HermeticGitEnv(t)
 
 	// Create temp directory (t.TempDir handles cleanup automatically)
 	dir := t.TempDir()
@@ -27,14 +29,6 @@ func setupTempRepo(t *testing.T) string {
 	// Initialize git repo
 	if err := runGit(dir, "init"); err != nil {
 		t.Fatalf("git init failed: %v", err)
-	}
-
-	// Configure git user for commits
-	if err := runGit(dir, "config", "user.email", "test@example.com"); err != nil {
-		t.Fatalf("git config user.email failed: %v", err)
-	}
-	if err := runGit(dir, "config", "user.name", "Test User"); err != nil {
-		t.Fatalf("git config user.name failed: %v", err)
 	}
 
 	// Create and commit a file

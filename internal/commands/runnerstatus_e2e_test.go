@@ -15,6 +15,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/scaffold"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/worktree"
 )
 
@@ -38,6 +39,7 @@ func TestRunnerStatusE2E(t *testing.T) {
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	t.Setenv("AGENCY_CACHE_DIR", cacheDir)
+	testutil.HermeticGitEnv(t)
 
 	// Create config dir and user config
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -66,8 +68,6 @@ func TestRunnerStatusE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	runCmd(t, ctx, cr, repoRoot, "git", "init")
-	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.email", "test@test.com")
-	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.name", "test")
 
 	// Create initial commit
 	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("# Test\n"), 0644); err != nil {
@@ -419,6 +419,7 @@ func TestRunnerStatusStalledDetection(t *testing.T) {
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(tmpDir, "config"))
 	t.Setenv("AGENCY_CACHE_DIR", filepath.Join(tmpDir, "cache"))
+	testutil.HermeticGitEnv(t)
 
 	// Create config
 	configDir := filepath.Join(tmpDir, "config")
@@ -436,8 +437,6 @@ func TestRunnerStatusStalledDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	runCmd(t, ctx, cr, repoRoot, "git", "init")
-	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.email", "test@test.com")
-	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.name", "test")
 	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("# Test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

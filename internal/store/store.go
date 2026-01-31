@@ -75,3 +75,29 @@ func (s *Store) VerifyRecordPath(repoID, runID string) string {
 func (s *Store) EventsPath(repoID, runID string) string {
 	return filepath.Join(s.RunDir(repoID, runID), "events.jsonl")
 }
+
+// ----- V2 Integration Worktree paths (Slice 8) -----
+
+// IntegrationWorktreesDir returns the integration worktrees directory for a repo.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/
+func (s *Store) IntegrationWorktreesDir(repoID string) string {
+	return filepath.Join(s.RepoDir(repoID), "integration_worktrees")
+}
+
+// IntegrationWorktreeDir returns the directory for a specific integration worktree.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/
+func (s *Store) IntegrationWorktreeDir(repoID, worktreeID string) string {
+	return filepath.Join(s.IntegrationWorktreesDir(repoID), worktreeID)
+}
+
+// IntegrationWorktreeMetaPath returns the path to an integration worktree's meta.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/meta.json
+func (s *Store) IntegrationWorktreeMetaPath(repoID, worktreeID string) string {
+	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "meta.json")
+}
+
+// IntegrationWorktreeTreePath returns the path to an integration worktree's tree directory.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/tree/
+func (s *Store) IntegrationWorktreeTreePath(repoID, worktreeID string) string {
+	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "tree")
+}

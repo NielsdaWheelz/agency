@@ -30,11 +30,155 @@ legacy commands (v1):
   completion  generate shell completion scripts (bash, zsh)
   version     print agency version
 
-v2 commands (slice 8, not yet implemented):
+v2 commands (slice 8):
   worktree    manage integration worktrees
-  agent       manage agent invocations
-  watch       interactive TUI for monitoring
+  agent       manage agent invocations (not yet implemented)
+  watch       interactive TUI for monitoring (not yet implemented)
 ```
+
+## `agency worktree` (v2)
+
+manages integration worktrees — stable, human-owned branches that are independent of agent invocations.
+
+### `agency worktree create`
+
+creates a new integration worktree.
+
+**usage:**
+```bash
+agency worktree create --name <name> [--parent <branch>] [--open] [--editor <name>]
+```
+
+**flags:**
+- `--name`: worktree name (required, 2-40 chars, lowercase alphanumeric with hyphens)
+- `--parent`: parent branch to branch from (default: current branch)
+- `--open`: open the worktree in editor after creation
+- `--editor`: editor to use (overrides config)
+
+**behavior:**
+1. validates name format and uniqueness
+2. generates worktree_id
+3. creates branch `agency/<name>-<shortid>`
+4. creates git worktree at `${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/tree/`
+5. writes `.agency/INTEGRATION_MARKER` (prevents runners from executing in integration trees)
+6. writes `meta.json` with worktree metadata
+
+**output:**
+```
+Created integration worktree 'my-feature'
+  worktree_id: 20260131120000-a3f2
+  branch:      agency/my-feature-a3f2
+  path:        /path/to/tree
+```
+
+**error codes:**
+- `E_NO_REPO` — not inside a git repository
+- `E_PARENT_DIRTY` — working tree has uncommitted changes
+- `E_INVALID_NAME` — name does not match validation rules
+- `E_NAME_EXISTS` — name already used by an active worktree
+- `E_WORKTREE_CREATE_FAILED` — git worktree add failed
+
+### `agency worktree ls`
+
+lists integration worktrees.
+
+**usage:**
+```bash
+agency worktree ls [--all] [--repo <path>] [--json]
+```
+
+**flags:**
+- `--all`: include archived worktrees
+- `--repo`: path to git repository
+- `--json`: output as JSON
+
+**output:**
+```
+20260131120000-a3f2  my-feature  agency/my-feature-a3f2
+20260131110000-c3d4  bugfix      agency/bugfix-c3d4 [archived]
+```
+
+### `agency worktree show`
+
+shows details of an integration worktree.
+
+**usage:**
+```bash
+agency worktree show <name|id|prefix> [--json]
+```
+
+**arguments:**
+- `name|id|prefix`: worktree identifier (name, id, or unique prefix)
+
+**flags:**
+- `--json`: output as JSON
+
+**output:**
+```
+worktree_id:   20260131120000-a3f2
+name:          my-feature
+branch:        agency/my-feature-a3f2
+parent_branch: main
+state:         present
+created_at:    2026-01-31T12:00:00Z
+tree_path:     /path/to/tree
+```
+
+### `agency worktree path`
+
+outputs the tree path for scripting.
+
+**usage:**
+```bash
+agency worktree path <name|id|prefix>
+```
+
+**example:**
+```bash
+cd $(agency worktree path my-feature)
+```
+
+### `agency worktree open`
+
+opens the worktree in the configured editor.
+
+**usage:**
+```bash
+agency worktree open <name|id|prefix> [--editor <name>]
+```
+
+### `agency worktree shell`
+
+opens a shell in the worktree.
+
+**usage:**
+```bash
+agency worktree shell <name|id|prefix>
+```
+
+spawns `$SHELL` (or `/bin/sh`) with the worktree as the working directory.
+
+### `agency worktree rm`
+
+removes an integration worktree.
+
+**usage:**
+```bash
+agency worktree rm <name|id|prefix> [--force]
+```
+
+**flags:**
+- `--force`: remove even if worktree has uncommitted changes
+
+**behavior:**
+1. runs `git worktree remove` (fails if dirty without `--force`)
+2. sets `state = archived` in `meta.json`
+3. preserves the record directory and metadata
+
+**error codes:**
+- `E_WORKTREE_NOT_FOUND` — worktree not found
+- `E_DIRTY_WORKTREE` — worktree has uncommitted changes (use `--force`)
+- `E_WORKTREE_REMOVE_FAILED` — git worktree remove failed
 
 ## `agency init`
 

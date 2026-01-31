@@ -17,6 +17,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
@@ -38,6 +39,7 @@ func TestGHE2EPushMerge(t *testing.T) {
 		t.Skip("set GH_TOKEN or GITHUB_TOKEN to enable GH e2e")
 	}
 	t.Setenv("GH_TOKEN", token)
+	testutil.HermeticGitEnv(t)
 
 	ctx := context.Background()
 	cr := exec.NewRealRunner()
@@ -53,9 +55,6 @@ func TestGHE2EPushMerge(t *testing.T) {
 	runCmd(t, ctx, cr, "", "gh", "auth", "status")
 	runCmd(t, ctx, cr, "", "gh", "auth", "setup-git")
 	runCmd(t, ctx, cr, "", "gh", "repo", "clone", repo, repoRoot)
-
-	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.email", "agency-e2e@users.noreply.github.com")
-	runCmd(t, ctx, cr, repoRoot, "git", "config", "user.name", "agency-e2e")
 
 	defaultBranch := resolveDefaultBranch(t, ctx, cr, repoRoot, repo)
 
