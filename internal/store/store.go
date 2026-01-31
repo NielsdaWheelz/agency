@@ -101,3 +101,61 @@ func (s *Store) IntegrationWorktreeMetaPath(repoID, worktreeID string) string {
 func (s *Store) IntegrationWorktreeTreePath(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "tree")
 }
+
+// ----- V2 Invocation paths (Slice 8 PR-02) -----
+
+// InvocationsDir returns the invocations directory for a repo.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/
+func (s *Store) InvocationsDir(repoID string) string {
+	return filepath.Join(s.RepoDir(repoID), "invocations")
+}
+
+// InvocationDir returns the directory for a specific invocation.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/
+func (s *Store) InvocationDir(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationsDir(repoID), invocationID)
+}
+
+// InvocationMetaPath returns the path to an invocation's meta.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/meta.json
+func (s *Store) InvocationMetaPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationDir(repoID, invocationID), "meta.json")
+}
+
+// InvocationEventsPath returns the path to an invocation's events.jsonl.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/events.jsonl
+func (s *Store) InvocationEventsPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationDir(repoID, invocationID), "events.jsonl")
+}
+
+// ----- V2 Sandbox paths (Slice 8 PR-02) -----
+
+// SandboxesDir returns the sandboxes directory for a repo.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/
+func (s *Store) SandboxesDir(repoID string) string {
+	return filepath.Join(s.RepoDir(repoID), "sandboxes")
+}
+
+// SandboxDir returns the directory for a specific sandbox.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/
+func (s *Store) SandboxDir(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxesDir(repoID), invocationID)
+}
+
+// SandboxTreePath returns the path to a sandbox's tree directory (runner CWD).
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tree/
+func (s *Store) SandboxTreePath(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxDir(repoID, invocationID), "tree")
+}
+
+// SandboxLogsDir returns the logs directory for a sandbox.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/
+func (s *Store) SandboxLogsDir(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxDir(repoID, invocationID), "logs")
+}
+
+// SandboxCheckpointsPath returns the path to a sandbox's checkpoints.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/checkpoints.json
+func (s *Store) SandboxCheckpointsPath(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxDir(repoID, invocationID), "checkpoints.json")
+}

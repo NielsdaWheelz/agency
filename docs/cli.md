@@ -32,7 +32,7 @@ legacy commands (v1):
 
 v2 commands (slice 8):
   worktree    manage integration worktrees
-  agent       manage agent invocations (not yet implemented)
+  agent       manage agent invocations (sandbox creation implemented)
   watch       interactive TUI for monitoring (not yet implemented)
 ```
 
@@ -179,6 +179,116 @@ agency worktree rm <name|id|prefix> [--force]
 - `E_WORKTREE_NOT_FOUND` — worktree not found
 - `E_DIRTY_WORKTREE` — worktree has uncommitted changes (use `--force`)
 - `E_WORKTREE_REMOVE_FAILED` — git worktree remove failed
+
+## `agency agent` (v2)
+
+manages agent invocations — executions of runners inside isolated sandbox worktrees.
+
+### `agency agent start`
+
+creates a new agent invocation with its sandbox worktree.
+
+**usage:**
+```bash
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>]
+```
+
+**flags:**
+- `--worktree`: integration worktree to run against (required)
+- `--runner`: runner to use: `claude` or `codex` (default: `claude`)
+- `--headless`: run in headless mode (non-interactive)
+- `--name`: optional human-readable label for the invocation
+
+**behavior:**
+1. resolves integration worktree
+2. verifies `INTEGRATION_MARKER` exists (target must be integration worktree)
+3. generates invocation_id
+4. creates sandbox directory
+5. captures base_commit from integration branch
+6. creates sandbox worktree via `git worktree add -b agency/sandbox-<invocation_id>`
+7. writes `.agency/SANDBOX_MARKER`
+8. writes invocation `meta.json`
+
+**note:** PR-02 creates sandbox only. Runner execution is implemented in PR-03 (headed) and PR-04 (headless).
+
+**output:**
+```
+Created agent invocation
+  invocation_id: 20260131120500-b7c9
+  runner:        claude
+  mode:          headed
+  worktree:      my-feature (20260131120000-a3f2)
+  sandbox_path:  /path/to/sandboxes/20260131120500-b7c9/tree
+  sandbox_branch: agency/sandbox-20260131120500-b7c9
+  base_commit:   789abc...
+
+Note: Runner execution not yet implemented (PR-02 creates sandbox only).
+Use 'agency agent show 20260131' to view invocation details.
+```
+
+**error codes:**
+- `E_NO_REPO` — not inside a git repository
+- `E_WORKTREE_NOT_FOUND` — integration worktree not found
+- `E_WORKTREE_BROKEN` — integration worktree meta.json unreadable
+- `E_INTEGRATION_MARKER_MISSING` — target is not an integration worktree
+- `E_SANDBOX_PATH_UNSAFE` — sandbox path resolves to integration tree (invariant violation)
+- `E_INVOCATION_CREATE_FAILED` — invocation creation failed
+- `E_SANDBOX_CREATE_FAILED` — sandbox worktree creation failed
+
+### `agency agent ls`
+
+lists agent invocations.
+
+**usage:**
+```bash
+agency agent ls [--worktree <name|id|prefix>] [--all] [--json]
+```
+
+**flags:**
+- `--worktree`: filter by integration worktree
+- `--all`: include finished (landed/discarded) invocations
+- `--json`: output as JSON
+
+**output:**
+```
+20260131120500-b7c9  claude  headed  starting  (arch-agent)
+20260131110000-d4e5  codex   headless  running
+```
+
+### `agency agent show`
+
+shows details of an agent invocation.
+
+**usage:**
+```bash
+agency agent show <invocation_id|prefix> [--json]
+```
+
+**arguments:**
+- `invocation_id|prefix`: invocation identifier (id or unique prefix)
+
+**flags:**
+- `--json`: output as JSON
+
+**output:**
+```
+invocation_id:          20260131120500-b7c9
+name:                   arch-agent
+integration_worktree:   20260131120000-a3f2
+runner:                 claude
+mode:                   headed
+status:                 starting
+started_at:             2026-01-31T12:05:00Z
+base_commit:            789abc...
+sandbox_branch:         agency/sandbox-20260131120500-b7c9
+sandbox_path:           /path/to/sandboxes/20260131120500-b7c9/tree
+sandbox_exists:         true
+```
+
+**error codes:**
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_INVOCATION_BROKEN` — invocation meta.json unreadable
 
 ## `agency init`
 
