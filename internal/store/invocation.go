@@ -99,7 +99,7 @@ type InvocationMeta struct {
 	// Status is the lifecycle status (starting, running, finished, failed).
 	Status InvocationStatus `json:"status"`
 
-	// ExitReason describes how the invocation ended (exited, killed, stopped, unknown).
+	// ExitReason describes how the invocation ended (exited, killed, stopped, start_failed, unknown).
 	ExitReason string `json:"exit_reason,omitempty"`
 
 	// ExitCode is the process exit code (headless only, null for headed or if running).
@@ -116,6 +116,18 @@ type InvocationMeta struct {
 
 	// PromptPath is the path to the prompt file (if prompt_source == "file").
 	PromptPath string `json:"prompt_path,omitempty"`
+
+	// StopRequestedAt is the timestamp when a graceful stop was requested via agent stop.
+	StopRequestedAt string `json:"stop_requested_at,omitempty"`
+
+	// Flags contains boolean flags for operational state.
+	Flags InvocationFlags `json:"flags,omitempty"`
+}
+
+// InvocationFlags contains boolean flags for operational state.
+type InvocationFlags struct {
+	// NeedsAttention indicates user attention may be required (e.g., stop requested).
+	NeedsAttention bool `json:"needs_attention,omitempty"`
 }
 
 // NewInvocationMeta creates a new InvocationMeta with required fields set.

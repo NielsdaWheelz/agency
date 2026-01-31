@@ -161,8 +161,14 @@ agency worktree rm my-feature
 Agent invocations are executions of runners (Claude, Codex, etc.) inside isolated sandbox worktrees. Each invocation is independent and runs in its own sandbox derived from an integration worktree's branch.
 
 ```bash
-# Start an agent (creates sandbox - runner execution coming in PR-03/04)
+# Start a headed (interactive) agent - creates sandbox, launches tmux, attaches
 agency agent start --worktree my-feature
+
+# Start in detached mode (don't attach immediately)
+agency agent start --worktree my-feature --detached
+
+# Start a headless agent (non-interactive, coming in PR-04)
+agency agent start --worktree my-feature --headless
 
 # List agent invocations
 agency agent ls
@@ -170,11 +176,22 @@ agency agent ls --worktree my-feature  # filter by worktree
 
 # Show invocation details
 agency agent show 20260131
+
+# Attach to a running headed invocation
+agency agent attach 20260131
+
+# Stop an invocation gracefully (sends Ctrl-C)
+agency agent stop 20260131
+
+# Kill an invocation forcefully
+agency agent kill 20260131
 ```
 
 Key concepts:
 - **Sandbox**: Isolated worktree per invocation (runners never touch integration trees)
 - **Invocation**: Single agent execution with its own logs, checkpoints, and outcomes
+- **Headed mode**: Interactive tmux session (default) - attach with `agent attach`
+- **Headless mode**: Non-interactive subprocess execution (coming in PR-04)
 - **Landing**: Apply sandbox changes back to integration branch (coming in PR-07)
 
 See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including runners, checkpoints, and the watch TUI.

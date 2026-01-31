@@ -186,20 +186,21 @@ manages agent invocations — executions of runners inside isolated sandbox work
 
 ### `agency agent start`
 
-creates a new agent invocation with its sandbox worktree.
+starts a new agent invocation with its sandbox worktree.
 
 **usage:**
 ```bash
-agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>]
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached]
 ```
 
 **flags:**
 - `--worktree`: integration worktree to run against (required)
 - `--runner`: runner to use: `claude` or `codex` (default: `claude`)
-- `--headless`: run in headless mode (non-interactive)
+- `--headless`: run in headless mode (non-interactive, execution coming in PR-04)
 - `--name`: optional human-readable label for the invocation
+- `--detached`: start but do not attach (headed mode only)
 
-**behavior:**
+**behavior (headed mode, default):**
 1. resolves integration worktree
 2. verifies `INTEGRATION_MARKER` exists (target must be integration worktree)
 3. generates invocation_id
@@ -207,23 +208,26 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 5. captures base_commit from integration branch
 6. creates sandbox worktree via `git worktree add -b agency/sandbox-<invocation_id>`
 7. writes `.agency/SANDBOX_MARKER`
-8. writes invocation `meta.json`
+8. writes invocation `meta.json` with `status=starting`
+9. preflight check: verifies no tmux session with this name exists
+10. creates tmux session `agency_<invocation_id>` with CWD = sandbox tree, runs runner command directly
+11. updates invocation meta with `status=running`, `tmux_session` set
+12. attaches to tmux session (unless `--detached`)
 
-**note:** PR-02 creates sandbox only. Runner execution is implemented in PR-03 (headed) and PR-04 (headless).
+**behavior (headless mode):**
+sandbox creation only; full runner execution is implemented in PR-04.
 
-**output:**
+**output (headed):**
 ```
-Created agent invocation
-  invocation_id: 20260131120500-b7c9
-  runner:        claude
-  mode:          headed
-  worktree:      my-feature (20260131120000-a3f2)
-  sandbox_path:  /path/to/sandboxes/20260131120500-b7c9/tree
-  sandbox_branch: agency/sandbox-20260131120500-b7c9
-  base_commit:   789abc...
+Started agent invocation
+  invocation_id:  20260131120500-b7c9
+  runner:         claude
+  mode:           headed
+  worktree:       my-feature (20260131120000-a3f2)
+  sandbox_path:   /path/to/sandboxes/20260131120500-b7c9/tree
+  tmux_session:   agency_20260131120500-b7c9
 
-Note: Runner execution not yet implemented (PR-02 creates sandbox only).
-Use 'agency agent show 20260131' to view invocation details.
+Attaching to tmux session... (detach with Ctrl+b, d)
 ```
 
 **error codes:**
@@ -234,6 +238,9 @@ Use 'agency agent show 20260131' to view invocation details.
 - `E_SANDBOX_PATH_UNSAFE` — sandbox path resolves to integration tree (invariant violation)
 - `E_INVOCATION_CREATE_FAILED` — invocation creation failed
 - `E_SANDBOX_CREATE_FAILED` — sandbox worktree creation failed
+- `E_TMUX_SESSION_EXISTS` — tmux session already exists (leaked session or parallel execution)
+- `E_INVOCATION_START_FAILED` — tmux session creation failed
+- `E_RUNNER_NOT_CONFIGURED` — runner command not found
 
 ### `agency agent ls`
 
@@ -289,6 +296,97 @@ sandbox_exists:         true
 - `E_INVOCATION_NOT_FOUND` — invocation not found
 - `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
 - `E_INVOCATION_BROKEN` — invocation meta.json unreadable
+
+### `agency agent attach`
+
+attaches to a running headed invocation's tmux session.
+
+**usage:**
+```bash
+agency agent attach <invocation_id|prefix>
+```
+
+**arguments:**
+- `invocation_id|prefix`: invocation identifier (id or unique prefix)
+
+**behavior:**
+1. resolves invocation
+2. verifies invocation mode is `headed` (attach not supported for headless)
+3. verifies tmux session exists
+4. attaches to tmux session (blocks until user detaches)
+
+**output:**
+(enters tmux session)
+
+**error codes:**
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headless; attach only supports headed
+- `E_TMUX_SESSION_MISSING` — tmux session not found (may have exited)
+- `E_TMUX_ATTACH_FAILED` — failed to attach to tmux session
+
+### `agency agent stop`
+
+sends a graceful stop signal (Ctrl-C) to a running headed invocation.
+
+**usage:**
+```bash
+agency agent stop <invocation_id|prefix>
+```
+
+**arguments:**
+- `invocation_id|prefix`: invocation identifier (id or unique prefix)
+
+**behavior:**
+1. resolves invocation
+2. verifies invocation mode is `headed` (headless stop coming in PR-04)
+3. sends C-c to the tmux session via `tmux send-keys`
+4. updates invocation meta: sets `stop_requested_at` and `flags.needs_attention=true`
+
+**note:** this does not guarantee termination — the runner may ignore the signal.
+use `agency agent kill` for forceful termination.
+
+**output:**
+```
+Stop signal sent to invocation 20260131120500-b7c9
+Note: The runner may ignore the interrupt. Use 'agency agent kill' to force termination.
+```
+
+**error codes:**
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headless; stop not yet supported
+
+### `agency agent kill`
+
+forcefully terminates a running invocation.
+
+**usage:**
+```bash
+agency agent kill <invocation_id|prefix>
+```
+
+**arguments:**
+- `invocation_id|prefix`: invocation identifier (id or unique prefix)
+
+**behavior:**
+1. resolves invocation
+2. verifies invocation mode is `headed` (headless kill coming in PR-04)
+3. kills the tmux session via `tmux kill-session`
+4. updates invocation meta: `status=failed`, `exit_reason=killed`, `finished_at=now`
+
+**note:** sandbox is preserved for inspection. `tmux_session` is kept as historical value.
+
+**output:**
+```
+Killed invocation 20260131120500-b7c9
+Sandbox preserved at: /path/to/sandboxes/20260131120500-b7c9/tree
+```
+
+**error codes:**
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headless; kill not yet supported
 
 ## `agency init`
 

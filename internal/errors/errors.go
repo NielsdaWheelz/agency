@@ -123,6 +123,12 @@ const (
 	ESandboxCreateFailed      Code = "E_SANDBOX_CREATE_FAILED"      // sandbox worktree creation failed
 	EIntegrationMarkerMissing Code = "E_INTEGRATION_MARKER_MISSING" // target is not an integration worktree
 	ESandboxPathUnsafe        Code = "E_SANDBOX_PATH_UNSAFE"        // sandbox path resolves to integration tree
+
+	// Slice 8 agent execution error codes (PR-03)
+	EInvocationInvalidMode  Code = "E_INVOCATION_INVALID_MODE"  // operation not supported for invocation mode (e.g., attach on headless)
+	EInvocationNotRunning   Code = "E_INVOCATION_NOT_RUNNING"   // invocation is not in running state
+	EInvocationStartFailed  Code = "E_INVOCATION_START_FAILED"  // runner failed to start (tmux session creation failed)
+	EInvocationAlreadyEnded Code = "E_INVOCATION_ALREADY_ENDED" // invocation has already finished/failed
 )
 
 // AgencyError is the standard error type for agency errors.
