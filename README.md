@@ -129,14 +129,41 @@ agency/
 └── docs/                 # documentation
 ```
 
+## integration worktrees (v2)
+
+Slice 8 introduces **integration worktrees** — stable branches you intend to merge, push, or PR. They are independent of any agent invocation and serve as the human-owned workspace where agent work is eventually landed.
+
+```bash
+# Create an integration worktree
+agency worktree create --name my-feature
+
+# List integration worktrees
+agency worktree ls
+
+# Show details
+agency worktree show my-feature
+
+# Get path for scripting
+cd $(agency worktree path my-feature)
+
+# Open in editor
+agency worktree open my-feature
+
+# Open shell in worktree
+agency worktree shell my-feature
+
+# Remove worktree (archives record, deletes tree)
+agency worktree rm my-feature
+```
+
+See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including agents, sandboxes, and the watch TUI.
+
 ## cli framework
 
 agency uses [Cobra](https://github.com/spf13/cobra) for command-line parsing. This provides:
 - auto-generated shell completions (bash, zsh)
 - built-in help for all commands
 - consistent flag parsing
-
-new v2 commands (`worktree`, `agent`, `watch`) are registered but not yet implemented - see [slice 8 spec](docs/v1/s8/s8_spec.md) for the roadmap.
 
 ## versioning
 

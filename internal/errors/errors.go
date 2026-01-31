@@ -106,6 +106,13 @@ const (
 	EInvalidRepoPath Code = "E_INVALID_REPO_PATH" // --repo path does not exist or is not inside a git repo
 	ERunRefAmbiguous Code = "E_RUN_REF_AMBIGUOUS" // name matches multiple active runs (across repos)
 	ERepoNotFound    Code = "E_REPO_NOT_FOUND"    // run resolved but no valid repo path exists
+
+	// Slice 8 integration worktree error codes
+	EWorktreeNotFound     Code = "E_WORKTREE_NOT_FOUND"     // worktree does not exist
+	EWorktreeIDAmbiguous  Code = "E_WORKTREE_ID_AMBIGUOUS"  // worktree id/prefix matches multiple
+	EWorktreeBroken       Code = "E_WORKTREE_BROKEN"        // worktree exists but meta.json is unreadable
+	EWorktreeDirExists    Code = "E_WORKTREE_DIR_EXISTS"    // worktree directory already exists
+	EWorktreeRemoveFailed Code = "E_WORKTREE_REMOVE_FAILED" // git worktree remove failed
 )
 
 // AgencyError is the standard error type for agency errors.

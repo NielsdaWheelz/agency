@@ -11,12 +11,14 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
 // setupTempRepo creates a temp repo with one commit on the default branch.
 // Returns the repo root path and data dir. Cleanup is handled automatically by t.TempDir().
 func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	t.Helper()
+	testutil.HermeticGitEnv(t)
 
 	// Create temp directories (t.TempDir handles cleanup automatically)
 	repoRoot = t.TempDir()
@@ -25,14 +27,6 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	// Initialize git repo
 	if err := runGit(repoRoot, "init"); err != nil {
 		t.Fatalf("git init failed: %v", err)
-	}
-
-	// Configure git user for commits
-	if err := runGit(repoRoot, "config", "user.email", "test@example.com"); err != nil {
-		t.Fatalf("git config user.email failed: %v", err)
-	}
-	if err := runGit(repoRoot, "config", "user.name", "Test User"); err != nil {
-		t.Fatalf("git config user.name failed: %v", err)
 	}
 
 	// Create and commit a file
