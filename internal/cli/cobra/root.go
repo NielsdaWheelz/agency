@@ -63,10 +63,11 @@ and provides commands to control the runner session.`,
 		newCompletionCmd(),
 		newResolveCmd(),
 		newVersionCmd(),
-		// v2 command shells (empty for now)
+		// v2 commands
 		newWorktreeCmd(),
 		newAgentCmd(),
 		newWatchCmd(),
+		newDaemonCmd(),
 	)
 
 	return rootCmd

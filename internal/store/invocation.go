@@ -87,6 +87,10 @@ type InvocationMeta struct {
 	// PID is the process ID (headless only, null for headed).
 	PID *int `json:"pid,omitempty"`
 
+	// PGID is the process group ID (headless only, null for headed).
+	// Persisted for stop/kill operations even after daemon restart.
+	PGID *int `json:"pgid,omitempty"`
+
 	// TmuxSession is the session name (headed only, null for headless).
 	TmuxSession string `json:"tmux_session,omitempty"`
 
@@ -114,11 +118,29 @@ type InvocationMeta struct {
 	// PromptSource indicates how the prompt was provided (file, string, editor, interactive).
 	PromptSource string `json:"prompt_source,omitempty"`
 
-	// PromptPath is the path to the prompt file (if prompt_source == "file").
+	// PromptPath is the path to the prompt file stored by daemon.
 	PromptPath string `json:"prompt_path,omitempty"`
+
+	// PromptSHA256 is the SHA-256 hash of the prompt text.
+	PromptSHA256 string `json:"prompt_sha256,omitempty"`
 
 	// StopRequestedAt is the timestamp when a graceful stop was requested via agent stop.
 	StopRequestedAt string `json:"stop_requested_at,omitempty"`
+
+	// DaemonPID is the PID of the daemon that owns this invocation (headless only).
+	DaemonPID *int `json:"daemon_pid,omitempty"`
+
+	// DaemonInstanceID is the UUID of the daemon instance supervising this invocation.
+	DaemonInstanceID string `json:"daemon_instance_id,omitempty"`
+
+	// ClaimedAt is the timestamp when the daemon took ownership.
+	ClaimedAt string `json:"claimed_at,omitempty"`
+
+	// LifecycleOwner indicates who owns lifecycle updates ("daemon" or "" for CLI-owned).
+	LifecycleOwner string `json:"lifecycle_owner,omitempty"`
+
+	// OrphanedAt is the timestamp when the invocation was marked orphaned.
+	OrphanedAt string `json:"orphaned_at,omitempty"`
 
 	// Flags contains boolean flags for operational state.
 	Flags InvocationFlags `json:"flags,omitempty"`
@@ -128,6 +150,14 @@ type InvocationMeta struct {
 type InvocationFlags struct {
 	// NeedsAttention indicates user attention may be required (e.g., stop requested).
 	NeedsAttention bool `json:"needs_attention,omitempty"`
+
+	// Orphaned indicates the process was left without daemon supervision.
+	// Set on daemon restart when PID is found alive but daemon_instance_id doesn't match,
+	// or when PID is found dead.
+	Orphaned bool `json:"orphaned,omitempty"`
+
+	// CheckpointDegraded indicates the last checkpoint was degraded (tracked-only due to denylisted files).
+	CheckpointDegraded bool `json:"checkpoint_degraded,omitempty"`
 }
 
 // NewInvocationMeta creates a new InvocationMeta with required fields set.

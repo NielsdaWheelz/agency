@@ -1,5 +1,5 @@
 // Package ids provides identifier resolution for agency commands.
-// This file implements invocation resolution (Slice 8 PR-02).
+// This file implements invocation resolution (Slice 8 PR-02/04).
 package ids
 
 import (
@@ -19,7 +19,7 @@ type InvocationRef struct {
 	IntegrationWorktreeID string
 
 	// InvocationName is the optional human-readable name. Empty if broken or not set.
-	// NOTE: Names are NOT used for resolution - only for display.
+	// Used for name-based resolution in PR-04+.
 	InvocationName string
 
 	// Status is the invocation status (starting, running, finished, failed).
@@ -35,7 +35,7 @@ type InvocationRef struct {
 	Broken bool
 }
 
-// ErrInvocationNotFound indicates no matching invocation_id (exact or prefix).
+// ErrInvocationNotFound indicates no matching invocation (name, id, or prefix).
 type ErrInvocationNotFound struct {
 	Input string
 }
@@ -44,7 +44,7 @@ func (e *ErrInvocationNotFound) Error() string {
 	return "invocation not found: " + e.Input
 }
 
-// ErrInvocationAmbiguous indicates prefix matched multiple invocation_ids.
+// ErrInvocationAmbiguous indicates input matched multiple invocations.
 type ErrInvocationAmbiguous struct {
 	Input      string
 	Candidates []InvocationRef
@@ -53,9 +53,13 @@ type ErrInvocationAmbiguous struct {
 func (e *ErrInvocationAmbiguous) Error() string {
 	ids := make([]string, len(e.Candidates))
 	for i, c := range e.Candidates {
-		ids[i] = c.InvocationID
+		if c.InvocationName != "" {
+			ids[i] = c.InvocationName + " (" + c.InvocationID + ")"
+		} else {
+			ids[i] = c.InvocationID
+		}
 	}
-	return "ambiguous invocation id " + e.Input + " matches: " + strings.Join(ids, ", ")
+	return "ambiguous invocation identifier '" + e.Input + "' matches: " + strings.Join(ids, ", ")
 }
 
 // ResolveInvocationRefOpts contains options for invocation resolution.
@@ -71,14 +75,13 @@ type ResolveInvocationRefOpts struct {
 
 // ResolveInvocationRef resolves an input identifier to a single invocation reference.
 //
-// Resolution rules:
-//  1. Exact ID match: if exactly one candidate has InvocationID == input, resolve.
-//  2. Prefix match: treat input as a prefix of InvocationID.
+// Resolution rules (unified with worktree resolver in PR-04):
+//  1. Exact name match: among eligible (active, non-terminal) invocations
+//  2. Exact ID match: works for all including terminal (escape hatch)
+//  3. Unique ID prefix match: among eligible invocations
+//  4. Ambiguous: error listing candidates
 //
-// NOTE: Unlike worktrees, invocation names are NOT used for resolution.
-// Names are display-only and may be duplicated.
-//
-// By default, landed/discarded invocations are excluded from matching.
+// By default, landed/discarded invocations are excluded from name/prefix matching.
 // Exact ID match always works (escape hatch).
 // If IncludeFinished is true, all invocations are included in matching.
 func ResolveInvocationRef(input string, refs []InvocationRef, opts ResolveInvocationRefOpts) (InvocationRef, error) {
@@ -106,27 +109,63 @@ func ResolveInvocationRef(input string, refs []InvocationRef, opts ResolveInvoca
 		return true
 	}
 
-	// 1. Exact ID match (works for all invocations including broken)
-	var exactMatches []InvocationRef
+	// isActive checks if an invocation is in active (non-terminal) state
+	isActive := func(ref InvocationRef) bool {
+		if ref.Broken {
+			return false
+		}
+		// Terminal states: finished, failed, or landed/discarded
+		if ref.Status == "finished" || ref.Status == "failed" {
+			return false
+		}
+		if ref.LandingStatus == "landed" || ref.LandingStatus == "discarded" {
+			return false
+		}
+		return true
+	}
+
+	// 1. Exact name match among active invocations (names are unique among active)
+	var nameMatches []InvocationRef
+	for _, ref := range refs {
+		if ref.InvocationName != "" && ref.InvocationName == input && isActive(ref) {
+			// Apply worktree filter
+			if opts.WorktreeFilter != "" && ref.IntegrationWorktreeID != opts.WorktreeFilter {
+				continue
+			}
+			nameMatches = append(nameMatches, ref)
+		}
+	}
+
+	if len(nameMatches) == 1 {
+		return nameMatches[0], nil
+	}
+	if len(nameMatches) > 1 {
+		// This shouldn't happen if names are unique among active, but handle it
+		sortInvocationCandidates(nameMatches)
+		return InvocationRef{}, &ErrInvocationAmbiguous{Input: input, Candidates: nameMatches}
+	}
+
+	// 2. Exact ID match (works for all invocations including broken and terminal)
+	var exactIDMatches []InvocationRef
 	for _, ref := range refs {
 		if ref.InvocationID == input {
 			// Apply worktree filter even for exact match
 			if opts.WorktreeFilter != "" && ref.IntegrationWorktreeID != opts.WorktreeFilter {
 				continue
 			}
-			exactMatches = append(exactMatches, ref)
+			exactIDMatches = append(exactIDMatches, ref)
 		}
 	}
 
-	if len(exactMatches) == 1 {
-		return exactMatches[0], nil
+	if len(exactIDMatches) == 1 {
+		return exactIDMatches[0], nil
 	}
-	if len(exactMatches) > 1 {
-		sortInvocationCandidates(exactMatches)
-		return InvocationRef{}, &ErrInvocationAmbiguous{Input: input, Candidates: exactMatches}
+	if len(exactIDMatches) > 1 {
+		sortInvocationCandidates(exactIDMatches)
+		return InvocationRef{}, &ErrInvocationAmbiguous{Input: input, Candidates: exactIDMatches}
 	}
 
-	// 2. Prefix match among eligible invocations
+	// 3. Unique ID prefix match among eligible invocations
 	var prefixMatches []InvocationRef
 	for _, ref := range refs {
 		if strings.HasPrefix(ref.InvocationID, input) && isEligible(ref) {

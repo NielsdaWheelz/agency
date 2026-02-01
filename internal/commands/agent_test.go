@@ -367,7 +367,7 @@ func TestAgentStop_HeadedInvocation_SendsCtrlC(t *testing.T) {
 	}
 }
 
-func TestAgentStop_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
+func TestAgentStop_HeadlessInvocation_RoutesThroughDaemon(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, cr, fsys := setupAgentTestEnv(t, "test-feature")
 	invocationID := "20260131130000-efgh"
 
@@ -382,14 +382,17 @@ func TestAgentStop_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 		TmuxClient:    fakeTmux,
 	}
 
+	// PR-04: headless stop routes through daemon
+	// Without daemon running and without PGID, this returns an error
 	err := AgentStop(context.Background(), cr, fsys, repoDir, opts, &stdout, &stderr)
 	if err == nil {
-		t.Fatal("AgentStop error = nil, want E_INVOCATION_INVALID_MODE")
+		t.Fatal("AgentStop error = nil, want error (daemon not running, no PGID)")
 	}
 
+	// The error should be E_DAEMON_NOT_RUNNING since daemon isn't available
 	code := errors.GetCode(err)
-	if code != errors.EInvocationInvalidMode {
-		t.Errorf("error code = %q, want %q", code, errors.EInvocationInvalidMode)
+	if code != errors.EDaemonNotRunning {
+		t.Errorf("error code = %q, want %q", code, errors.EDaemonNotRunning)
 	}
 }
 
@@ -439,7 +442,7 @@ func TestAgentKill_HeadedInvocation_KillsSession(t *testing.T) {
 	}
 }
 
-func TestAgentKill_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
+func TestAgentKill_HeadlessInvocation_UpdatesMetaViaDeamon(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, cr, fsys := setupAgentTestEnv(t, "test-feature")
 	invocationID := "20260131130000-efgh"
 
@@ -454,14 +457,19 @@ func TestAgentKill_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 		TmuxClient:    fakeTmux,
 	}
 
+	// PR-04: headless kill routes through daemon (but still succeeds even if daemon not running)
+	// The daemon client call will fail, but AgentKill still proceeds to show success message
+	// because the daemon already updated meta (or would have if running)
 	err := AgentKill(context.Background(), cr, fsys, repoDir, opts, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("AgentKill error = nil, want E_INVOCATION_INVALID_MODE")
+	// AgentKill continues even if daemon communication fails, so we expect no error returned
+	// The stderr will contain a warning about daemon not being available
+	if err != nil {
+		t.Fatalf("AgentKill error = %v, want nil (daemon communication failure is non-fatal)", err)
 	}
 
-	code := errors.GetCode(err)
-	if code != errors.EInvocationInvalidMode {
-		t.Errorf("error code = %q, want %q", code, errors.EInvocationInvalidMode)
+	// Check output contains headless kill message
+	if !bytes.Contains(stdout.Bytes(), []byte("Killed headless invocation")) {
+		t.Errorf("stdout missing headless kill message, got: %s", stdout.String())
 	}
 }
 
