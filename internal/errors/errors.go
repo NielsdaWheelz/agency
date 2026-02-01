@@ -150,6 +150,11 @@ const (
 	EPromptTooLarge     Code = "E_PROMPT_TOO_LARGE"    // prompt exceeds 256 KB
 	EDaemonIncompatible Code = "E_DAEMON_INCOMPATIBLE" // CLI api_version does not match daemon api_version
 	ERunnerArgConflict  Code = "E_RUNNER_ARG_CONFLICT" // user-supplied args include reserved flags
+
+	// Slice 8 daemon worktree error codes (PR-06)
+	EWorktreeHasActiveInvocations Code = "E_WORKTREE_HAS_ACTIVE_INVOCATIONS" // rm blocked by active agents
+	ENotAnIntegrationWorktree     Code = "E_NOT_AN_INTEGRATION_WORKTREE"     // tree missing .agency/INTEGRATION_MARKER on rm
+	EWorktreeNameExists           Code = "E_WORKTREE_NAME_EXISTS"            // name collision with existing worktree
 )
 
 // AgencyError is the standard error type for agency errors.

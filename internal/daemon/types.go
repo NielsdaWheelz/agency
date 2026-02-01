@@ -1,6 +1,8 @@
 // Package daemon implements the agency daemon supervisor for headless invocations.
 package daemon
 
+import "sync/atomic"
+
 // APIVersion is the current API version. Incremented on breaking changes.
 const APIVersion = 1
 
@@ -162,16 +164,84 @@ type ErrorResponse struct {
 
 // SupervisedProcess holds runtime state for a supervised headless process.
 type SupervisedProcess struct {
-	InvocationID string
-	RepoID       string
-	PID          int
-	PGID         int
-	RawLogFile   string
-	StderrFile   string
+	InvocationID          string
+	RepoID                string
+	IntegrationWorktreeID string // PR-06: track which worktree this invocation targets
+	PID                   int
+	PGID                  int
+	RawLogFile            string
+	StderrFile            string
 
 	// lastOutputAt is updated in-memory on every chunk; persisted with throttling.
-	lastOutputAt int64
+	lastOutputAt atomic.Int64
+
+	// exitReason is set by handleKill/stopEscalation before sending signals.
+	// waitForExit* checks this after cmd.Wait() returns to use the correct reason.
+	// Possible values: "" (not set), "killed", "stopped".
+	exitReason atomic.Value
+
+	// failureReason is set alongside exitReason for the same purpose.
+	failureReason atomic.Value
 
 	// done channel is closed when the process exits.
 	done chan struct{}
+}
+
+// ----- PR-06 Worktree Types -----
+
+// WorktreeCreateRequest is the request body for POST /worktrees/create.
+type WorktreeCreateRequest struct {
+	// RepoRoot is the absolute path to the repository root.
+	RepoRoot string `json:"repo_root"`
+
+	// Name is the human-readable name (required, validated).
+	Name string `json:"name"`
+
+	// ParentBranch is the branch to branch from (optional, defaults to current branch).
+	ParentBranch string `json:"parent_branch,omitempty"`
+
+	// IdempotencyKey is an optional UUID for idempotent create (scoped to repo_id).
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+// WorktreeCreateResponse is the response body for POST /worktrees/create.
+type WorktreeCreateResponse struct {
+	OK           bool   `json:"ok"`
+	WorktreeID   string `json:"worktree_id,omitempty"`
+	TreePath     string `json:"tree_path,omitempty"`
+	Branch       string `json:"branch,omitempty"`
+	RepoID       string `json:"repo_id,omitempty"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// WorktreeRmRequest is the request body for POST /worktrees/{id}/rm.
+type WorktreeRmRequest struct {
+	// Force forces removal even if the worktree is dirty or has active invocations.
+	Force bool `json:"force,omitempty"`
+}
+
+// WorktreeRmResponse is the response body for POST /worktrees/{id}/rm.
+type WorktreeRmResponse struct {
+	OK           bool   `json:"ok"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// WorktreeIdempotencyEntry tracks a recent worktree create request for idempotency.
+type WorktreeIdempotencyEntry struct {
+	WorktreeID string
+	TreePath   string
+	Branch     string
+	CreatedAt  int64 // Unix timestamp
 }

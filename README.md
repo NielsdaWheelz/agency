@@ -103,13 +103,32 @@ go build -o agency ./cmd/agency
 ### test
 
 ```bash
+# all tests (includes daemon integration tests)
 go test ./...
+
+# with race detector (recommended — catches data races in daemon concurrency)
+make test-race
+
+# verbose, specific package
+go test ./internal/daemon/ -v -count=1
+
+# skip integration tests (fast, Layer 2 only)
+go test ./internal/daemon/ -v -short
 ```
+
+The daemon package includes a comprehensive integration test suite (28+ tests across 3 layers) that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking.
 
 ### lint
 
 ```bash
 make lint
+```
+
+### full CI check
+
+```bash
+make check         # fmt-check, lint, test, build
+make verify        # check + race detector + e2e
 ```
 
 ### run from source
@@ -125,7 +144,10 @@ agency/
 ├── cmd/agency/           # main entry point
 ├── internal/             # implementation packages
 │   ├── cli/cobra/        # Cobra CLI command tree
-│   └── commands/         # command implementations
+│   ├── commands/         # command implementations
+│   ├── daemon/           # daemon server, handlers, process supervision
+│   ├── daemonclient/     # daemon IPC client
+│   └── store/            # on-disk persistence (repos, invocations, worktrees)
 └── docs/                 # documentation
 ```
 
@@ -244,6 +266,27 @@ When you run `agency agent start --headless`:
 5. CLI receives invocation_id and sandbox_path, then exits
 
 The CLI **never** writes invocation or sandbox files for headless mode — the daemon is the single writer.
+
+### Daemon-Owned Worktree Mutations
+
+Integration worktree create/remove operations are daemon-owned for single-writer consistency:
+
+```bash
+# Create worktree (routes through daemon RPC)
+agency worktree create --name my-feature
+
+# Remove worktree (routes through daemon RPC)
+agency worktree rm my-feature [--force]
+```
+
+Key behaviors:
+- **Atomic creation**: Partial failures roll back worktree, branch, and record
+- **Repo lock**: Daemon acquires repo lock before name check/branch generation
+- **Idempotency**: Duplicate create requests return existing worktree
+- **Active invocation guard**: rm fails if agents are running (unless --force)
+- **Force escalation**: --force sends SIGINT → 5s wait → SIGKILL before removing
+
+Read-only commands (ls, show, path, open, shell) remain CLI-local for performance.
 
 See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including checkpoints and the watch TUI.
 
