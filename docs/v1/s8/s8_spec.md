@@ -110,8 +110,9 @@ Multiple agents can work on the same integration branch concurrently. Each gets 
 ### Migration Phases
 
 - **Phase 1 (PR-04):** Daemon supervises headless processes + streams logs + updates invocation lifecycle fields. CLI creates sandboxes, invocation records, worktrees. CLI performs git operations (land, checkpoint, worktree add/remove).
-- **Phase 2 (post PR-4.5):** Daemon becomes control plane for git ops + store writes; CLI becomes pure client.
-- Watch may poll files in slice 8; streaming subscriptions are post-v1.5.
+- **Phase 2 (PR-05+):** Daemon becomes control plane — creates sandboxes, invocation records, worktrees. CLI becomes pure client.
+- **Phase 3 (PR-12+):** All CLI reads go through daemon. No CLI scanning of store directories.
+- **Phase 4 (PR-13):** Watch uses daemon event stream. No filesystem polling.
 
 ---
 
@@ -120,9 +121,13 @@ Multiple agents can work on the same integration branch concurrently. Each gets 
 - Daemon owns process lifetimes for headless invocations (start/stop/kill, exit detection)
 - Daemon owns log streaming for headless invocations
 - CLI must never attempt to "detach" headless execution without the daemon
-- Headed invocations may be started by CLI in v2 but must use tmux; future parity may move this to daemon
-- Store write ownership may migrate across releases; not a hard invariant yet
-- In slice 8: CLI writes meta.json on creation, daemon writes lifecycle fields during supervision. This is the phase 1 split.
+- Headed invocations start via CLI+tmux in PR-03; daemon takes ownership in PR-10
+- Store write ownership migrates progressively:
+  - PR-04: CLI creates sandbox + invocation meta; daemon writes lifecycle fields
+  - PR-05: Daemon creates sandbox + invocation meta for headless
+  - PR-06: Daemon owns worktree mutations
+  - PR-10: Daemon owns headed invocation creation
+  - PR-12: All reads go through daemon; CLI stops scanning store
 
 ---
 
@@ -274,6 +279,7 @@ The invocation record is the **single source of truth** for both invocation life
 | Field | Description |
 |-------|-------------|
 | `invocation_id` | `<yyyymmddhhmmss>-<4hex>` (same format as run_id) |
+| `invocation_name` | Optional human-readable label. Validated by `core.ValidateName()` (2-40 chars, lowercase alphanum + hyphens). Unique among active (non-terminal) invocations per repo. Released when invocation reaches terminal state. |
 | `integration_worktree_id` | Target integration worktree |
 | `sandbox_path` | Filesystem path to sandbox tree (CWD for runner) |
 | `sandbox_branch` | `agency/sandbox-<invocation_id>` (full invocation ID) |
@@ -337,6 +343,7 @@ Logs and checkpoints live under the sandbox directory (same invocation_id key).
 {
   "schema_version": "1.0",
   "invocation_id": "20260128120500-b7c9",
+  "invocation_name": "auth-fix",
   "integration_worktree_id": "20260128120000-a3f2",
   "sandbox_path": "/path/to/data/repos/.../sandboxes/20260128120500-b7c9/tree",
   "sandbox_branch": "agency/sandbox-20260128120500-b7c9",
@@ -356,6 +363,40 @@ Logs and checkpoints live under the sandbox directory (same invocation_id key).
   "prompt_path": "/path/to/prompt.md"
 }
 ```
+
+---
+
+## Name Resolution
+
+Both worktrees and invocations use the same unified resolution pattern. Any command that accepts a `<name|id|prefix>` argument resolves it as follows:
+
+1. **Exact name match** — case-sensitive match among eligible entities
+2. **Exact ID match** — works for all entities including terminal/archived (escape hatch for referencing old records)
+3. **Unique ID prefix match** — shortest unambiguous prefix among eligible entities
+4. **Ambiguous** — error listing matching candidates
+
+**Eligibility rules:**
+
+- **Worktrees:** non-archived, non-broken by default. `--all` includes archived. Exact ID always works (escape hatch).
+- **Invocations:** active (non-terminal) by default. Terminal invocations (finished, failed, landed, discarded) excluded from name/prefix matching. Exact ID always works (escape hatch).
+
+**Naming rules (shared):**
+
+Both worktree names and invocation names are validated by `core.ValidateName()`:
+
+- 2-40 characters
+- Lowercase alphanumeric + hyphens
+- Must start with a lowercase letter
+- No consecutive hyphens, no trailing hyphens
+- Pattern: `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`
+
+**Uniqueness:**
+
+- Worktree names: unique among non-archived worktrees per repo (required)
+- Invocation names: unique among active (non-terminal) invocations per repo (optional — omit for unnamed invocations)
+- Names are released when the entity reaches terminal state (archived for worktrees, finished/failed/landed/discarded for invocations)
+
+**Display:** When present, names are the primary display label. Unnamed invocations display as truncated ID (4-char suffix).
 
 ---
 
@@ -383,7 +424,7 @@ agency worktree rm <name|id|prefix> [--force]
 - `path` outputs the integration tree path only (for scripting: `` cd `agency worktree path foo` ``)
 - `open` opens integration directory in configured editor
 - `--open` on create opens in configured editor after creation
-- Resolution accepts name, worktree_id, or unique prefix
+- Resolution follows unified pattern: name → exact ID → unique prefix (see Name Resolution)
 - `--all` includes archived worktrees in listing
 
 ---
@@ -391,17 +432,17 @@ agency worktree rm <name|id|prefix> [--force]
 ### Agents
 
 ```
-agency agent start --worktree <name|id> [--runner <runner>] [--headless] [--prompt-file <path>] [--prompt <string>] [--detached] [--no-include-untracked] [--runner-arg <arg>]...
+agency agent start --worktree <name|id> [--name <name>] [--runner <runner>] [--headless] [--prompt-file <path>] [--prompt <string>] [--detached] [--no-include-untracked] [--runner-arg <arg>]...
 agency agent ls [--repo] [--worktree <name|id>]
-agency agent show <invocation_id|prefix> [--json]
-agency agent attach <invocation_id|prefix>
-agency agent stop <invocation_id|prefix>
-agency agent kill <invocation_id|prefix>
-agency agent diff <invocation_id|prefix>
-agency agent land <invocation_id|prefix> [--apply] [--require-base]
-agency agent discard <invocation_id|prefix>
-agency agent open <invocation_id|prefix>
-agency agent logs <invocation_id|prefix> [--follow]
+agency agent show <name|id|prefix> [--json]
+agency agent attach <name|id|prefix>
+agency agent stop <name|id|prefix>
+agency agent kill <name|id|prefix>
+agency agent diff <name|id|prefix>
+agency agent land <name|id|prefix> [--apply] [--require-base]
+agency agent discard <name|id|prefix>
+agency agent open <name|id|prefix>
+agency agent logs <name|id|prefix> [--follow]
 ```
 
 **`start` behavior:**
@@ -445,8 +486,10 @@ agency agent logs <invocation_id|prefix> [--follow]
 - `--headless --detached` requires daemon; CLI autostarts daemon if not running; if autostart fails, error
 - `--headless` without `--detached`: CLI autostarts daemon if not running, delegates to daemon, and tails logs until exit. No "headless foreground without daemon" path exists — daemon is always the supervisor
 - `--detached` starts but does not attach (headed mode only)
+- `--name` assigns an optional human-readable name to the invocation. Validated by `core.ValidateName()`. Must be unique among active invocations per repo.
 - `--runner-arg` passes additional flags to the runner command (repeatable)
 - `--no-include-untracked` excludes untracked files from checkpoint snapshots
+- Resolution follows unified pattern: name → exact ID → unique prefix (see Name Resolution)
 - `land` fails if invocation is still running
 - `land` cherry-picks onto current integration HEAD by default (allows parallel landing)
 - `land` reports conflicts and aborts if cherry-pick fails (sandbox preserved for manual resolution)
@@ -460,8 +503,8 @@ agency agent logs <invocation_id|prefix> [--follow]
 ### Checkpoints
 
 ```
-agency checkpoint ls --invocation <invocation_id|prefix>
-agency checkpoint apply --invocation <invocation_id|prefix> <checkpoint_id>
+agency checkpoint ls --invocation <name|id|prefix>
+agency checkpoint apply --invocation <name|id|prefix> <checkpoint_id>
 ```
 
 **Rules:**
@@ -514,13 +557,13 @@ bugfix-auth (agency/bugfix-auth-c8d3) [present]
 **Implementation:**
 
 - Bubbletea TUI library
-- Filesystem polling for status updates (no fsnotify for watch)
-- tmux `has-session` for presence detection
-- Log viewing via file tailing
+- Subscribes to daemon event stream (`GET /events?since=<cursor>`) for live updates — no filesystem polling
+- On reconnect or cursor gap: full resync via daemon read endpoints (`GET /invocations` + `GET /worktrees`), then resumes streaming
+- Log viewing via daemon log stream (`GET /invocations/{id}/logs`) for headless; attach for headed
+- Actions route through daemon mutation endpoints (not direct git/store writes)
 - For headed invocations: `attach` (Enter key) is the primary viewing mechanism
-- Watch may poll store/log files; streaming subscriptions are a possible future enhancement
 
-Note: Watch uses **polling**. Checkpointing uses **fsnotify + periodic fallback**. Do not conflate.
+Note: Watch uses **daemon event stream** (PR-13). Checkpointing uses **fsnotify + periodic fallback** (PR-08). Do not conflate.
 
 ---
 
@@ -716,7 +759,7 @@ For every invocation, logs are stored in the sandbox:
 ${DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/
 ├── raw.jsonl       # Verbatim runner stdout (JSONL as emitted by claude/codex)
 ├── stderr.log      # Runner stderr (errors, warnings)
-└── stream.jsonl    # Normalized events (written by stream parser, PR-05)
+└── stream.jsonl    # Normalized events (written by stream parser, PR-07)
 ```
 
 Agency events are stored in the invocation record:
@@ -730,8 +773,8 @@ ${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/events.jsonl
 - **Headless logs:** Streamed by daemon (append-only). `raw.jsonl` = verbatim copy of runner stdout, appended as chunks arrive. `stderr.log` = runner stderr, appended as chunks arrive.
 - **Headed logs:** Best-effort. Capture-pane is available via `agent logs --capture` or via watch action; periodic sampling is optional. TUI escape codes make raw capture unreliable; `attach` (via watch or CLI) is the primary viewing mechanism for headed invocations.
 - `last_output_at` updated **in memory** on every chunk written to `raw.jsonl`; **persisted to meta.json** at most once per 500ms (atomic rename is expensive)
-- `stream.jsonl` is NOT written by the logging layer — reserved for the stream parser (PR-05)
-- Watch uses tailing of `raw.jsonl` for headless; attach for headed
+- `stream.jsonl` is NOT written by the logging layer — reserved for the stream parser (PR-07)
+- Watch uses daemon log stream for headless; attach for headed
 
 ---
 
@@ -1176,3 +1219,8 @@ Slice 8 is complete when:
 - Rebase workflow when integration branch diverges during sandbox execution
 - Sandbox branch cleanup (prune old branches)
 - Snapshot ref GC strategy for long-lived repos
+- workflow composition (agent chains)
+- agent-to-agent coordination
+- cost/token tracking
+- approval gates before landing
+- remote execution.

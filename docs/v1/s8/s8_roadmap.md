@@ -218,6 +218,12 @@ Headed invocations don't have exit codes. "Finished" = tmux session no longer ex
   - `POST /invocations/{id}/stop`
   - `POST /invocations/{id}/kill`
   - `GET /health` → returns `api_version`, `build_version`, `daemon_pid`, `uptime`
+- Invocation naming:
+  - `--name <name>` flag on `agent start` (optional)
+  - Validated by `core.ValidateName()` (same rules as worktree names)
+  - Unique among active (non-terminal) invocations per repo
+  - Invocation resolver updated: name → exact ID → prefix (unified with worktree resolver)
+  - Names released when invocation reaches terminal state
 - CLI continues to create:
   - Invocation meta (PR-02 behavior)
   - Sandbox worktree (PR-02 behavior)
@@ -277,6 +283,9 @@ sandboxes/<invocation_id>/logs/
 - [ ] Recovery scan on daemon restart marks orphaned invocations `failed`/`unknown`
 - [ ] Pidfile written on startup, removed on clean shutdown
 - [ ] Stale pidfile detected and cleaned up on startup
+- [ ] `--name` on `agent start` validates and enforces uniqueness among active invocations
+- [ ] Invocation resolver matches by name → exact ID → prefix
+- [ ] Unnamed invocations resolvable by ID/prefix only
 
 ---
 
@@ -534,14 +543,21 @@ Runners often modify files without committing. `agent land` must handle this:
   - `GET /worktrees/{id}`
   - `GET /invocations` (filters: worktree_id, state, runner, mode)
   - `GET /invocations/{id}`
-  - `GET /invocations/{id}/diff` — replaces CLI-local `agent diff`
-  - `GET /invocations/{id}/checkpoints` — replaces CLI-local `checkpoint ls`
+  - `GET /invocations/{id}/diff` — sandbox diff (base_commit vs sandbox tip)
+  - `GET /invocations/{id}/logs?stream=raw|stderr` — log file contents (non-streaming read; streaming is PR-13)
+  - `GET /invocations/{id}/checkpoints` — checkpoint list
   - `GET /summary` — cacheable convenience: pre-derived counts for watch (active invocations, ready-to-land, needs-attention). Not required — clients can derive from list endpoints.
-- CLI commands migrate:
+- CLI agent read commands (first implementation — cobra skeletons exist since PR-00):
+  - `agent ls [--worktree <ref>]` → `GET /invocations` — list invocations, filterable by worktree. Shows name when present, truncated ID otherwise.
+  - `agent show <name|id|prefix> [--json]` → `GET /invocations/{id}` — invocation details + derived status
+  - `agent diff <name|id|prefix>` → `GET /invocations/{id}/diff` — sandbox changes vs base_commit
+  - `agent logs <name|id|prefix>` → `GET /invocations/{id}/logs` — view log contents (`--follow` deferred to PR-13 daemon log stream)
+  - `agent open <name|id|prefix>` → opens sandbox path in configured editor (reads path from `GET /invocations/{id}`)
+- CLI worktree read commands migrate:
   - `worktree ls`/`show`/`path` → call daemon read endpoints
-  - `agent ls`/`show`/`diff`/`logs` → call daemon read endpoints
+- CLI checkpoint read commands migrate:
   - `checkpoint ls` → call daemon read endpoint
-  - CLI stops scanning `${DATA_DIR}` entirely for v2 flows
+- CLI stops scanning `${DATA_DIR}` entirely for v2 flows
 
 **Status contract:**
 
@@ -572,6 +588,11 @@ CLI renders `display_status` directly. Watch uses `attention_flags` for sorting/
 **Acceptance:**
 
 - [ ] All CLI read commands go through daemon, not store
+- [ ] `agent ls` lists invocations with correct derived status
+- [ ] `agent show` displays full invocation details + `display_status`
+- [ ] `agent diff` shows sandbox changes via daemon endpoint
+- [ ] `agent logs` displays log contents via daemon endpoint
+- [ ] `agent open` opens sandbox in editor using path from daemon
 - [ ] Statuses match previous CLI-derived outputs
 - [ ] No CLI code scans store directories for v2 flows
 - [ ] Daemon returns consistent derived status for all invocation states
