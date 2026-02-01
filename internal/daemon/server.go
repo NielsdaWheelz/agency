@@ -238,23 +238,32 @@ func (s *Server) terminateAllInvocations() {
 	defer s.mu.Unlock()
 
 	for id, proc := range s.processes {
+		// Set exit reason before sending signals so waitForExit* uses
+		// the correct reason if the process exits from SIGINT.
+		proc.exitReason.Store("killed")
+		proc.failureReason.Store("killed")
+
 		// Send SIGINT to process group
 		_ = syscall.Kill(-proc.PGID, syscall.SIGINT)
 
 		// Wait up to 5 seconds for graceful exit
 		select {
 		case <-proc.done:
-			// Process exited gracefully
+			// Process exited gracefully — waitForExit* will write terminal meta
+			// using the exitReason we set above.
+			continue
 		case <-time.After(5 * time.Second):
 			// Force kill
 			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
 		}
 
-		// Mark as failed/killed
+		// Timed out waiting — write meta directly since waitForExit* is
+		// blocked on s.mu.Lock() and we hold the lock.
 		now := s.Clock().UTC().Format(time.RFC3339)
 		_ = s.Store.UpdateInvocationMeta(proc.RepoID, id, func(meta *store.InvocationMeta) {
 			meta.Status = store.InvocationStatusFailed
 			meta.ExitReason = "killed"
+			meta.FailureReason = "killed"
 			meta.FinishedAt = now
 			meta.PID = nil
 			meta.LifecycleOwner = ""
@@ -352,7 +361,7 @@ func (s *Server) writeError(w http.ResponseWriter, status int, code, message, hi
 
 // flushLastOutputAt writes the last_output_at to meta.json.
 func (s *Server) flushLastOutputAt(proc *SupervisedProcess) {
-	lastOutput := time.Unix(0, proc.lastOutputAt)
+	lastOutput := time.Unix(0, proc.lastOutputAt.Load())
 	if lastOutput.IsZero() {
 		return
 	}
@@ -513,8 +522,7 @@ func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *o
 		n, err := reader.Read(buf)
 		if n > 0 {
 			_, _ = file.Write(buf[:n])
-			// Update last output timestamp (atomic store, not mutex)
-			proc.lastOutputAt = s.Clock().UnixNano()
+			proc.lastOutputAt.Store(s.Clock().UnixNano())
 		}
 		if err != nil {
 			break

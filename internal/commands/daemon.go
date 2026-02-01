@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -38,7 +39,15 @@ func DaemonStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts Da
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	// Resolve DataDir through EvalSymlinks so path comparisons (e.g.,
+	// isInsideAgencyManagedWorktree) are consistent with EvalSymlinks-resolved
+	// repo_root paths in handlers.
+	dataDir := dirs.DataDir
+	if resolved, err := filepath.EvalSymlinks(dataDir); err == nil {
+		dataDir = resolved
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	pidPath := st.DaemonPidPath()
 

@@ -1,6 +1,8 @@
 // Package daemon implements the agency daemon supervisor for headless invocations.
 package daemon
 
+import "sync/atomic"
+
 // APIVersion is the current API version. Incremented on breaking changes.
 const APIVersion = 1
 
@@ -171,7 +173,15 @@ type SupervisedProcess struct {
 	StderrFile            string
 
 	// lastOutputAt is updated in-memory on every chunk; persisted with throttling.
-	lastOutputAt int64
+	lastOutputAt atomic.Int64
+
+	// exitReason is set by handleKill/stopEscalation before sending signals.
+	// waitForExit* checks this after cmd.Wait() returns to use the correct reason.
+	// Possible values: "" (not set), "killed", "stopped".
+	exitReason atomic.Value
+
+	// failureReason is set alongside exitReason for the same purpose.
+	failureReason atomic.Value
 
 	// done channel is closed when the process exits.
 	done chan struct{}

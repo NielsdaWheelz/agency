@@ -103,13 +103,32 @@ go build -o agency ./cmd/agency
 ### test
 
 ```bash
+# all tests (includes daemon integration tests)
 go test ./...
+
+# with race detector (recommended — catches data races in daemon concurrency)
+make test-race
+
+# verbose, specific package
+go test ./internal/daemon/ -v -count=1
+
+# skip integration tests (fast, Layer 2 only)
+go test ./internal/daemon/ -v -short
 ```
+
+The daemon package includes a comprehensive integration test suite (28+ tests across 3 layers) that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking.
 
 ### lint
 
 ```bash
 make lint
+```
+
+### full CI check
+
+```bash
+make check         # fmt-check, lint, test, build
+make verify        # check + race detector + e2e
 ```
 
 ### run from source
@@ -125,7 +144,10 @@ agency/
 ├── cmd/agency/           # main entry point
 ├── internal/             # implementation packages
 │   ├── cli/cobra/        # Cobra CLI command tree
-│   └── commands/         # command implementations
+│   ├── commands/         # command implementations
+│   ├── daemon/           # daemon server, handlers, process supervision
+│   ├── daemonclient/     # daemon IPC client
+│   └── store/            # on-disk persistence (repos, invocations, worktrees)
 └── docs/                 # documentation
 ```
 

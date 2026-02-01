@@ -191,9 +191,14 @@ agency stores data in platform-appropriate locations:
 ```
 ${AGENCY_DATA_DIR}/
 ├── repo_index.json              # index of all registered repos
+├── agencyd.sock                 # daemon Unix socket (v2)
+├── agencyd.pid                  # daemon PID file (v2)
 └── repos/
     └── <repo_id>/
         ├── repo.json            # repo metadata
+        ├── .lock                # repo lock file
+        │
+        │   # v1 (legacy runs)
         ├── runs/
         │   └── <run_id>/
         │       ├── meta.json    # run metadata
@@ -204,13 +209,33 @@ ${AGENCY_DATA_DIR}/
         │           ├── setup.log
         │           ├── verify.log
         │           └── archive.log
-        └── worktrees/
-            └── <run_id>/        # git worktree
-                ├── .agency/
-                │   ├── report.md
-                │   ├── INSTRUCTIONS.md
-                │   ├── out/
-                │   ├── tmp/
-                │   └── state/
-                └── <repo files>
+        ├── worktrees/
+        │   └── <run_id>/        # git worktree (v1 runs)
+        │       ├── .agency/
+        │       │   ├── report.md
+        │       │   ├── INSTRUCTIONS.md
+        │       │   ├── out/
+        │       │   ├── tmp/
+        │       │   └── state/
+        │       └── <repo files>
+        │
+        │   # v2 (daemon-managed)
+        ├── integration_worktrees/
+        │   └── <worktree_id>/
+        │       ├── meta.json    # worktree metadata (state, name, branch)
+        │       └── tree/        # git worktree
+        │           ├── .agency/
+        │           │   └── INTEGRATION_MARKER
+        │           └── <repo files>
+        └── invocations/
+            └── <invocation_id>/
+                ├── meta.json    # invocation metadata (status, pid, exit_reason)
+                └── sandbox/
+                    ├── tree/    # sandbox git worktree
+                    │   ├── .agency/
+                    │   │   └── SANDBOX_MARKER
+                    │   └── <repo files>
+                    └── logs/
+                        ├── raw.jsonl    # stdout stream
+                        └── stderr.log   # stderr capture
 ```

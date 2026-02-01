@@ -410,6 +410,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 // stopEscalation performs the stop signal escalation: SIGINT → SIGTERM → SIGKILL
 func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervised bool, proc *SupervisedProcess) {
+	// Set exit reason on supervised process BEFORE sending signals,
+	// so waitForExit* uses "stopped" instead of "exited" after cmd.Wait() returns.
+	if supervised && proc != nil {
+		proc.exitReason.Store("stopped")
+		proc.failureReason.Store("stopped")
+	}
+
 	// Step 1: Send SIGINT
 	err := syscall.Kill(-pgid, syscall.SIGINT)
 	if err == syscall.ESRCH {
@@ -506,26 +513,36 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		pgid = *meta.PID // Fallback
 	}
 
+	// Set exit reason on supervised process BEFORE sending signal,
+	// so waitForExit* uses the correct reason after cmd.Wait() returns.
+	s.mu.RLock()
+	proc, supervised := s.processes[invocationID]
+	s.mu.RUnlock()
+
+	if supervised && proc != nil {
+		proc.exitReason.Store("killed")
+		proc.failureReason.Store("killed")
+	}
+
 	// Send SIGKILL if we have a PGID
 	if pgid > 0 {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
 
-	// Update invocation meta - always mark as killed regardless of current state
-	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusFailed
-		m.ExitReason = "killed"
-		m.FailureReason = "killed" // PR-05: set failure_reason
-		m.FinishedAt = now
-		m.PID = nil
-		m.LifecycleOwner = ""
-	})
-
-	// Remove from supervised processes if present
-	s.mu.Lock()
-	delete(s.processes, invocationID)
-	s.mu.Unlock()
+	// For supervised processes, waitForExit* will write the terminal meta
+	// using the exitReason/failureReason we set above. For unsupervised
+	// processes (orphaned), we must write meta directly.
+	if !supervised {
+		now := s.Clock().UTC().Format(time.RFC3339)
+		_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+			m.Status = store.InvocationStatusFailed
+			m.ExitReason = "killed"
+			m.FailureReason = "killed"
+			m.FinishedAt = now
+			m.PID = nil
+			m.LifecycleOwner = ""
+		})
+	}
 
 	resp := KillResponse{OK: true}
 	s.writeJSON(w, http.StatusOK, resp)
@@ -549,6 +566,12 @@ func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, 
 		if exitErr, ok := err.(*osexec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
+		status = store.InvocationStatusFailed
+	}
+
+	// Check if kill/stop set an override reason before the signal was sent.
+	if override, ok := proc.exitReason.Load().(string); ok && override != "" {
+		exitReason = override
 		status = store.InvocationStatusFailed
 	}
 
@@ -580,7 +603,7 @@ func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
 		select {
 		case <-proc.done:
 			// Final flush
-			if proc.lastOutputAt > lastFlushed {
+			if proc.lastOutputAt.Load() > lastFlushed {
 				s.flushLastOutputAt(proc)
 			}
 			return
@@ -588,9 +611,9 @@ func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
 			return
 		case <-ticker.C:
 			// Only flush if there's new output
-			if proc.lastOutputAt > lastFlushed {
+			if current := proc.lastOutputAt.Load(); current > lastFlushed {
 				s.flushLastOutputAt(proc)
-				lastFlushed = proc.lastOutputAt
+				lastFlushed = current
 			}
 		}
 	}
@@ -1356,6 +1379,15 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 		}
 		status = store.InvocationStatusFailed
 		failureReason = "runner_exit_nonzero"
+	}
+
+	// Check if kill/stop set an override reason before the signal was sent.
+	if override, ok := proc.exitReason.Load().(string); ok && override != "" {
+		exitReason = override
+		status = store.InvocationStatusFailed
+	}
+	if override, ok := proc.failureReason.Load().(string); ok && override != "" {
+		failureReason = override
 	}
 
 	// Update invocation meta
