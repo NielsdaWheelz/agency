@@ -13,6 +13,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/google/uuid"
 )
 
 // Client communicates with the agency daemon over Unix socket.
@@ -65,7 +66,7 @@ func (c *Client) IsRunning(ctx context.Context) bool {
 	return err == nil && health.OK
 }
 
-// StartHeadless starts a headless invocation.
+// StartHeadless starts a headless invocation (legacy PR-04 endpoint).
 func (c *Client) StartHeadless(ctx context.Context, req *daemon.StartHeadlessRequest) (*daemon.StartHeadlessResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -91,6 +92,83 @@ func (c *Client) StartHeadless(ctx context.Context, req *daemon.StartHeadlessReq
 	}
 
 	return &result, nil
+}
+
+// ControlPlaneStartOpts holds options for control plane start.
+type ControlPlaneStartOpts struct {
+	RepoRoot       string
+	WorktreeRef    string
+	Runner         string
+	Prompt         string
+	InvocationName string
+	RunnerArgs     []string
+	Env            map[string]string
+}
+
+// ControlPlaneStartHeadless starts a headless invocation via the control plane endpoint (PR-05).
+// This endpoint handles all creation: invocation ID generation, sandbox creation, and runner start.
+func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlaneStartOpts) (*daemon.ControlPlaneStartResponse, error) {
+	// Generate client request ID for idempotency
+	clientRequestID := uuid.New().String()
+
+	req := daemon.ControlPlaneStartRequest{
+		RepoRoot:        opts.RepoRoot,
+		WorktreeRef:     opts.WorktreeRef,
+		Runner:          opts.Runner,
+		Prompt:          opts.Prompt,
+		InvocationName:  opts.InvocationName,
+		RunnerArgs:      opts.RunnerArgs,
+		Env:             opts.Env,
+		ClientRequestID: clientRequestID,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	url := "http://daemon/invocations/start_headless"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.ControlPlaneStartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// CheckAPIVersion checks if the daemon API version is compatible with the client.
+// Returns nil if compatible, error otherwise.
+func (c *Client) CheckAPIVersion(ctx context.Context) error {
+	health, err := c.Health(ctx)
+	if err != nil {
+		return err
+	}
+
+	if health.APIVersion != daemon.APIVersion {
+		return errors.NewWithDetails(
+			errors.EDaemonIncompatible,
+			fmt.Sprintf("daemon API version mismatch: daemon=%d, client=%d", health.APIVersion, daemon.APIVersion),
+			map[string]string{
+				"daemon_version": fmt.Sprintf("%d", health.APIVersion),
+				"client_version": fmt.Sprintf("%d", daemon.APIVersion),
+				"hint":           "restart the daemon with 'agency daemon stop && agency daemon start'",
+			},
+		)
+	}
+
+	return nil
 }
 
 // Stop sends a graceful stop signal to an invocation.

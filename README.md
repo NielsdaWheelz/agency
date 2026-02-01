@@ -202,7 +202,13 @@ Key concepts:
 
 ## Daemon (v2)
 
-The agency daemon supervises headless invocations, providing streaming log capture and reliable process lifecycle management.
+The agency daemon is the **control plane** for headless invocations. For headless execution, the daemon:
+- Creates invocation IDs
+- Creates sandbox worktrees
+- Manages all invocation metadata
+- Supervises runner processes
+- Streams logs to disk
+- Handles lifecycle transitions
 
 ```bash
 # Start daemon (runs in foreground, Ctrl-C to stop)
@@ -217,11 +223,27 @@ agency daemon stop
 agency daemon stop --force
 ```
 
-The daemon:
-- Automatically starts when a headless invocation is created
-- Captures stdout/stderr to `raw.jsonl` and `stderr.log` in the sandbox logs directory
-- Handles graceful stop (SIGINT) and forceful kill (SIGKILL) via process groups
-- Detects orphaned invocations on restart
+### Daemon Features
+
+- **Auto-start**: Daemon starts automatically when a headless invocation is created
+- **Log capture**: Captures stdout/stderr to `raw.jsonl` and `stderr.log` in sandbox logs
+- **Graceful stop**: Escalates SIGINT → SIGTERM (5s) → SIGKILL (2s) on `agent stop`
+- **Forceful kill**: Immediate SIGKILL via process groups on `agent kill`
+- **Orphan detection**: Detects and marks orphaned invocations on restart
+- **Idempotency**: Duplicate requests return existing invocation (via client_request_id)
+- **API versioning**: CLI checks daemon API version before operations
+- **Repo registration**: Automatically registers repositories on first use
+
+### Headless Mode Architecture
+
+When you run `agency agent start --headless`:
+1. CLI sends a single RPC to the daemon with repo_root, worktree_ref, runner, and prompt
+2. Daemon resolves the integration worktree and validates the request
+3. Daemon atomically creates sandbox worktree and invocation record
+4. Daemon spawns the runner process and streams logs
+5. CLI receives invocation_id and sandbox_path, then exits
+
+The CLI **never** writes invocation or sandbox files for headless mode — the daemon is the single writer.
 
 See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including checkpoints and the watch TUI.
 
