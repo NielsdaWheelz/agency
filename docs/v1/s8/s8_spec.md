@@ -99,6 +99,33 @@ Multiple agents can work on the same integration branch concurrently. Each gets 
 
 ---
 
+## Control Plane
+
+- A long-lived local daemon (`agency daemon`) is the supervisor for **all detached execution**
+- CLI is trending toward client-only; in slice 8, daemon is required for headless detached supervision
+- IPC is via unix domain socket at `${AGENCY_DATA_DIR}/agencyd.sock` with permissions `0600`
+- API is versioned; CLI refuses incompatible daemon versions
+- Daemon is the only component allowed to supervise long-running headless processes
+
+### Migration Phases
+
+- **Phase 1 (PR-04):** Daemon supervises headless processes + streams logs + updates invocation lifecycle fields. CLI creates sandboxes, invocation records, worktrees. CLI performs git operations (land, checkpoint, worktree add/remove).
+- **Phase 2 (post PR-4.5):** Daemon becomes control plane for git ops + store writes; CLI becomes pure client.
+- Watch may poll files in slice 8; streaming subscriptions are post-v1.5.
+
+---
+
+## Ownership Rules
+
+- Daemon owns process lifetimes for headless invocations (start/stop/kill, exit detection)
+- Daemon owns log streaming for headless invocations
+- CLI must never attempt to "detach" headless execution without the daemon
+- Headed invocations may be started by CLI in v2 but must use tmux; future parity may move this to daemon
+- Store write ownership may migrate across releases; not a hard invariant yet
+- In slice 8: CLI writes meta.json on creation, daemon writes lifecycle fields during supervision. This is the phase 1 split.
+
+---
+
 ## Integration Worktree Details
 
 ### Lifecycle
@@ -415,6 +442,8 @@ agency agent logs <invocation_id|prefix> [--follow]
 - `stop` is graceful (SIGINT / C-c via tmux)
 - `kill` is forceful (SIGKILL / tmux kill-session)
 - `attach` only applies to headed invocations
+- `--headless --detached` requires daemon; CLI autostarts daemon if not running; if autostart fails, error
+- `--headless` without `--detached`: CLI autostarts daemon if not running, delegates to daemon, and tails logs until exit. No "headless foreground without daemon" path exists — daemon is always the supervisor
 - `--detached` starts but does not attach (headed mode only)
 - `--runner-arg` passes additional flags to the runner command (repeatable)
 - `--no-include-untracked` excludes untracked files from checkpoint snapshots
@@ -489,6 +518,7 @@ bugfix-auth (agency/bugfix-auth-c8d3) [present]
 - tmux `has-session` for presence detection
 - Log viewing via file tailing
 - For headed invocations: `attach` (Enter key) is the primary viewing mechanism
+- Watch may poll store/log files; streaming subscriptions are a possible future enhancement
 
 Note: Watch uses **polling**. Checkpointing uses **fsnotify + periodic fallback**. Do not conflate.
 
@@ -587,6 +617,13 @@ agency agent start --worktree foo --headless \
   --runner-arg "--permission-mode" \
   --runner-arg "allowedTools"
 ```
+
+### Detached Semantics
+
+- Headless invocations support detached mode: they continue after CLI exits
+- All headless execution requires the daemon. CLI autostarts daemon if not running; if autostart fails, error. There is no "headless without daemon" code path.
+- `--detached`: CLI delegates to daemon and returns immediately
+- Without `--detached`: CLI delegates to daemon and tails logs until the invocation exits
 
 ---
 
@@ -690,9 +727,9 @@ ${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/events.jsonl
 
 **Requirements:**
 
-- **Headless logs:** Complete. `raw.jsonl` = verbatim copy of runner stdout, appended as chunks arrive. `stderr.log` = runner stderr, appended as chunks arrive.
-- **Headed logs:** Best-effort. Periodic `tmux capture-pane` sampling. TUI escape codes make raw capture unreliable; `attach` (via watch or CLI) is the primary viewing mechanism for headed invocations.
-- `last_output_at` updated on **every chunk** written to `raw.jsonl` (not batched)
+- **Headless logs:** Streamed by daemon (append-only). `raw.jsonl` = verbatim copy of runner stdout, appended as chunks arrive. `stderr.log` = runner stderr, appended as chunks arrive.
+- **Headed logs:** Best-effort. Capture-pane is available via `agent logs --capture` or via watch action; periodic sampling is optional. TUI escape codes make raw capture unreliable; `attach` (via watch or CLI) is the primary viewing mechanism for headed invocations.
+- `last_output_at` updated **in memory** on every chunk written to `raw.jsonl`; **persisted to meta.json** at most once per 500ms (atomic rename is expensive)
 - `stream.jsonl` is NOT written by the logging layer — reserved for the stream parser (PR-05)
 - Watch uses tailing of `raw.jsonl` for headless; attach for headed
 
@@ -703,6 +740,8 @@ ${DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/events.jsonl
 ### Scope
 
 Checkpoints are **per-sandbox** (per-invocation). Each sandbox has its own checkpoint history.
+
+Checkpoint creation is best-effort; must not block runner execution.
 
 ### Primitive
 
@@ -771,15 +810,17 @@ export TEMP_INDEX=$(mktemp)
 cp "$(git rev-parse --git-dir)/index" "$TEMP_INDEX"
 
 # 2. Run denylist check BEFORE staging untracked files
-#    (see Untracked Files Policy — if denylisted files found, abort checkpoint)
+#    (see Untracked Files Policy — if denylisted files found, degrade to tracked-only)
 denylisted=$(git ls-files -o --exclude-standard | grep -E '\.env|\.key|\.pem|credentials\.json|secrets\.json')
 if [ -n "$denylisted" ]; then
-  # emit checkpoint_failed event, skip this checkpoint, return
-  exit 0
+  # Degrade: snapshot tracked files only (skip untracked entirely)
+  GIT_INDEX_FILE="$TEMP_INDEX" git add -u
+  # emit checkpoint_degraded event with file list, set flag in invocation meta
+  # continue to step 4
+else
+  # 3. Stage all changes (tracked + untracked) into the temp index
+  GIT_INDEX_FILE="$TEMP_INDEX" git add -A
 fi
-
-# 3. Stage all changes (tracked + untracked) into the temp index
-GIT_INDEX_FILE="$TEMP_INDEX" git add -A
 
 # 4. Write the tree object from the temp index
 tree_hash=$(GIT_INDEX_FILE="$TEMP_INDEX" git write-tree)
@@ -796,9 +837,13 @@ git update-ref "refs/agency/snapshots/<invocation_id>/<n>" "$snapshot_commit"
 # 7. Record in checkpoints.json
 ```
 
-**If `--no-include-untracked`:** Skip step 2 (denylist check) and replace step 3 with `GIT_INDEX_FILE="$TEMP_INDEX" git add -u` (only tracked files).
+**If `--no-include-untracked`:** Skip step 2 (denylist check) and use `GIT_INDEX_FILE="$TEMP_INDEX" git add -u` (only tracked files).
 
 **Ordering matters:** The denylist check (step 2) runs **before** anything is staged into the temp index. This ensures denylisted files are never written into a snapshot tree object, even transiently.
+
+**Snapshot commit parent:** The parent is the sandbox branch HEAD at snapshot time (`-p HEAD`). Snapshots are stored under private refs only; they do not appear on any branch.
+
+**Index lock handling:** If `.git/index.lock` exists or `git add` fails due to lock, emit `checkpoint_failed` event and continue. Checkpoints are best-effort; do not block or retry.
 
 **Why this works:**
 
@@ -840,6 +885,8 @@ git for-each-ref --format='%(refname)' "refs/agency/snapshots/<invocation_id>/" 
   xargs -I{} git update-ref -d {}
 ```
 
+Checkpoint refs are per-invocation and must be cleaned up on discard; may be retained on land for audit (configurable later).
+
 This allows git GC to eventually clean up the snapshot commit objects.
 
 ---
@@ -862,10 +909,11 @@ The following patterns are denied from checkpoints:
    (This already excludes `.gitignore` patterns)
 2. Check results against denylist
 3. If any denylisted files found:
-   - Skip checkpoint creation
-   - Emit `checkpoint_failed` event with reason
+   - **Degrade** checkpoint to tracked-only snapshot (`git add -u` in temp index)
+   - Emit `checkpoint_degraded` event with file list
+   - Set `flags.checkpoint_degraded = true` in invocation meta
    - Log warning
-   - **Invocation continues** (non-fatal)
+   - **Invocation continues** (non-fatal, checkpoint still created)
 
 **Escape hatch:** `--no-include-untracked` flag on `agent start` to exclude untracked files from snapshots entirely.
 
@@ -875,21 +923,37 @@ The following patterns are denied from checkpoints:
 
 Checkpoint failures are **best-effort; do not abort invocation**.
 
-On failure:
+**Degraded checkpoint** (denylisted untracked files):
+
+1. Emit event to `events.jsonl`:
+   ```json
+   {
+     "event": "checkpoint_degraded",
+     "data": {
+       "reason": "denylisted_untracked",
+       "excluded_files": [".env"],
+       "invocation_id": "...",
+       "snapshot_type": "tracked_only"
+     }
+   }
+   ```
+2. Checkpoint is created with tracked files only (still useful for rollback)
+3. Continue invocation execution
+
+**Hard failure** (index lock, git error, etc.):
 
 1. Emit event to `events.jsonl`:
    ```json
    {
      "event": "checkpoint_failed",
      "data": {
-       "reason": "denylisted_file",
-       "files": [".env"],
+       "reason": "index_locked",
        "invocation_id": "..."
      }
    }
    ```
-
-2. Continue invocation execution
+2. Skip checkpoint entirely
+3. Continue invocation execution
 
 ---
 
@@ -940,12 +1004,14 @@ Runners often modify files without committing. When `<base_commit>..<sandbox_bra
 
 ```bash
 cd <sandbox_path>
-git diff <base_commit> -- . > /tmp/patch
+git diff <base_commit> -- . > ${DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tmp/land.patch
 
 cd <integration_tree_path>
-git apply /tmp/patch
+git apply --index ${DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tmp/land.patch
 git commit -m "agency: land invocation <invocation_id>"
 ```
+
+Patch file is written to the sandbox's own `tmp/` directory (not `/tmp`). `--apply` respects `.gitignore`; untracked files not in the diff are unaffected.
 
 `agent land` without `--apply` in this case errors with a hint: "no commits to cherry-pick; use --apply to land working tree changes."
 
@@ -985,6 +1051,8 @@ These invariants **must** hold and must not be "optimized" away:
 7. **No code path may execute a runner with CWD = integration tree.** Enforced by:
    - Integration trees contain `.agency/INTEGRATION_MARKER`
    - `agent start` checks that the resolved sandbox path does not contain `INTEGRATION_MARKER`
+   - Daemon must refuse to start headless process if sandbox_path is not a sandbox (missing `SANDBOX_MARKER`) or is an integration tree (has `INTEGRATION_MARKER`)
+   - Daemon must refuse if sandbox_path is not under `${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tree` (prefix check against store-computed path)
    - If sandbox creation fails, `agent start` aborts rather than falling back to the integration tree
 
 These invariants prevent race conditions by design, rather than by locking.
@@ -1050,11 +1118,25 @@ refs/agency/snapshots/<invocation_id>/<n>   # Checkpoint snapshot commits
 | Runner crash | Invocation marked failed, exit_code captured (headless) or exit_reason=unknown (headed) |
 | Stalled output | `stalled` status derived |
 | Corrupted sandbox | Explicit error, no auto-repair |
-| Checkpoint failure | Event logged, invocation continues |
-| Denylisted file in untracked | Checkpoint skipped, warning logged |
+| Checkpoint failure (index lock, git error) | Event logged, checkpoint skipped, invocation continues |
+| Denylisted file in untracked | Checkpoint degraded to tracked-only, event logged |
 | fsnotify miss | Periodic fallback catches dirty state |
 | Land conflict (cherry-pick/merge fails) | Abort operation, report conflicts, sandbox preserved |
 | Sandbox creation fails | `agent start` aborts, no fallback to integration tree |
+
+**Recovery (daemon restart):**
+
+On daemon restart, any headless invocation with `status=running` whose PID the daemon has no handle for is considered orphaned. Exact state transition:
+
+- Set `status = "failed"`
+- Set `exit_reason = "unknown"`
+- Set `finished_at = now`
+- Set `flags.needs_attention = true`
+- Clear `pid`
+
+Rationale: the daemon cannot supervise a process it didn't spawn (no pipe, no pgid). Marking it failed is honest — the invocation is no longer managed. Users can inspect the sandbox and start a new invocation.
+
+- No guaranteed log reattachment in v2 (pipes are not recoverable)
 
 ---
 
@@ -1073,7 +1155,7 @@ Slice 8 is complete when:
 - [ ] Integration worktrees are never modified by runners directly (enforced by INTEGRATION_MARKER)
 - [ ] The system remains reversible and inspectable
 - [ ] Headless logs are complete (stdout/stderr captured directly)
-- [ ] Headed logs are best-effort (periodic capture-pane; attach is the primary viewing mechanism)
+- [ ] Headed logs are best-effort (capture-pane available on demand; attach is the primary viewing mechanism)
 
 ---
 
