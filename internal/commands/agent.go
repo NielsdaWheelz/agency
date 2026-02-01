@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
-	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -57,7 +56,7 @@ type AgentStartOpts struct {
 
 // AgentStart starts a new agent invocation.
 // For headed mode (default): creates sandbox, launches tmux session, optionally attaches.
-// For headless mode: creates sandbox (runner execution added in PR-04).
+// For headless mode (PR-05): delegates to daemon control plane which creates everything.
 func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -71,6 +70,30 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if err != nil {
 		return errors.New(errors.ENoRepo, "not inside a git repository")
 	}
+
+	// Validate runner
+	runner := opts.Runner
+	if runner == "" {
+		runner = "claude"
+	}
+	if runner != "claude" && runner != "codex" {
+		return errors.NewWithDetails(
+			errors.EUsage,
+			"invalid runner: "+runner,
+			map[string]string{
+				"runner": runner,
+				"valid":  "claude, codex",
+			},
+		)
+	}
+
+	// For headless mode (PR-05): delegate everything to daemon control plane
+	// CLI does NOT create invocation or sandbox - daemon does
+	if opts.Headless {
+		return agentStartHeadlessControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr)
+	}
+
+	// For headed mode: CLI creates invocation and sandbox, launches tmux
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
@@ -107,29 +130,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		)
 	}
 
-	// Determine runner mode
-	mode := store.RunnerModeHeaded
-	if opts.Headless {
-		mode = store.RunnerModeHeadless
-	}
-
-	// Validate runner
-	runner := opts.Runner
-	if runner == "" {
-		runner = "claude"
-	}
-	if runner != "claude" && runner != "codex" {
-		return errors.NewWithDetails(
-			errors.EUsage,
-			"invalid runner: "+runner,
-			map[string]string{
-				"runner": runner,
-				"valid":  "claude, codex",
-			},
-		)
-	}
-
-	// Create invocation service and create invocation
+	// Create invocation service and create invocation (headed mode only)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
 
 	result, err := invSvc.Create(ctx, invocation.CreateOpts{
@@ -138,15 +139,15 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		RepoRoot:                repoRoot.Path,
 		RepoID:                  repoIdentity.RepoID,
 		Runner:                  runner,
-		Mode:                    mode,
+		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          opts.InvocationName,
 	})
 	if err != nil {
 		return err
 	}
 
-	// For headed mode, launch tmux session
-	if mode == store.RunnerModeHeaded {
+	// Headed mode: launch tmux session
+	{
 		// Resolve runner command
 		userCfg, _, _ := config.LoadUserConfig(fsys, dirs.ConfigDir)
 		runnerCmd, err := config.ResolveRunnerCmd(cr, fsys, dirs.ConfigDir, userCfg, runner)
@@ -232,7 +233,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			_, _ = fmt.Fprintf(stdout, "  name:           %s\n", opts.InvocationName)
 		}
 		_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
-		_, _ = fmt.Fprintf(stdout, "  mode:           %s\n", mode)
+		_, _ = fmt.Fprintf(stdout, "  mode:           headed\n")
 		_, _ = fmt.Fprintf(stdout, "  worktree:       %s (%s)\n", wtRecord.Meta.Name, wtRecord.WorktreeID)
 		_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", result.SandboxPath)
 		_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", sessionName)
@@ -252,19 +253,16 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 		return nil
 	}
+}
 
-	// Headless mode - run via daemon
+// agentStartHeadlessControlPlane handles headless invocation start via daemon control plane (PR-05).
+// CLI does NOT create invocation or sandbox - daemon does everything.
+func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, repoRootPath string, dirs paths.Dirs, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
 	// Resolve prompt
 	prompt := opts.Prompt
 	if prompt == "" && opts.PromptFile != "" {
 		data, err := os.ReadFile(opts.PromptFile)
 		if err != nil {
-			// Mark invocation as failed
-			_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
-				meta.Status = store.InvocationStatusFailed
-				meta.ExitReason = "start_failed"
-				meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			})
 			return errors.WrapWithDetails(
 				errors.EPromptRequired,
 				"failed to read prompt file",
@@ -276,48 +274,35 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	if prompt == "" {
-		// Mark invocation as failed
-		_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "start_failed"
-			meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		})
 		return errors.New(errors.EPromptRequired, "headless mode requires a prompt (use --prompt or --prompt-file)")
 	}
 
 	// Ensure daemon is running
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	logPath := st.DaemonLogPath()
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		// Mark invocation as failed
-		_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "start_failed"
-			meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		})
 		return err
 	}
 
-	// Send start request to daemon
-	daemonReq := &daemon.StartHeadlessRequest{
-		RepoID:       repoIdentity.RepoID,
-		InvocationID: result.InvocationID,
-		Runner:       runner,
-		SandboxPath:  result.SandboxPath,
-		Prompt:       prompt,
-		RunnerArgs:   opts.RunnerArgs,
+	// Check API version compatibility (PR-05)
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
 	}
 
-	resp, err := client.StartHeadless(ctx, daemonReq)
+	// Send control plane start request to daemon (PR-05)
+	// Daemon creates: invocation ID, sandbox, invocation meta, and starts runner
+	resp, err := client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:       repoRootPath,
+		WorktreeRef:    opts.WorktreeRef,
+		Runner:         runner,
+		Prompt:         prompt,
+		InvocationName: opts.InvocationName,
+		RunnerArgs:     opts.RunnerArgs,
+	})
 	if err != nil {
-		// Mark invocation as failed
-		_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "start_failed"
-			meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		})
 		return err
 	}
 
@@ -331,16 +316,14 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	// Output result
 	_, _ = fmt.Fprintf(stdout, "Started headless agent invocation\n")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", result.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
 	if opts.InvocationName != "" {
 		_, _ = fmt.Fprintf(stdout, "  name:           %s\n", opts.InvocationName)
 	}
 	_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
-	_, _ = fmt.Fprintf(stdout, "  mode:           %s\n", mode)
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s (%s)\n", wtRecord.Meta.Name, wtRecord.WorktreeID)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", result.SandboxPath)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_branch: %s\n", result.SandboxBranch)
-	_, _ = fmt.Fprintf(stdout, "  base_commit:    %s\n", result.BaseCommit[:12])
+	_, _ = fmt.Fprintf(stdout, "  mode:           headless\n")
+	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", resp.IntegrationWorktreeID)
+	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  pid:            %d\n", resp.PID)
 
 	if resp.LogPaths != nil {
@@ -352,12 +335,13 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if resp.AlreadyRunning {
 		_, _ = fmt.Fprintf(stdout, "\nNote: Invocation was already running (idempotent start).\n")
 	}
-	if resp.Orphaned {
-		_, _ = fmt.Fprintf(stdout, "\nWarning: Process is running but was orphaned (daemon restart). Log streaming may be incomplete.\n")
-	}
 
-	_, _ = fmt.Fprintf(stdout, "\nUse 'agency agent show %s' to view status.\n", result.InvocationID[:8])
-	_, _ = fmt.Fprintf(stdout, "Use 'agency agent stop %s' to stop gracefully.\n", result.InvocationID[:8])
+	shortID := resp.InvocationID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	_, _ = fmt.Fprintf(stdout, "\nUse 'agency agent show %s' to view status.\n", shortID)
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent stop %s' to stop gracefully.\n", shortID)
 
 	return nil
 }

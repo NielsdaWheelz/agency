@@ -4,7 +4,13 @@ package daemon
 // APIVersion is the current API version. Incremented on breaking changes.
 const APIVersion = 1
 
-// StartHeadlessRequest is the request body for POST /invocations/{id}/start_headless.
+// MaxPromptSize is the maximum allowed prompt size in bytes (256 KB).
+const MaxPromptSize = 256 * 1024
+
+// IdempotencyTTL is how long idempotency entries are retained (5 minutes).
+const IdempotencyTTL = 5 * 60 // seconds
+
+// StartHeadlessRequest is the request body for POST /invocations/{id}/start_headless (legacy PR-04).
 type StartHeadlessRequest struct {
 	// RepoID is the repo identifier.
 	RepoID string `json:"repo_id"`
@@ -26,6 +32,65 @@ type StartHeadlessRequest struct {
 
 	// Env are optional environment variable overrides.
 	Env map[string]string `json:"env,omitempty"`
+}
+
+// ControlPlaneStartRequest is the request body for POST /invocations/start_headless (PR-05 control plane).
+// This is the new endpoint where daemon creates everything.
+type ControlPlaneStartRequest struct {
+	// RepoRoot is the absolute path to the repository root.
+	RepoRoot string `json:"repo_root"`
+
+	// WorktreeRef is the integration worktree reference (name, id, or prefix).
+	WorktreeRef string `json:"worktree_ref"`
+
+	// Runner is the runner type (claude, codex).
+	Runner string `json:"runner"`
+
+	// Prompt is the full prompt text (max 256KB).
+	Prompt string `json:"prompt"`
+
+	// InvocationName is an optional human-readable label.
+	InvocationName string `json:"invocation_name,omitempty"`
+
+	// RunnerArgs are optional pass-through args appended after the base command.
+	RunnerArgs []string `json:"runner_args,omitempty"`
+
+	// Env are optional environment variable overrides.
+	Env map[string]string `json:"env,omitempty"`
+
+	// ClientRequestID is required for idempotency (UUID format).
+	ClientRequestID string `json:"client_request_id"`
+}
+
+// ControlPlaneStartResponse is the response body for POST /invocations/start_headless (PR-05 control plane).
+type ControlPlaneStartResponse struct {
+	OK                      bool      `json:"ok"`
+	InvocationID            string    `json:"invocation_id,omitempty"`
+	SandboxPath             string    `json:"sandbox_path,omitempty"`
+	RepoID                  string    `json:"repo_id,omitempty"`
+	IntegrationWorktreeID   string    `json:"integration_worktree_id,omitempty"`
+	IntegrationWorktreeName string    `json:"integration_worktree_name,omitempty"`
+	PID                     int       `json:"pid,omitempty"`
+	PGID                    int       `json:"pgid,omitempty"`
+	DaemonInstanceID        string    `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning          bool      `json:"already_running,omitempty"`
+	LogPaths                *LogPaths `json:"log_paths,omitempty"`
+
+	// Standard response fields
+	APIVersion      int    `json:"api_version"`
+	BuildVersion    string `json:"build_version,omitempty"`
+	ClientRequestID string `json:"client_request_id,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// IdempotencyEntry tracks a recent request for idempotency.
+type IdempotencyEntry struct {
+	InvocationID string
+	CreatedAt    int64 // Unix timestamp
 }
 
 // StartHeadlessResponse is the response body for POST /invocations/{id}/start_headless.

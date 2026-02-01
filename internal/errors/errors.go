@@ -144,6 +144,12 @@ const (
 	EInvocationNameExists    Code = "E_INVOCATION_NAME_EXISTS"    // invocation name already used by an active invocation
 	ELifecycleOwnerMismatch  Code = "E_LIFECYCLE_OWNER_MISMATCH"  // attempt to modify invocation owned by another entity
 	EPromptRequired          Code = "E_PROMPT_REQUIRED"           // headless invocation requires a prompt
+
+	// Slice 8 daemon control plane error codes (PR-05)
+	EUnsafeRepoRoot     Code = "E_UNSAFE_REPO_ROOT"    // repo_root is inside an agency-managed worktree
+	EPromptTooLarge     Code = "E_PROMPT_TOO_LARGE"    // prompt exceeds 256 KB
+	EDaemonIncompatible Code = "E_DAEMON_INCOMPATIBLE" // CLI api_version does not match daemon api_version
+	ERunnerArgConflict  Code = "E_RUNNER_ARG_CONFLICT" // user-supplied args include reserved flags
 )
 
 // AgencyError is the standard error type for agency errors.

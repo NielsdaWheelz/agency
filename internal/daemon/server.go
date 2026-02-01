@@ -56,6 +56,13 @@ type Server struct {
 	// processes maps invocation_id -> supervised process state.
 	processes map[string]*SupervisedProcess
 
+	// idempotencyMu protects the idempotency map.
+	idempotencyMu sync.RWMutex
+
+	// idempotency maps (repo_id, client_request_id) -> IdempotencyEntry.
+	// Used to prevent duplicate invocations from retried requests.
+	idempotency map[string]IdempotencyEntry
+
 	// server is the HTTP server.
 	server *http.Server
 
@@ -69,15 +76,16 @@ type Server struct {
 // NewServer creates a new daemon server with the given dependencies.
 func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir string) *Server {
 	return &Server{
-		Store:      st,
-		Runner:     runner,
-		FS:         fsys,
-		ConfigDir:  configDir,
-		Clock:      time.Now,
-		PIDChecker: IsPIDAlive,
-		InstanceID: uuid.New().String(),
-		processes:  make(map[string]*SupervisedProcess),
-		shutdownCh: make(chan struct{}),
+		Store:       st,
+		Runner:      runner,
+		FS:          fsys,
+		ConfigDir:   configDir,
+		Clock:       time.Now,
+		PIDChecker:  IsPIDAlive,
+		InstanceID:  uuid.New().String(),
+		processes:   make(map[string]*SupervisedProcess),
+		idempotency: make(map[string]IdempotencyEntry),
+		shutdownCh:  make(chan struct{}),
 	}
 }
 
@@ -239,9 +247,9 @@ func (s *Server) terminateAllInvocations() {
 	}
 }
 
-// handleInvocations handles requests to /invocations/{id}/...
+// handleInvocations handles requests to /invocations/...
 func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
-	// Parse path: /invocations/{id}/{action}
+	// Parse path: /invocations/{action_or_id}[/{action}]
 	path := r.URL.Path
 	if len(path) < len("/invocations/") {
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
@@ -250,7 +258,17 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 
 	remaining := path[len("/invocations/"):]
 	if remaining == "" {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "invocation id required", "")
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "endpoint required", "")
+		return
+	}
+
+	// Check for control plane endpoint: POST /invocations/start_headless (no ID)
+	if remaining == "start_headless" {
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleControlPlaneStartHeadless(w, r)
 		return
 	}
 
@@ -274,6 +292,7 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "start_headless":
+		// Legacy PR-04 endpoint: POST /invocations/{id}/start_headless
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
@@ -353,7 +372,7 @@ func (s *Server) runRecoveryScan() error {
 	return nil
 }
 
-// recoverRepoInvocations checks invocations for a single repo.
+// recoverRepoInvocations checks invocations for a single repo (PR-05 enhanced).
 func (s *Server) recoverRepoInvocations(repoID string) error {
 	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
 	if err != nil {
@@ -361,14 +380,39 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 	}
 
 	now := s.Clock().UTC().Format(time.RFC3339)
+	nowTime := s.Clock()
 
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue
 		}
 
-		// Only check running headless invocations
-		if r.Meta.Mode != store.RunnerModeHeadless || r.Meta.Status != store.InvocationStatusRunning {
+		// Only process headless invocations
+		if r.Meta.Mode != store.RunnerModeHeadless {
+			continue
+		}
+
+		// PR-05: Handle status=starting invocations that are too old (>60s)
+		if r.Meta.Status == store.InvocationStatusStarting {
+			startedAt, err := time.Parse(time.RFC3339, r.Meta.StartedAt)
+			if err == nil {
+				age := nowTime.Sub(startedAt)
+				if age > 60*time.Second && r.Meta.PID == nil {
+					_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+						meta.Status = store.InvocationStatusFailed
+						meta.ExitReason = "start_failed"
+						meta.FailureReason = "start_incomplete" // PR-05: set failure_reason
+						meta.FinishedAt = now
+						meta.Flags.NeedsAttention = true
+						meta.LifecycleOwner = ""
+					})
+				}
+			}
+			continue
+		}
+
+		// Only check running invocations
+		if r.Meta.Status != store.InvocationStatusRunning {
 			continue
 		}
 
@@ -381,10 +425,11 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 		alive := s.PIDChecker(pid)
 
 		if !alive {
-			// Case A: PID is NOT alive
+			// Case A: PID is NOT alive - mark as failed with failure_reason
 			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
 				meta.Status = store.InvocationStatusFailed
 				meta.ExitReason = "unknown"
+				meta.FailureReason = "runner_exit_nonzero" // PR-05: set failure_reason (best guess)
 				meta.FinishedAt = now
 				meta.PID = nil
 				meta.Flags.NeedsAttention = true
@@ -456,6 +501,69 @@ func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *o
 		}
 		if err != nil {
 			break
+		}
+	}
+}
+
+// idempotencyKey generates a key for the idempotency map.
+func idempotencyKey(repoID, clientRequestID string) string {
+	return repoID + ":" + clientRequestID
+}
+
+// checkIdempotency checks if a request is a duplicate based on client_request_id.
+// Returns (invocation_id, true) if this is a duplicate request.
+// Returns ("", false) if this is a new request.
+func (s *Server) checkIdempotency(repoID, clientRequestID string) (string, bool) {
+	if clientRequestID == "" {
+		return "", false
+	}
+
+	s.idempotencyMu.RLock()
+	defer s.idempotencyMu.RUnlock()
+
+	key := idempotencyKey(repoID, clientRequestID)
+	entry, exists := s.idempotency[key]
+	if !exists {
+		return "", false
+	}
+
+	// Check if entry is expired
+	now := s.Clock().Unix()
+	if now-entry.CreatedAt > IdempotencyTTL {
+		return "", false
+	}
+
+	return entry.InvocationID, true
+}
+
+// recordIdempotency records a successful request for idempotency.
+func (s *Server) recordIdempotency(repoID, clientRequestID, invocationID string) {
+	if clientRequestID == "" {
+		return
+	}
+
+	s.idempotencyMu.Lock()
+	defer s.idempotencyMu.Unlock()
+
+	key := idempotencyKey(repoID, clientRequestID)
+	s.idempotency[key] = IdempotencyEntry{
+		InvocationID: invocationID,
+		CreatedAt:    s.Clock().Unix(),
+	}
+
+	// Opportunistically clean up expired entries (every 100 requests or so)
+	if len(s.idempotency) > 100 {
+		s.cleanupExpiredIdempotency()
+	}
+}
+
+// cleanupExpiredIdempotency removes expired entries from the idempotency map.
+// Must be called with idempotencyMu held.
+func (s *Server) cleanupExpiredIdempotency() {
+	now := s.Clock().Unix()
+	for key, entry := range s.idempotency {
+		if now-entry.CreatedAt > IdempotencyTTL {
+			delete(s.idempotency, key)
 		}
 	}
 }
