@@ -32,7 +32,8 @@ legacy commands (v1):
 
 v2 commands (slice 8):
   worktree    manage integration worktrees
-  agent       manage agent invocations (sandbox creation implemented)
+  agent       manage agent invocations (headed + headless via daemon)
+  daemon      manage the agency daemon (headless supervision)
   watch       interactive TUI for monitoring (not yet implemented)
 ```
 
@@ -190,32 +191,48 @@ starts a new agent invocation with its sandbox worktree.
 
 **usage:**
 ```bash
-agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached]
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--runner-arg <arg>]...
 ```
 
 **flags:**
 - `--worktree`: integration worktree to run against (required)
 - `--runner`: runner to use: `claude` or `codex` (default: `claude`)
-- `--headless`: run in headless mode (non-interactive, execution coming in PR-04)
-- `--name`: optional human-readable label for the invocation
-- `--detached`: start but do not attach (headed mode only)
+- `--headless`: run in headless mode (non-interactive, via daemon)
+- `--name`: optional human-readable label for the invocation (unique among active invocations)
+- `--detached`: start but do not attach (headed mode only; no-op for headless)
+- `--prompt`: prompt string for headless mode
+- `--prompt-file`: path to file containing prompt for headless mode
+- `--runner-arg`: additional argument to pass to the runner (repeatable)
 
 **behavior (headed mode, default):**
 1. resolves integration worktree
 2. verifies `INTEGRATION_MARKER` exists (target must be integration worktree)
-3. generates invocation_id
-4. creates sandbox directory
-5. captures base_commit from integration branch
-6. creates sandbox worktree via `git worktree add -b agency/sandbox-<invocation_id>`
-7. writes `.agency/SANDBOX_MARKER`
-8. writes invocation `meta.json` with `status=starting`
-9. preflight check: verifies no tmux session with this name exists
-10. creates tmux session `agency_<invocation_id>` with CWD = sandbox tree, runs runner command directly
-11. updates invocation meta with `status=running`, `tmux_session` set
-12. attaches to tmux session (unless `--detached`)
+3. validates invocation name uniqueness if provided
+4. generates invocation_id
+5. creates sandbox directory
+6. captures base_commit from integration branch
+7. creates sandbox worktree via `git worktree add -b agency/sandbox-<invocation_id>`
+8. writes `.agency/SANDBOX_MARKER`
+9. writes invocation `meta.json` with `status=starting`
+10. preflight check: verifies no tmux session with this name exists
+11. creates tmux session `agency_<invocation_id>` with CWD = sandbox tree, runs runner command directly
+12. updates invocation meta with `status=running`, `tmux_session` set
+13. attaches to tmux session (unless `--detached`)
 
 **behavior (headless mode):**
-sandbox creation only; full runner execution is implemented in PR-04.
+1. resolves integration worktree
+2. verifies `INTEGRATION_MARKER` exists
+3. validates invocation name uniqueness if provided
+4. generates invocation_id
+5. creates sandbox directory
+6. captures base_commit from integration branch
+7. creates sandbox worktree
+8. writes invocation `meta.json` with `status=starting`, `mode=headless`
+9. resolves prompt from `--prompt` or `--prompt-file` (required)
+10. ensures daemon is running (autostarts if needed)
+11. sends start request to daemon via IPC
+12. daemon validates sandbox markers, spawns runner process, streams logs
+13. returns immediately (headless is detached by default)
 
 **output (headed):**
 ```
@@ -327,20 +344,25 @@ agency agent attach <invocation_id|prefix>
 
 ### `agency agent stop`
 
-sends a graceful stop signal (Ctrl-C) to a running headed invocation.
+sends a graceful stop signal (Ctrl-C / SIGINT) to a running invocation.
 
 **usage:**
 ```bash
-agency agent stop <invocation_id|prefix>
+agency agent stop <invocation_id|name|prefix>
 ```
 
 **arguments:**
-- `invocation_id|prefix`: invocation identifier (id or unique prefix)
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
-**behavior:**
+**behavior (headed mode):**
 1. resolves invocation
-2. verifies invocation mode is `headed` (headless stop coming in PR-04)
-3. sends C-c to the tmux session via `tmux send-keys`
+2. sends C-c to the tmux session via `tmux send-keys`
+3. updates invocation meta: sets `stop_requested_at` and `flags.needs_attention=true`
+
+**behavior (headless mode):**
+1. resolves invocation
+2. sends stop request to daemon via IPC
+3. daemon sends SIGINT to the runner's process group
 4. updates invocation meta: sets `stop_requested_at` and `flags.needs_attention=true`
 
 **note:** this does not guarantee termination — the runner may ignore the signal.
@@ -354,8 +376,8 @@ Note: The runner may ignore the interrupt. Use 'agency agent kill' to force term
 
 **error codes:**
 - `E_INVOCATION_NOT_FOUND` — invocation not found
-- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
-- `E_INVOCATION_INVALID_MODE` — invocation is headless; stop not yet supported
+- `E_INVOCATION_ID_AMBIGUOUS` — identifier matches multiple invocations
+- `E_DAEMON_NOT_RUNNING` — daemon not running for headless invocation (and no PGID available)
 
 ### `agency agent kill`
 
@@ -363,19 +385,24 @@ forcefully terminates a running invocation.
 
 **usage:**
 ```bash
-agency agent kill <invocation_id|prefix>
+agency agent kill <invocation_id|name|prefix>
 ```
 
 **arguments:**
-- `invocation_id|prefix`: invocation identifier (id or unique prefix)
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
-**behavior:**
+**behavior (headed mode):**
 1. resolves invocation
-2. verifies invocation mode is `headed` (headless kill coming in PR-04)
-3. kills the tmux session via `tmux kill-session`
+2. kills the tmux session via `tmux kill-session`
+3. updates invocation meta: `status=failed`, `exit_reason=killed`, `finished_at=now`
+
+**behavior (headless mode):**
+1. resolves invocation
+2. sends kill request to daemon via IPC
+3. daemon sends SIGKILL to the runner's process group
 4. updates invocation meta: `status=failed`, `exit_reason=killed`, `finished_at=now`
 
-**note:** sandbox is preserved for inspection. `tmux_session` is kept as historical value.
+**note:** sandbox is preserved for inspection. The invocation can be resolved by name (if named) or ID/prefix.
 
 **output:**
 ```
@@ -385,8 +412,95 @@ Sandbox preserved at: /path/to/sandboxes/20260131120500-b7c9/tree
 
 **error codes:**
 - `E_INVOCATION_NOT_FOUND` — invocation not found
-- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
-- `E_INVOCATION_INVALID_MODE` — invocation is headless; kill not yet supported
+- `E_INVOCATION_ID_AMBIGUOUS` — identifier matches multiple invocations
+
+## `agency daemon` (v2)
+
+manages the agency daemon — the supervisor for headless agent invocations.
+
+### `agency daemon start`
+
+starts the daemon in the foreground.
+
+**usage:**
+```bash
+agency daemon start
+```
+
+**behavior:**
+1. checks for existing daemon via PID file
+2. if daemon already running: prints message and exits 0 (idempotent)
+3. cleans up any stale socket file
+4. creates Unix socket at `${AGENCY_DATA_DIR}/agencyd.sock` (permissions 0600)
+5. writes PID file to `${AGENCY_DATA_DIR}/agencyd.pid`
+6. runs recovery scan (marks orphaned invocations)
+7. runs HTTP server loop until SIGINT/SIGTERM
+8. on shutdown: flushes pending meta writes, removes socket and PID file
+
+**output:**
+```
+Agency daemon started (pid 12345)
+Socket: /path/to/agencyd.sock
+Instance ID: <uuid>
+```
+
+### `agency daemon status`
+
+shows daemon status.
+
+**usage:**
+```bash
+agency daemon status [--json]
+```
+
+**flags:**
+- `--json`: output as JSON
+
+**behavior:**
+1. connects to daemon socket
+2. calls `GET /health`
+3. displays health information
+
+**output:**
+```
+Daemon is running
+  PID:           12345
+  Instance ID:   <uuid>
+  API Version:   1
+  Build Version: v0.1.0
+  Uptime:        3600s
+```
+
+**error codes:**
+- `E_DAEMON_NOT_RUNNING` — daemon is not running
+
+### `agency daemon stop`
+
+stops the daemon.
+
+**usage:**
+```bash
+agency daemon stop [--force]
+```
+
+**flags:**
+- `--force`: terminate all active invocations before stopping
+
+**behavior:**
+1. attempts RPC shutdown via `POST /shutdown`
+2. if active invocations exist without `--force`: returns `E_DAEMON_BUSY` with list
+3. if `--force`: daemon terminates all invocations (SIGINT → wait 5s → SIGKILL)
+4. if RPC fails: falls back to PID file, sends SIGTERM (wait 5s → SIGKILL)
+5. cleans up stale PID and socket files
+
+**output:**
+```
+Daemon shutdown initiated
+```
+
+**error codes:**
+- `E_DAEMON_NOT_RUNNING` — daemon is not running
+- `E_DAEMON_BUSY` — active invocations exist (use `--force` to override)
 
 ## `agency init`
 

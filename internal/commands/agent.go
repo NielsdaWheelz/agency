@@ -1,5 +1,5 @@
 // Package commands implements agency CLI commands.
-// This file implements agent commands (Slice 8 PR-02/03).
+// This file implements agent commands (Slice 8 PR-02/03/04).
 package commands
 
 import (
@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -39,6 +41,15 @@ type AgentStartOpts struct {
 
 	// Detached starts but does not attach (headed mode only).
 	Detached bool
+
+	// Prompt is the prompt string for headless mode (either Prompt or PromptFile).
+	Prompt string
+
+	// PromptFile is the path to a file containing the prompt for headless mode.
+	PromptFile string
+
+	// RunnerArgs are additional arguments to pass to the runner.
+	RunnerArgs []string
 
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
@@ -242,21 +253,111 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return nil
 	}
 
-	// Headless mode - sandbox created, runner execution in PR-04
-	_, _ = fmt.Fprintf(stdout, "Created agent invocation\n")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id: %s\n", result.InvocationID)
-	if opts.InvocationName != "" {
-		_, _ = fmt.Fprintf(stdout, "  name:          %s\n", opts.InvocationName)
+	// Headless mode - run via daemon
+	// Resolve prompt
+	prompt := opts.Prompt
+	if prompt == "" && opts.PromptFile != "" {
+		data, err := os.ReadFile(opts.PromptFile)
+		if err != nil {
+			// Mark invocation as failed
+			_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "start_failed"
+				meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			})
+			return errors.WrapWithDetails(
+				errors.EPromptRequired,
+				"failed to read prompt file",
+				err,
+				map[string]string{"path": opts.PromptFile},
+			)
+		}
+		prompt = string(data)
 	}
-	_, _ = fmt.Fprintf(stdout, "  runner:        %s\n", runner)
-	_, _ = fmt.Fprintf(stdout, "  mode:          %s\n", mode)
-	_, _ = fmt.Fprintf(stdout, "  worktree:      %s (%s)\n", wtRecord.Meta.Name, wtRecord.WorktreeID)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_path:  %s\n", result.SandboxPath)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_branch: %s\n", result.SandboxBranch)
-	_, _ = fmt.Fprintf(stdout, "  base_commit:   %s\n", result.BaseCommit[:12])
 
-	_, _ = fmt.Fprintf(stderr, "\nNote: Headless runner execution not yet implemented (PR-04).\n")
-	_, _ = fmt.Fprintf(stderr, "Use 'agency agent show %s' to view invocation details.\n", result.InvocationID[:8])
+	if prompt == "" {
+		// Mark invocation as failed
+		_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFailed
+			meta.ExitReason = "start_failed"
+			meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		})
+		return errors.New(errors.EPromptRequired, "headless mode requires a prompt (use --prompt or --prompt-file)")
+	}
+
+	// Ensure daemon is running
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		// Mark invocation as failed
+		_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFailed
+			meta.ExitReason = "start_failed"
+			meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		})
+		return err
+	}
+
+	// Send start request to daemon
+	daemonReq := &daemon.StartHeadlessRequest{
+		RepoID:       repoIdentity.RepoID,
+		InvocationID: result.InvocationID,
+		Runner:       runner,
+		SandboxPath:  result.SandboxPath,
+		Prompt:       prompt,
+		RunnerArgs:   opts.RunnerArgs,
+	}
+
+	resp, err := client.StartHeadless(ctx, daemonReq)
+	if err != nil {
+		// Mark invocation as failed
+		_ = st.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFailed
+			meta.ExitReason = "start_failed"
+			meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		})
+		return err
+	}
+
+	if !resp.OK {
+		return errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": resp.Hint},
+		)
+	}
+
+	// Output result
+	_, _ = fmt.Fprintf(stdout, "Started headless agent invocation\n")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", result.InvocationID)
+	if opts.InvocationName != "" {
+		_, _ = fmt.Fprintf(stdout, "  name:           %s\n", opts.InvocationName)
+	}
+	_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
+	_, _ = fmt.Fprintf(stdout, "  mode:           %s\n", mode)
+	_, _ = fmt.Fprintf(stdout, "  worktree:       %s (%s)\n", wtRecord.Meta.Name, wtRecord.WorktreeID)
+	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", result.SandboxPath)
+	_, _ = fmt.Fprintf(stdout, "  sandbox_branch: %s\n", result.SandboxBranch)
+	_, _ = fmt.Fprintf(stdout, "  base_commit:    %s\n", result.BaseCommit[:12])
+	_, _ = fmt.Fprintf(stdout, "  pid:            %d\n", resp.PID)
+
+	if resp.LogPaths != nil {
+		_, _ = fmt.Fprintf(stdout, "  logs:\n")
+		_, _ = fmt.Fprintf(stdout, "    raw:    %s\n", resp.LogPaths.Raw)
+		_, _ = fmt.Fprintf(stdout, "    stderr: %s\n", resp.LogPaths.Stderr)
+	}
+
+	if resp.AlreadyRunning {
+		_, _ = fmt.Fprintf(stdout, "\nNote: Invocation was already running (idempotent start).\n")
+	}
+	if resp.Orphaned {
+		_, _ = fmt.Fprintf(stdout, "\nWarning: Process is running but was orphaned (daemon restart). Log streaming may be incomplete.\n")
+	}
+
+	_, _ = fmt.Fprintf(stdout, "\nUse 'agency agent show %s' to view status.\n", result.InvocationID[:8])
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent stop %s' to stop gracefully.\n", result.InvocationID[:8])
 
 	return nil
 }
@@ -666,10 +767,10 @@ type AgentStopOpts struct {
 	TmuxClient tmux.Client
 }
 
-// AgentStop sends a graceful stop signal (Ctrl-C) to a running headed invocation.
+// AgentStop sends a graceful stop signal (Ctrl-C) to a running invocation.
 // This does not guarantee termination - the runner may ignore the signal.
 // For headed mode: sends C-c via tmux send-keys.
-// For headless mode: not yet implemented (PR-04).
+// For headless mode: sends SIGINT via daemon.
 func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStopOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -708,20 +809,40 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		)
 	}
 
-	// Only headed mode is supported for now
-	if record.Meta.Mode != store.RunnerModeHeaded {
-		return errors.NewWithDetails(
-			errors.EInvocationInvalidMode,
-			"stop is not yet supported for headless invocations",
-			map[string]string{
-				"invocation_id": record.InvocationID,
-				"mode":          string(record.Meta.Mode),
-				"hint":          "headless stop will be implemented in PR-04",
-			},
-		)
+	// Handle headless mode via daemon
+	if record.Meta.Mode == store.RunnerModeHeadless {
+		socketPath := st.DaemonSocketPath()
+		client := daemonclient.NewClient(socketPath)
+
+		if !client.IsRunning(ctx) {
+			// Daemon not running - check if process is alive and try to signal directly via PGID
+			if record.Meta.PGID != nil {
+				_, _ = fmt.Fprintf(stderr, "warning: daemon not running, attempting direct signal...\n")
+				// This is a fallback - we can still signal the process group
+			} else {
+				return errors.New(errors.EDaemonNotRunning, "daemon is not running and no PGID available for direct signaling")
+			}
+		}
+
+		resp, err := client.Stop(ctx, repoIdentity.RepoID, record.InvocationID)
+		if err != nil {
+			return err
+		}
+
+		if !resp.OK {
+			return errors.NewWithDetails(
+				errors.Code(resp.ErrorCode),
+				resp.Message,
+				map[string]string{"hint": resp.Hint},
+			)
+		}
+
+		_, _ = fmt.Fprintf(stdout, "Stop signal sent to headless invocation %s\n", record.InvocationID)
+		_, _ = fmt.Fprintf(stdout, "Note: The runner may ignore the interrupt. Use 'agency agent kill' to force termination.\n")
+		return nil
 	}
 
-	// Get tmux client
+	// Headed mode - send C-c via tmux
 	tmuxClient := opts.TmuxClient
 	if tmuxClient == nil {
 		tmuxClient = tmux.NewExecClient(cr)
@@ -769,7 +890,7 @@ type AgentKillOpts struct {
 
 // AgentKill forcefully terminates a running invocation.
 // For headed mode: kills the tmux session.
-// For headless mode: not yet implemented (PR-04).
+// For headless mode: sends SIGKILL via daemon.
 func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentKillOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -808,20 +929,29 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		)
 	}
 
-	// Only headed mode is supported for now
-	if record.Meta.Mode != store.RunnerModeHeaded {
-		return errors.NewWithDetails(
-			errors.EInvocationInvalidMode,
-			"kill is not yet supported for headless invocations",
-			map[string]string{
-				"invocation_id": record.InvocationID,
-				"mode":          string(record.Meta.Mode),
-				"hint":          "headless kill will be implemented in PR-04",
-			},
-		)
+	// Handle headless mode via daemon
+	if record.Meta.Mode == store.RunnerModeHeadless {
+		socketPath := st.DaemonSocketPath()
+		client := daemonclient.NewClient(socketPath)
+
+		resp, err := client.Kill(ctx, repoIdentity.RepoID, record.InvocationID)
+		if err != nil {
+			// If daemon not running, the kill endpoint will still update meta
+			_, _ = fmt.Fprintf(stderr, "warning: daemon communication failed: %v\n", err)
+		} else if !resp.OK {
+			return errors.NewWithDetails(
+				errors.Code(resp.ErrorCode),
+				resp.Message,
+				map[string]string{"hint": resp.Hint},
+			)
+		}
+
+		_, _ = fmt.Fprintf(stdout, "Killed headless invocation %s\n", record.InvocationID)
+		_, _ = fmt.Fprintf(stdout, "Sandbox preserved at: %s\n", record.Meta.SandboxPath)
+		return nil
 	}
 
-	// Get tmux client
+	// Headed mode - kill tmux session
 	tmuxClient := opts.TmuxClient
 	if tmuxClient == nil {
 		tmuxClient = tmux.NewExecClient(cr)

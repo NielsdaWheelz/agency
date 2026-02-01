@@ -167,8 +167,12 @@ agency agent start --worktree my-feature
 # Start in detached mode (don't attach immediately)
 agency agent start --worktree my-feature --detached
 
-# Start a headless agent (non-interactive, coming in PR-04)
-agency agent start --worktree my-feature --headless
+# Start a headless agent (non-interactive, via daemon)
+agency agent start --worktree my-feature --headless --prompt "Fix the bug in auth.go"
+agency agent start --worktree my-feature --headless --prompt-file task.md
+
+# Give invocations human-readable names
+agency agent start --worktree my-feature --name auth-fix
 
 # List agent invocations
 agency agent ls
@@ -176,11 +180,12 @@ agency agent ls --worktree my-feature  # filter by worktree
 
 # Show invocation details
 agency agent show 20260131
+agency agent show auth-fix  # resolve by name
 
 # Attach to a running headed invocation
 agency agent attach 20260131
 
-# Stop an invocation gracefully (sends Ctrl-C)
+# Stop an invocation gracefully (sends Ctrl-C / SIGINT)
 agency agent stop 20260131
 
 # Kill an invocation forcefully
@@ -191,10 +196,34 @@ Key concepts:
 - **Sandbox**: Isolated worktree per invocation (runners never touch integration trees)
 - **Invocation**: Single agent execution with its own logs, checkpoints, and outcomes
 - **Headed mode**: Interactive tmux session (default) - attach with `agent attach`
-- **Headless mode**: Non-interactive subprocess execution (coming in PR-04)
+- **Headless mode**: Non-interactive subprocess execution via daemon - prompts required
+- **Invocation names**: Optional human-readable labels, unique among active invocations
 - **Landing**: Apply sandbox changes back to integration branch (coming in PR-07)
 
-See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including runners, checkpoints, and the watch TUI.
+## Daemon (v2)
+
+The agency daemon supervises headless invocations, providing streaming log capture and reliable process lifecycle management.
+
+```bash
+# Start daemon (runs in foreground, Ctrl-C to stop)
+agency daemon start
+
+# Check daemon status
+agency daemon status
+agency daemon status --json
+
+# Stop daemon (refuses if active invocations; use --force to terminate all)
+agency daemon stop
+agency daemon stop --force
+```
+
+The daemon:
+- Automatically starts when a headless invocation is created
+- Captures stdout/stderr to `raw.jsonl` and `stderr.log` in the sandbox logs directory
+- Handles graceful stop (SIGINT) and forceful kill (SIGKILL) via process groups
+- Detects orphaned invocations on restart
+
+See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including checkpoints and the watch TUI.
 
 ## cli framework
 

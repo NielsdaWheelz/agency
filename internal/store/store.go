@@ -128,6 +128,12 @@ func (s *Store) InvocationEventsPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationDir(repoID, invocationID), "events.jsonl")
 }
 
+// InvocationPromptPath returns the path to an invocation's prompt.txt.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/prompt.txt
+func (s *Store) InvocationPromptPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationDir(repoID, invocationID), "prompt.txt")
+}
+
 // ----- V2 Sandbox paths (Slice 8 PR-02) -----
 
 // SandboxesDir returns the sandboxes directory for a repo.
@@ -158,4 +164,36 @@ func (s *Store) SandboxLogsDir(repoID, invocationID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/checkpoints.json
 func (s *Store) SandboxCheckpointsPath(repoID, invocationID string) string {
 	return filepath.Join(s.SandboxDir(repoID, invocationID), "checkpoints.json")
+}
+
+// SandboxRawLogPath returns the path to a sandbox's raw.jsonl log file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/raw.jsonl
+func (s *Store) SandboxRawLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "raw.jsonl")
+}
+
+// SandboxStderrLogPath returns the path to a sandbox's stderr.log file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/stderr.log
+func (s *Store) SandboxStderrLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "stderr.log")
+}
+
+// ----- Daemon state paths -----
+
+// DaemonPidPath returns the path to the daemon's pid file.
+// Format: ${AGENCY_DATA_DIR}/agencyd.pid
+func (s *Store) DaemonPidPath() string {
+	return filepath.Join(s.DataDir, "agencyd.pid")
+}
+
+// DaemonSocketPath returns the path to the daemon's Unix socket.
+// Format: ${AGENCY_DATA_DIR}/agencyd.sock
+func (s *Store) DaemonSocketPath() string {
+	return filepath.Join(s.DataDir, "agencyd.sock")
+}
+
+// DaemonLogPath returns the path to the daemon's log file.
+// Format: ${AGENCY_DATA_DIR}/agencyd.log
+func (s *Store) DaemonLogPath() string {
+	return filepath.Join(s.DataDir, "agencyd.log")
 }

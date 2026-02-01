@@ -83,14 +83,15 @@ type CreateResult struct {
 //
 // Operations (in order):
 //  1. Generate invocation_id
-//  2. Verify integration marker exists (safety check)
-//  3. Compute sandbox paths and validate safety
-//  4. Create invocation directory (exclusive)
-//  5. Create sandbox directory
-//  6. Capture base_commit
-//  7. Run git worktree add for sandbox
-//  8. Write SANDBOX_MARKER
-//  9. Write invocation meta.json
+//  2. Validate invocation name uniqueness (if name provided)
+//  3. Verify integration marker exists (safety check)
+//  4. Compute sandbox paths and validate safety
+//  5. Create invocation directory (exclusive)
+//  6. Create sandbox directory
+//  7. Capture base_commit
+//  8. Run git worktree add for sandbox
+//  9. Write SANDBOX_MARKER
+//  10. Write invocation meta.json
 //
 // On failure after any step, cleanup is performed.
 func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, error) {
@@ -100,7 +101,28 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		return nil, errors.Wrap(errors.EInternal, "failed to generate invocation_id", err)
 	}
 
-	// 2. Verify integration marker exists
+	// 2. Validate invocation name uniqueness (if name provided)
+	if opts.InvocationName != "" {
+		// Validate name format
+		if err := core.ValidateName(opts.InvocationName); err != nil {
+			return nil, errors.WrapWithDetails(
+				errors.EInvalidName,
+				"invalid invocation name",
+				err,
+				map[string]string{
+					"name": opts.InvocationName,
+					"hint": "names must be 2-40 chars, lowercase alphanumeric + hyphens",
+				},
+			)
+		}
+
+		// Check uniqueness among active invocations
+		if err := s.checkNameUniqueness(opts.RepoID, opts.InvocationName); err != nil {
+			return nil, err
+		}
+	}
+
+	// 3. Verify integration marker exists
 	integrationTreePath := opts.IntegrationWorktreeMeta.TreePath
 	if !integrationworktree.HasIntegrationMarker(integrationTreePath) {
 		return nil, errors.NewWithDetails(
@@ -114,7 +136,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		)
 	}
 
-	// 3. Compute sandbox paths
+	// 4. Compute sandbox paths
 	sandboxTreePath := s.Store.SandboxTreePath(opts.RepoID, invocationID)
 	sandboxBranch := "agency/sandbox-" + invocationID
 
@@ -426,4 +448,44 @@ func HasSandboxMarker(path string) bool {
 	markerPath := filepath.Join(path, ".agency", SandboxMarkerFileName)
 	_, err := os.Stat(markerPath)
 	return err == nil
+}
+
+// checkNameUniqueness checks if an invocation name is already used by an active invocation.
+// Returns E_INVOCATION_NAME_EXISTS if the name is taken.
+func (s *Service) checkNameUniqueness(repoID, name string) error {
+	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to scan invocations for name check", err)
+	}
+
+	for _, r := range records {
+		// Skip broken invocations
+		if r.Broken || r.Meta == nil {
+			continue
+		}
+
+		// Skip terminal invocations (names are released when invocation reaches terminal state)
+		if r.Meta.Status == store.InvocationStatusFinished || r.Meta.Status == store.InvocationStatusFailed {
+			continue
+		}
+		if r.Meta.LandingStatus == store.LandingStatusLanded || r.Meta.LandingStatus == store.LandingStatusDiscarded {
+			continue
+		}
+
+		// Check if name matches
+		if r.Meta.InvocationName == name {
+			return errors.NewWithDetails(
+				errors.EInvocationNameExists,
+				"invocation name '"+name+"' is already used by an active invocation",
+				map[string]string{
+					"name":                name,
+					"existing_invocation": r.InvocationID,
+					"existing_status":     string(r.Meta.Status),
+					"hint":                "use a different name or wait for the existing invocation to complete",
+				},
+			)
+		}
+	}
+
+	return nil
 }

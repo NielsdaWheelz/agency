@@ -129,6 +129,21 @@ const (
 	EInvocationNotRunning   Code = "E_INVOCATION_NOT_RUNNING"   // invocation is not in running state
 	EInvocationStartFailed  Code = "E_INVOCATION_START_FAILED"  // runner failed to start (tmux session creation failed)
 	EInvocationAlreadyEnded Code = "E_INVOCATION_ALREADY_ENDED" // invocation has already finished/failed
+
+	// Slice 8 daemon error codes (PR-04)
+	EDaemonNotRunning        Code = "E_DAEMON_NOT_RUNNING"        // daemon is not running (socket missing, /health fails)
+	EDaemonAlreadyRunning    Code = "E_DAEMON_ALREADY_RUNNING"    // another daemon instance is already running on this socket
+	EDaemonBusy              Code = "E_DAEMON_BUSY"               // active headless invocations exist; use --force to override
+	EDaemonStartFailed       Code = "E_DAEMON_START_FAILED"       // daemon failed to start
+	EDaemonConnectionFailed  Code = "E_DAEMON_CONNECTION_FAILED"  // failed to connect to daemon
+	ESandboxValidationFailed Code = "E_SANDBOX_VALIDATION_FAILED" // sandbox marker missing, integration marker present, or path mismatch
+	EInvocationTerminal      Code = "E_INVOCATION_TERMINAL"       // invocation already in terminal state (finished/failed)
+	EInvocationOrphaned      Code = "E_INVOCATION_ORPHANED"       // PID dead but was previously running; process exited without daemon observing
+	ERunnerNotFound          Code = "E_RUNNER_NOT_FOUND"          // runner binary not found on PATH or in config
+	ERunnerStartFailed       Code = "E_RUNNER_START_FAILED"       // runner process failed to start (exec error)
+	EInvocationNameExists    Code = "E_INVOCATION_NAME_EXISTS"    // invocation name already used by an active invocation
+	ELifecycleOwnerMismatch  Code = "E_LIFECYCLE_OWNER_MISMATCH"  // attempt to modify invocation owned by another entity
+	EPromptRequired          Code = "E_PROMPT_REQUIRED"           // headless invocation requires a prompt
 )
 
 // AgencyError is the standard error type for agency errors.

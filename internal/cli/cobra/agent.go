@@ -59,6 +59,9 @@ func newAgentStartCmd() *cobra.Command {
 	var headless bool
 	var name string
 	var detached bool
+	var prompt string
+	var promptFile string
+	var runnerArgs []string
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -71,14 +74,16 @@ sandbox worktree derived from the integration branch.
 For headed mode (default): creates sandbox, launches tmux session, and attaches.
 Use --detached to start without attaching.
 
-For headless mode: creates sandbox (full execution coming in PR-04).
+For headless mode: creates sandbox and runs the runner via the daemon.
+Headless mode requires a prompt (--prompt or --prompt-file).
 
 Example:
   agency agent start --worktree my-feature
   agency agent start --worktree my-feature --runner claude
   agency agent start --worktree my-feature --detached
   agency agent start --worktree my-feature --name arch-agent
-  agency agent start --worktree my-feature --headless`,
+  agency agent start --worktree my-feature --headless --prompt "Fix the bug"
+  agency agent start --worktree my-feature --headless --prompt-file task.md`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if worktree == "" {
@@ -100,6 +105,9 @@ Example:
 				Headless:       headless,
 				InvocationName: name,
 				Detached:       detached,
+				Prompt:         prompt,
+				PromptFile:     promptFile,
+				RunnerArgs:     runnerArgs,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -109,6 +117,9 @@ Example:
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional name for the invocation")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Start but do not attach (headed mode only)")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
+	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")
 
 	return cmd
 }
