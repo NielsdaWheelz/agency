@@ -16,12 +16,14 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
@@ -220,6 +222,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	// Open log files
 	rawLogPath := s.Store.SandboxRawLogPath(req.RepoID, req.InvocationID)
 	stderrLogPath := s.Store.SandboxStderrLogPath(req.RepoID, req.InvocationID)
+	streamLogPath := s.Store.SandboxStreamLogPath(req.RepoID, req.InvocationID)
 
 	rawFile, err := os.OpenFile(rawLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -233,6 +236,16 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		_ = rawFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to open stderr log file: "+err.Error(), "")
+		return
+	}
+
+	// PR-07: Open stream.jsonl for normalized events
+	streamFile, err := os.OpenFile(streamLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		_ = rawFile.Close()
+		_ = stderrFile.Close()
+		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
+		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to open stream log file: "+err.Error(), "")
 		return
 	}
 
@@ -254,6 +267,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	if err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stdout pipe: "+err.Error(), "")
 		return
@@ -263,6 +277,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	if err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stderr pipe: "+err.Error(), "")
 		return
@@ -272,6 +287,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	if err := cmd.Start(); err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to start runner: "+err.Error(), "")
 		return
@@ -280,15 +296,21 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	pid := cmd.Process.Pid
 	pgid := pid // With Setpgid=true, the child becomes its own process group leader
 
+	// PR-07: Create stream parser for normalized events
+	parser := stream.NewParser(req.InvocationID, req.Runner, s.Clock)
+
 	// Create supervised process record
 	proc := &SupervisedProcess{
-		InvocationID: req.InvocationID,
-		RepoID:       req.RepoID,
-		PID:          pid,
-		PGID:         pgid,
-		RawLogFile:   rawLogPath,
-		StderrFile:   stderrLogPath,
-		done:         make(chan struct{}),
+		InvocationID:  req.InvocationID,
+		RepoID:        req.RepoID,
+		PID:           pid,
+		PGID:          pgid,
+		RawLogFile:    rawLogPath,
+		StderrFile:    stderrLogPath,
+		StreamLogFile: streamLogPath,
+		Runner:        req.Runner,
+		Parser:        parser,
+		done:          make(chan struct{}),
 	}
 
 	// Register the process
@@ -322,15 +344,17 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	// Start goroutines to stream output
-	go s.streamOutput(proc, stdoutPipe, rawFile)
+	// PR-07: Start goroutine to stream and parse stdout
+	go s.streamAndParseOutput(proc, stdoutPipe, rawFile, streamFile)
+	// Stderr is still streamed without parsing
 	go s.streamOutput(proc, stderrPipe, stderrFile)
 
 	// Start goroutine to wait for process exit
-	go s.waitForExit(proc, cmd, rawFile, stderrFile)
+	go s.waitForExit(proc, cmd, rawFile, stderrFile, streamFile)
 
-	// Start goroutine to periodically flush lastOutputAt
+	// Start goroutine to periodically flush lastOutputAt and semantic status
 	go s.runOutputFlushLoop(proc)
+	go s.runSemanticStatusFlushLoop(proc)
 
 	// Return success
 	resp := StartHeadlessResponse{
@@ -549,13 +573,23 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 }
 
 // waitForExit waits for the process to exit and updates meta.
-func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, stderrFile *os.File) {
+func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, stderrFile, streamFile *os.File) {
 	defer func() { _ = rawFile.Close() }()
 	defer func() { _ = stderrFile.Close() }()
+	defer func() {
+		if streamFile != nil {
+			_ = streamFile.Close()
+		}
+	}()
 	defer close(proc.done)
 
 	// Wait for process to exit
 	err := cmd.Wait()
+
+	// Stop the parser
+	if proc.Parser != nil {
+		proc.Parser.Stop()
+	}
 
 	// Determine exit code and status
 	exitCode := 0
@@ -575,6 +609,22 @@ func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, 
 		status = store.InvocationStatusFailed
 	}
 
+	// PR-07: Get final semantic status
+	var semanticStatus *string
+	var semanticStatusUpdatedAt string
+	if proc.Parser != nil {
+		if s := proc.Parser.GetSemanticStatus(); s != nil {
+			str := string(*s)
+			semanticStatus = &str
+			semanticStatusUpdatedAt = proc.Parser.GetSemanticStatusUpdatedAt().UTC().Format(time.RFC3339)
+		}
+		// Clear semantic status if invocation failed
+		if status == store.InvocationStatusFailed {
+			semanticStatus = nil
+			semanticStatusUpdatedAt = ""
+		}
+	}
+
 	// Update invocation meta
 	now := s.Clock().UTC().Format(time.RFC3339)
 	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
@@ -584,6 +634,15 @@ func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, 
 		meta.FinishedAt = now
 		meta.PID = nil
 		meta.LifecycleOwner = ""
+		// PR-07: Persist final semantic status
+		if semanticStatus != nil {
+			s := runnerstatus.Status(*semanticStatus)
+			meta.SemanticStatus = &s
+			meta.SemanticStatusUpdatedAt = semanticStatusUpdatedAt
+		} else {
+			meta.SemanticStatus = nil
+			meta.SemanticStatusUpdatedAt = ""
+		}
 	})
 
 	// Remove from supervised processes
@@ -1231,6 +1290,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	// Open log files
 	rawLogPath := s.Store.SandboxRawLogPath(repoID, result.InvocationID)
 	stderrLogPath := s.Store.SandboxStderrLogPath(repoID, result.InvocationID)
+	streamLogPath := s.Store.SandboxStreamLogPath(repoID, result.InvocationID)
 
 	rawFile, err := os.OpenFile(rawLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -1241,6 +1301,14 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	if err != nil {
 		_ = rawFile.Close()
 		return 0, 0, fmt.Errorf("failed to open stderr log file: %w", err)
+	}
+
+	// PR-07: Open stream.jsonl for normalized events
+	streamFile, err := os.OpenFile(streamLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		_ = rawFile.Close()
+		_ = stderrFile.Close()
+		return 0, 0, fmt.Errorf("failed to open stream log file: %w", err)
 	}
 
 	// Create the command
@@ -1261,6 +1329,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	if err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		return 0, 0, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
@@ -1268,6 +1337,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	if err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		return 0, 0, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
@@ -1275,11 +1345,15 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	if err := cmd.Start(); err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
 	}
 
 	pid := cmd.Process.Pid
 	pgid := pid
+
+	// PR-07: Create stream parser for normalized events
+	parser := stream.NewParser(result.InvocationID, req.Runner, s.Clock)
 
 	// Create supervised process record
 	proc := &SupervisedProcess{
@@ -1290,6 +1364,9 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		PGID:                  pgid,
 		RawLogFile:            rawLogPath,
 		StderrFile:            stderrLogPath,
+		StreamLogFile:         streamLogPath,
+		Runner:                req.Runner,
+		Parser:                parser,
 		done:                  make(chan struct{}),
 	}
 
@@ -1298,15 +1375,17 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	s.processes[result.InvocationID] = proc
 	s.mu.Unlock()
 
-	// Start goroutines to stream output
-	go s.streamOutput(proc, stdoutPipe, rawFile)
+	// PR-07: Start goroutine to stream and parse stdout
+	go s.streamAndParseOutput(proc, stdoutPipe, rawFile, streamFile)
+	// Stderr is still streamed without parsing
 	go s.streamOutput(proc, stderrPipe, stderrFile)
 
 	// Start goroutine to wait for process exit
-	go s.waitForExitWithFailureReason(proc, cmd, rawFile, stderrFile)
+	go s.waitForExitWithFailureReason(proc, cmd, rawFile, stderrFile, streamFile)
 
-	// Start goroutine to periodically flush lastOutputAt
+	// Start goroutines to periodically flush lastOutputAt and semantic status
 	go s.runOutputFlushLoop(proc)
+	go s.runSemanticStatusFlushLoop(proc)
 
 	return pid, pgid, nil
 }
@@ -1359,13 +1438,23 @@ func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, res
 }
 
 // waitForExitWithFailureReason waits for the process to exit and updates meta with failure_reason.
-func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, stderrFile *os.File) {
+func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, stderrFile, streamFile *os.File) {
 	defer func() { _ = rawFile.Close() }()
 	defer func() { _ = stderrFile.Close() }()
+	defer func() {
+		if streamFile != nil {
+			_ = streamFile.Close()
+		}
+	}()
 	defer close(proc.done)
 
 	// Wait for process to exit
 	err := cmd.Wait()
+
+	// Stop the parser
+	if proc.Parser != nil {
+		proc.Parser.Stop()
+	}
 
 	// Determine exit code and status
 	exitCode := 0
@@ -1390,6 +1479,22 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 		failureReason = override
 	}
 
+	// PR-07: Get final semantic status
+	var semanticStatus *string
+	var semanticStatusUpdatedAt string
+	if proc.Parser != nil {
+		if s := proc.Parser.GetSemanticStatus(); s != nil {
+			str := string(*s)
+			semanticStatus = &str
+			semanticStatusUpdatedAt = proc.Parser.GetSemanticStatusUpdatedAt().UTC().Format(time.RFC3339)
+		}
+		// Clear semantic status if invocation failed
+		if status == store.InvocationStatusFailed {
+			semanticStatus = nil
+			semanticStatusUpdatedAt = ""
+		}
+	}
+
 	// Update invocation meta
 	now := s.Clock().UTC().Format(time.RFC3339)
 	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
@@ -1402,6 +1507,15 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 		meta.FinishedAt = now
 		meta.PID = nil
 		meta.LifecycleOwner = ""
+		// PR-07: Persist final semantic status
+		if semanticStatus != nil {
+			s := runnerstatus.Status(*semanticStatus)
+			meta.SemanticStatus = &s
+			meta.SemanticStatusUpdatedAt = semanticStatusUpdatedAt
+		} else {
+			meta.SemanticStatus = nil
+			meta.SemanticStatusUpdatedAt = ""
+		}
 	})
 
 	// Remove from supervised processes
