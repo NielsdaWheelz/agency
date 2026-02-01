@@ -1002,10 +1002,11 @@ func (s *Server) checkInvocationNameUniqueness(repoID, name string) error {
 
 // invocationCreateResult holds the result of createInvocationAndSandbox.
 type invocationCreateResult struct {
-	InvocationID  string
-	SandboxPath   string
-	SandboxBranch string
-	BaseCommit    string
+	InvocationID          string
+	SandboxPath           string
+	SandboxBranch         string
+	BaseCommit            string
+	IntegrationWorktreeID string // PR-06: track worktree for rm guard
 }
 
 // createInvocationAndSandbox creates invocation directory, sandbox directory, and git worktree atomically.
@@ -1155,10 +1156,11 @@ func (s *Server) createInvocationAndSandbox(ctx context.Context, repoID, repoRoo
 	}
 
 	return &invocationCreateResult{
-		InvocationID:  invocationID,
-		SandboxPath:   sandboxTreePath,
-		SandboxBranch: sandboxBranch,
-		BaseCommit:    baseCommit,
+		InvocationID:          invocationID,
+		SandboxPath:           sandboxTreePath,
+		SandboxBranch:         sandboxBranch,
+		BaseCommit:            baseCommit,
+		IntegrationWorktreeID: wtRecord.WorktreeID,
 	}, nil
 }
 
@@ -1258,13 +1260,14 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 
 	// Create supervised process record
 	proc := &SupervisedProcess{
-		InvocationID: result.InvocationID,
-		RepoID:       repoID,
-		PID:          pid,
-		PGID:         pgid,
-		RawLogFile:   rawLogPath,
-		StderrFile:   stderrLogPath,
-		done:         make(chan struct{}),
+		InvocationID:          result.InvocationID,
+		RepoID:                repoID,
+		IntegrationWorktreeID: result.IntegrationWorktreeID, // PR-06: track for worktree rm guard
+		PID:                   pid,
+		PGID:                  pgid,
+		RawLogFile:            rawLogPath,
+		StderrFile:            stderrLogPath,
+		done:                  make(chan struct{}),
 	}
 
 	// Register the process

@@ -279,3 +279,79 @@ func mustOpenFile(path string) io.Reader {
 	}
 	return f.Body
 }
+
+// ----- PR-06 Worktree Client Methods -----
+
+// WorktreeCreateOpts holds options for worktree creation via daemon.
+type WorktreeCreateOpts struct {
+	RepoRoot       string
+	Name           string
+	ParentBranch   string
+	IdempotencyKey string
+}
+
+// WorktreeCreate creates an integration worktree via the daemon.
+func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*daemon.WorktreeCreateResponse, error) {
+	req := daemon.WorktreeCreateRequest{
+		RepoRoot:       opts.RepoRoot,
+		Name:           opts.Name,
+		ParentBranch:   opts.ParentBranch,
+		IdempotencyKey: opts.IdempotencyKey,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://daemon/worktrees/create", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.WorktreeCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// WorktreeRm removes an integration worktree via the daemon.
+func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, force bool) (*daemon.WorktreeRmResponse, error) {
+	req := daemon.WorktreeRmRequest{
+		Force: force,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://daemon/worktrees/%s/rm?repo_id=%s", worktreeRef, repoID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.WorktreeRmResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}

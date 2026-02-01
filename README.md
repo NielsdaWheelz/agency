@@ -245,6 +245,27 @@ When you run `agency agent start --headless`:
 
 The CLI **never** writes invocation or sandbox files for headless mode — the daemon is the single writer.
 
+### Daemon-Owned Worktree Mutations
+
+Integration worktree create/remove operations are daemon-owned for single-writer consistency:
+
+```bash
+# Create worktree (routes through daemon RPC)
+agency worktree create --name my-feature
+
+# Remove worktree (routes through daemon RPC)
+agency worktree rm my-feature [--force]
+```
+
+Key behaviors:
+- **Atomic creation**: Partial failures roll back worktree, branch, and record
+- **Repo lock**: Daemon acquires repo lock before name check/branch generation
+- **Idempotency**: Duplicate create requests return existing worktree
+- **Active invocation guard**: rm fails if agents are running (unless --force)
+- **Force escalation**: --force sends SIGINT → 5s wait → SIGKILL before removing
+
+Read-only commands (ls, show, path, open, shell) remain CLI-local for performance.
+
 See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including checkpoints and the watch TUI.
 
 ## cli framework

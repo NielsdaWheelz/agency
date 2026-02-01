@@ -1,5 +1,5 @@
 // Package commands implements agency CLI commands.
-// This file implements integration worktree commands (Slice 8 PR-01).
+// This file implements integration worktree commands (Slice 8 PR-01, PR-06).
 package commands
 
 import (
@@ -11,7 +11,10 @@ import (
 	osexec "os/exec"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -31,6 +34,7 @@ type WorktreeCreateOpts struct {
 }
 
 // WorktreeCreate creates a new integration worktree.
+// PR-06: Routes through daemon for single-writer ownership.
 func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -39,49 +43,58 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Validate repo context
-	repoRoot, err := integrationworktree.ValidateRepoContext(ctx, cr, cwd)
+	// Validate repo context (basic check - daemon does full validation)
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+
+	// Check parent tree is clean (daemon doesn't check this)
+	clean, err := git.IsClean(ctx, cr, repoRoot.Path)
 	if err != nil {
 		return err
 	}
+	if !clean {
+		return errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash before creating a worktree")
+	}
 
-	// Get repo identity
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
-
-	// Determine parent branch
-	parentBranch := opts.ParentBranch
-	if parentBranch == "" {
-		// Default to current branch
-		result, err := cr.Run(ctx, "git", []string{"-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"}, exec.RunOpts{})
-		if err != nil || result.ExitCode != 0 {
-			return errors.New(errors.EParentBranchNotFound, "failed to determine current branch; use --parent to specify")
+	// Auto-start daemon if not running
+	client := daemonclient.NewClient(dirs.DataDir + "/agencyd.sock")
+	if !client.IsRunning(ctx) {
+		if err := daemonclient.AutoStartDaemon(ctx, dirs.DataDir); err != nil {
+			return errors.Wrap(errors.EDaemonStartFailed, "failed to auto-start daemon", err)
 		}
-		parentBranch = result.Stdout
-		// Trim newline
-		if len(parentBranch) > 0 && parentBranch[len(parentBranch)-1] == '\n' {
-			parentBranch = parentBranch[:len(parentBranch)-1]
+		// Wait for daemon to be ready
+		if err := client.WaitForReady(ctx, 10*time.Second); err != nil {
+			return err
 		}
 	}
 
-	// Create store and service
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
-
-	// Ensure repo record exists
-	if err := ensureRepoRecord(fsys, dirs.DataDir, repoIdentity, originInfo); err != nil {
+	// Check API version compatibility
+	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 
-	// Create the worktree
-	result, err := svc.Create(ctx, integrationworktree.CreateOpts{
-		Name:         opts.Name,
-		RepoRoot:     repoRoot,
-		RepoID:       repoIdentity.RepoID,
-		ParentBranch: parentBranch,
+	// Generate idempotency key
+	idempotencyKey := uuid.New().String()
+
+	// Call daemon to create worktree
+	result, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+		RepoRoot:       repoRoot.Path,
+		Name:           opts.Name,
+		ParentBranch:   opts.ParentBranch,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		return err
+	}
+
+	if !result.OK {
+		return errors.NewWithDetails(
+			errors.Code(result.ErrorCode),
+			result.Message,
+			map[string]string{"hint": result.Hint},
+		)
 	}
 
 	// Output result
@@ -514,6 +527,7 @@ type WorktreeRmOpts struct {
 }
 
 // WorktreeRm removes an integration worktree.
+// PR-06: Routes through daemon for single-writer ownership.
 func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRmOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -529,7 +543,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// Resolve worktree
+	// Resolve worktree locally first to get worktree name for display
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
 
@@ -549,59 +563,40 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		)
 	}
 
-	// Remove the worktree
-	err = svc.Remove(ctx, repoIdentity.RepoID, record.WorktreeID, integrationworktree.RemoveOpts{
-		RepoRoot: repoRoot.Path,
-		Force:    opts.Force,
-	})
+	worktreeName := record.Meta.Name
+	worktreeID := record.WorktreeID
+
+	// Auto-start daemon if not running
+	client := daemonclient.NewClient(dirs.DataDir + "/agencyd.sock")
+	if !client.IsRunning(ctx) {
+		if err := daemonclient.AutoStartDaemon(ctx, dirs.DataDir); err != nil {
+			return errors.Wrap(errors.EDaemonStartFailed, "failed to auto-start daemon", err)
+		}
+		// Wait for daemon to be ready
+		if err := client.WaitForReady(ctx, 10*time.Second); err != nil {
+			return err
+		}
+	}
+
+	// Check API version compatibility
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// Call daemon to remove worktree
+	result, err := client.WorktreeRm(ctx, repoIdentity.RepoID, worktreeID, opts.Force)
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Removed integration worktree '%s' (%s)\n", record.Meta.Name, record.WorktreeID)
-	return nil
-}
-
-// ensureRepoRecord ensures a repo record exists for the given repo identity.
-func ensureRepoRecord(fsys fs.FS, dataDir string, repoIdentity identity.RepoIdentity, originInfo git.OriginInfo) error {
-	st := store.NewStore(fsys, dataDir, time.Now)
-
-	// Check if repo record exists
-	_, exists, err := st.LoadRepoRecord(repoIdentity.RepoID)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-
-	// Create repo directory
-	repoDir := st.RepoDir(repoIdentity.RepoID)
-	if err := fsys.MkdirAll(repoDir, 0o700); err != nil {
-		return errors.WrapWithDetails(
-			errors.EPersistFailed,
-			"failed to create repo directory",
-			err,
-			map[string]string{"repo_dir": repoDir},
+	if !result.OK {
+		return errors.NewWithDetails(
+			errors.Code(result.ErrorCode),
+			result.Message,
+			map[string]string{"hint": result.Hint},
 		)
 	}
 
-	// Create repo record using UpsertRepoRecord
-	now := time.Now().UTC().Format(time.RFC3339)
-	rec := store.RepoRecord{
-		SchemaVersion: "1.0",
-		RepoID:        repoIdentity.RepoID,
-		RepoKey:       repoIdentity.RepoKey,
-		OriginURL:     originInfo.URL,
-		OriginPresent: originInfo.Present,
-		OriginHost:    originInfo.Host,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-
-	if err := st.SaveRepoRecord(rec); err != nil {
-		return err
-	}
-
+	_, _ = fmt.Fprintf(stdout, "Removed integration worktree '%s' (%s)\n", worktreeName, worktreeID)
 	return nil
 }

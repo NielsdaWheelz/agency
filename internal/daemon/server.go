@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
@@ -63,6 +65,16 @@ type Server struct {
 	// Used to prevent duplicate invocations from retried requests.
 	idempotency map[string]IdempotencyEntry
 
+	// worktreeIdempotencyMu protects the worktree idempotency map.
+	worktreeIdempotencyMu sync.RWMutex
+
+	// worktreeIdempotency maps (repo_id, idempotency_key) -> WorktreeIdempotencyEntry.
+	// Used to prevent duplicate worktree creation from retried requests.
+	worktreeIdempotency map[string]WorktreeIdempotencyEntry
+
+	// repoLock is the repo lock instance for serializing git operations.
+	repoLock *lock.RepoLock
+
 	// server is the HTTP server.
 	server *http.Server
 
@@ -75,17 +87,20 @@ type Server struct {
 
 // NewServer creates a new daemon server with the given dependencies.
 func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir string) *Server {
+	repoLock := lock.NewRepoLock(st.DataDir)
 	return &Server{
-		Store:       st,
-		Runner:      runner,
-		FS:          fsys,
-		ConfigDir:   configDir,
-		Clock:       time.Now,
-		PIDChecker:  IsPIDAlive,
-		InstanceID:  uuid.New().String(),
-		processes:   make(map[string]*SupervisedProcess),
-		idempotency: make(map[string]IdempotencyEntry),
-		shutdownCh:  make(chan struct{}),
+		Store:               st,
+		Runner:              runner,
+		FS:                  fsys,
+		ConfigDir:           configDir,
+		Clock:               time.Now,
+		PIDChecker:          IsPIDAlive,
+		InstanceID:          uuid.New().String(),
+		processes:           make(map[string]*SupervisedProcess),
+		idempotency:         make(map[string]IdempotencyEntry),
+		worktreeIdempotency: make(map[string]WorktreeIdempotencyEntry),
+		repoLock:            &repoLock,
+		shutdownCh:          make(chan struct{}),
 	}
 }
 
@@ -145,6 +160,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/shutdown", s.handleShutdown)
 	mux.HandleFunc("/invocations/", s.handleInvocations)
+	mux.HandleFunc("/worktrees/", s.handleWorktrees)
+	mux.HandleFunc("/worktrees", s.handleWorktrees) // Without trailing slash for create
 }
 
 // handleHealth handles GET /health.
@@ -565,5 +582,123 @@ func (s *Server) cleanupExpiredIdempotency() {
 		if now-entry.CreatedAt > IdempotencyTTL {
 			delete(s.idempotency, key)
 		}
+	}
+}
+
+// worktreeIdempotencyKey generates a key for the worktree idempotency map.
+func worktreeIdempotencyKey(repoID, idempotencyKey string) string {
+	return repoID + ":worktree:" + idempotencyKey
+}
+
+// checkWorktreeIdempotency checks if a worktree create request is a duplicate.
+// Returns the entry and true if this is a duplicate request.
+func (s *Server) checkWorktreeIdempotency(repoID, idempotencyKey string) (WorktreeIdempotencyEntry, bool) {
+	if idempotencyKey == "" {
+		return WorktreeIdempotencyEntry{}, false
+	}
+
+	s.worktreeIdempotencyMu.RLock()
+	defer s.worktreeIdempotencyMu.RUnlock()
+
+	key := worktreeIdempotencyKey(repoID, idempotencyKey)
+	entry, exists := s.worktreeIdempotency[key]
+	if !exists {
+		return WorktreeIdempotencyEntry{}, false
+	}
+
+	// Check if entry is expired
+	now := s.Clock().Unix()
+	if now-entry.CreatedAt > IdempotencyTTL {
+		return WorktreeIdempotencyEntry{}, false
+	}
+
+	return entry, true
+}
+
+// recordWorktreeIdempotency records a successful worktree create request.
+func (s *Server) recordWorktreeIdempotency(repoID, idempotencyKey, worktreeID, treePath, branch string) {
+	if idempotencyKey == "" {
+		return
+	}
+
+	s.worktreeIdempotencyMu.Lock()
+	defer s.worktreeIdempotencyMu.Unlock()
+
+	key := worktreeIdempotencyKey(repoID, idempotencyKey)
+	s.worktreeIdempotency[key] = WorktreeIdempotencyEntry{
+		WorktreeID: worktreeID,
+		TreePath:   treePath,
+		Branch:     branch,
+		CreatedAt:  s.Clock().Unix(),
+	}
+
+	// Opportunistically clean up expired entries
+	if len(s.worktreeIdempotency) > 100 {
+		s.cleanupExpiredWorktreeIdempotency()
+	}
+}
+
+// cleanupExpiredWorktreeIdempotency removes expired entries.
+// Must be called with worktreeIdempotencyMu held.
+func (s *Server) cleanupExpiredWorktreeIdempotency() {
+	now := s.Clock().Unix()
+	for key, entry := range s.worktreeIdempotency {
+		if now-entry.CreatedAt > IdempotencyTTL {
+			delete(s.worktreeIdempotency, key)
+		}
+	}
+}
+
+// handleWorktrees handles requests to /worktrees/...
+func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
+	// Parse path: /worktrees[/create] or /worktrees/{id}/rm
+	path := r.URL.Path
+
+	// Handle POST /worktrees/create (or /worktrees with trailing /)
+	if path == "/worktrees" || path == "/worktrees/" {
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "endpoint required", "use /worktrees/create or /worktrees/{id}/rm")
+		return
+	}
+
+	remaining := strings.TrimPrefix(path, "/worktrees/")
+
+	// Handle POST /worktrees/create
+	if remaining == "create" {
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleWorktreeCreate(w, r)
+		return
+	}
+
+	// Handle POST /worktrees/{id}/rm
+	// Find the slash separating id from action
+	var worktreeRef, action string
+	for i, c := range remaining {
+		if c == '/' {
+			worktreeRef = remaining[:i]
+			action = remaining[i+1:]
+			break
+		}
+	}
+	if worktreeRef == "" {
+		worktreeRef = remaining
+	}
+
+	if worktreeRef == "" {
+		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree id required", "")
+		return
+	}
+
+	switch action {
+	case "rm":
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleWorktreeRm(w, r, worktreeRef)
+	default:
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm")
 	}
 }
