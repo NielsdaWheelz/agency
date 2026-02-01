@@ -1,7 +1,11 @@
 // Package daemon implements the agency daemon supervisor for headless invocations.
 package daemon
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
+)
 
 // APIVersion is the current API version. Incremented on breaking changes.
 const APIVersion = 1
@@ -171,6 +175,12 @@ type SupervisedProcess struct {
 	PGID                  int
 	RawLogFile            string
 	StderrFile            string
+	StreamLogFile         string // PR-07: path to stream.jsonl for normalized events
+	Runner                string // PR-07: runner type for stream parsing
+
+	// Parser handles stream parsing and semantic status (PR-07).
+	// May be nil for headed invocations or unsupported runners.
+	Parser *stream.Parser
 
 	// lastOutputAt is updated in-memory on every chunk; persisted with throttling.
 	lastOutputAt atomic.Int64

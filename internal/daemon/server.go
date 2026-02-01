@@ -22,6 +22,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/lock"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
@@ -528,6 +529,77 @@ func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *o
 			break
 		}
 	}
+}
+
+// streamAndParseOutput streams stdout while parsing for normalized events (PR-07).
+// Writes verbatim to rawFile, normalized events to streamFile.
+func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader, rawFile, streamFile *os.File) {
+	if proc.Parser == nil {
+		// No parser - fall back to simple streaming
+		s.streamOutput(proc, reader, rawFile)
+		return
+	}
+
+	// Use the parser to handle streaming and parsing
+	_ = proc.Parser.StreamAndParse(reader, rawFile, streamFile)
+}
+
+// runSemanticStatusFlushLoop periodically flushes semantic status to meta.json (PR-07).
+// Only flushes when semantic status has changed, not on every tick.
+func (s *Server) runSemanticStatusFlushLoop(proc *SupervisedProcess) {
+	if proc.Parser == nil {
+		return
+	}
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastStatus *runnerstatus.Status
+	var lastUpdatedAt time.Time
+
+	for {
+		select {
+		case <-proc.done:
+			// Final flush handled by waitForExit*
+			return
+		case <-s.shutdownCh:
+			return
+		case <-ticker.C:
+			currentStatus := proc.Parser.GetSemanticStatus()
+			currentUpdatedAt := proc.Parser.GetSemanticStatusUpdatedAt()
+
+			// Only flush if status actually changed
+			statusChanged := false
+			if currentStatus == nil && lastStatus != nil {
+				statusChanged = true
+			} else if currentStatus != nil && lastStatus == nil {
+				statusChanged = true
+			} else if currentStatus != nil && lastStatus != nil && *currentStatus != *lastStatus {
+				statusChanged = true
+			} else if !currentUpdatedAt.IsZero() && currentUpdatedAt.After(lastUpdatedAt) {
+				// Same status but newer timestamp - still update
+				statusChanged = true
+			}
+
+			if statusChanged {
+				s.flushSemanticStatus(proc, currentStatus, currentUpdatedAt)
+				lastStatus = currentStatus
+				lastUpdatedAt = currentUpdatedAt
+			}
+		}
+	}
+}
+
+// flushSemanticStatus writes the semantic status to meta.json.
+func (s *Server) flushSemanticStatus(proc *SupervisedProcess, status *runnerstatus.Status, updatedAt time.Time) {
+	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+		meta.SemanticStatus = status
+		if status != nil && !updatedAt.IsZero() {
+			meta.SemanticStatusUpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+		} else {
+			meta.SemanticStatusUpdatedAt = ""
+		}
+	})
 }
 
 // idempotencyKey generates a key for the idempotency map.

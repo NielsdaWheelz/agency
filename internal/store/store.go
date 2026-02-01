@@ -178,6 +178,12 @@ func (s *Store) SandboxStderrLogPath(repoID, invocationID string) string {
 	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "stderr.log")
 }
 
+// SandboxStreamLogPath returns the path to a sandbox's stream.jsonl file (normalized events).
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/stream.jsonl
+func (s *Store) SandboxStreamLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "stream.jsonl")
+}
+
 // ----- Daemon state paths -----
 
 // DaemonPidPath returns the path to the daemon's pid file.

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","cwd":"/path/to/sandbox","model":"claude-3-opus-20240229"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Starting work..."}]}}
+{this is not valid json and should trigger a parse error}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Continuing after the malformed line..."}]}}
+{"type":"result","subtype":"success","duration_ms":30000}

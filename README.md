@@ -249,12 +249,59 @@ agency daemon stop --force
 
 - **Auto-start**: Daemon starts automatically when a headless invocation is created
 - **Log capture**: Captures stdout/stderr to `raw.jsonl` and `stderr.log` in sandbox logs
+- **Stream parsing**: Parses runner output and writes normalized events to `stream.jsonl`
+- **Semantic status**: Derives meaningful status (`working`, `ready_for_review`) from parsed output
 - **Graceful stop**: Escalates SIGINT → SIGTERM (5s) → SIGKILL (2s) on `agent stop`
 - **Forceful kill**: Immediate SIGKILL via process groups on `agent kill`
 - **Orphan detection**: Detects and marks orphaned invocations on restart
 - **Idempotency**: Duplicate requests return existing invocation (via client_request_id)
 - **API versioning**: CLI checks daemon API version before operations
 - **Repo registration**: Automatically registers repositories on first use
+
+### Stream Parsing and Semantic Status (PR-07)
+
+For headless invocations, the daemon parses runner output in real-time to derive semantic status:
+
+**Log files produced:**
+```
+sandboxes/<invocation_id>/logs/
+├── raw.jsonl        # Verbatim runner stdout (exactly as emitted)
+├── stderr.log       # Verbatim runner stderr
+└── stream.jsonl     # Normalized events (daemon-generated)
+```
+
+**Semantic status values:**
+- `working` — Agent is actively working (any assistant/command activity)
+- `ready_for_review` — Agent has completed successfully (result:success / agent_message)
+
+**Normalized events (stream.jsonl):**
+Each line contains a JSON event with a stable schema across runners:
+```json
+{
+  "schema_version": "1.0",
+  "seq": 1,
+  "timestamp": "2026-02-01T12:00:00Z",
+  "invocation_id": "20260201-a1b2",
+  "runner": "claude",
+  "kind": "session_start|message|tool_start|tool_end|final|error|usage|parse_error",
+  "data": { "..." }
+}
+```
+
+**Supported runners:**
+- Claude Code (`claude -p --output-format stream-json --verbose`)
+- Codex CLI (`codex exec --json`)
+
+**Error handling:**
+- Parse errors do not crash the daemon or fail the invocation
+- Malformed lines emit `kind=parse_error` events (throttled to prevent flooding)
+- `raw.jsonl` always contains verbatim output regardless of parse success
+- Final lines without trailing newlines are still captured and parsed
+
+**Status persistence:**
+- Semantic status is written to `InvocationMeta.semantic_status`
+- Updates are throttled to 500ms and only written on actual change
+- Final status is always persisted on invocation exit
 
 ### Headless Mode Architecture
 

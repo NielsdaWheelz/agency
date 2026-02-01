@@ -9,6 +9,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // InvocationStatus represents the lifecycle status of an invocation.
@@ -148,6 +149,14 @@ type InvocationMeta struct {
 
 	// Flags contains boolean flags for operational state.
 	Flags InvocationFlags `json:"flags,omitempty"`
+
+	// SemanticStatus is the derived semantic status from stream parsing (headless only).
+	// Values: working, needs_input, blocked, ready_for_review.
+	// This is set by the daemon during stream parsing and is optional.
+	SemanticStatus *runnerstatus.Status `json:"semantic_status,omitempty"`
+
+	// SemanticStatusUpdatedAt is the timestamp when semantic_status was last updated.
+	SemanticStatusUpdatedAt string `json:"semantic_status_updated_at,omitempty"`
 }
 
 // InvocationFlags contains boolean flags for operational state.
