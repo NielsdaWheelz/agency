@@ -157,6 +157,11 @@ type InvocationMeta struct {
 
 	// SemanticStatusUpdatedAt is the timestamp when semantic_status was last updated.
 	SemanticStatusUpdatedAt string `json:"semantic_status_updated_at,omitempty"`
+
+	// CheckpointIncludeUntracked determines whether checkpoints include untracked files.
+	// Set at invocation creation time based on CLI flag --no-include-untracked.
+	// Default is true (include untracked files).
+	CheckpointIncludeUntracked bool `json:"checkpoint_include_untracked"`
 }
 
 // InvocationFlags contains boolean flags for operational state.
@@ -186,17 +191,18 @@ func NewInvocationMeta(
 	startedAt time.Time,
 ) *InvocationMeta {
 	return &InvocationMeta{
-		SchemaVersion:         "1.0",
-		InvocationID:          invocationID,
-		InvocationName:        invocationName,
-		IntegrationWorktreeID: integrationWorktreeID,
-		SandboxPath:           sandboxPath,
-		SandboxBranch:         sandboxBranch,
-		BaseCommit:            baseCommit,
-		Runner:                runner,
-		Mode:                  mode,
-		StartedAt:             startedAt.UTC().Format(time.RFC3339),
-		Status:                InvocationStatusStarting,
+		SchemaVersion:              "1.0",
+		InvocationID:               invocationID,
+		InvocationName:             invocationName,
+		IntegrationWorktreeID:      integrationWorktreeID,
+		SandboxPath:                sandboxPath,
+		SandboxBranch:              sandboxBranch,
+		BaseCommit:                 baseCommit,
+		Runner:                     runner,
+		Mode:                       mode,
+		StartedAt:                  startedAt.UTC().Format(time.RFC3339),
+		Status:                     InvocationStatusStarting,
+		CheckpointIncludeUntracked: true, // Default: include untracked files in checkpoints
 	}
 }
 

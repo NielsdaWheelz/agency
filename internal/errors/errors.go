@@ -155,6 +155,12 @@ const (
 	EWorktreeHasActiveInvocations Code = "E_WORKTREE_HAS_ACTIVE_INVOCATIONS" // rm blocked by active agents
 	ENotAnIntegrationWorktree     Code = "E_NOT_AN_INTEGRATION_WORKTREE"     // tree missing .agency/INTEGRATION_MARKER on rm
 	EWorktreeNameExists           Code = "E_WORKTREE_NAME_EXISTS"            // name collision with existing worktree
+
+	// Slice 8 checkpoint error codes (PR-08)
+	EInvocationStillRunning Code = "E_INVOCATION_STILL_RUNNING" // checkpoint apply refused — invocation must be stopped/finished first
+	ECheckpointNotFound     Code = "E_CHECKPOINT_NOT_FOUND"     // requested checkpoint_id does not exist in checkpoints.json
+	ERollbackFailed         Code = "E_ROLLBACK_FAILED"          // git reset/clean/checkout failed during checkpoint apply
+	ECheckpointFailed       Code = "E_CHECKPOINT_FAILED"        // checkpoint creation failed (git error, index lock, etc.)
 )
 
 // AgencyError is the standard error type for agency errors.

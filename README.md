@@ -116,7 +116,7 @@ go test ./internal/daemon/ -v -count=1
 go test ./internal/daemon/ -v -short
 ```
 
-The daemon package includes a comprehensive integration test suite (28+ tests across 3 layers) that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking.
+The daemon package includes a comprehensive integration test suite (40+ tests across 5 layers) that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking. The checkpoint package adds 25+ tests covering snapshot creation, duplicate detection, rollback, typed error propagation, and denylist behavior.
 
 ### lint
 
@@ -146,6 +146,8 @@ agency/
 │   ├── cli/cobra/        # Cobra CLI command tree
 │   ├── commands/         # command implementations
 │   ├── daemon/           # daemon server, handlers, process supervision
+│   │   ├── checkpoint/   # checkpoint engine (fsnotify, snapshots, rollback)
+│   │   └── stream/       # stream parser for semantic status
 │   ├── daemonclient/     # daemon IPC client
 │   └── store/            # on-disk persistence (repos, invocations, worktrees)
 └── docs/                 # documentation
@@ -302,6 +304,67 @@ Each line contains a JSON event with a stable schema across runners:
 - Semantic status is written to `InvocationMeta.semantic_status`
 - Updates are throttled to 500ms and only written on actual change
 - Final status is always persisted on invocation exit
+
+### Checkpoints (PR-08)
+
+The daemon automatically creates **checkpoints** during headless agent execution, enabling safe rollback if something goes wrong. Checkpoints are stored as private git refs and never pollute branch history.
+
+```bash
+# List checkpoints for an invocation
+agency checkpoint ls --invocation 20260201
+agency checkpoint ls --invocation auth-fix --json
+
+# Restore sandbox to a checkpoint state (invocation must be stopped/finished)
+agency checkpoint apply --invocation 20260201 5
+agency checkpoint apply --invocation auth-fix 3
+```
+
+**Checkpoint creation:**
+- **Trigger**: fsnotify watches sandbox tree + 30s polling fallback
+- **Debounce**: 3 seconds after last file change before snapshotting
+- **Rate limit**: Maximum 1 checkpoint per 10 seconds
+- **Final checkpoint**: Created on invocation exit (only if content changed)
+- **Deduplication**: Tree-SHA comparison skips checkpoints when content is identical to the last snapshot
+
+**Checkpoint storage:**
+```
+sandboxes/<invocation_id>/
+├── checkpoints.json    # Checkpoint metadata
+└── tree/               # Sandbox (watched by fsnotify)
+
+refs/agency/snapshots/<invocation_id>/
+├── 1                   # Snapshot commit for checkpoint 1
+├── 2                   # Snapshot commit for checkpoint 2
+└── ...
+```
+
+**Denylist policy:**
+Certain files are excluded from snapshots to prevent accidental secret capture:
+- `.env`, `.env.*`
+- `*.key`, `*.pem`
+- `credentials.json`, `secrets.json`
+
+If denylisted files are detected, the checkpoint degrades to tracked-files-only and continues (non-fatal).
+
+**Usage flags:**
+```bash
+# Exclude untracked files from all checkpoints for this invocation
+agency agent start --worktree my-feature --headless --no-include-untracked --prompt "..."
+```
+
+**Rollback:**
+- Rollback restores the sandbox to exact checkpoint state
+- Invocation must be stopped/finished first (use `agent stop` or `agent kill`)
+- After rollback, start a new invocation to continue work
+- Checkpoint refs remain valid for future rollback
+- Typed error codes: `E_CHECKPOINT_NOT_FOUND` (missing ID or snapshot), `E_ROLLBACK_FAILED` (git error), `E_INVOCATION_STILL_RUNNING` (must stop first)
+
+**Events:**
+Checkpoint events are emitted to `invocations/<id>/events.jsonl`:
+- `agency.checkpoint_created` — checkpoint successfully created
+- `agency.checkpoint_failed` — checkpoint creation failed
+- `agency.checkpoint_applied` — checkpoint was applied (rollback)
+- `agency.checkpoint_denylist_triggered` — denylisted files found, degraded to tracked-only
 
 ### Headless Mode Architecture
 

@@ -317,7 +317,10 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch action {
+	// Extract the top-level action (first path segment after invocation ID).
+	topAction, _, _ := strings.Cut(action, "/")
+
+	switch topAction {
 	case "start_headless":
 		// Legacy PR-04 endpoint: POST /invocations/{id}/start_headless
 		if r.Method != http.MethodPost {
@@ -337,13 +340,16 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleKill(w, r, invocationID)
+	case "checkpoints":
+		// Handle /invocations/{id}/checkpoints/apply
+		s.handleCheckpoints(w, r, invocationID)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
 	}
 }
 
 // writeJSON writes a JSON response.
-func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
+func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
@@ -727,6 +733,27 @@ func (s *Server) cleanupExpiredWorktreeIdempotency() {
 			delete(s.worktreeIdempotency, key)
 		}
 	}
+}
+
+// runCheckpointLoop runs the checkpoint engine for a supervised process (PR-08).
+// Stops automatically when the process exits.
+func (s *Server) runCheckpointLoop(proc *SupervisedProcess) {
+	if proc.CheckpointEngine == nil {
+		return
+	}
+
+	// Create a context that cancels when the process exits
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Stop checkpoint engine when process exits
+	go func() {
+		<-proc.done
+		cancel()
+		proc.CheckpointEngine.Stop()
+	}()
+
+	// Run the checkpoint engine (blocks until stopped)
+	_ = proc.CheckpointEngine.Run(ctx)
 }
 
 // handleWorktrees handles requests to /worktrees/...
