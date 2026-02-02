@@ -1,0 +1,67 @@
+package daemon
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/store"
+)
+
+func TestHandleLandDiscardRouting(t *testing.T) {
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	t.Run("GET /land returns 405", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/invocations/test-inv/land?repo_id=test-repo", nil)
+		w := httptest.NewRecorder()
+
+		s.handleInvocations(w, req)
+
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("GET /discard returns 405", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/invocations/test-inv/discard?repo_id=test-repo", nil)
+		w := httptest.NewRecorder()
+
+		s.handleInvocations(w, req)
+
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("POST /land routes correctly", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/land?repo_id=test-repo", nil)
+		w := httptest.NewRecorder()
+
+		s.handleInvocations(w, req)
+
+		// Should NOT be 404 "unknown action". It will fail at invocation lookup.
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		if code, ok := resp["error_code"].(string); ok {
+			assert.NotEqual(t, "E_NOT_FOUND", code, "land route should be recognized")
+		}
+	})
+
+	t.Run("POST /discard routes correctly", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/discard?repo_id=test-repo", nil)
+		w := httptest.NewRecorder()
+
+		s.handleInvocations(w, req)
+
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		if code, ok := resp["error_code"].(string); ok {
+			assert.NotEqual(t, "E_NOT_FOUND", code, "discard route should be recognized")
+		}
+	})
+}

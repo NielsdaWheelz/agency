@@ -49,6 +49,9 @@ type IntegrationWorktreeMeta struct {
 	// CreatedAt is the creation timestamp in RFC3339 UTC format.
 	CreatedAt string `json:"created_at"`
 
+	// LastUsedAt is the last activity timestamp in RFC3339 UTC format.
+	LastUsedAt string `json:"last_used_at,omitempty"`
+
 	// State is the lifecycle state (present or archived).
 	State WorktreeState `json:"state"`
 }

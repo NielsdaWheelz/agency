@@ -251,6 +251,68 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 	}
 }
 
+// TestPR09ErrorCodesExist verifies PR-09 landing error codes are defined and stable.
+func TestPR09ErrorCodesExist(t *testing.T) {
+	codes := []Code{
+		ELandConflict,
+		ELandNothingToLand,
+		ELandApplyRequired,
+		ELandFailed,
+		ELandAlreadyLanded,
+		ELandAlreadyDiscarded,
+		ESandboxMissing,
+		EIntegrationTreeMissing,
+		ELandDenylistViolation,
+	}
+
+	expectedStrings := map[Code]string{
+		ELandConflict:           "E_LAND_CONFLICT",
+		ELandNothingToLand:      "E_LAND_NOTHING_TO_LAND",
+		ELandApplyRequired:      "E_LAND_APPLY_REQUIRED",
+		ELandFailed:             "E_LAND_FAILED",
+		ELandAlreadyLanded:      "E_LAND_ALREADY_LANDED",
+		ELandAlreadyDiscarded:   "E_LAND_ALREADY_DISCARDED",
+		ESandboxMissing:         "E_SANDBOX_MISSING",
+		EIntegrationTreeMissing: "E_INTEGRATION_TREE_MISSING",
+		ELandDenylistViolation:  "E_LAND_DENYLIST_VIOLATION",
+	}
+
+	for _, code := range codes {
+		expected := expectedStrings[code]
+		if string(code) != expected {
+			t.Errorf("code = %q, want %q", code, expected)
+		}
+	}
+}
+
+// TestPR09ErrorFormat verifies PR-09 error codes format correctly.
+func TestPR09ErrorFormat(t *testing.T) {
+	tests := []struct {
+		code Code
+		msg  string
+		want string
+	}{
+		{ELandConflict, "cherry-pick conflicts", "E_LAND_CONFLICT: cherry-pick conflicts"},
+		{ELandNothingToLand, "no changes", "E_LAND_NOTHING_TO_LAND: no changes"},
+		{ELandApplyRequired, "uncommitted changes", "E_LAND_APPLY_REQUIRED: uncommitted changes"},
+		{ELandFailed, "generic failure", "E_LAND_FAILED: generic failure"},
+		{ELandAlreadyLanded, "already landed", "E_LAND_ALREADY_LANDED: already landed"},
+		{ELandAlreadyDiscarded, "already discarded", "E_LAND_ALREADY_DISCARDED: already discarded"},
+		{ESandboxMissing, "sandbox gone", "E_SANDBOX_MISSING: sandbox gone"},
+		{EIntegrationTreeMissing, "tree gone", "E_INTEGRATION_TREE_MISSING: tree gone"},
+		{ELandDenylistViolation, "blocked files", "E_LAND_DENYLIST_VIOLATION: blocked files"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.code), func(t *testing.T) {
+			err := New(tt.code, tt.msg)
+			if err.Error() != tt.want {
+				t.Errorf("Error() = %q, want %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
 // TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
 func TestSlice3ErrorFormat(t *testing.T) {
 	tests := []struct {

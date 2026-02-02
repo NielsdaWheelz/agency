@@ -29,10 +29,10 @@ Subcommands:
   attach    Attach to a running headed invocation
   stop      Stop an invocation gracefully (Ctrl-C)
   kill      Kill an invocation forcefully
-  diff      Show sandbox changes (future)
-  land      Apply sandbox changes to integration (future)
-  discard   Discard sandbox changes (future)
-  open      Open sandbox in editor (future)
+  diff      Show sandbox changes vs integration
+  land      Apply sandbox changes to integration
+  discard   Discard sandbox changes
+  open      Open sandbox in editor
   logs      View invocation logs (future)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,6 +48,10 @@ Subcommands:
 		newAgentAttachCmd(),
 		newAgentStopCmd(),
 		newAgentKillCmd(),
+		newAgentDiffCmd(),
+		newAgentLandCmd(),
+		newAgentDiscardCmd(),
+		newAgentOpenCmd(),
 	)
 
 	return cmd
@@ -300,6 +304,159 @@ Example:
 			ctx := context.Background()
 
 			return commands.AgentKill(ctx, cr, fsys, cwd, commands.AgentKillOpts{
+				InvocationRef: args[0],
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return cmd
+}
+
+func newAgentDiffCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "diff <invocation_ref>",
+		Short: "Show sandbox changes vs integration",
+		Long: `Show the diff between sandbox and the integration branch.
+
+Displays:
+- Commits in the sandbox (since base_commit)
+- File changes between base_commit and sandbox tip
+- Uncommitted changes in sandbox (if any)
+
+This is a read-only operation that does not require the daemon.
+
+Example:
+  agency agent diff 20260131
+  agency agent diff my-invocation`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentDiff(ctx, cr, fsys, cwd, commands.AgentDiffOpts{
+				InvocationRef: args[0],
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return cmd
+}
+
+func newAgentLandCmd() *cobra.Command {
+	var apply bool
+	var requireBase bool
+
+	cmd := &cobra.Command{
+		Use:   "land <invocation_ref>",
+		Short: "Apply sandbox changes to integration",
+		Long: `Land sandbox changes into the integration worktree.
+
+By default, cherry-picks sandbox commits onto the integration branch HEAD.
+If the sandbox has no commits but has uncommitted changes, use --apply.
+
+Landing fails if:
+- The invocation is still running (stop it first)
+- Cherry-pick results in conflicts (sandbox preserved for resolution)
+- The invocation has already been landed or discarded
+
+Options:
+  --apply        Apply uncommitted changes as a patch (when no commits exist)
+  --require-base Fail if integration has diverged from base_commit
+
+Example:
+  agency agent land 20260131
+  agency agent land my-invocation --apply
+  agency agent land 20260131 --require-base`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentLand(ctx, cr, fsys, cwd, commands.AgentLandOpts{
+				InvocationRef: args[0],
+				Apply:         apply,
+				RequireBase:   requireBase,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().BoolVar(&apply, "apply", false, "Apply uncommitted changes (when no commits exist)")
+	cmd.Flags().BoolVar(&requireBase, "require-base", false, "Fail if integration has diverged from base_commit")
+
+	return cmd
+}
+
+func newAgentDiscardCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "discard <invocation_ref>",
+		Short: "Discard sandbox changes",
+		Long: `Discard a sandbox without landing its changes.
+
+If the invocation is still running, it will be stopped first (gracefully,
+then forcefully killed after 5 seconds).
+
+The sandbox worktree, branch, and checkpoint refs are removed.
+The invocation record is preserved with landing_status="discarded".
+
+Example:
+  agency agent discard 20260131
+  agency agent discard my-invocation`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentDiscard(ctx, cr, fsys, cwd, commands.AgentDiscardOpts{
+				InvocationRef: args[0],
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return cmd
+}
+
+func newAgentOpenCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "open <invocation_ref>",
+		Short: "Open sandbox in editor",
+		Long: `Open the sandbox directory in your configured editor.
+
+Uses the editor from user config, EDITOR environment variable,
+or defaults to VS Code (code).
+
+Example:
+  agency agent open 20260131
+  agency agent open my-invocation`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentOpen(ctx, cr, fsys, cwd, commands.AgentOpenOpts{
 				InvocationRef: args[0],
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},

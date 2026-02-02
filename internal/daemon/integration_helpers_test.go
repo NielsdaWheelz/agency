@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,4 +207,19 @@ func waitForInvocationTerminal(t *testing.T, st *store.Store, repoID, invocation
 
 	t.Fatalf("invocation %s did not reach terminal status within %v", invocationID, timeout)
 	return nil
+}
+
+// gitExec runs a git command in the given directory and returns trimmed stdout.
+// Fatals on non-zero exit or execution error.
+func gitExec(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cr := exec.NewRealRunner()
+	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir})
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
+	}
+	return strings.TrimSpace(result.Stdout)
 }

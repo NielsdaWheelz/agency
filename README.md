@@ -116,7 +116,7 @@ go test ./internal/daemon/ -v -count=1
 go test ./internal/daemon/ -v -short
 ```
 
-The daemon package includes a comprehensive integration test suite (40+ tests across 5 layers) that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking. The checkpoint package adds 25+ tests covering snapshot creation, duplicate detection, rollback, typed error propagation, and denylist behavior.
+The daemon package includes a comprehensive integration test suite that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking. The checkpoint package adds 25+ tests covering snapshot creation, duplicate detection, rollback, typed error propagation, and denylist behavior. The landing package adds 12 integration tests (cherry-pick, apply, conflict, nothing-to-land, already-landed/discarded, discard running) plus unit tests for precondition validation and routing.
 
 ### lint
 
@@ -147,6 +147,7 @@ agency/
 │   ├── commands/         # command implementations
 │   ├── daemon/           # daemon server, handlers, process supervision
 │   │   ├── checkpoint/   # checkpoint engine (fsnotify, snapshots, rollback)
+│   │   ├── landing/      # landing service (cherry-pick, apply, discard)
 │   │   └── stream/       # stream parser for semantic status
 │   ├── daemonclient/     # daemon IPC client
 │   └── store/            # on-disk persistence (repos, invocations, worktrees)
@@ -222,7 +223,43 @@ Key concepts:
 - **Headed mode**: Interactive tmux session (default) - attach with `agent attach`
 - **Headless mode**: Non-interactive subprocess execution via daemon - prompts required
 - **Invocation names**: Optional human-readable labels, unique among active invocations
-- **Landing**: Apply sandbox changes back to integration branch (coming in PR-07)
+- **Landing**: Apply sandbox changes back to integration branch via `agent land`
+
+### Landing Workflow (PR-09)
+
+After an agent completes work in a sandbox, use the landing workflow to apply changes back to the integration worktree:
+
+```bash
+# View sandbox changes before landing
+agency agent diff 20260131
+
+# Land sandbox changes (cherry-picks commits onto integration)
+agency agent land 20260131
+
+# Land uncommitted changes (when sandbox has no commits)
+agency agent land 20260131 --apply
+
+# Land with strict base check (fails if integration moved)
+agency agent land 20260131 --require-base
+
+# Discard sandbox without landing
+agency agent discard 20260131
+
+# Open sandbox in editor for manual inspection
+agency agent open 20260131
+```
+
+**Landing behavior:**
+- **Cherry-pick mode (default)**: If sandbox has commits, cherry-picks them onto integration HEAD
+- **Apply mode (--apply)**: If sandbox has uncommitted changes but no commits, applies as patch
+- **Conflicts**: If cherry-pick conflicts, landing aborts and sandbox is preserved for resolution
+- **Cleanup**: On success, sandbox worktree, branch, and checkpoint refs are removed
+- **Artifact exclusion**: Daemon-internal files (`.agency/`) are excluded from dirty checks, staging, and diffs — only user changes are landed
+
+**Discard behavior:**
+- Stops running invocations (graceful, then forceful after 5s)
+- Removes sandbox worktree, branch, and checkpoint refs
+- Preserves invocation record with `landing_status=discarded`
 
 ## Daemon (v2)
 

@@ -161,6 +161,17 @@ const (
 	ECheckpointNotFound     Code = "E_CHECKPOINT_NOT_FOUND"     // requested checkpoint_id does not exist in checkpoints.json
 	ERollbackFailed         Code = "E_ROLLBACK_FAILED"          // git reset/clean/checkout failed during checkpoint apply
 	ECheckpointFailed       Code = "E_CHECKPOINT_FAILED"        // checkpoint creation failed (git error, index lock, etc.)
+
+	// Slice 8 landing error codes (PR-09)
+	ELandConflict           Code = "E_LAND_CONFLICT"            // cherry-pick or apply resulted in merge conflicts
+	ELandNothingToLand      Code = "E_LAND_NOTHING_TO_LAND"     // sandbox has no commits and no uncommitted changes
+	ELandApplyRequired      Code = "E_LAND_APPLY_REQUIRED"      // sandbox has no commits but has uncommitted changes; --apply required
+	ELandFailed             Code = "E_LAND_FAILED"              // landing operation failed (git error, validation, etc.)
+	ELandAlreadyLanded      Code = "E_LAND_ALREADY_LANDED"      // invocation has already been landed
+	ELandAlreadyDiscarded   Code = "E_LAND_ALREADY_DISCARDED"   // invocation has already been discarded
+	ESandboxMissing         Code = "E_SANDBOX_MISSING"          // sandbox tree no longer exists
+	EIntegrationTreeMissing Code = "E_INTEGRATION_TREE_MISSING" // integration worktree tree no longer exists
+	ELandDenylistViolation  Code = "E_LAND_DENYLIST_VIOLATION"  // denylisted files found in uncommitted changes
 )
 
 // AgencyError is the standard error type for agency errors.
