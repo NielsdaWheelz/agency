@@ -34,6 +34,7 @@ v2 commands (slice 8):
   worktree    manage integration worktrees
   agent       manage agent invocations (headed + headless via daemon)
   daemon      manage the agency daemon (headless supervision)
+  checkpoint  manage sandbox checkpoints for headless invocations
   watch       interactive TUI for monitoring (not yet implemented)
 ```
 
@@ -191,7 +192,7 @@ starts a new agent invocation with its sandbox worktree.
 
 **usage:**
 ```bash
-agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--runner-arg <arg>]...
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--runner-arg <arg>]... [--no-include-untracked]
 ```
 
 **flags:**
@@ -203,6 +204,7 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 - `--prompt`: prompt string for headless mode
 - `--prompt-file`: path to file containing prompt for headless mode
 - `--runner-arg`: additional argument to pass to the runner (repeatable)
+- `--no-include-untracked`: exclude untracked files from checkpoint snapshots (headless only)
 
 **behavior (headed mode, default):**
 1. resolves integration worktree
@@ -501,6 +503,127 @@ Daemon shutdown initiated
 **error codes:**
 - `E_DAEMON_NOT_RUNNING` — daemon is not running
 - `E_DAEMON_BUSY` — active invocations exist (use `--force` to override)
+
+## `agency checkpoint` (v2)
+
+manages checkpoints for headless agent invocations. checkpoints are automatic snapshots of sandbox state created by the daemon during execution.
+
+### `agency checkpoint ls`
+
+lists checkpoints for a headless invocation.
+
+**usage:**
+```bash
+agency checkpoint ls --invocation <name|id|prefix> [--json]
+```
+
+**flags:**
+- `--invocation`: invocation identifier (required)
+- `--json`: output as JSON
+
+**behavior:**
+1. resolves invocation (by name, id, or unique prefix)
+2. verifies invocation is headless mode
+3. loads `checkpoints.json` from sandbox directory
+4. displays checkpoint list
+
+**output:**
+```
+Checkpoints for invocation 20260201120500-b7c9:
+
+ID    Created               Untracked   Head SHA    Diffstat
+----  --------------------  ----------  ----------  --------
+1     2026-02-01 12:05:30   yes         abc123ef    3 files changed, 25+/10-
+2     2026-02-01 12:06:15   yes         def456ab    1 file changed, 5+/2-
+3     2026-02-01 12:08:00   no          ghi789cd    2 files changed, 10+/5-
+```
+
+**json output:**
+```json
+{
+  "schema_version": "1.0",
+  "checkpoints": [
+    {
+      "id": 1,
+      "snapshot_ref": "refs/agency/snapshots/20260201120500-b7c9/1",
+      "snapshot_commit": "abc123ef...",
+      "sandbox_head_sha": "...",
+      "created_at": "2026-02-01T12:05:30Z",
+      "includes_untracked": true,
+      "diffstat": "+25 -10 in 3 files",
+      "tree_sha": "def456..."
+    }
+  ]
+}
+```
+
+checkpoints are deduplicated: if the sandbox tree hasn't changed since the last checkpoint (same `tree_sha`), the engine skips creating a new snapshot. this prevents duplicate checkpoints from poll-tick noise.
+
+**error codes:**
+- `E_NO_REPO` — not inside a git repository
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headed (only headless supported)
+
+### `agency checkpoint apply`
+
+restores a sandbox to a checkpoint state (rollback).
+
+**usage:**
+```bash
+agency checkpoint apply --invocation <name|id|prefix> <checkpoint_id>
+```
+
+**arguments:**
+- `checkpoint_id`: the checkpoint ID to restore to (positive integer)
+
+**flags:**
+- `--invocation`: invocation identifier (required)
+
+**behavior:**
+1. resolves invocation (by name, id, or unique prefix)
+2. verifies invocation is headless mode
+3. verifies invocation is NOT running (must be stopped/finished)
+4. sends apply request to daemon
+5. daemon performs rollback: `git reset --hard`, `git clean -fd`, `git checkout <snapshot> -- .`
+6. emits `checkpoint_applied` event
+
+**output:**
+```
+Restored to checkpoint 3 (commit ghi789cd)
+```
+
+**preconditions:**
+- invocation must be headless mode
+- invocation must NOT be running (use `agency agent stop` or `agency agent kill` first)
+- checkpoint must exist in `checkpoints.json`
+- daemon must be running
+
+**error codes:**
+- `E_NO_REPO` — not inside a git repository
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headed (only headless supported)
+- `E_INVOCATION_STILL_RUNNING` — invocation is still running; stop or kill first
+- `E_CHECKPOINT_NOT_FOUND` — checkpoint_id does not exist or snapshot commit is inaccessible
+- `E_ROLLBACK_FAILED` — git reset/clean/checkout failed during restore
+- `E_CHECKPOINT_FAILED` — checkpoint subsystem error (e.g., failed to load checkpoints.json)
+- `E_DAEMON_NOT_RUNNING` — daemon is not running
+
+all checkpoint errors are typed `AgencyError` objects with stable codes. the daemon handler dispatches on `errors.GetCode()`, not string matching.
+
+**notes:**
+- after rollback, start a new invocation to continue work
+- checkpoint refs remain valid for future rollback
+- rollback overwrites all sandbox files (tracked and untracked)
+- original sandbox HEAD is not preserved (use a different checkpoint to go back)
+
+**examples:**
+```bash
+agency checkpoint ls --invocation my-agent           # list checkpoints
+agency checkpoint ls --invocation 20260201 --json   # JSON output
+agency checkpoint apply --invocation my-agent 3     # restore to checkpoint 3
+```
 
 ## `agency init`
 

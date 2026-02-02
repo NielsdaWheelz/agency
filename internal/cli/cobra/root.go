@@ -66,6 +66,7 @@ and provides commands to control the runner session.`,
 		// v2 commands
 		newWorktreeCmd(),
 		newAgentCmd(),
+		newCheckpointCmd(),
 		newWatchCmd(),
 		newDaemonCmd(),
 	)

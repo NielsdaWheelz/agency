@@ -62,6 +62,7 @@ func newAgentStartCmd() *cobra.Command {
 	var prompt string
 	var promptFile string
 	var runnerArgs []string
+	var noIncludeUntracked bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -77,13 +78,17 @@ Use --detached to start without attaching.
 For headless mode: creates sandbox and runs the runner via the daemon.
 Headless mode requires a prompt (--prompt or --prompt-file).
 
+Checkpoints are automatically created during headless execution. Use
+--no-include-untracked to exclude untracked files from checkpoint snapshots.
+
 Example:
   agency agent start --worktree my-feature
   agency agent start --worktree my-feature --runner claude
   agency agent start --worktree my-feature --detached
   agency agent start --worktree my-feature --name arch-agent
   agency agent start --worktree my-feature --headless --prompt "Fix the bug"
-  agency agent start --worktree my-feature --headless --prompt-file task.md`,
+  agency agent start --worktree my-feature --headless --prompt-file task.md
+  agency agent start --worktree my-feature --headless --no-include-untracked`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if worktree == "" {
@@ -100,14 +105,15 @@ Example:
 			ctx := context.Background()
 
 			return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
-				WorktreeRef:    worktree,
-				Runner:         runner,
-				Headless:       headless,
-				InvocationName: name,
-				Detached:       detached,
-				Prompt:         prompt,
-				PromptFile:     promptFile,
-				RunnerArgs:     runnerArgs,
+				WorktreeRef:        worktree,
+				Runner:             runner,
+				Headless:           headless,
+				InvocationName:     name,
+				Detached:           detached,
+				Prompt:             prompt,
+				PromptFile:         promptFile,
+				RunnerArgs:         runnerArgs,
+				NoIncludeUntracked: noIncludeUntracked,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -120,6 +126,7 @@ Example:
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")
+	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from checkpoint snapshots")
 
 	return cmd
 }

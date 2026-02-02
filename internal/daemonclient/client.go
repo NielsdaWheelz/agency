@@ -96,13 +96,14 @@ func (c *Client) StartHeadless(ctx context.Context, req *daemon.StartHeadlessReq
 
 // ControlPlaneStartOpts holds options for control plane start.
 type ControlPlaneStartOpts struct {
-	RepoRoot       string
-	WorktreeRef    string
-	Runner         string
-	Prompt         string
-	InvocationName string
-	RunnerArgs     []string
-	Env            map[string]string
+	RepoRoot           string
+	WorktreeRef        string
+	Runner             string
+	Prompt             string
+	InvocationName     string
+	RunnerArgs         []string
+	Env                map[string]string
+	NoIncludeUntracked bool // PR-08: exclude untracked files from checkpoints
 }
 
 // ControlPlaneStartHeadless starts a headless invocation via the control plane endpoint (PR-05).
@@ -112,14 +113,15 @@ func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlan
 	clientRequestID := uuid.New().String()
 
 	req := daemon.ControlPlaneStartRequest{
-		RepoRoot:        opts.RepoRoot,
-		WorktreeRef:     opts.WorktreeRef,
-		Runner:          opts.Runner,
-		Prompt:          opts.Prompt,
-		InvocationName:  opts.InvocationName,
-		RunnerArgs:      opts.RunnerArgs,
-		Env:             opts.Env,
-		ClientRequestID: clientRequestID,
+		RepoRoot:           opts.RepoRoot,
+		WorktreeRef:        opts.WorktreeRef,
+		Runner:             opts.Runner,
+		Prompt:             opts.Prompt,
+		InvocationName:     opts.InvocationName,
+		RunnerArgs:         opts.RunnerArgs,
+		Env:                opts.Env,
+		ClientRequestID:    clientRequestID,
+		NoIncludeUntracked: opts.NoIncludeUntracked, // PR-08
 	}
 
 	body, err := json.Marshal(req)
@@ -349,6 +351,40 @@ func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, for
 	defer func() { _ = resp.Body.Close() }()
 
 	var result daemon.WorktreeRmResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// ----- PR-08 Checkpoint Client Methods -----
+
+// CheckpointApply applies a checkpoint to an invocation's sandbox.
+func (c *Client) CheckpointApply(ctx context.Context, repoID, invocationID string, checkpointID int) (*daemon.CheckpointApplyResponse, error) {
+	req := daemon.CheckpointApplyRequest{
+		CheckpointID: checkpointID,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://daemon/invocations/%s/checkpoints/apply?repo_id=%s", invocationID, repoID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.CheckpointApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}

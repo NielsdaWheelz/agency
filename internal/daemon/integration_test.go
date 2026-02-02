@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -619,4 +621,168 @@ func TestDaemonConcurrentStarts(t *testing.T) {
 	// Clean up.
 	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
 	_, _ = env.Client.Kill(ctx, resp2.RepoID, resp2.InvocationID)
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoint Integration Tests (Phase 5, PR-08)
+// ---------------------------------------------------------------------------
+
+// 5.1 TestDaemonCheckpointApplyWhileRunning
+// Start a sleep-mode invocation and attempt checkpoint apply immediately.
+// Should return E_INVOCATION_STILL_RUNNING.
+func TestDaemonCheckpointApplyWhileRunning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "cp-running")
+	startResp := startTestInvocation(t, env.Client, repoRoot, "cp-running", "sleep")
+
+	// Attempt checkpoint apply while invocation is still running.
+	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 1)
+	if err != nil {
+		t.Fatalf("CheckpointApply returned transport error: %v", err)
+	}
+
+	if resp.OK {
+		t.Error("expected OK=false for checkpoint apply while running")
+	}
+	if resp.ErrorCode != "E_INVOCATION_STILL_RUNNING" {
+		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_INVOCATION_STILL_RUNNING")
+	}
+
+	// Clean up: kill the invocation.
+	_, _ = env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
+}
+
+// 5.2 TestDaemonCheckpointApplyNotFound
+// Start and finish an invocation, then apply a non-existent checkpoint ID.
+// Should return E_CHECKPOINT_NOT_FOUND.
+func TestDaemonCheckpointApplyNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cp-notfound")
+
+	// Start with exit-ok so the invocation finishes immediately.
+	startResp := startTestInvocation(t, env.Client, repoRoot, "cp-notfound", "exit-ok")
+
+	// Wait for invocation to finish.
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Apply non-existent checkpoint.
+	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 999)
+	if err != nil {
+		t.Fatalf("CheckpointApply returned transport error: %v", err)
+	}
+
+	if resp.OK {
+		t.Error("expected OK=false for non-existent checkpoint")
+	}
+	if resp.ErrorCode != "E_CHECKPOINT_NOT_FOUND" {
+		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_CHECKPOINT_NOT_FOUND")
+	}
+}
+
+// 5.3 TestDaemonCheckpointLifecycle
+// Full E2E: start invocation, write file in sandbox, wait for checkpoint,
+// kill invocation, verify checkpoints exist, apply checkpoint, verify file.
+func TestDaemonCheckpointLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cp-lifecycle")
+
+	// Start sleep-mode invocation (stays running so we can manipulate sandbox).
+	startResp := startTestInvocation(t, env.Client, repoRoot, "cp-lifecycle", "sleep")
+	sandboxPath := startResp.SandboxPath
+
+	// Write a file in the sandbox to trigger the checkpoint engine via fsnotify.
+	testFilePath := filepath.Join(sandboxPath, "checkpoint-test.txt")
+	if err := os.WriteFile(testFilePath, []byte("checkpoint test content\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Wait for the checkpoint engine debounce (3s) + rate limit buffer.
+	// The fsnotify watcher should detect the file write, debounce for 3s,
+	// then create a checkpoint (if dirty).
+	time.Sleep(6 * time.Second)
+
+	// Kill the invocation. This triggers a final checkpoint via the engine's Stop().
+	killResp, err := env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
+	if err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	if !killResp.OK {
+		t.Fatalf("kill failed: %s - %s", killResp.ErrorCode, killResp.Message)
+	}
+
+	// Wait for invocation to reach terminal state.
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
+
+	// Allow a brief pause for the checkpoint engine goroutine to finish writing.
+	time.Sleep(500 * time.Millisecond)
+
+	// Load checkpoints.json and verify at least one checkpoint was created.
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	cpData, err := os.ReadFile(checkpointsPath)
+	if err != nil {
+		t.Fatalf("failed to read checkpoints.json: %v (path: %s)", err, checkpointsPath)
+	}
+
+	var cpFile checkpoint.CheckpointsFile
+	if err := json.Unmarshal(cpData, &cpFile); err != nil {
+		t.Fatalf("failed to parse checkpoints.json: %v", err)
+	}
+	if len(cpFile.Checkpoints) == 0 {
+		t.Fatal("expected at least one checkpoint, got none")
+	}
+
+	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
+	t.Logf("found %d checkpoints, latest ID=%d", len(cpFile.Checkpoints), latestCP.ID)
+
+	// Verify the test file still exists in the sandbox (checkpoint captured it).
+	if _, err := os.Stat(testFilePath); os.IsNotExist(err) {
+		t.Error("test file should still exist in sandbox after kill")
+	}
+
+	// Modify the sandbox to verify that apply restores the checkpoint state.
+	if err := os.WriteFile(testFilePath, []byte("modified after kill\n"), 0o644); err != nil {
+		t.Fatalf("failed to modify test file: %v", err)
+	}
+
+	// Apply the latest checkpoint via the daemon client.
+	applyResp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, latestCP.ID)
+	if err != nil {
+		t.Fatalf("CheckpointApply transport error: %v", err)
+	}
+	if !applyResp.OK {
+		t.Fatalf("CheckpointApply failed: %s - %s", applyResp.ErrorCode, applyResp.Message)
+	}
+	if applyResp.CheckpointID != latestCP.ID {
+		t.Errorf("applied checkpoint_id = %d, want %d", applyResp.CheckpointID, latestCP.ID)
+	}
+
+	// Verify the file was restored to the checkpoint state (original content).
+	restoredContent, err := os.ReadFile(testFilePath)
+	if err != nil {
+		t.Fatalf("failed to read restored file: %v", err)
+	}
+	if string(restoredContent) != "checkpoint test content\n" {
+		t.Errorf("restored content = %q, want %q", string(restoredContent), "checkpoint test content\n")
+	}
 }

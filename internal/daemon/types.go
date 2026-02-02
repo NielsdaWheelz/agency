@@ -2,6 +2,7 @@
 package daemon
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
@@ -66,6 +67,10 @@ type ControlPlaneStartRequest struct {
 
 	// ClientRequestID is required for idempotency (UUID format).
 	ClientRequestID string `json:"client_request_id"`
+
+	// NoIncludeUntracked excludes untracked files from checkpoint snapshots.
+	// Default is false (include untracked files).
+	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
 }
 
 // ControlPlaneStartResponse is the response body for POST /invocations/start_headless (PR-05 control plane).
@@ -177,10 +182,15 @@ type SupervisedProcess struct {
 	StderrFile            string
 	StreamLogFile         string // PR-07: path to stream.jsonl for normalized events
 	Runner                string // PR-07: runner type for stream parsing
+	RepoRoot              string // PR-08: repo root path for checkpoint engine
 
 	// Parser handles stream parsing and semantic status (PR-07).
 	// May be nil for headed invocations or unsupported runners.
 	Parser *stream.Parser
+
+	// CheckpointEngine manages checkpoint creation (PR-08).
+	// May be nil if checkpointing is disabled.
+	CheckpointEngine CheckpointEngine
 
 	// lastOutputAt is updated in-memory on every chunk; persisted with throttling.
 	lastOutputAt atomic.Int64
@@ -195,6 +205,13 @@ type SupervisedProcess struct {
 
 	// done channel is closed when the process exits.
 	done chan struct{}
+}
+
+// CheckpointEngine is the interface for the checkpoint engine.
+// Used to allow mocking in tests.
+type CheckpointEngine interface {
+	Run(ctx context.Context) error
+	Stop()
 }
 
 // ----- PR-06 Worktree Types -----
@@ -254,4 +271,29 @@ type WorktreeIdempotencyEntry struct {
 	TreePath   string
 	Branch     string
 	CreatedAt  int64 // Unix timestamp
+}
+
+// ----- PR-08 Checkpoint Types -----
+
+// CheckpointApplyRequest is the request body for POST /invocations/{id}/checkpoints/apply.
+type CheckpointApplyRequest struct {
+	// CheckpointID is the checkpoint number to restore.
+	CheckpointID int `json:"checkpoint_id"`
+}
+
+// CheckpointApplyResponse is the response body for POST /invocations/{id}/checkpoints/apply.
+type CheckpointApplyResponse struct {
+	OK           bool   `json:"ok"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+
+	// Success fields
+	CheckpointID   int    `json:"checkpoint_id,omitempty"`
+	SnapshotCommit string `json:"snapshot_commit,omitempty"`
+	RestoredAt     string `json:"restored_at,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
 }

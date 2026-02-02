@@ -1,0 +1,740 @@
+package checkpoint
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+
+	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+)
+
+// Engine manages checkpoint creation for a single sandbox.
+type Engine struct {
+	// Configuration
+	invocationID   string
+	repoID         string
+	sandboxPath    string
+	repoRoot       string
+	checkpointsDir string // Directory containing checkpoints.json (sandbox dir, not tree)
+	eventsPath     string // Path to invocation events.jsonl
+	config         Config
+
+	// Dependencies
+	runner exec.CommandRunner
+	fsys   fs.FS
+	clock  func() time.Time
+
+	// State
+	mu             sync.Mutex
+	lastCheckpoint time.Time
+	eventSeq       atomic.Uint64
+	watcher        *fsnotify.Watcher
+	watchedDirs    map[string]bool
+
+	// Shutdown coordination
+	done     chan struct{}
+	doneOnce sync.Once
+}
+
+// NewEngine creates a new checkpoint engine for the given sandbox.
+func NewEngine(
+	invocationID, repoID, sandboxPath, repoRoot, checkpointsDir, eventsPath string,
+	config Config,
+	runner exec.CommandRunner,
+	fsys fs.FS,
+	clock func() time.Time,
+) *Engine {
+	return &Engine{
+		invocationID:   invocationID,
+		repoID:         repoID,
+		sandboxPath:    sandboxPath,
+		repoRoot:       repoRoot,
+		checkpointsDir: checkpointsDir,
+		eventsPath:     eventsPath,
+		config:         config,
+		runner:         runner,
+		fsys:           fsys,
+		clock:          clock,
+		watchedDirs:    make(map[string]bool),
+		done:           make(chan struct{}),
+	}
+}
+
+// Run starts the checkpoint engine. It blocks until Stop is called.
+func (e *Engine) Run(ctx context.Context) error {
+	// Initialize fsnotify watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create fsnotify watcher: %w", err)
+	}
+	e.watcher = watcher
+	defer func() { _ = watcher.Close() }()
+
+	// Add initial watches for all directories in sandbox tree
+	if err := e.setupInitialWatches(); err != nil {
+		// Non-fatal: fall back to polling only
+		fmt.Fprintf(os.Stderr, "warning: fsnotify setup failed, using polling only: %v\n", err)
+	}
+
+	// Start main loop
+	debounceTimer := time.NewTimer(0)
+	if !debounceTimer.Stop() {
+		select {
+		case <-debounceTimer.C:
+		default:
+		}
+	}
+	debouncePending := false
+
+	pollTicker := time.NewTicker(e.config.PollInterval)
+	defer pollTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Context cancelled, do final checkpoint
+			e.doFinalCheckpoint(ctx)
+			return ctx.Err()
+
+		case <-e.done:
+			// Stop called, do final checkpoint
+			e.doFinalCheckpoint(context.Background())
+			return nil
+
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			// Ignore events from .git/ and .agency/ paths
+			if e.shouldIgnorePath(event.Name) {
+				continue
+			}
+
+			// Handle new directory creation - add watcher
+			if event.Has(fsnotify.Create) {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+					e.addWatchRecursive(event.Name)
+				}
+			}
+
+			// Reset debounce timer
+			if !debouncePending {
+				debouncePending = true
+				debounceTimer.Reset(e.config.DebounceInterval)
+			} else {
+				// Extend debounce period
+				if !debounceTimer.Stop() {
+					select {
+					case <-debounceTimer.C:
+					default:
+					}
+				}
+				debounceTimer.Reset(e.config.DebounceInterval)
+			}
+
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			// Log but continue
+			fmt.Fprintf(os.Stderr, "fsnotify error: %v\n", err)
+
+		case <-debounceTimer.C:
+			debouncePending = false
+			e.tryCheckpoint(ctx, "fsnotify")
+
+		case <-pollTicker.C:
+			e.tryCheckpointIfDirty(ctx)
+		}
+	}
+}
+
+// Stop signals the engine to stop and perform a final checkpoint.
+func (e *Engine) Stop() {
+	e.doneOnce.Do(func() {
+		close(e.done)
+	})
+}
+
+// setupInitialWatches walks the sandbox tree and adds watches for all directories.
+func (e *Engine) setupInitialWatches() error {
+	return filepath.WalkDir(e.sandboxPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip inaccessible paths
+		}
+
+		// Skip .git and .agency directories
+		if d.IsDir() {
+			base := filepath.Base(path)
+			if base == ".git" || base == ".agency" {
+				return filepath.SkipDir
+			}
+
+			// Skip symlinks
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+
+			e.mu.Lock()
+			if !e.watchedDirs[path] {
+				if err := e.watcher.Add(path); err == nil {
+					e.watchedDirs[path] = true
+				}
+			}
+			e.mu.Unlock()
+		}
+		return nil
+	})
+}
+
+// addWatchRecursive adds watches for a directory and all its subdirectories.
+func (e *Engine) addWatchRecursive(dir string) {
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if d.IsDir() {
+			base := filepath.Base(path)
+			if base == ".git" || base == ".agency" {
+				return filepath.SkipDir
+			}
+
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+
+			e.mu.Lock()
+			if !e.watchedDirs[path] {
+				if err := e.watcher.Add(path); err == nil {
+					e.watchedDirs[path] = true
+				}
+			}
+			e.mu.Unlock()
+		}
+		return nil
+	})
+}
+
+// shouldIgnorePath returns true if events from this path should be ignored.
+func (e *Engine) shouldIgnorePath(path string) bool {
+	rel, err := filepath.Rel(e.sandboxPath, path)
+	if err != nil {
+		return false
+	}
+
+	// Check each path component
+	parts := strings.Split(rel, string(filepath.Separator))
+	for _, p := range parts {
+		if p == ".git" || p == ".agency" {
+			return true
+		}
+	}
+	return false
+}
+
+// tryCheckpoint attempts to create a checkpoint, respecting rate limiting.
+func (e *Engine) tryCheckpoint(ctx context.Context, trigger string) {
+	e.mu.Lock()
+	timeSinceLast := e.clock().Sub(e.lastCheckpoint)
+	if timeSinceLast < e.config.RateLimit {
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+
+	if err := e.CreateCheckpoint(ctx); err != nil {
+		// Emit failure event but continue
+		e.emitCheckpointFailed(err.Error())
+	}
+}
+
+// tryCheckpointIfDirty checks if the sandbox is dirty and creates a checkpoint if so.
+func (e *Engine) tryCheckpointIfDirty(ctx context.Context) {
+	e.mu.Lock()
+	timeSinceLast := e.clock().Sub(e.lastCheckpoint)
+	if timeSinceLast < e.config.RateLimit {
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+
+	dirty, err := e.isDirty(ctx)
+	if err != nil || !dirty {
+		return
+	}
+
+	if err := e.CreateCheckpoint(ctx); err != nil {
+		e.emitCheckpointFailed(err.Error())
+	}
+}
+
+// isDirty checks if the sandbox has uncommitted changes.
+func (e *Engine) isDirty(ctx context.Context) (bool, error) {
+	result, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"status", "--porcelain",
+	}, exec.RunOpts{})
+	if err != nil {
+		return false, err
+	}
+	if result.ExitCode != 0 {
+		return false, fmt.Errorf("git status failed: %s", result.Stderr)
+	}
+
+	output := strings.TrimSpace(result.Stdout)
+	if output == "" {
+		return false, nil
+	}
+
+	// If not including untracked, filter out ?? lines
+	if !e.config.IncludeUntracked {
+		lines := strings.Split(output, "\n")
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "?? ") {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// doFinalCheckpoint performs a final checkpoint on shutdown.
+func (e *Engine) doFinalCheckpoint(ctx context.Context) {
+	dirty, err := e.isDirty(ctx)
+	if err != nil || !dirty {
+		return
+	}
+
+	// Force create regardless of rate limit
+	if err := e.createCheckpointInternal(ctx); err != nil {
+		e.emitCheckpointFailed(err.Error())
+	}
+}
+
+// CreateCheckpoint creates a new checkpoint for the sandbox.
+// This is the main public entry point.
+func (e *Engine) CreateCheckpoint(ctx context.Context) error {
+	e.mu.Lock()
+	timeSinceLast := e.clock().Sub(e.lastCheckpoint)
+	if timeSinceLast < e.config.RateLimit {
+		e.mu.Unlock()
+		return nil // Rate limited, not an error
+	}
+	e.mu.Unlock()
+
+	return e.createCheckpointInternal(ctx)
+}
+
+// createCheckpointInternal is the actual checkpoint creation logic.
+func (e *Engine) createCheckpointInternal(ctx context.Context) error {
+	// 1. Check if sandbox is dirty
+	dirty, err := e.isDirty(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check dirty state: %w", err)
+	}
+	if !dirty {
+		return nil // Nothing to checkpoint
+	}
+
+	// 2. Check denylist for untracked files
+	includeUntracked := e.config.IncludeUntracked
+	var deniedFiles []string
+	if includeUntracked {
+		deniedFiles, err = e.checkDenylist(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check denylist: %w", err)
+		}
+		if len(deniedFiles) > 0 {
+			// Degrade to tracked-only
+			includeUntracked = false
+			e.emitDenylistTriggered(deniedFiles)
+		}
+	}
+
+	// 3. Get current HEAD
+	headResult, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"rev-parse", "HEAD",
+	}, exec.RunOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	if headResult.ExitCode != 0 {
+		return fmt.Errorf("git rev-parse HEAD failed: %s", headResult.Stderr)
+	}
+	sandboxHeadSHA := strings.TrimSpace(headResult.Stdout)
+
+	// 4. Create temp index
+	tempIndex, err := os.CreateTemp("", "agency-checkpoint-index-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp index: %w", err)
+	}
+	tempIndexPath := tempIndex.Name()
+	_ = tempIndex.Close()
+	defer func() { _ = os.Remove(tempIndexPath) }()
+
+	// Copy current index to temp
+	gitDir, err := e.getGitDir(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get git dir: %w", err)
+	}
+	indexPath := filepath.Join(gitDir, "index")
+	if data, err := os.ReadFile(indexPath); err == nil {
+		if err := os.WriteFile(tempIndexPath, data, 0o600); err != nil {
+			return fmt.Errorf("failed to copy index: %w", err)
+		}
+	}
+
+	// 5. Stage changes into temp index
+	var addArgs []string
+	if includeUntracked {
+		// git add -A -- . ':(exclude).agency' ':(exclude).git'
+		addArgs = []string{
+			"-C", e.sandboxPath,
+			"add", "-A", "--", ".", ":(exclude).agency", ":(exclude).git",
+		}
+	} else {
+		// git add -u (tracked files only)
+		addArgs = []string{
+			"-C", e.sandboxPath,
+			"add", "-u",
+		}
+	}
+
+	env := map[string]string{"GIT_INDEX_FILE": tempIndexPath}
+	addResult, err := e.runner.Run(ctx, "git", addArgs, exec.RunOpts{Env: env})
+	if err != nil {
+		return fmt.Errorf("failed to run git add: %w", err)
+	}
+	if addResult.ExitCode != 0 {
+		// Check for index lock
+		if strings.Contains(addResult.Stderr, "index.lock") {
+			return fmt.Errorf("index lock detected: %s", addResult.Stderr)
+		}
+		return fmt.Errorf("git add failed: %s", addResult.Stderr)
+	}
+
+	// 6. Write tree from temp index
+	writeTreeResult, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"write-tree",
+	}, exec.RunOpts{Env: env})
+	if err != nil {
+		return fmt.Errorf("failed to run git write-tree: %w", err)
+	}
+	if writeTreeResult.ExitCode != 0 {
+		return fmt.Errorf("git write-tree failed: %s", writeTreeResult.Stderr)
+	}
+	treeHash := strings.TrimSpace(writeTreeResult.Stdout)
+
+	// 7. Load checkpoints file and get next ID
+	cpFile, err := e.loadCheckpoints()
+	if err != nil {
+		return fmt.Errorf("failed to load checkpoints: %w", err)
+	}
+	// Skip if tree is identical to last checkpoint (no actual content change).
+	if n := len(cpFile.Checkpoints); n > 0 {
+		if lastTree := cpFile.Checkpoints[n-1].TreeSHA; lastTree == treeHash && treeHash != "" {
+			return nil
+		}
+	}
+
+	checkpointID := cpFile.NextID()
+	snapshotRef := fmt.Sprintf("%s%s/%d", RefPrefix, e.invocationID, checkpointID)
+
+	// 8. Create commit
+	commitMessage := fmt.Sprintf("agency snapshot %s %d", e.invocationID, checkpointID)
+	commitTreeResult, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"commit-tree", treeHash,
+		"-p", "HEAD",
+		"-m", commitMessage,
+	}, exec.RunOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to run git commit-tree: %w", err)
+	}
+	if commitTreeResult.ExitCode != 0 {
+		return fmt.Errorf("git commit-tree failed: %s", commitTreeResult.Stderr)
+	}
+	snapshotCommit := strings.TrimSpace(commitTreeResult.Stdout)
+
+	// 9. Create ref (run from repo root to ensure ref is accessible)
+	updateRefResult, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.repoRoot,
+		"update-ref", snapshotRef, snapshotCommit,
+	}, exec.RunOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to run git update-ref: %w", err)
+	}
+	if updateRefResult.ExitCode != 0 {
+		return fmt.Errorf("git update-ref failed: %s", updateRefResult.Stderr)
+	}
+
+	// 10. Compute diffstat
+	diffstat := e.computeDiffstat(ctx, sandboxHeadSHA, snapshotCommit)
+
+	// 11. Add checkpoint to file
+	now := e.clock()
+	cp := Checkpoint{
+		ID:                checkpointID,
+		SnapshotRef:       snapshotRef,
+		SnapshotCommit:    snapshotCommit,
+		SandboxHeadSHA:    sandboxHeadSHA,
+		CreatedAt:         now.UTC().Format(time.RFC3339),
+		IncludesUntracked: includeUntracked,
+		Diffstat:          diffstat,
+		TreeSHA:           treeHash,
+	}
+	cpFile.Checkpoints = append(cpFile.Checkpoints, cp)
+
+	// 12. Prune old checkpoints if needed
+	if len(cpFile.Checkpoints) > MaxCheckpoints {
+		e.pruneCheckpoints(ctx, cpFile)
+	}
+
+	// 13. Save checkpoints file
+	if err := e.saveCheckpoints(cpFile); err != nil {
+		return fmt.Errorf("failed to save checkpoints: %w", err)
+	}
+
+	// 14. Update state
+	e.mu.Lock()
+	e.lastCheckpoint = now
+	e.mu.Unlock()
+
+	// 15. Emit success event
+	e.emitCheckpointCreated(checkpointID, includeUntracked, sandboxHeadSHA)
+
+	return nil
+}
+
+// getGitDir returns the .git directory path for the sandbox.
+func (e *Engine) getGitDir(ctx context.Context) (string, error) {
+	result, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"rev-parse", "--git-dir",
+	}, exec.RunOpts{})
+	if err != nil {
+		return "", err
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("git rev-parse --git-dir failed: %s", result.Stderr)
+	}
+
+	gitDir := strings.TrimSpace(result.Stdout)
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(e.sandboxPath, gitDir)
+	}
+	return gitDir, nil
+}
+
+// checkDenylist returns a list of untracked files that match denylist patterns.
+func (e *Engine) checkDenylist(ctx context.Context) ([]string, error) {
+	// Get list of untracked non-ignored files
+	result, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"ls-files", "-o", "--exclude-standard",
+	}, exec.RunOpts{})
+	if err != nil {
+		return nil, err
+	}
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("git ls-files failed: %s", result.Stderr)
+	}
+
+	output := strings.TrimSpace(result.Stdout)
+	if output == "" {
+		return nil, nil
+	}
+
+	var denied []string
+	for _, file := range strings.Split(output, "\n") {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		base := filepath.Base(file)
+		if matchesDenylist(base) {
+			denied = append(denied, file)
+		}
+	}
+
+	return denied, nil
+}
+
+// matchesDenylist checks if a filename matches any denylist pattern.
+func matchesDenylist(basename string) bool {
+	for _, pattern := range DenylistPatterns {
+		// Handle exact match
+		if pattern == basename {
+			return true
+		}
+
+		// Handle glob patterns
+		matched, err := filepath.Match(pattern, basename)
+		if err == nil && matched {
+			return true
+		}
+
+		// Handle .env.* pattern (prefix match)
+		if pattern == ".env.*" && strings.HasPrefix(basename, ".env.") {
+			return true
+		}
+	}
+	return false
+}
+
+// computeDiffstat returns a human-readable diffstat.
+func (e *Engine) computeDiffstat(ctx context.Context, base, commit string) string {
+	result, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"diff", "--stat", "--stat-width=80", base + ".." + commit,
+	}, exec.RunOpts{})
+	if err != nil || result.ExitCode != 0 {
+		return ""
+	}
+
+	// Parse the summary line (e.g., "3 files changed, 42 insertions(+), 15 deletions(-)")
+	trimmed := strings.TrimSpace(result.Stdout)
+	if trimmed == "" {
+		return ""
+	}
+	lines := strings.Split(trimmed, "\n")
+
+	// Get last line which is the summary
+	summary := lines[len(lines)-1]
+
+	// Extract numbers using regex
+	filesRe := regexp.MustCompile(`(\d+) files? changed`)
+	insertionsRe := regexp.MustCompile(`(\d+) insertions?\(\+\)`)
+	deletionsRe := regexp.MustCompile(`(\d+) deletions?\(-\)`)
+
+	files := "0"
+	insertions := "0"
+	deletions := "0"
+
+	if m := filesRe.FindStringSubmatch(summary); len(m) > 1 {
+		files = m[1]
+	}
+	if m := insertionsRe.FindStringSubmatch(summary); len(m) > 1 {
+		insertions = m[1]
+	}
+	if m := deletionsRe.FindStringSubmatch(summary); len(m) > 1 {
+		deletions = m[1]
+	}
+
+	return fmt.Sprintf("+%s -%s in %s files", insertions, deletions, files)
+}
+
+// pruneCheckpoints removes the oldest checkpoints to stay under MaxCheckpoints.
+func (e *Engine) pruneCheckpoints(ctx context.Context, cpFile *CheckpointsFile) {
+	excess := len(cpFile.Checkpoints) - MaxCheckpoints
+	if excess <= 0 {
+		return
+	}
+
+	// Delete refs for oldest checkpoints
+	for i := 0; i < excess; i++ {
+		cp := cpFile.Checkpoints[i]
+		// Delete ref
+		_, _ = e.runner.Run(ctx, "git", []string{
+			"-C", e.repoRoot,
+			"update-ref", "-d", cp.SnapshotRef,
+		}, exec.RunOpts{})
+	}
+
+	// Remove from file
+	cpFile.Checkpoints = cpFile.Checkpoints[excess:]
+}
+
+// loadCheckpoints reads checkpoints.json or creates a new one.
+func (e *Engine) loadCheckpoints() (*CheckpointsFile, error) {
+	cpPath := filepath.Join(e.checkpointsDir, "checkpoints.json")
+	data, err := e.fsys.ReadFile(cpPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewCheckpointsFile(), nil
+		}
+		return nil, err
+	}
+
+	var cpFile CheckpointsFile
+	if err := json.Unmarshal(data, &cpFile); err != nil {
+		return nil, err
+	}
+
+	return &cpFile, nil
+}
+
+// saveCheckpoints writes checkpoints.json atomically.
+func (e *Engine) saveCheckpoints(cpFile *CheckpointsFile) error {
+	cpPath := filepath.Join(e.checkpointsDir, "checkpoints.json")
+	return fs.WriteJSONAtomic(cpPath, cpFile, 0o644)
+}
+
+// emitCheckpointCreated emits a checkpoint_created event.
+func (e *Engine) emitCheckpointCreated(checkpointID int, includesUntracked bool, sandboxHeadSHA string) {
+	seq := e.eventSeq.Add(1)
+	event := NewEvent(
+		e.invocationID, seq,
+		EventKindCheckpointCreated,
+		CheckpointCreatedData(checkpointID, includesUntracked, sandboxHeadSHA),
+		e.clock(),
+	)
+	e.appendEvent(event)
+}
+
+// emitCheckpointFailed emits a checkpoint_failed event.
+func (e *Engine) emitCheckpointFailed(reason string) {
+	seq := e.eventSeq.Add(1)
+	event := NewEvent(
+		e.invocationID, seq,
+		EventKindCheckpointFailed,
+		CheckpointFailedData(reason),
+		e.clock(),
+	)
+	e.appendEvent(event)
+}
+
+// emitDenylistTriggered emits a checkpoint_denylist_triggered event.
+func (e *Engine) emitDenylistTriggered(files []string) {
+	seq := e.eventSeq.Add(1)
+	event := NewEvent(
+		e.invocationID, seq,
+		EventKindCheckpointDenylistTriggered,
+		CheckpointDenylistTriggeredData(files),
+		e.clock(),
+	)
+	e.appendEvent(event)
+}
+
+// appendEvent appends an event to events.jsonl.
+func (e *Engine) appendEvent(event Event) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+
+	// Best-effort append
+	f, err := os.OpenFile(e.eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	_, _ = f.Write(data)
+}

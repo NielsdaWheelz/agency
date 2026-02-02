@@ -16,6 +16,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
+	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -1089,6 +1090,7 @@ type invocationCreateResult struct {
 	SandboxBranch         string
 	BaseCommit            string
 	IntegrationWorktreeID string // PR-06: track worktree for rm guard
+	RepoRoot              string // PR-08: repo root for checkpoint engine
 }
 
 // createInvocationAndSandbox creates invocation directory, sandbox directory, and git worktree atomically.
@@ -1218,6 +1220,9 @@ func (s *Server) createInvocationAndSandbox(ctx context.Context, repoID, repoRoo
 		s.Clock(),
 	)
 
+	// PR-08: Set checkpoint configuration
+	meta.CheckpointIncludeUntracked = !req.NoIncludeUntracked
+
 	if err := s.Store.WriteInvocationMeta(repoID, invocationID, meta); err != nil {
 		cleanup()
 		return nil, err
@@ -1243,6 +1248,7 @@ func (s *Server) createInvocationAndSandbox(ctx context.Context, repoID, repoRoo
 		SandboxBranch:         sandboxBranch,
 		BaseCommit:            baseCommit,
 		IntegrationWorktreeID: wtRecord.WorktreeID,
+		RepoRoot:              repoRoot, // PR-08: pass to checkpoint engine
 	}, nil
 }
 
@@ -1355,6 +1361,26 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	// PR-07: Create stream parser for normalized events
 	parser := stream.NewParser(result.InvocationID, req.Runner, s.Clock)
 
+	// PR-08: Create checkpoint engine
+	checkpointsDir := s.Store.SandboxDir(repoID, result.InvocationID)
+	eventsPath := s.Store.InvocationEventsPath(repoID, result.InvocationID)
+
+	cpConfig := checkpoint.DefaultConfig()
+	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
+
+	cpEngine := checkpoint.NewEngine(
+		result.InvocationID,
+		repoID,
+		result.SandboxPath,
+		result.RepoRoot,
+		checkpointsDir,
+		eventsPath,
+		cpConfig,
+		s.Runner,
+		s.FS,
+		s.Clock,
+	)
+
 	// Create supervised process record
 	proc := &SupervisedProcess{
 		InvocationID:          result.InvocationID,
@@ -1366,7 +1392,9 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		StderrFile:            stderrLogPath,
 		StreamLogFile:         streamLogPath,
 		Runner:                req.Runner,
+		RepoRoot:              result.RepoRoot, // PR-08: for checkpoint engine
 		Parser:                parser,
+		CheckpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
 	}
 
@@ -1386,6 +1414,9 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	// Start goroutines to periodically flush lastOutputAt and semantic status
 	go s.runOutputFlushLoop(proc)
 	go s.runSemanticStatusFlushLoop(proc)
+
+	// PR-08: Start checkpoint engine goroutine
+	go s.runCheckpointLoop(proc)
 
 	return pid, pgid, nil
 }

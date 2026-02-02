@@ -50,6 +50,9 @@ type AgentStartOpts struct {
 	// RunnerArgs are additional arguments to pass to the runner.
 	RunnerArgs []string
 
+	// NoIncludeUntracked excludes untracked files from checkpoint snapshots (PR-08).
+	NoIncludeUntracked bool
+
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
 }
@@ -295,12 +298,13 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 	// Send control plane start request to daemon (PR-05)
 	// Daemon creates: invocation ID, sandbox, invocation meta, and starts runner
 	resp, err := client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
-		RepoRoot:       repoRootPath,
-		WorktreeRef:    opts.WorktreeRef,
-		Runner:         runner,
-		Prompt:         prompt,
-		InvocationName: opts.InvocationName,
-		RunnerArgs:     opts.RunnerArgs,
+		RepoRoot:           repoRootPath,
+		WorktreeRef:        opts.WorktreeRef,
+		Runner:             runner,
+		Prompt:             prompt,
+		InvocationName:     opts.InvocationName,
+		RunnerArgs:         opts.RunnerArgs,
+		NoIncludeUntracked: opts.NoIncludeUntracked, // PR-08
 	})
 	if err != nil {
 		return err
