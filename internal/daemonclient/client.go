@@ -391,3 +391,76 @@ func (c *Client) CheckpointApply(ctx context.Context, repoID, invocationID strin
 
 	return &result, nil
 }
+
+// ----- PR-09 Landing Client Methods -----
+
+// LandOpts holds options for landing via daemon.
+type LandOpts struct {
+	RepoID       string
+	InvocationID string
+	Apply        bool
+	RequireBase  bool
+}
+
+// Land lands sandbox changes to the integration worktree via daemon.
+func (c *Client) Land(ctx context.Context, opts LandOpts) (*daemon.LandResponse, error) {
+	req := daemon.LandRequest{
+		Apply:       opts.Apply,
+		RequireBase: opts.RequireBase,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://daemon/invocations/%s/land?repo_id=%s", opts.InvocationID, opts.RepoID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.LandResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// Discard discards a sandbox without landing via daemon.
+func (c *Client) Discard(ctx context.Context, repoID, invocationID string) (*daemon.DiscardResponse, error) {
+	req := daemon.DiscardRequest{}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://daemon/invocations/%s/discard?repo_id=%s", invocationID, repoID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.DiscardResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}

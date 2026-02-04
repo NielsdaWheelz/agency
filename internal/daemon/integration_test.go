@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -786,3 +789,437 @@ func TestDaemonCheckpointLifecycle(t *testing.T) {
 		t.Errorf("restored content = %q, want %q", string(restoredContent), "checkpoint test content\n")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Landing Integration Tests (PR-09)
+// ---------------------------------------------------------------------------
+
+func TestDaemonLandCherryPick(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, treePath, repoID := createTestWorktree(t, env.Client, repoRoot, "land-cp")
+
+	// Start and wait for invocation to finish.
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-cp", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Create a commit in the sandbox.
+	sandboxPath := startResp.SandboxPath
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "new-file.txt"), []byte("landed content\n"), 0o644))
+	gitExec(t, sandboxPath, "add", "new-file.txt")
+	gitExec(t, sandboxPath, "commit", "-m", "sandbox commit")
+
+	// Land via cherry-pick.
+	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+
+	require.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
+	assert.Equal(t, daemon.LandingModeCherryPick, resp.AppliedMode)
+	assert.Equal(t, 1, resp.CommitsLanded)
+	assert.NotEqual(t, resp.IntegrationHeadBefore, resp.IntegrationHeadAfter)
+
+	// Verify the file landed in the integration tree.
+	content, err := os.ReadFile(filepath.Join(treePath, "new-file.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "landed content\n", string(content))
+
+	// Verify sandbox was cleaned up.
+	_, err = os.Stat(sandboxPath)
+	assert.True(t, os.IsNotExist(err), "sandbox should be removed after landing")
+
+	// Verify invocation meta updated.
+	meta, err := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.LandingStatusLanded, meta.LandingStatus)
+}
+
+func TestDaemonLandApply(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, treePath, repoID := createTestWorktree(t, env.Client, repoRoot, "land-apply")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-apply", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Write a file in the sandbox but do NOT commit (dirty tree only).
+	sandboxPath := startResp.SandboxPath
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "applied-file.txt"), []byte("applied content\n"), 0o644))
+
+	// Land with Apply=true.
+	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+		Apply:        true,
+	})
+	require.NoError(t, err)
+
+	require.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
+	assert.Equal(t, daemon.LandingModeApplyPatch, resp.AppliedMode)
+	assert.Equal(t, 1, resp.CommitsLanded)
+
+	// Verify the file landed in the integration tree.
+	content, err := os.ReadFile(filepath.Join(treePath, "applied-file.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "applied content\n", string(content))
+
+	// Verify sandbox was cleaned up.
+	_, err = os.Stat(sandboxPath)
+	assert.True(t, os.IsNotExist(err), "sandbox should be removed after landing")
+
+	// Verify meta updated.
+	meta, err := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.LandingStatusLanded, meta.LandingStatus)
+}
+
+func TestDaemonLandConflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, treePath, repoID := createTestWorktree(t, env.Client, repoRoot, "land-conflict")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-conflict", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Capture integration HEAD before modifications.
+	headBefore := gitExec(t, treePath, "rev-parse", "HEAD")
+
+	// Create a conflicting commit in the sandbox.
+	sandboxPath := startResp.SandboxPath
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "README.md"), []byte("sandbox version\n"), 0o644))
+	gitExec(t, sandboxPath, "add", "README.md")
+	gitExec(t, sandboxPath, "commit", "-m", "sandbox modifies README")
+
+	// Create a conflicting commit in the integration tree.
+	require.NoError(t, os.WriteFile(filepath.Join(treePath, "README.md"), []byte("integration version\n"), 0o644))
+	gitExec(t, treePath, "add", "README.md")
+	gitExec(t, treePath, "commit", "-m", "integration modifies README")
+
+	// Attempt to land — should conflict.
+	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_LAND_CONFLICT", resp.ErrorCode)
+	assert.NotEmpty(t, resp.ConflictFiles)
+	assert.Contains(t, resp.ConflictFiles, "README.md")
+
+	// Verify integration tree HEAD was restored (cherry-pick aborted).
+	headAfter := gitExec(t, treePath, "rev-parse", "HEAD")
+	assert.NotEqual(t, headBefore, headAfter, "integration HEAD should have advanced from the integration commit")
+
+	// Sandbox should still exist (not cleaned up on failure).
+	_, err = os.Stat(sandboxPath)
+	assert.NoError(t, err, "sandbox should still exist after failed land")
+}
+
+func TestDaemonLandNothingToLand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "land-nothing")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-nothing", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Land without any changes — no commits, clean tree.
+	// The daemon writes .agency/SANDBOX_MARKER at invocation startup, but
+	// isSandboxDirty excludes .agency/ so it should not count as dirty.
+	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_LAND_NOTHING_TO_LAND", resp.ErrorCode)
+}
+
+func TestDaemonLandApplyRequired(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "land-apply-req")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-apply-req", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Write a file (dirty tree) but do NOT commit, and do NOT set Apply.
+	sandboxPath := startResp.SandboxPath
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "dirty-file.txt"), []byte("dirty\n"), 0o644))
+
+	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+		// Apply: false (default)
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_LAND_APPLY_REQUIRED", resp.ErrorCode)
+	assert.Contains(t, resp.Hint, "apply")
+}
+
+func TestDaemonLandWhileRunning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "land-running")
+
+	// Start a sleep invocation (stays running).
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-running", "sleep")
+
+	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       startResp.RepoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
+
+	// Clean up.
+	_, _ = env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
+}
+
+func TestDaemonLandAlreadyLanded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "land-twice")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-twice", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Create a commit so the first land succeeds.
+	sandboxPath := startResp.SandboxPath
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "file.txt"), []byte("content\n"), 0o644))
+	gitExec(t, sandboxPath, "add", "file.txt")
+	gitExec(t, sandboxPath, "commit", "-m", "commit for landing")
+
+	// First land should succeed.
+	resp1, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+	require.True(t, resp1.OK, "first land should succeed: %s - %s", resp1.ErrorCode, resp1.Message)
+
+	// Second land should fail.
+	resp2, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp2.OK)
+	assert.Equal(t, "E_LAND_ALREADY_LANDED", resp2.ErrorCode)
+}
+
+func TestDaemonLandAlreadyDiscarded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "land-after-discard")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "land-after-discard", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Discard first.
+	discardResp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.NoError(t, err)
+	require.True(t, discardResp.OK, "discard should succeed: %s - %s", discardResp.ErrorCode, discardResp.Message)
+
+	// Then try to land.
+	landResp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+
+	assert.False(t, landResp.OK)
+	assert.Equal(t, "E_LAND_ALREADY_DISCARDED", landResp.ErrorCode)
+}
+
+// ---------------------------------------------------------------------------
+// Discard Integration Tests (PR-09)
+// ---------------------------------------------------------------------------
+
+func TestDaemonDiscard(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "discard-basic")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "discard-basic", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	sandboxPath := startResp.SandboxPath
+
+	resp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.NoError(t, err)
+
+	require.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
+
+	// Verify meta updated.
+	meta, err := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.LandingStatusDiscarded, meta.LandingStatus)
+
+	// Verify sandbox was cleaned up.
+	_, err = os.Stat(sandboxPath)
+	assert.True(t, os.IsNotExist(err), "sandbox should be removed after discard")
+}
+
+func TestDaemonDiscardRunning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "discard-running")
+
+	// Start a sleep invocation (stays running).
+	startResp := startTestInvocation(t, env.Client, repoRoot, "discard-running", "sleep")
+
+	resp, err := env.Client.Discard(ctx, startResp.RepoID, startResp.InvocationID)
+	require.NoError(t, err)
+
+	require.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
+
+	// Wait for the process to actually terminate and meta to update.
+	time.Sleep(1 * time.Second)
+
+	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "discarded", meta.ExitReason)
+	assert.Equal(t, store.LandingStatusDiscarded, meta.LandingStatus)
+}
+
+func TestDaemonDiscardAlreadyLanded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "discard-after-land")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "discard-after-land", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Land first.
+	sandboxPath := startResp.SandboxPath
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "file.txt"), []byte("content\n"), 0o644))
+	gitExec(t, sandboxPath, "add", "file.txt")
+	gitExec(t, sandboxPath, "commit", "-m", "commit")
+
+	landResp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoID,
+		InvocationID: startResp.InvocationID,
+	})
+	require.NoError(t, err)
+	require.True(t, landResp.OK)
+
+	// Try to discard after landing.
+	discardResp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.NoError(t, err)
+
+	assert.False(t, discardResp.OK)
+	assert.Equal(t, "E_LAND_ALREADY_LANDED", discardResp.ErrorCode)
+}
+
+func TestDaemonDiscardAlreadyDiscarded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "discard-twice")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "discard-twice", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// First discard should succeed.
+	resp1, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.NoError(t, err)
+	require.True(t, resp1.OK)
+
+	// Second discard should fail.
+	resp2, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.NoError(t, err)
+
+	assert.False(t, resp2.OK)
+	assert.Equal(t, "E_LAND_ALREADY_DISCARDED", resp2.ErrorCode)
+}
+
+// ---------------------------------------------------------------------------
+// Landing Routing Tests (PR-09)
+// ---------------------------------------------------------------------------
+
+// Routing correctness for POST /land and /discard is proven by all the
+// integration tests above — every successful Land/Discard call proves the
+// route is wired. Method-not-allowed (405) testing for GET is covered by
+// TestHandleLandDiscardRouting in landing_handlers_test.go (internal package).

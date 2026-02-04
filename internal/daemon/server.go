@@ -343,6 +343,20 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	case "checkpoints":
 		// Handle /invocations/{id}/checkpoints/apply
 		s.handleCheckpoints(w, r, invocationID)
+	case "land":
+		// PR-09: Land sandbox changes to integration worktree
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleLand(w, r, invocationID)
+	case "discard":
+		// PR-09: Discard sandbox without landing
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleDiscard(w, r, invocationID)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
 	}

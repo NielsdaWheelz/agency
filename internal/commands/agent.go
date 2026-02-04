@@ -876,6 +876,366 @@ type AgentKillOpts struct {
 	TmuxClient tmux.Client
 }
 
+// AgentDiffOpts holds options for the agent diff command.
+type AgentDiffOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+}
+
+// AgentDiff shows the diff between sandbox and base_commit.
+// This is a CLI-local, read-only operation - no daemon call needed.
+func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiffOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true, // diff can be viewed for finished invocations
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	// Show commit list: base_commit..sandbox_branch
+	_, _ = fmt.Fprintf(stdout, "Commits in sandbox:\n")
+	_, _ = fmt.Fprintf(stdout, "==================\n")
+
+	logResult, err := cr.Run(ctx, "git", []string{
+		"-C", repoRoot.Path,
+		"log", "--oneline", fmt.Sprintf("%s..%s", record.Meta.BaseCommit, record.Meta.SandboxBranch),
+	}, exec.RunOpts{})
+	if err == nil && logResult.ExitCode == 0 {
+		if logResult.Stdout == "" {
+			_, _ = fmt.Fprintf(stdout, "(no commits)\n")
+		} else {
+			_, _ = fmt.Fprint(stdout, logResult.Stdout)
+		}
+	} else {
+		_, _ = fmt.Fprintf(stdout, "(unable to list commits)\n")
+	}
+
+	_, _ = fmt.Fprintf(stdout, "\nFile diff (base_commit vs sandbox):\n")
+	_, _ = fmt.Fprintf(stdout, "====================================\n")
+
+	// Show file diff: base_commit..sandbox_branch
+	diffResult, err := cr.Run(ctx, "git", []string{
+		"-C", repoRoot.Path,
+		"diff", fmt.Sprintf("%s..%s", record.Meta.BaseCommit, record.Meta.SandboxBranch),
+	}, exec.RunOpts{})
+	if err == nil && diffResult.ExitCode == 0 {
+		if diffResult.Stdout == "" {
+			_, _ = fmt.Fprintf(stdout, "(no changes)\n")
+		} else {
+			_, _ = fmt.Fprint(stdout, diffResult.Stdout)
+		}
+	} else {
+		_, _ = fmt.Fprintf(stderr, "warning: unable to generate diff: %s\n", diffResult.Stderr)
+	}
+
+	// If sandbox exists and has uncommitted changes, show those too
+	if record.SandboxExists {
+		statusResult, err := cr.Run(ctx, "git", []string{
+			"-C", record.Meta.SandboxPath,
+			"status", "--porcelain",
+		}, exec.RunOpts{})
+		if err == nil && statusResult.ExitCode == 0 && statusResult.Stdout != "" {
+			_, _ = fmt.Fprintf(stdout, "\nUncommitted changes in sandbox:\n")
+			_, _ = fmt.Fprintf(stdout, "================================\n")
+			_, _ = fmt.Fprint(stdout, statusResult.Stdout)
+		}
+	}
+
+	return nil
+}
+
+// AgentLandOpts holds options for the agent land command.
+type AgentLandOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+
+	// Apply enables apply mode for uncommitted changes.
+	Apply bool
+
+	// RequireBase fails if integration has diverged from base_commit.
+	RequireBase bool
+}
+
+// AgentLand lands sandbox changes to the integration worktree via daemon.
+func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLandOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true, // land works on finished invocations
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	// Ensure daemon is running
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	// Check API version compatibility
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// Call daemon to land
+	resp, err := client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       repoIdentity.RepoID,
+		InvocationID: record.InvocationID,
+		Apply:        opts.Apply,
+		RequireBase:  opts.RequireBase,
+	})
+	if err != nil {
+		return err
+	}
+
+	if !resp.OK {
+		// Handle specific error codes
+		hint := resp.Hint
+		if resp.ErrorCode == string(errors.ELandConflict) && len(resp.ConflictFiles) > 0 {
+			_, _ = fmt.Fprintf(stderr, "Conflicting files:\n")
+			for _, f := range resp.ConflictFiles {
+				_, _ = fmt.Fprintf(stderr, "  - %s\n", f)
+			}
+		}
+		return errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": hint},
+		)
+	}
+
+	// Success output
+	_, _ = fmt.Fprintf(stdout, "Successfully landed invocation %s\n", record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  mode:        %s\n", resp.AppliedMode)
+	_, _ = fmt.Fprintf(stdout, "  commits:     %d\n", resp.CommitsLanded)
+	_, _ = fmt.Fprintf(stdout, "  head_before: %s\n", resp.IntegrationHeadBefore[:12])
+	_, _ = fmt.Fprintf(stdout, "  head_after:  %s\n", resp.IntegrationHeadAfter[:12])
+
+	return nil
+}
+
+// AgentDiscardOpts holds options for the agent discard command.
+type AgentDiscardOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+}
+
+// AgentDiscard discards a sandbox without landing via daemon.
+func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiscardOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true, // discard works on any non-landed/discarded invocation
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	// Ensure daemon is running
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	// Check API version compatibility
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// Call daemon to discard
+	resp, err := client.Discard(ctx, repoIdentity.RepoID, record.InvocationID)
+	if err != nil {
+		return err
+	}
+
+	if !resp.OK {
+		return errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": resp.Hint},
+		)
+	}
+
+	// Success output
+	_, _ = fmt.Fprintf(stdout, "Discarded invocation %s\n", record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "Sandbox and checkpoint refs have been removed.\n")
+
+	return nil
+}
+
+// AgentOpenOpts holds options for the agent open command.
+type AgentOpenOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+}
+
+// AgentOpen opens the sandbox directory in the configured editor.
+func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
+	// Resolve paths
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	// Get repo context
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return errors.New(errors.ENoRepo, "not inside a git repository")
+	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// Resolve invocation
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+
+	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	if record.Broken {
+		return errors.NewWithDetails(
+			errors.EInvocationBroken,
+			"invocation exists but meta.json is unreadable or invalid",
+			map[string]string{
+				"invocation_id":  record.InvocationID,
+				"invocation_dir": record.InvocationDir,
+			},
+		)
+	}
+
+	if !record.SandboxExists {
+		return errors.NewWithDetails(
+			errors.ESandboxMissing,
+			"sandbox no longer exists",
+			map[string]string{
+				"invocation_id": record.InvocationID,
+				"sandbox_path":  record.Meta.SandboxPath,
+				"hint":          "sandbox was removed after landing or discarding",
+			},
+		)
+	}
+
+	// Get editor from config or environment
+	userCfg, _, _ := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	editor := userCfg.Defaults.Editor
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = "code" // default to VS Code
+	}
+
+	// Open editor
+	_, _ = fmt.Fprintf(stdout, "Opening sandbox in %s: %s\n", editor, record.Meta.SandboxPath)
+	result, err := cr.Run(ctx, editor, []string{record.Meta.SandboxPath}, exec.RunOpts{})
+	if err != nil {
+		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", err)
+	}
+	if result.ExitCode != 0 {
+		_, _ = fmt.Fprintf(stderr, "warning: editor exited with code %d\n", result.ExitCode)
+	}
+
+	return nil
+}
+
 // AgentKill forcefully terminates a running invocation.
 // For headed mode: kills the tmux session.
 // For headless mode: sends SIGKILL via daemon.
