@@ -116,6 +116,81 @@ response: `WorktreeRmResponse`
 5. daemon never mutates store files outside documented contracts.
 6. legacy endpoints are frozen and must not be used by new clients.
 
+### GET /invocations/{ref}/logs
+
+query:
+- `repo_id` (optional)
+- `kind`: `raw` (default), `stderr`, `stream`
+
+**offset mode** (PR-B): when `offset` query param is present
+- `offset` (int64, >= 0): byte offset from start of file
+- `limit` (int, default 65536, max 1048576): max bytes returned
+
+response (offset mode): `InvocationLogsOffsetData`
+- `kind`, `data_b64` (base64-encoded bytes), `next_offset`, `total_bytes`
+
+**tail mode** (legacy): when `offset` is absent
+- `tail_bytes` (int, default 65536, max 1048576): bytes from end of file
+
+response (tail mode): `InvocationLogsData`
+- `kind`, `content`, `truncated`, `total_bytes`, `returned_bytes`, `starts_midline`, `ends_midline`
+
+error codes:
+- `E_INVOCATION_NOT_FOUND`: invocation ref not found
+- `E_LOG_NOT_FOUND`: log file does not exist
+- `E_INVALID_ARGUMENT`: bad offset or limit
+
+### GET /worktrees
+
+query:
+- `repo_id` (optional), `state` (default `present`), `limit`, `cursor`
+
+response: `ListWorktreesData`
+
+### GET /worktrees/{ref}
+
+query:
+- `repo_id` (optional)
+
+response: `WorktreeDTO`
+
+### GET /invocations
+
+query:
+- `repo_id`, `worktree_id`, `worktree_ref`, `state`, `mode`, `limit`, `cursor`
+
+response: `ListInvocationsData`
+
+### GET /invocations/{ref}
+
+query:
+- `repo_id` (optional)
+
+response: `InvocationDTO`
+
+### GET /invocations/{ref}/diff
+
+query:
+- `repo_id`, `include_patch`, `max_patch_bytes`, `include_uncommitted`
+
+response: `InvocationDiffData`
+
+### GET /invocations/{ref}/checkpoints
+
+query:
+- `repo_id`, `limit`, `cursor`
+
+response: `ListCheckpointsData`
+
+### POST /repos/register
+
+request: `RegisterRepoRequest`
+response: `RegisterRepoResponse`
+
+### GET /repos
+
+response: `ListReposData`
+
 ## stubs
 
 - complete error code catalog per endpoint

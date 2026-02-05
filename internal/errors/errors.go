@@ -182,6 +182,10 @@ const (
 	ERepoNoAccessibleRoots Code = "E_REPO_NO_ACCESSIBLE_ROOTS" // all registered roots are inaccessible
 	EAmbiguous             Code = "E_AMBIGUOUS"                // name/ref matches multiple entities across repos
 	ENoRepoContext         Code = "E_NO_REPO_CONTEXT"          // command requires repo context but none available
+
+	// Slice 8 logs API error codes (PR-B)
+	ELogNotFound     Code = "E_LOG_NOT_FOUND"    // log file does not exist or kind unavailable
+	EInvalidArgument Code = "E_INVALID_ARGUMENT" // invalid parameter (offset, limit, interval, etc.)
 )
 
 // AgencyError is the standard error type for agency errors.

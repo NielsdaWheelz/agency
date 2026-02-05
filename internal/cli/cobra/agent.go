@@ -2,7 +2,9 @@ package cobra
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -33,7 +35,7 @@ Subcommands:
   land      Apply sandbox changes to integration
   discard   Discard sandbox changes
   open      Open sandbox in editor
-  logs      View invocation logs (future)`,
+  logs      View invocation logs`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
@@ -52,6 +54,7 @@ Subcommands:
 		newAgentLandCmd(),
 		newAgentDiscardCmd(),
 		newAgentOpenCmd(),
+		newAgentLogsCmd(),
 	)
 
 	return cmd
@@ -141,6 +144,8 @@ func newAgentLSCmd() *cobra.Command {
 	var worktree string
 	var all bool
 	var jsonOut bool
+	var watch bool
+	var intervalStr string
 
 	cmd := &cobra.Command{
 		Use:   "ls",
@@ -150,14 +155,32 @@ func newAgentLSCmd() *cobra.Command {
 By default, shows active invocations (not yet landed/discarded).
 Use --repo to specify a repo, or --all-repos to list globally.
 
+Use --watch to continuously redraw the list at a configurable interval.
+--watch is incompatible with --json.
+
 Example:
   agency agent ls
   agency agent ls --repo abc123
   agency agent ls --all-repos
   agency agent ls --worktree my-feature
-  agency agent ls --all --json`,
+  agency agent ls --all --json
+  agency agent ls --watch
+  agency agent ls --watch --interval 1s`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if watch && jsonOut {
+				return errors.New(errors.EUsage, "--watch and --json cannot be used together")
+			}
+
+			var interval time.Duration
+			if watch && intervalStr != "" {
+				d, parseErr := parseWatchInterval(intervalStr)
+				if parseErr != nil {
+					return errors.New(errors.EInvalidArgument, parseErr.Error())
+				}
+				interval = d
+			}
+
 			cwd, err := os.Getwd()
 			if err != nil {
 				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
@@ -173,6 +196,8 @@ Example:
 				WorktreeRef: worktree,
 				All:         all,
 				JSON:        jsonOut,
+				Watch:       watch,
+				Interval:    interval,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -182,6 +207,8 @@ Example:
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Filter by integration worktree")
 	cmd.Flags().BoolVar(&all, "all", false, "Include finished (landed/discarded) invocations")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVar(&watch, "watch", false, "Continuously redraw the list")
+	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Watch redraw interval (e.g. 500ms, 1s)")
 
 	return cmd
 }
@@ -488,6 +515,83 @@ Example:
 	}
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+
+	return cmd
+}
+
+// watchIntervalMin/Max define valid bounds for --interval.
+const (
+	watchIntervalMin = 250 * time.Millisecond
+	watchIntervalMax = 5 * time.Second
+)
+
+// parseWatchInterval parses and validates a --interval flag value.
+func parseWatchInterval(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("--interval: %q is not a valid duration (use e.g. 500ms, 1s, 2.5s)", s)
+	}
+	if d < watchIntervalMin {
+		return 0, fmt.Errorf("--interval must be between 250ms and 5s")
+	}
+	if d > watchIntervalMax {
+		return 0, fmt.Errorf("--interval must be between 250ms and 5s")
+	}
+	return d, nil
+}
+
+func newAgentLogsCmd() *cobra.Command {
+	var repoFlag string
+	var kind string
+	var follow bool
+	var offset int64
+
+	cmd := &cobra.Command{
+		Use:   "logs <invocation_ref>",
+		Short: "View invocation logs",
+		Long: `View logs for an agent invocation.
+
+Streams log content from the daemon using offset-based reads.
+By default, reads all available log data and exits.
+
+With --follow, continues polling for new data after reaching EOF
+(like tail -f). Exit with Ctrl-C.
+
+Use --kind to select log stream:
+  raw     Verbatim runner stdout (default)
+  stderr  Runner stderr
+  stream  Normalized events (if available)
+
+Example:
+  agency agent logs 20260131
+  agency agent logs --follow my-invocation
+  agency agent logs --kind stderr 20260131
+  agency agent logs --offset 1024 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentLogs(ctx, cr, fsys, cwd, commands.AgentLogsOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+				Kind:          kind,
+				Follow:        follow,
+				Offset:        offset,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVar(&kind, "kind", "raw", "Log kind: raw, stderr, stream")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output (poll for new data)")
+	cmd.Flags().Int64Var(&offset, "offset", 0, "Byte offset to start reading from")
 
 	return cmd
 }

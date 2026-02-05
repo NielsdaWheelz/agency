@@ -257,6 +257,12 @@ agency agent stop 20260131
 
 # Kill an invocation forcefully
 agency agent kill 20260131
+
+# View invocation logs
+agency agent logs 20260131
+agency agent logs --follow my-invocation    # follow mode (like tail -f)
+agency agent logs --kind stderr 20260131     # view stderr
+agency agent logs --offset 1024 20260131     # start from byte offset
 ```
 
 Key concepts:
@@ -302,6 +308,56 @@ agency agent open 20260131
 - Stops running invocations (graceful, then forceful after 5s)
 - Removes sandbox worktree, branch, and checkpoint refs
 - Preserves invocation record with `landing_status=discarded`
+
+### Viewing Logs (PR-B)
+
+View invocation logs via the daemon's offset-based API:
+
+```bash
+# View all log output (pages to EOF)
+agency agent logs 20260131
+
+# Follow mode — polls for new data (like tail -f)
+agency agent logs --follow my-invocation
+
+# View stderr instead of stdout
+agency agent logs --kind stderr 20260131
+
+# View normalized stream events (if available)
+agency agent logs --kind stream 20260131
+
+# Start reading from a specific byte offset
+agency agent logs --offset 1024 20260131
+```
+
+**Log kinds:**
+- **raw**: Verbatim runner stdout (JSONL as emitted by claude/codex) — default
+- **stderr**: Runner stderr (errors, warnings)
+- **stream**: Normalized events (written by stream parser, if available)
+
+**Follow mode:** Polls daemon at 500ms intervals. Exit with Ctrl-C.
+
+### Live Monitoring (PR-B)
+
+Use `--watch` on list commands for live ANSI-redraw monitoring:
+
+```bash
+# Watch worktrees (updates every 500ms)
+agency worktree ls --watch
+
+# Watch agents with custom interval
+agency agent ls --watch --interval 1s
+
+# Watch agents for a specific worktree
+agency agent ls --watch --worktree my-feature
+```
+
+**Watch behavior:**
+- Clears screen and redraws on each tick
+- Default interval: 500ms (min 250ms, max 5s)
+- Incompatible with `--json`
+- Exit with Ctrl-C
+- Works over SSH/tailscale
 
 ## Daemon (v2)
 

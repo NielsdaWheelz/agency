@@ -894,6 +894,71 @@ func (c *Client) GetInvocationLogs(ctx context.Context, ref string, repoID strin
 	}, nil
 }
 
+// GetInvocationLogsOffsetOpts holds options for offset-based log reads (PR-B).
+type GetInvocationLogsOffsetOpts struct {
+	Kind   string // raw, stderr, stream (default: raw)
+	Offset int64  // byte offset from start of file
+	Limit  int    // max bytes returned (default 65536)
+}
+
+// GetInvocationLogsOffsetResult wraps the offset-mode logs response.
+type GetInvocationLogsOffsetResult struct {
+	Logs      daemon.InvocationLogsOffsetData
+	RequestID string
+}
+
+// GetInvocationLogsOffset gets logs at a byte offset for an invocation via the daemon (PR-B).
+func (c *Client) GetInvocationLogsOffset(ctx context.Context, ref string, repoID string, opts GetInvocationLogsOffsetOpts) (*GetInvocationLogsOffsetResult, error) {
+	u := fmt.Sprintf("http://daemon/invocations/%s/logs?", url.PathEscape(ref))
+	if repoID != "" {
+		u += "repo_id=" + url.QueryEscape(repoID) + "&"
+	}
+	if opts.Kind != "" {
+		u += "kind=" + url.QueryEscape(opts.Kind) + "&"
+	}
+	u += fmt.Sprintf("offset=%d&", opts.Offset)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 65536
+	}
+	u += fmt.Sprintf("limit=%d", limit)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var logs daemon.InvocationLogsOffsetData
+	if err := json.Unmarshal(dataBytes, &logs); err != nil {
+		return nil, err
+	}
+
+	return &GetInvocationLogsOffsetResult{
+		Logs:      logs,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
 // ListCheckpointsOpts holds options for listing checkpoints.
 type ListCheckpointsOpts struct {
 	Limit  int    // default 100, max 500

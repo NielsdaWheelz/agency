@@ -134,11 +134,22 @@ type WorktreeLSOpts struct {
 	AllRepos bool   // PR-A: --all-repos
 	All      bool
 	JSON     bool
+
+	// Watch mode (PR-B): re-render on interval with ANSI clear-screen.
+	Watch    bool
+	Interval time.Duration // default 500ms, min 250ms, max 5s
+
+	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
+	SleepFn func(time.Duration)
+
+	// MaxIterations limits watch iterations for testing. 0 = unlimited.
+	MaxIterations int
 }
 
 // WorktreeLS lists integration worktrees.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
+// PR-B: Supports --watch for ANSI clear-screen redraw polling.
 func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeLSOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -194,20 +205,33 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		repoID = repoCtx.RepoID
 	}
 
-	result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
-		RepoID: repoID,
-		State:  state,
-	})
-	if err != nil {
-		return err
+	// Non-watch mode
+	if !opts.Watch {
+		result, fetchErr := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+			RepoID: repoID,
+			State:  state,
+		})
+		if fetchErr != nil {
+			return fetchErr
+		}
+		if opts.JSON {
+			return writeWorktreeLSJSONFromDTO(stdout, result.Worktrees)
+		}
+		return writeWorktreeLSHumanFromDTO(stdout, result.Worktrees)
 	}
 
-	// Output
-	if opts.JSON {
-		return writeWorktreeLSJSONFromDTO(stdout, result.Worktrees)
+	// Watch mode (PR-B)
+	fetchAndRender := func(w io.Writer) error {
+		result, fetchErr := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+			RepoID: repoID,
+			State:  state,
+		})
+		if fetchErr != nil {
+			return fetchErr
+		}
+		return writeWorktreeLSHumanFromDTO(w, result.Worktrees)
 	}
-
-	return writeWorktreeLSHumanFromDTO(stdout, result.Worktrees)
+	return watchLoop(ctx, stdout, stderr, opts.Interval, opts.SleepFn, opts.MaxIterations, fetchAndRender)
 }
 
 // writeWorktreeLSJSONFromDTO outputs worktree list as JSON from daemon DTOs.

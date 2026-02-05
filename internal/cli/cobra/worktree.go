@@ -3,6 +3,7 @@ package cobra
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -103,6 +104,8 @@ func newWorktreeLSCmd() *cobra.Command {
 	var allRepos bool
 	var all bool
 	var jsonOut bool
+	var watch bool
+	var intervalStr string
 
 	cmd := &cobra.Command{
 		Use:   "ls",
@@ -112,14 +115,32 @@ func newWorktreeLSCmd() *cobra.Command {
 By default, only shows non-archived worktrees for the current repo.
 Use --repo to specify a repo by id/prefix, or --all-repos to list globally.
 
+Use --watch to continuously redraw the list at a configurable interval.
+--watch is incompatible with --json.
+
 Example:
   agency worktree ls
   agency worktree ls --all
   agency worktree ls --repo abc123
   agency worktree ls --all-repos
-  agency worktree ls --json`,
+  agency worktree ls --json
+  agency worktree ls --watch
+  agency worktree ls --watch --interval 1s`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if watch && jsonOut {
+				return errors.New(errors.EUsage, "--watch and --json cannot be used together")
+			}
+
+			var interval time.Duration
+			if watch && intervalStr != "" {
+				d, parseErr := parseWatchInterval(intervalStr)
+				if parseErr != nil {
+					return errors.New(errors.EInvalidArgument, parseErr.Error())
+				}
+				interval = d
+			}
+
 			cwd, err := os.Getwd()
 			if err != nil {
 				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
@@ -134,6 +155,8 @@ Example:
 				AllRepos: allRepos,
 				All:      all,
 				JSON:     jsonOut,
+				Watch:    watch,
+				Interval: interval,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -142,6 +165,8 @@ Example:
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVar(&watch, "watch", false, "Continuously redraw the list")
+	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Watch redraw interval (e.g. 500ms, 1s)")
 
 	return cmd
 }
