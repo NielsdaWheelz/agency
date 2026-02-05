@@ -1,3 +1,8 @@
+**Audit Snapshot**
+- this file is an inventory snapshot, not the live backlog.
+- issue stubs live in `docs/issues/` and should be moved to github issues for real tracking.
+- priorities here are triage hints, not execution order.
+
 **Backlog**
 1. **low** Switch to Cobra from Go stdlib.
 2. **low** Reports should be JSON, simpler, not required, and omit "how to test" or other basics.
