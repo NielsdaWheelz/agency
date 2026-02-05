@@ -35,8 +35,66 @@ v2 commands (slice 8):
   agent       manage agent invocations (headed + headless via daemon)
   daemon      manage the agency daemon (headless supervision)
   checkpoint  manage sandbox checkpoints for headless invocations
+  repo        manage repository registry
   watch       interactive TUI for monitoring (not yet implemented)
 ```
+
+## `agency repo` (v2)
+
+manages the repository registry. repos must be registered before creating worktrees or starting agents. repos are auto-registered on first use, but can be managed explicitly.
+
+### `agency repo add`
+
+registers a repository.
+
+**usage:**
+```bash
+agency repo add [--path <path>] [--json]
+```
+
+**flags:**
+- `--path`: path to the git repository (default: current directory)
+- `--json`: output as JSON
+
+**behavior:**
+1. resolves git root from the given path
+2. generates a deterministic repo_id from the repo root
+3. writes `repo.json` and updates `repo_index.json`
+4. idempotent: re-registering an existing repo is a no-op
+
+**output:**
+```
+Registered repository
+  repo_id: abcd1234ef567890
+  root:    /path/to/repo
+```
+
+### `agency repo ls`
+
+lists registered repositories.
+
+**usage:**
+```bash
+agency repo ls [--json]
+```
+
+**flags:**
+- `--json`: output as JSON
+
+### `agency repo show`
+
+shows details of a registered repository.
+
+**usage:**
+```bash
+agency repo show <repo-id> [--json]
+```
+
+**arguments:**
+- `repo-id`: repository identifier
+
+**flags:**
+- `--json`: output as JSON
 
 ## `agency worktree` (v2)
 
@@ -86,13 +144,16 @@ lists integration worktrees.
 
 **usage:**
 ```bash
-agency worktree ls [--all] [--repo <path>] [--json]
+agency worktree ls [--all] [--repo <path>] [--all-repos] [--json] [--watch] [--interval <duration>]
 ```
 
 **flags:**
 - `--all`: include archived worktrees
 - `--repo`: path to git repository
+- `--all-repos`: list worktrees across all registered repositories
 - `--json`: output as JSON
+- `--watch`: live-updating ANSI-redraw view (incompatible with `--json`)
+- `--interval`: refresh interval for `--watch` (default: 500ms, min: 250ms, max: 5s)
 
 **output:**
 ```
@@ -267,13 +328,17 @@ lists agent invocations.
 
 **usage:**
 ```bash
-agency agent ls [--worktree <name|id|prefix>] [--all] [--json]
+agency agent ls [--worktree <name|id|prefix>] [--all] [--repo <path>] [--all-repos] [--json] [--watch] [--interval <duration>]
 ```
 
 **flags:**
 - `--worktree`: filter by integration worktree
 - `--all`: include finished (landed/discarded) invocations
+- `--repo`: path to git repository
+- `--all-repos`: list invocations across all registered repositories
 - `--json`: output as JSON
+- `--watch`: live-updating ANSI-redraw view (incompatible with `--json`)
+- `--interval`: refresh interval for `--watch` (default: 500ms, min: 250ms, max: 5s)
 
 **output:**
 ```
@@ -415,6 +480,88 @@ Sandbox preserved at: /path/to/sandboxes/20260131120500-b7c9/tree
 **error codes:**
 - `E_INVOCATION_NOT_FOUND` — invocation not found
 - `E_INVOCATION_ID_AMBIGUOUS` — identifier matches multiple invocations
+
+### `agency agent diff`
+
+shows sandbox changes vs the integration worktree.
+
+**usage:**
+```bash
+agency agent diff <invocation_id|name|prefix>
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+### `agency agent land`
+
+applies sandbox changes back to the integration worktree.
+
+**usage:**
+```bash
+agency agent land <invocation_id|name|prefix> [--apply] [--require-base]
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--apply`: apply uncommitted changes as a patch (when sandbox has no commits)
+- `--require-base`: fail if integration branch has moved since sandbox was created
+
+**behavior:**
+- **cherry-pick mode (default)**: cherry-picks sandbox commits onto integration HEAD
+- **apply mode (--apply)**: applies uncommitted changes as a patch
+- **conflicts**: landing aborts and sandbox is preserved for resolution
+- **cleanup**: on success, sandbox worktree, branch, and checkpoint refs are removed
+
+### `agency agent discard`
+
+discards a sandbox without landing changes.
+
+**usage:**
+```bash
+agency agent discard <invocation_id|name|prefix>
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**behavior:**
+- stops running invocations (graceful, then forceful after 5s)
+- removes sandbox worktree, branch, and checkpoint refs
+- preserves invocation record with `landing_status=discarded`
+
+### `agency agent open`
+
+opens the sandbox in the configured editor.
+
+**usage:**
+```bash
+agency agent open <invocation_id|name|prefix> [--editor <name>]
+```
+
+### `agency agent logs`
+
+views invocation logs.
+
+**usage:**
+```bash
+agency agent logs <invocation_id|name|prefix> [--kind <type>] [--follow] [--offset <bytes>]
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--kind`: log stream type — `raw` (default), `stderr`, or `stream`
+- `--follow`: tail -f style polling for new data (500ms intervals, exit with Ctrl-C)
+- `--offset`: byte offset to start reading from
+
+**log kinds:**
+- **raw**: verbatim runner stdout (JSONL as emitted by claude/codex) — default
+- **stderr**: runner stderr (errors, warnings)
+- **stream**: normalized events (written by daemon stream parser, if available)
 
 ## `agency daemon` (v2)
 
