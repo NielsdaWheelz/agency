@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1444,4 +1445,309 @@ func TestCheckpointsRouting(t *testing.T) {
 		w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints/unknown?repo_id="+env.RepoID)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+}
+
+// ---------------------------------------------------------------------------
+// PR-B: Offset-based logs tests
+// ---------------------------------------------------------------------------
+
+func TestReadLogFileAtOffset(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		offset    int64
+		limit     int
+		wantData  string // expected decoded content; empty string = check DataB64 == ""
+		wantNext  int64
+		wantTotal int64
+		wantErr   bool
+		noFile    bool // if true, skip creating the log file
+	}{
+		{
+			name:      "full_file",
+			offset:    0,
+			limit:     65536,
+			wantData:  "abcdef",
+			wantNext:  6,
+			wantTotal: 6,
+		},
+		{
+			name:      "partial_offset_0_limit_2",
+			offset:    0,
+			limit:     2,
+			wantData:  "ab",
+			wantNext:  2,
+			wantTotal: 6,
+		},
+		{
+			name:      "partial_offset_2_limit_2",
+			offset:    2,
+			limit:     2,
+			wantData:  "cd",
+			wantNext:  4,
+			wantTotal: 6,
+		},
+		{
+			name:      "beyond_eof",
+			offset:    100,
+			limit:     65536,
+			wantData:  "",
+			wantNext:  6,
+			wantTotal: 6,
+		},
+		{
+			name:      "limit_clamped_to_max",
+			offset:    0,
+			limit:     MaxLogChunk + 100,
+			wantData:  "abcdef",
+			wantNext:  6,
+			wantTotal: 6,
+		},
+		{
+			name:    "file_not_found",
+			offset:  0,
+			limit:   65536,
+			noFile:  true,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			logPath := filepath.Join(tmpDir, "test.log")
+
+			if !tt.noFile {
+				require.NoError(t, os.WriteFile(logPath, []byte("abcdef"), 0o644))
+			}
+
+			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+			srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+			data, err := srv.readLogFileAtOffset(logPath, tt.offset, tt.limit)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantNext, data.NextOffset)
+			assert.Equal(t, tt.wantTotal, data.TotalBytes)
+
+			if tt.wantData == "" {
+				assert.Equal(t, "", data.DataB64)
+			} else {
+				decoded, decErr := base64.StdEncoding.DecodeString(data.DataB64)
+				require.NoError(t, decErr)
+				assert.Equal(t, tt.wantData, string(decoded))
+			}
+		})
+	}
+}
+
+func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("offset_read_happy_path", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		// Seed a raw log file for inv-1
+		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		require.NoError(t, os.MkdirAll(logsDir, 0o700))
+		logContent := "abcdef"
+		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&offset=0&limit=2")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+
+		assert.Equal(t, "raw", data.Kind)
+		assert.Equal(t, int64(2), data.NextOffset)
+		assert.Equal(t, int64(6), data.TotalBytes)
+		assert.NotEmpty(t, data.DataB64)
+	})
+
+	t.Run("offset_read_second_chunk", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		require.NoError(t, os.MkdirAll(logsDir, 0o700))
+		logContent := "abcdef"
+		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&offset=2&limit=2")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+
+		decoded, decErr := base64.StdEncoding.DecodeString(data.DataB64)
+		require.NoError(t, decErr)
+		assert.Equal(t, "cd", string(decoded))
+		assert.Equal(t, int64(4), data.NextOffset)
+	})
+
+	t.Run("offset_beyond_eof", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		require.NoError(t, os.MkdirAll(logsDir, 0o700))
+		logContent := "abcdef"
+		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&offset=100&limit=65536")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+
+		assert.Equal(t, "", data.DataB64)
+		assert.Equal(t, int64(6), data.NextOffset)
+	})
+
+	t.Run("offset_negative_returns_error", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		// Seed log file so we get past resolution
+		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		require.NoError(t, os.MkdirAll(logsDir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&offset=-1&limit=65536")
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.False(t, resp.OK)
+		assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+	})
+
+	t.Run("offset_missing_file_returns_not_found", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		// inv-2 has no log files; offset mode should return E_LOG_NOT_FOUND
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-2/logs?repo_id="+env.RepoID+"&offset=0&limit=65536")
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.False(t, resp.OK)
+		assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
+	})
+
+	t.Run("offset_stream_kind_missing_file", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=stream&offset=0&limit=65536")
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.False(t, resp.OK)
+		assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
+		assert.Contains(t, resp.Hint, "try --kind raw")
+	})
+
+	t.Run("offset_invalid_limit_returns_error", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		// Seed log file so we get past resolution
+		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		require.NoError(t, os.MkdirAll(logsDir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&offset=0&limit=0")
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.False(t, resp.OK)
+		assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+	})
+}
+
+func TestParseGetLogsParams_OffsetMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		query          string
+		wantOffsetMode bool
+		wantOffset     int64
+		wantLimit      int
+		wantTailBytes  int
+	}{
+		{
+			name:           "offset_present_enables_offset_mode",
+			query:          "offset=100&limit=1024",
+			wantOffsetMode: true,
+			wantOffset:     100,
+			wantLimit:      1024,
+		},
+		{
+			name:           "offset_zero_is_offset_mode",
+			query:          "offset=0",
+			wantOffsetMode: true,
+			wantOffset:     0,
+			wantLimit:      65536, // default
+		},
+		{
+			name:          "no_offset_is_tail_mode",
+			query:         "tail_bytes=1024",
+			wantTailBytes: 1024,
+		},
+		{
+			name:           "invalid_offset_value",
+			query:          "offset=abc",
+			wantOffsetMode: true,
+			wantOffset:     -1,    // parse failure → -1
+			wantLimit:      65536, // default when limit not specified
+		},
+		{
+			name:           "invalid_limit_value",
+			query:          "offset=0&limit=abc",
+			wantOffsetMode: true,
+			wantLimit:      -1, // parse failure → -1
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?"+tt.query, nil)
+			params := parseGetLogsParams(req)
+			assert.Equal(t, tt.wantOffsetMode, params.OffsetMode)
+			if tt.wantOffsetMode {
+				assert.Equal(t, tt.wantOffset, params.Offset)
+				assert.Equal(t, tt.wantLimit, params.Limit)
+			} else {
+				assert.Equal(t, tt.wantTailBytes, params.TailBytes)
+			}
+		})
+	}
 }

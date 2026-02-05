@@ -267,3 +267,140 @@ func TestAgentAttach_HeadedInvocation_SessionMissing(t *testing.T) {
 
 	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
 }
+
+// ---------------------------------------------------------------------------
+// PR-B: AgentLogs integration tests
+// ---------------------------------------------------------------------------
+
+func TestAgentLogs_PageToEOF(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "logs-test")
+	invocationID := "20260131140000-logs"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	// Seed a raw log file with known content
+	st := store.NewStore(fsys, dataDir, time.Now)
+	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("hello world\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+		InvocationRef:   invocationID,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Equal(t, "hello world\n", stdout.String())
+}
+
+func TestAgentLogs_FollowMode(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "follow-test")
+	invocationID := "20260131150000-foll"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	logPath := st.SandboxRawLogPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(logPath, []byte("line1\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	appendCalls := 0
+	sleepFn := func(d time.Duration) {
+		appendCalls++
+		// Simulate new data appearing after first poll
+		if appendCalls == 1 {
+			f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
+			if err == nil {
+				_, _ = f.WriteString("line2\n")
+				_ = f.Close()
+			}
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+		InvocationRef:   invocationID,
+		Follow:          true,
+		MaxIterations:   2,
+		SleepFn:         sleepFn,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "line1\n")
+	assert.Contains(t, stdout.String(), "line2\n")
+}
+
+func TestAgentLogs_ContextCancellation(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "ctx-test")
+	invocationID := "20260131160000-cctx"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("data\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	sleepFn := func(d time.Duration) {
+		cancel() // cancel on first poll sleep
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLogs(ctx, cr2, fsys, repoDir, AgentLogsOpts{
+		InvocationRef:   invocationID,
+		Follow:          true,
+		SleepFn:         sleepFn,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	// Should have read initial data before cancellation
+	assert.Contains(t, stdout.String(), "data\n")
+}
+
+func TestAgentLogs_StderrKind(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "stderr-test")
+	invocationID := "20260131170000-stde"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(st.SandboxStderrLogPath(repoID, invocationID), []byte("error output\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+		InvocationRef:   invocationID,
+		Kind:            "stderr",
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Equal(t, "error output\n", stdout.String())
+}

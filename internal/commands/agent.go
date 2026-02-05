@@ -4,6 +4,7 @@ package commands
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -295,6 +296,16 @@ type AgentLSOpts struct {
 
 	// JSON outputs as JSON.
 	JSON bool
+
+	// Watch mode (PR-B): re-render on interval with ANSI clear-screen.
+	Watch    bool
+	Interval time.Duration // default 500ms, min 250ms, max 5s
+
+	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
+	SleepFn func(time.Duration)
+
+	// MaxIterations limits watch iterations for testing. 0 = unlimited.
+	MaxIterations int
 }
 
 // AgentLS lists agent invocations.
@@ -343,21 +354,35 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		repoID = repoCtx.RepoID
 	}
 
-	result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-		RepoID:      repoID,
-		WorktreeRef: opts.WorktreeRef,
-		State:       state,
-	})
-	if err != nil {
-		return err
+	// Non-watch mode
+	if !opts.Watch {
+		result, fetchErr := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+			RepoID:      repoID,
+			WorktreeRef: opts.WorktreeRef,
+			State:       state,
+		})
+		if fetchErr != nil {
+			return fetchErr
+		}
+		if opts.JSON {
+			return writeAgentLSJSONFromDTO(stdout, result.Invocations)
+		}
+		return writeAgentLSHumanFromDTO(stdout, result.Invocations)
 	}
 
-	// Output
-	if opts.JSON {
-		return writeAgentLSJSONFromDTO(stdout, result.Invocations)
+	// Watch mode (PR-B)
+	fetchAndRender := func(w io.Writer) error {
+		result, fetchErr := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+			RepoID:      repoID,
+			WorktreeRef: opts.WorktreeRef,
+			State:       state,
+		})
+		if fetchErr != nil {
+			return fetchErr
+		}
+		return writeAgentLSHumanFromDTO(w, result.Invocations)
 	}
-
-	return writeAgentLSHumanFromDTO(stdout, result.Invocations)
+	return watchLoop(ctx, stdout, stderr, opts.Interval, opts.SleepFn, opts.MaxIterations, fetchAndRender)
 }
 
 // writeAgentLSJSONFromDTO outputs invocation list as JSON from daemon DTOs.
@@ -1133,6 +1158,175 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	return nil
+}
+
+// AgentLogsOpts holds options for the agent logs command.
+type AgentLogsOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
+	// Kind is the log kind: raw, stderr, stream (default: raw).
+	Kind string
+
+	// Follow enables follow mode: poll for new data after reaching EOF.
+	Follow bool
+
+	// Offset is the byte offset to start reading from (default 0).
+	Offset int64
+
+	// PollInterval is the follow-mode poll interval (default 500ms, min 250ms, max 5s).
+	PollInterval time.Duration
+
+	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
+	SleepFn func(time.Duration)
+
+	// MaxIterations limits follow iterations for testing. 0 = unlimited.
+	MaxIterations int
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+}
+
+// AgentLogs views invocation logs via daemon offset-based API (PR-B).
+// Without --follow: pages to EOF and exits.
+// With --follow: pages to EOF, then polls for new data until interrupted.
+func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLogsOpts, stdout, stderr io.Writer) error {
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent logs",
+	})
+	if err != nil {
+		return err
+	}
+
+	kind := opts.Kind
+	if kind == "" {
+		kind = "raw"
+	}
+
+	offset := opts.Offset
+	sleepFn := opts.SleepFn
+	if sleepFn == nil {
+		sleepFn = time.Sleep
+	}
+
+	pollInterval := opts.PollInterval
+	if pollInterval == 0 {
+		pollInterval = 500 * time.Millisecond
+	}
+
+	// Page to EOF
+	for {
+		result, err := client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
+			Kind:   kind,
+			Offset: offset,
+			Limit:  65536,
+		})
+		if err != nil {
+			return err
+		}
+
+		if result.Logs.DataB64 != "" {
+			decoded, decErr := base64Decode(result.Logs.DataB64)
+			if decErr != nil {
+				return errors.Wrap(errors.EInternal, "failed to decode log data", decErr)
+			}
+			_, _ = stdout.Write(decoded)
+		}
+
+		// No new data — we've reached EOF
+		if result.Logs.NextOffset == offset {
+			break
+		}
+		offset = result.Logs.NextOffset
+	}
+
+	// If not following, we're done
+	if !opts.Follow {
+		return nil
+	}
+
+	// Follow mode: poll for new data
+	iterations := 0
+	for {
+		// Check context cancellation before sleeping
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		sleepFn(pollInterval)
+
+		// Re-check after sleep — context may have been cancelled during sleep
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		result, err := client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
+			Kind:   kind,
+			Offset: offset,
+			Limit:  65536,
+		})
+		if err != nil {
+			// On error during follow, print and exit
+			_, _ = fmt.Fprintf(stderr, "\nerror: %v\n", err)
+			return err
+		}
+
+		if result.Logs.DataB64 != "" {
+			decoded, decErr := base64Decode(result.Logs.DataB64)
+			if decErr != nil {
+				return errors.Wrap(errors.EInternal, "failed to decode log data", decErr)
+			}
+			_, _ = stdout.Write(decoded)
+		}
+
+		offset = result.Logs.NextOffset
+
+		iterations++
+		if opts.MaxIterations > 0 && iterations >= opts.MaxIterations {
+			break
+		}
+	}
+
+	return nil
+}
+
+// base64Decode decodes a base64-encoded string.
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }
 
 // AgentKill forcefully terminates a running invocation.
