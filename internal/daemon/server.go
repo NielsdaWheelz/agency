@@ -52,6 +52,10 @@ type Server struct {
 	// Used in tests to avoid long waits.
 	CheckpointDebounceOverride *time.Duration
 
+	// HeadedReconcileIntervalOverride, if set, overrides the default headed reconcile interval.
+	// Used in tests to speed up reconciliation.
+	HeadedReconcileIntervalOverride *time.Duration
+
 	// ConfigDir is the path to the config directory.
 	ConfigDir string
 
@@ -88,6 +92,12 @@ type Server struct {
 	// Used to prevent duplicate worktree creation from retried requests.
 	worktreeIdempotency map[string]WorktreeIdempotencyEntry
 
+	// headedStartingFirstSeen tracks when a "starting" headed invocation was first
+	// observed without a tmux session. Used for grace window before marking failed.
+	// PR-11: Maps invocation_id -> count of ticks observed without tmux session.
+	headedStartingTickCount   map[string]int
+	headedStartingTickCountMu sync.Mutex
+
 	// repoLock is the repo lock instance for serializing git operations.
 	repoLock *lock.RepoLock
 
@@ -99,26 +109,32 @@ type Server struct {
 
 	// shutdownOnce ensures shutdown is only called once.
 	shutdownOnce sync.Once
+
+	// reconcileLoopDone is closed when the reconciliation loop exits.
+	// PR-11: Used to ensure shutdown handlers wait for reconcile loop to exit.
+	reconcileLoopDone chan struct{}
 }
 
 // NewServer creates a new daemon server with the given dependencies.
 func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir string) *Server {
 	repoLock := lock.NewRepoLock(st.DataDir)
 	return &Server{
-		Store:               st,
-		Runner:              runner,
-		FS:                  fsys,
-		TmuxClient:          tmux.NewExecClient(runner), // PR-10: create real tmux client
-		ConfigDir:           configDir,
-		Clock:               time.Now,
-		PIDChecker:          IsPIDAlive,
-		InstanceID:          uuid.New().String(),
-		processes:           make(map[string]*SupervisedProcess),
-		idempotency:         make(map[string]IdempotencyEntry),
-		headedIdempotency:   make(map[string]HeadedIdempotencyEntry), // PR-10
-		worktreeIdempotency: make(map[string]WorktreeIdempotencyEntry),
-		repoLock:            &repoLock,
-		shutdownCh:          make(chan struct{}),
+		Store:                   st,
+		Runner:                  runner,
+		FS:                      fsys,
+		TmuxClient:              tmux.NewExecClient(runner), // PR-10: create real tmux client
+		ConfigDir:               configDir,
+		Clock:                   time.Now,
+		PIDChecker:              IsPIDAlive,
+		InstanceID:              uuid.New().String(),
+		processes:               make(map[string]*SupervisedProcess),
+		idempotency:             make(map[string]IdempotencyEntry),
+		headedIdempotency:       make(map[string]HeadedIdempotencyEntry), // PR-10
+		worktreeIdempotency:     make(map[string]WorktreeIdempotencyEntry),
+		headedStartingTickCount: make(map[string]int), // PR-11
+		repoLock:                &repoLock,
+		shutdownCh:              make(chan struct{}),
+		reconcileLoopDone:       make(chan struct{}), // PR-11
 	}
 }
 
@@ -150,6 +166,9 @@ func (s *Server) Serve(listener net.Listener) error {
 		fmt.Fprintf(os.Stderr, "warning: recovery scan failed: %v\n", err)
 	}
 
+	// PR-11: Start headed reconciliation loop
+	go s.runHeadedReconcileLoop()
+
 	return s.server.Serve(listener)
 }
 
@@ -157,7 +176,17 @@ func (s *Server) Serve(listener net.Listener) error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	var err error
 	s.shutdownOnce.Do(func() {
+		// PR-11: Close shutdownCh to signal all loops to stop
 		close(s.shutdownCh)
+
+		// PR-11: Wait for reconciliation loop to exit before mutating state.
+		// This ensures reconcile and shutdown handlers don't race on meta writes.
+		select {
+		case <-s.reconcileLoopDone:
+			// Reconciliation loop has exited
+		case <-ctx.Done():
+			// Shutdown context timed out - proceed anyway
+		}
 
 		// Flush all pending meta writes
 		s.mu.RLock()
@@ -476,12 +505,15 @@ func (s *Server) runRecoveryScan() error {
 	return nil
 }
 
-// recoverRepoInvocations checks invocations for a single repo (PR-05 enhanced).
+// recoverRepoInvocations checks invocations for a single repo (PR-05 enhanced, PR-11 headed).
 func (s *Server) recoverRepoInvocations(repoID string) error {
 	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
 	if err != nil {
 		return err
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	now := s.Clock().UTC().Format(time.RFC3339)
 	nowTime := s.Clock()
@@ -491,11 +523,13 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 			continue
 		}
 
-		// Only process headless invocations
-		if r.Meta.Mode != store.RunnerModeHeadless {
+		// PR-11: Handle headed invocations
+		if r.Meta.Mode == store.RunnerModeHeaded {
+			s.recoverHeadedInvocation(ctx, repoID, r, now, nowTime)
 			continue
 		}
 
+		// Headless invocation handling (existing PR-05 logic)
 		// PR-05: Handle status=starting invocations that are too old (>60s)
 		if r.Meta.Status == store.InvocationStatusStarting {
 			startedAt, err := time.Parse(time.RFC3339, r.Meta.StartedAt)
@@ -553,6 +587,78 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 	}
 
 	return nil
+}
+
+// recoverHeadedInvocation handles recovery for a single headed invocation on daemon startup.
+// PR-11: Headed invocations are reconciled based on tmux session existence.
+func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r store.InvocationRecord, now string, nowTime time.Time) {
+	// Skip terminal invocations
+	if r.Meta.Status != store.InvocationStatusStarting && r.Meta.Status != store.InvocationStatusRunning {
+		return
+	}
+
+	// Get tmux session name
+	sessionName := r.Meta.TmuxSession
+	if sessionName == "" {
+		sessionName = tmux.SessionName(r.InvocationID)
+	}
+
+	// Check tmux session existence
+	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+	if err != nil && !tmux.IsNoSessionErr(err) {
+		// Transient error - log and skip, don't finalize
+		fmt.Fprintf(os.Stderr, "warning: recovery: could not check tmux session %s for invocation %s: %v\n",
+			sessionName, r.InvocationID, err)
+		return
+	}
+
+	if exists {
+		// Session exists - invocation is still running
+		// Per PR-11 spec: do not re-insert into s.processes, it's incomplete by design
+		// stop/kill handlers look up tmux session name from persisted meta
+		return
+	}
+
+	// Session does not exist
+	switch r.Meta.Status {
+	case store.InvocationStatusStarting:
+		// Starting but no tmux session - check age for grace period
+		startedAt, parseErr := time.Parse(time.RFC3339, r.Meta.StartedAt)
+		if parseErr != nil {
+			// Can't determine age - mark as failed to be safe
+			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "start_failed"
+				meta.FailureReason = "tmux_session_missing"
+				meta.FinishedAt = now
+				meta.LifecycleOwner = ""
+			})
+			return
+		}
+
+		// On startup, apply a longer grace period (30s) than tick-based grace
+		// This accounts for slow daemon restarts where tmux session creation was in-flight
+		age := nowTime.Sub(startedAt)
+		if age > 30*time.Second {
+			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "start_failed"
+				meta.FailureReason = "tmux_session_missing"
+				meta.FinishedAt = now
+				meta.LifecycleOwner = ""
+			})
+		}
+		// If age <= 30s, leave it for the reconcile loop to handle with proper tick counting
+
+	case store.InvocationStatusRunning:
+		// Running but no tmux session - mark as finished
+		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFinished
+			meta.ExitReason = "exited"
+			meta.FinishedAt = now
+			meta.LifecycleOwner = ""
+		})
+	}
 }
 
 // WritePidFile writes the daemon's PID to the pid file.
@@ -891,6 +997,175 @@ func (s *Server) runCheckpointLoop(proc *SupervisedProcess) {
 
 	// Run the checkpoint engine (blocks until stopped)
 	_ = proc.CheckpointEngine.Run(ctx)
+}
+
+// ----- PR-11: Headed Reconciliation Loop -----
+
+// runHeadedReconcileLoop periodically checks tmux session existence for headed invocations.
+// This ensures headed invocations are correctly marked as finished when their tmux session exits.
+// The loop runs until shutdownCh is closed, then signals completion via reconcileLoopDone.
+func (s *Server) runHeadedReconcileLoop() {
+	defer close(s.reconcileLoopDone)
+
+	interval := HeadedReconcileInterval
+	if s.HeadedReconcileIntervalOverride != nil {
+		interval = *s.HeadedReconcileIntervalOverride
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.shutdownCh:
+			// Shutdown requested - exit immediately without completing partial tick
+			return
+		case <-ticker.C:
+			s.reconcileHeadedInvocations()
+		}
+	}
+}
+
+// reconcileHeadedInvocations checks all headed invocations and updates their state
+// based on tmux session existence. This is the core reconciliation logic for PR-11.
+func (s *Server) reconcileHeadedInvocations() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Scan all repos for headed invocations
+	repoIndexPath := s.Store.RepoIndexPath()
+	data, err := s.FS.ReadFile(repoIndexPath)
+	if err != nil {
+		// No repos yet or error - nothing to reconcile
+		return
+	}
+
+	var index store.RepoIndex
+	if err := json.Unmarshal(data, &index); err != nil {
+		return
+	}
+
+	for repoID := range index.Repos {
+		s.reconcileHeadedInvocationsForRepo(ctx, repoID)
+	}
+}
+
+// reconcileHeadedInvocationsForRepo reconciles headed invocations for a single repo.
+func (s *Server) reconcileHeadedInvocationsForRepo(ctx context.Context, repoID string) {
+	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	if err != nil {
+		return
+	}
+
+	now := s.Clock().UTC().Format(time.RFC3339)
+
+	for _, r := range records {
+		if r.Broken || r.Meta == nil {
+			continue
+		}
+
+		// Only process headed invocations
+		if r.Meta.Mode != store.RunnerModeHeaded {
+			continue
+		}
+
+		// Only process non-terminal invocations
+		if r.Meta.Status != store.InvocationStatusStarting && r.Meta.Status != store.InvocationStatusRunning {
+			// Terminal state - clean up any grace tracking
+			s.cleanupHeadedStartingTracking(r.InvocationID)
+			continue
+		}
+
+		// Get tmux session name
+		sessionName := r.Meta.TmuxSession
+		if sessionName == "" {
+			sessionName = tmux.SessionName(r.InvocationID)
+		}
+
+		// Check tmux session existence
+		exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+		if err != nil && !tmux.IsNoSessionErr(err) {
+			// Transient error (not "no session") - log warning and skip
+			// Per PR-11 spec: do not finalize on transient errors
+			fmt.Fprintf(os.Stderr, "warning: reconcile tick: could not check tmux session %s for invocation %s: %v\n",
+				sessionName, r.InvocationID, err)
+			continue
+		}
+
+		if exists {
+			// Session exists - invocation is still running
+			// Clean up any grace tracking (session came back or was never gone)
+			s.cleanupHeadedStartingTracking(r.InvocationID)
+			continue
+		}
+
+		// Session does not exist - apply appropriate transition
+		switch r.Meta.Status {
+		case store.InvocationStatusStarting:
+			// Check grace window before marking as failed
+			s.reconcileHeadedStarting(repoID, r.InvocationID, r.Meta, now)
+
+		case store.InvocationStatusRunning:
+			// Running → Finished: tmux session disappeared
+			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFinished
+				meta.ExitReason = "exited"
+				meta.FinishedAt = now
+				meta.LifecycleOwner = ""
+			})
+			// Clean up from supervised processes map if present
+			s.mu.Lock()
+			if proc, ok := s.processes[r.InvocationID]; ok {
+				proc.CloseDone()
+				delete(s.processes, r.InvocationID)
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+// reconcileHeadedStarting handles the grace window for starting invocations.
+// Per PR-11 spec: a starting invocation is eligible for → failed only after
+// it has been observed without a tmux session for at least 2 consecutive ticks.
+func (s *Server) reconcileHeadedStarting(repoID, invocationID string, meta *store.InvocationMeta, now string) {
+	s.headedStartingTickCountMu.Lock()
+	defer s.headedStartingTickCountMu.Unlock()
+
+	count := s.headedStartingTickCount[invocationID]
+	count++
+	s.headedStartingTickCount[invocationID] = count
+
+	if count < HeadedStartingGraceCount {
+		// Still within grace window - don't finalize yet
+		return
+	}
+
+	// Grace window exceeded - mark as failed
+	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		m.Status = store.InvocationStatusFailed
+		m.ExitReason = "start_failed"
+		m.FailureReason = "tmux_session_missing"
+		m.FinishedAt = now
+		m.LifecycleOwner = ""
+	})
+
+	// Clean up tracking
+	delete(s.headedStartingTickCount, invocationID)
+
+	// Clean up from supervised processes map if present
+	s.mu.Lock()
+	if proc, ok := s.processes[invocationID]; ok {
+		proc.CloseDone()
+		delete(s.processes, invocationID)
+	}
+	s.mu.Unlock()
+}
+
+// cleanupHeadedStartingTracking removes an invocation from the grace tracking map.
+func (s *Server) cleanupHeadedStartingTracking(invocationID string) {
+	s.headedStartingTickCountMu.Lock()
+	delete(s.headedStartingTickCount, invocationID)
+	s.headedStartingTickCountMu.Unlock()
 }
 
 // handleWorktrees handles requests to /worktrees/...

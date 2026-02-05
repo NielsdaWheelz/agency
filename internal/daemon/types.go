@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 )
@@ -17,6 +18,15 @@ const MaxPromptSize = 256 * 1024
 
 // IdempotencyTTL is how long idempotency entries are retained (5 minutes).
 const IdempotencyTTL = 5 * 60 // seconds
+
+// HeadedReconcileInterval is the default interval for headed invocation reconciliation.
+// Per PR-11 spec: default 3 seconds, configurable via constant (no CLI flag).
+const HeadedReconcileInterval = 3 * time.Second
+
+// HeadedStartingGraceCount is the number of reconciliation ticks a "starting"
+// invocation must be observed without a tmux session before being marked failed.
+// Per PR-11 spec: at least 2 consecutive ticks (i.e., ≥1 full tick interval after first observation).
+const HeadedStartingGraceCount = 2
 
 // StartHeadlessRequest is the request body for POST /invocations/{id}/start_headless (legacy PR-04).
 type StartHeadlessRequest struct {
