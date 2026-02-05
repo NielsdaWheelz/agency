@@ -291,6 +291,7 @@ agency daemon stop --force
 - **Auto-start**: Daemon starts automatically when any invocation is created (headed or headless)
 - **Unified invocation creation**: Single control plane for both headed and headless modes
 - **Headed mode management**: Creates and manages tmux sessions for interactive agents
+- **Headed reconciliation**: Background loop detects tmux session exit and updates invocation state (PR-11)
 - **Log capture**: Captures stdout/stderr to `raw.jsonl` and `stderr.log` (headless mode)
 - **Stream parsing**: Parses runner output and writes normalized events to `stream.jsonl`
 - **Semantic status**: Derives meaningful status (`working`, `ready_for_review`) from parsed output
@@ -345,6 +346,27 @@ Each line contains a JSON event with a stable schema across runners:
 - Semantic status is written to `InvocationMeta.semantic_status`
 - Updates are throttled to 500ms and only written on actual change
 - Final status is always persisted on invocation exit
+
+### Headed Reconciliation (PR-11)
+
+For headed (tmux) invocations, the daemon runs a background **reconciliation loop** that automatically detects when a tmux session exits and updates the invocation state accordingly.
+
+**How it works:**
+- Every 3 seconds, the daemon checks if each headed invocation's tmux session still exists
+- If a `running` invocation's session is gone → marks invocation as `finished`
+- If a `starting` invocation's session fails to appear for 2+ consecutive checks → marks as `failed`
+- Transient tmux errors (connection issues, etc.) are logged but don't cause state transitions
+
+**Startup recovery:**
+- On daemon start, all headed invocations are immediately reconciled
+- Invocations whose tmux sessions have disappeared are marked finished
+- Recently-started invocations (< 30s old) are given time for tmux to initialize
+
+**Shutdown behavior:**
+- The reconciliation loop exits cleanly before daemon terminates active invocations
+- This prevents race conditions between reconciliation and force-kill during shutdown
+
+This ensures the daemon is the **single authority** for headed invocation lifecycle, making CLI status queries purely read-only.
 
 ### Checkpoints (PR-08)
 
