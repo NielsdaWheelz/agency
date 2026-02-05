@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -30,9 +29,14 @@ type CheckpointLSOpts struct {
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
+
+	// DaemonSocketOverride, if set, uses this socket path directly and
+	// assumes the daemon is already running. Bypasses EnsureDaemonRunning.
+	DaemonSocketOverride string
 }
 
 // CheckpointLS lists checkpoints for an invocation.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
 	// 1. Resolve paths
 	var dataDir string
@@ -56,85 +60,43 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	originInfo := git.GetOriginInfo(ctx, cr, gitRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(gitRoot.Path, originInfo.URL)
 
-	// 3. Set up store
-	st := store.NewStore(fsys, dataDir, time.Now)
+	// 3. Ensure daemon is running
+	var client *daemonclient.Client
+	if opts.DaemonSocketOverride != "" {
+		client = daemonclient.NewClient(opts.DaemonSocketOverride)
+	} else {
+		st := store.NewStore(fsys, dataDir, time.Now)
+		socketPath := st.DaemonSocketPath()
+		logPath := st.DaemonLogPath()
 
-	// 4. Scan invocations and resolve
-	records, err := store.ScanInvocationsForRepo(dataDir, repoIdentity.RepoID)
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to scan invocations", err)
+		client, err = daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Convert to refs
-	refs := make([]ids.InvocationRef, 0, len(records))
-	for _, r := range records {
-		ref := ids.InvocationRef{
-			InvocationID: r.InvocationID,
-			RepoID:       repoIdentity.RepoID,
-			Broken:       r.Broken,
-		}
-		if r.Meta != nil {
-			ref.IntegrationWorktreeID = r.Meta.IntegrationWorktreeID
-			ref.InvocationName = r.Meta.InvocationName
-			ref.Status = string(r.Meta.Status)
-			ref.LandingStatus = string(r.Meta.LandingStatus)
-		}
-		refs = append(refs, ref)
-	}
-
-	resolved, err := ids.ResolveInvocationRef(opts.InvocationRef, refs, ids.ResolveInvocationRefOpts{
-		IncludeFinished: true, // Allow viewing checkpoints for finished invocations
-	})
+	// PR-12: Call daemon ListCheckpoints endpoint
+	result, err := client.ListCheckpoints(ctx, opts.InvocationRef, repoIdentity.RepoID, daemonclient.ListCheckpointsOpts{})
 	if err != nil {
-		if _, ok := err.(*ids.ErrInvocationNotFound); ok {
-			return errors.NewWithDetails(errors.EInvocationNotFound, err.Error(), nil)
-		}
-		if _, ok := err.(*ids.ErrInvocationAmbiguous); ok {
-			return errors.NewWithDetails(errors.EInvocationIDAmbiguous, err.Error(), nil)
-		}
 		return err
 	}
 
-	// Find the record with full meta
-	var record *store.InvocationRecord
-	for i := range records {
-		if records[i].InvocationID == resolved.InvocationID {
-			record = &records[i]
-			break
-		}
-	}
-	if record == nil || record.Meta == nil {
-		return errors.New(errors.EInvocationNotFound, "invocation not found")
-	}
-
-	// 5. Verify invocation is headless
-	if record.Meta.Mode != store.RunnerModeHeadless {
-		return errors.New(errors.EInvocationInvalidMode, "checkpoint ls is only supported for headless invocations")
-	}
-
-	// 6. Load checkpoints file
-	checkpointsDir := st.SandboxDir(repoIdentity.RepoID, record.InvocationID)
-	cpFile, err := checkpoint.LoadCheckpointsFile(fsys, checkpointsDir)
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to load checkpoints.json", err)
-	}
-
-	// 7. Output
+	// Output
 	if opts.JSON {
-		return json.NewEncoder(stdout).Encode(cpFile)
+		return json.NewEncoder(stdout).Encode(result.Checkpoints)
 	}
 
 	// Human-readable output
-	if len(cpFile.Checkpoints) == 0 {
+	if len(result.Checkpoints) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No checkpoints found.")
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Checkpoints for invocation %s:\n\n", record.InvocationID)
-	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-10s  %-10s  %s\n", "ID", "Created", "Untracked", "Head SHA", "Diffstat")
+	_, _ = fmt.Fprintf(stdout, "Checkpoints:\n\n")
+	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-10s  %-10s  %s\n", "ID", "Created", "Untracked", "Commit", "Diffstat")
 	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-10s  %-10s  %s\n", "----", "--------------------", "----------", "----------", "--------")
 
-	for _, cp := range cpFile.Checkpoints {
+	for _, cp := range result.Checkpoints {
 		// Parse and format timestamp
 		createdAt := cp.CreatedAt
 		if t, err := time.Parse(time.RFC3339, cp.CreatedAt); err == nil {
@@ -146,14 +108,14 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			untracked = "no"
 		}
 
-		// Truncate head SHA
-		headSHA := cp.SandboxHeadSHA
-		if len(headSHA) > 8 {
-			headSHA = headSHA[:8]
+		// Truncate snapshot commit
+		snapshotCommit := cp.SnapshotCommit
+		if len(snapshotCommit) > 8 {
+			snapshotCommit = snapshotCommit[:8]
 		}
 
 		_, _ = fmt.Fprintf(stdout, "%-4d  %-20s  %-10s  %-10s  %s\n",
-			cp.ID, createdAt, untracked, headSHA, cp.Diffstat)
+			cp.ID, createdAt, untracked, snapshotCommit, cp.Diffstat)
 	}
 
 	return nil

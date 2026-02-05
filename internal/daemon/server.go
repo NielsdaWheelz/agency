@@ -360,8 +360,14 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	remaining := path[len("/invocations/"):]
+
+	// PR-12: Handle GET /invocations (list invocations)
 	if remaining == "" {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "endpoint required", "")
+		if r.Method == http.MethodGet {
+			s.handleListInvocations(w, r)
+			return
+		}
+		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 		return
 	}
 
@@ -386,65 +392,114 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the slash separating id from action
-	var invocationID, action string
+	var invocationRef, action string
 	for i, c := range remaining {
 		if c == '/' {
-			invocationID = remaining[:i]
+			invocationRef = remaining[:i]
 			action = remaining[i+1:]
 			break
 		}
 	}
-	if invocationID == "" {
-		invocationID = remaining
+	if invocationRef == "" {
+		invocationRef = remaining
 	}
 
-	if invocationID == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invocation id required", "")
+	if invocationRef == "" {
+		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invocation ref required", "")
 		return
 	}
 
-	// Extract the top-level action (first path segment after invocation ID).
+	// Extract the top-level action (first path segment after invocation ref).
 	topAction, _, _ := strings.Cut(action, "/")
 
 	switch topAction {
+	case "":
+		// PR-12: GET /invocations/{ref} - get single invocation
+		if r.Method == http.MethodGet {
+			s.handleGetInvocation(w, r, invocationRef)
+			return
+		}
+		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 	case "start_headless":
 		// Legacy PR-04 endpoint: POST /invocations/{id}/start_headless
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
 		}
-		s.handleStartHeadless(w, r, invocationID)
+		s.handleStartHeadless(w, r, invocationRef)
 	case "stop":
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
 		}
-		s.handleStop(w, r, invocationID)
+		s.handleStop(w, r, invocationRef)
 	case "kill":
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
 		}
-		s.handleKill(w, r, invocationID)
+		s.handleKill(w, r, invocationRef)
 	case "checkpoints":
-		// Handle /invocations/{id}/checkpoints/apply
-		s.handleCheckpoints(w, r, invocationID)
+		// PR-12: Handle GET /invocations/{ref}/checkpoints (list) and POST .../apply
+		s.handleCheckpointsRoute(w, r, invocationRef, action)
 	case "land":
 		// PR-09: Land sandbox changes to integration worktree
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
 		}
-		s.handleLand(w, r, invocationID)
+		s.handleLand(w, r, invocationRef)
 	case "discard":
 		// PR-09: Discard sandbox without landing
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
 		}
-		s.handleDiscard(w, r, invocationID)
+		s.handleDiscard(w, r, invocationRef)
+	case "diff":
+		// PR-12: GET /invocations/{ref}/diff
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleGetInvocationDiff(w, r, invocationRef)
+	case "logs":
+		// PR-12: GET /invocations/{ref}/logs
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleGetInvocationLogs(w, r, invocationRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
+	}
+}
+
+// handleCheckpointsRoute routes checkpoint requests (PR-12 addition).
+func (s *Server) handleCheckpointsRoute(w http.ResponseWriter, r *http.Request, invocationRef, action string) {
+	// Parse sub-action: checkpoints or checkpoints/apply
+	subAction := ""
+	if idx := strings.Index(action, "/"); idx != -1 {
+		subAction = action[idx+1:]
+	}
+
+	switch subAction {
+	case "":
+		// GET /invocations/{ref}/checkpoints - list checkpoints
+		if r.Method == http.MethodGet {
+			s.handleGetInvocationCheckpoints(w, r, invocationRef)
+			return
+		}
+		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+	case "apply":
+		// POST /invocations/{ref}/checkpoints/apply - apply checkpoint
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleCheckpoints(w, r, invocationRef)
+	default:
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown checkpoints action: "+subAction, "")
 	}
 }
 
@@ -1170,12 +1225,16 @@ func (s *Server) cleanupHeadedStartingTracking(invocationID string) {
 
 // handleWorktrees handles requests to /worktrees/...
 func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
-	// Parse path: /worktrees[/create] or /worktrees/{id}/rm
+	// Parse path: /worktrees[/create] or /worktrees/{ref}[/rm]
 	path := r.URL.Path
 
-	// Handle POST /worktrees/create (or /worktrees with trailing /)
+	// PR-12: Handle GET /worktrees (list worktrees) or /worktrees/
 	if path == "/worktrees" || path == "/worktrees/" {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "endpoint required", "use /worktrees/create or /worktrees/{id}/rm")
+		if r.Method == http.MethodGet {
+			s.handleListWorktrees(w, r)
+			return
+		}
+		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 		return
 	}
 
@@ -1191,8 +1250,8 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle POST /worktrees/{id}/rm
-	// Find the slash separating id from action
+	// Handle /worktrees/{ref} or /worktrees/{ref}/rm
+	// Find the slash separating ref from action
 	var worktreeRef, action string
 	for i, c := range remaining {
 		if c == '/' {
@@ -1206,11 +1265,18 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if worktreeRef == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree id required", "")
+		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree ref required", "")
 		return
 	}
 
 	switch action {
+	case "":
+		// PR-12: GET /worktrees/{ref} - get single worktree
+		if r.Method == http.MethodGet {
+			s.handleGetWorktree(w, r, worktreeRef)
+			return
+		}
+		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 	case "rm":
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")

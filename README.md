@@ -116,7 +116,7 @@ go test ./internal/daemon/ -v -count=1
 go test ./internal/daemon/ -v -short
 ```
 
-The daemon package includes a comprehensive integration test suite that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking. The checkpoint package adds 25+ tests covering snapshot creation, duplicate detection, rollback, typed error propagation, and denylist behavior. The landing package adds 12 integration tests (cherry-pick, apply, conflict, nothing-to-land, already-landed/discarded, discard running) plus unit tests for precondition validation and routing.
+The daemon package includes a comprehensive integration test suite that exercises real server/client communication, real git repos, and real process supervision. A compiled fake runner binary stands in for `claude` — no mocking. The checkpoint package adds 25+ tests covering snapshot creation, duplicate detection, rollback, typed error propagation, and denylist behavior. The landing package adds 12 integration tests (cherry-pick, apply, conflict, nothing-to-land, already-landed/discarded, discard running) plus unit tests for precondition validation and routing. The read API adds 42 tests covering status derivation precedence, attention flags, DTO conversion, all read handlers, filter helpers, pagination, log reading, diff integration, parameter parsing, and routing.
 
 ### lint
 
@@ -469,7 +469,30 @@ Key behaviors:
 - **Active invocation guard**: rm fails if agents are running (unless --force)
 - **Force escalation**: --force sends SIGINT → 5s wait → SIGKILL before removing
 
-Read-only commands (ls, show, path, open, shell) remain CLI-local for performance.
+Read-only commands (ls, show, path, open, shell) **route through the daemon** for consistent data access.
+
+### Daemon Read API (PR-12)
+
+The daemon is the **sole read authority** for v2 flows. All list and show commands route through daemon HTTP API:
+
+**Read endpoints:**
+- `GET /worktrees` — list worktrees with filtering
+- `GET /worktrees/{ref}` — resolve worktree by name/id/prefix
+- `GET /invocations` — list invocations with filtering
+- `GET /invocations/{ref}` — resolve invocation by name/id/prefix
+- `GET /invocations/{ref}/diff` — structured diff with commits
+- `GET /invocations/{ref}/logs` — log tail with truncation metadata
+- `GET /invocations/{ref}/checkpoints` — checkpoint list
+
+**Derived status:**
+The daemon derives `display_status` from lifecycle and semantic status:
+- `failed` → `needs attention` → `needs input` → `blocked` → `ready for review` → `working` → `running` → `finished` → `starting`
+
+**Attention flags:**
+- `needs_attention` — invocation requires human attention
+- `stalled` — no output for >5 minutes while running
+- `orphaned` — invocation's tmux session disappeared unexpectedly
+- `landable` — finished and ready to land
 
 See [slice 8 spec](docs/v1/s8/s8_spec.md) for the full roadmap including checkpoints and the watch TUI.
 

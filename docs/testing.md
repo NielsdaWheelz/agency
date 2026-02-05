@@ -37,6 +37,19 @@ this document defines the testing policy.
 
 - `.claude/prompts/test-writing.md`
 
+## daemon read API tests
+
+the read API test suite (`internal/daemon/read_handlers_test.go` and `status_derive_test.go`) covers:
+- status derivation: precedence rules (13 rows), attention flags (10 rows), DTO conversions
+- read handlers: list/get for worktrees, invocations, checkpoints, logs, diff
+- filter helpers: state, mode, worktree ref matching
+- pagination: cursor-based for all 3 list types, exclusive cursor boundaries
+- diff integration: real git repo with commits, structured diff verification
+- parameter parsing: defaults and overrides for all endpoint params
+- routing: method not allowed, unknown sub-actions
+
+test pattern: `httptest.NewRequest` + `httptest.NewRecorder` directly on unexported handlers (package `daemon`). status derivation tests use external package `daemon_test`.
+
 ## stubs
 
 - coverage thresholds and reporting

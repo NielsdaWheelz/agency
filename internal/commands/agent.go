@@ -14,13 +14,13 @@ import (
 	"golang.org/x/term"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -293,6 +293,7 @@ type AgentLSOpts struct {
 }
 
 // AgentLS lists agent invocations.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLSOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -309,134 +310,82 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// Resolve worktree filter if provided
-	var worktreeFilter string
-	if opts.WorktreeRef != "" {
-		st := store.NewStore(fsys, dirs.DataDir, time.Now)
-		wtSvc := integrationworktree.NewService(st, cr, fsys, time.Now)
-		wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, opts.WorktreeRef, false)
-		if err != nil {
-			return err
-		}
-		worktreeFilter = wtRecord.WorktreeID
-	}
+	// Ensure daemon is running
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	// Scan invocations
-	var records []store.InvocationRecord
-	if worktreeFilter != "" {
-		records, err = store.ScanInvocationsForWorktree(dirs.DataDir, repoIdentity.RepoID, worktreeFilter)
-	} else {
-		records, err = store.ScanInvocationsForRepo(dirs.DataDir, repoIdentity.RepoID)
-	}
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to scan invocations", err)
+		return err
 	}
 
-	// Filter by status unless --all
-	var filtered []store.InvocationRecord
-	for _, r := range records {
-		if r.Broken {
-			if opts.All {
-				filtered = append(filtered, r)
-			}
-			continue
-		}
-		if r.Meta != nil {
-			landed := r.Meta.LandingStatus == store.LandingStatusLanded
-			discarded := r.Meta.LandingStatus == store.LandingStatusDiscarded
-			if (landed || discarded) && !opts.All {
-				continue
-			}
-		}
-		filtered = append(filtered, r)
+	// PR-12: Call daemon ListInvocations endpoint
+	state := "active"
+	if opts.All {
+		state = "all"
+	}
+
+	result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+		RepoID:      repoIdentity.RepoID,
+		WorktreeRef: opts.WorktreeRef,
+		State:       state,
+	})
+	if err != nil {
+		return err
 	}
 
 	// Output
 	if opts.JSON {
-		return writeAgentLSJSON(stdout, filtered)
+		return writeAgentLSJSONFromDTO(stdout, result.Invocations)
 	}
 
-	return writeAgentLSHuman(stdout, filtered)
+	return writeAgentLSHumanFromDTO(stdout, result.Invocations)
 }
 
-func writeAgentLSJSON(w io.Writer, records []store.InvocationRecord) error {
-	type jsonRecord struct {
-		InvocationID          string `json:"invocation_id"`
-		InvocationName        string `json:"invocation_name,omitempty"`
-		IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
-		Runner                string `json:"runner,omitempty"`
-		Mode                  string `json:"mode,omitempty"`
-		Status                string `json:"status,omitempty"`
-		LandingStatus         string `json:"landing_status,omitempty"`
-		SandboxPath           string `json:"sandbox_path,omitempty"`
-		StartedAt             string `json:"started_at,omitempty"`
-		SandboxExists         bool   `json:"sandbox_exists"`
-		Broken                bool   `json:"broken,omitempty"`
-	}
-
-	out := make([]jsonRecord, len(records))
-	for i, r := range records {
-		jr := jsonRecord{
-			InvocationID:  r.InvocationID,
-			SandboxExists: r.SandboxExists,
-			Broken:        r.Broken,
-		}
-		if r.Meta != nil {
-			jr.InvocationName = r.Meta.InvocationName
-			jr.IntegrationWorktreeID = r.Meta.IntegrationWorktreeID
-			jr.Runner = r.Meta.Runner
-			jr.Mode = string(r.Meta.Mode)
-			jr.Status = string(r.Meta.Status)
-			jr.LandingStatus = string(r.Meta.LandingStatus)
-			jr.SandboxPath = r.Meta.SandboxPath
-			jr.StartedAt = r.Meta.StartedAt
-		}
-		out[i] = jr
-	}
-
+// writeAgentLSJSONFromDTO outputs invocation list as JSON from daemon DTOs.
+// PR-12: CLI renders daemon-provided data - no local derivation.
+func writeAgentLSJSONFromDTO(w io.Writer, invocations []daemon.InvocationDTO) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return enc.Encode(invocations)
 }
 
-func writeAgentLSHuman(w io.Writer, records []store.InvocationRecord) error {
-	if len(records) == 0 {
+// writeAgentLSHumanFromDTO outputs invocation list in human-readable format from daemon DTOs.
+// PR-12: CLI renders daemon-provided display_status and attention_flags.
+func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) error {
+	if len(invocations) == 0 {
 		_, _ = fmt.Fprintln(w, "No agent invocations found.")
 		return nil
 	}
 
-	for _, r := range records {
-		if r.Broken {
-			_, _ = fmt.Fprintf(w, "%s  [broken]\n", r.InvocationID)
-			continue
-		}
-
+	for _, inv := range invocations {
 		name := ""
-		if r.Meta.InvocationName != "" {
-			name = " (" + r.Meta.InvocationName + ")"
+		if inv.InvocationName != "" {
+			name = " (" + inv.InvocationName + ")"
 		}
 
-		sandboxStatus := ""
-		if !r.SandboxExists {
-			sandboxStatus = " [no sandbox]"
+		// Use daemon-derived display_status
+		displayStatus := inv.DisplayStatus
+		if displayStatus == "" {
+			displayStatus = inv.Status // fallback to raw status
 		}
 
-		landingStatus := ""
-		switch r.Meta.LandingStatus {
-		case store.LandingStatusLanded:
-			landingStatus = " [landed]"
-		case store.LandingStatusDiscarded:
-			landingStatus = " [discarded]"
+		// Show attention flags if any
+		attentionStr := ""
+		if len(inv.AttentionFlags) > 0 {
+			for _, flag := range inv.AttentionFlags {
+				attentionStr += " [" + flag + "]"
+			}
 		}
 
-		_, _ = fmt.Fprintf(w, "%s  %s  %s  %s%s%s%s\n",
-			r.InvocationID,
-			r.Meta.Runner,
-			r.Meta.Mode,
-			r.Meta.Status,
+		_, _ = fmt.Fprintf(w, "%s  %s  %s  %s%s%s\n",
+			inv.InvocationID,
+			inv.Runner,
+			inv.Mode,
+			displayStatus,
 			name,
-			sandboxStatus,
-			landingStatus,
+			attentionStr,
 		)
 	}
 
@@ -453,6 +402,7 @@ type AgentShowOpts struct {
 }
 
 // AgentShow shows details of an agent invocation.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShowOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -469,102 +419,67 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// Resolve invocation
+	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true, // show can view any invocation
-	})
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
 		return err
 	}
 
-	if record.Broken {
-		return errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-				"hint":           "inspect or remove the directory manually",
-			},
-		)
+	// PR-12: Call daemon GetInvocation endpoint
+	result, err := client.GetInvocation(ctx, opts.InvocationRef, repoIdentity.RepoID)
+	if err != nil {
+		return err
 	}
 
 	// Output
 	if opts.JSON {
-		return writeAgentShowJSON(stdout, record)
+		return writeAgentShowJSONFromDTO(stdout, &result.Invocation)
 	}
 
-	return writeAgentShowHuman(stdout, record)
+	return writeAgentShowHumanFromDTO(stdout, &result.Invocation)
 }
 
-func writeAgentShowJSON(w io.Writer, r *store.InvocationRecord) error {
-	type jsonRecord struct {
-		InvocationID          string `json:"invocation_id"`
-		InvocationName        string `json:"invocation_name,omitempty"`
-		IntegrationWorktreeID string `json:"integration_worktree_id"`
-		SandboxPath           string `json:"sandbox_path"`
-		SandboxBranch         string `json:"sandbox_branch"`
-		BaseCommit            string `json:"base_commit"`
-		Runner                string `json:"runner"`
-		Mode                  string `json:"mode"`
-		Status                string `json:"status"`
-		LandingStatus         string `json:"landing_status,omitempty"`
-		StartedAt             string `json:"started_at"`
-		FinishedAt            string `json:"finished_at,omitempty"`
-		ExitCode              *int   `json:"exit_code,omitempty"`
-		SandboxExists         bool   `json:"sandbox_exists"`
-		InvocationDir         string `json:"invocation_dir"`
-	}
-
-	out := jsonRecord{
-		InvocationID:          r.InvocationID,
-		InvocationName:        r.Meta.InvocationName,
-		IntegrationWorktreeID: r.Meta.IntegrationWorktreeID,
-		SandboxPath:           r.Meta.SandboxPath,
-		SandboxBranch:         r.Meta.SandboxBranch,
-		BaseCommit:            r.Meta.BaseCommit,
-		Runner:                r.Meta.Runner,
-		Mode:                  string(r.Meta.Mode),
-		Status:                string(r.Meta.Status),
-		LandingStatus:         string(r.Meta.LandingStatus),
-		StartedAt:             r.Meta.StartedAt,
-		FinishedAt:            r.Meta.FinishedAt,
-		ExitCode:              r.Meta.ExitCode,
-		SandboxExists:         r.SandboxExists,
-		InvocationDir:         r.InvocationDir,
-	}
-
+// writeAgentShowJSONFromDTO outputs invocation details as JSON from daemon DTO.
+// PR-12: CLI renders daemon-provided data - no local derivation.
+func writeAgentShowJSONFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return enc.Encode(inv)
 }
 
-func writeAgentShowHuman(w io.Writer, r *store.InvocationRecord) error {
-	_, _ = fmt.Fprintf(w, "invocation_id:          %s\n", r.InvocationID)
-	if r.Meta.InvocationName != "" {
-		_, _ = fmt.Fprintf(w, "name:                   %s\n", r.Meta.InvocationName)
+// writeAgentShowHumanFromDTO outputs invocation details in human-readable format from daemon DTO.
+// PR-12: CLI renders daemon-provided display_status and attention_flags.
+func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
+	_, _ = fmt.Fprintf(w, "invocation_id:          %s\n", inv.InvocationID)
+	if inv.InvocationName != "" {
+		_, _ = fmt.Fprintf(w, "name:                   %s\n", inv.InvocationName)
 	}
-	_, _ = fmt.Fprintf(w, "integration_worktree:   %s\n", r.Meta.IntegrationWorktreeID)
-	_, _ = fmt.Fprintf(w, "runner:                 %s\n", r.Meta.Runner)
-	_, _ = fmt.Fprintf(w, "mode:                   %s\n", r.Meta.Mode)
-	_, _ = fmt.Fprintf(w, "status:                 %s\n", r.Meta.Status)
-	if r.Meta.LandingStatus != "" {
-		_, _ = fmt.Fprintf(w, "landing_status:         %s\n", r.Meta.LandingStatus)
+	_, _ = fmt.Fprintf(w, "worktree_id:            %s\n", inv.WorktreeID)
+	_, _ = fmt.Fprintf(w, "runner:                 %s\n", inv.Runner)
+	_, _ = fmt.Fprintf(w, "mode:                   %s\n", inv.Mode)
+	_, _ = fmt.Fprintf(w, "status:                 %s\n", inv.Status)
+	_, _ = fmt.Fprintf(w, "display_status:         %s\n", inv.DisplayStatus)
+	if inv.LandingStatus != "" {
+		_, _ = fmt.Fprintf(w, "landing_status:         %s\n", inv.LandingStatus)
 	}
-	_, _ = fmt.Fprintf(w, "started_at:             %s\n", r.Meta.StartedAt)
-	if r.Meta.FinishedAt != "" {
-		_, _ = fmt.Fprintf(w, "finished_at:            %s\n", r.Meta.FinishedAt)
+	if inv.SemanticStatus != "" {
+		_, _ = fmt.Fprintf(w, "semantic_status:        %s\n", inv.SemanticStatus)
 	}
-	if r.Meta.TmuxSession != "" {
-		_, _ = fmt.Fprintf(w, "tmux_session:           %s\n", r.Meta.TmuxSession)
+	if len(inv.AttentionFlags) > 0 {
+		_, _ = fmt.Fprintf(w, "attention_flags:        %v\n", inv.AttentionFlags)
 	}
-	_, _ = fmt.Fprintf(w, "base_commit:            %s\n", r.Meta.BaseCommit)
-	_, _ = fmt.Fprintf(w, "sandbox_branch:         %s\n", r.Meta.SandboxBranch)
-	_, _ = fmt.Fprintf(w, "sandbox_path:           %s\n", r.Meta.SandboxPath)
-	_, _ = fmt.Fprintf(w, "sandbox_exists:         %v\n", r.SandboxExists)
+	_, _ = fmt.Fprintf(w, "started_at:             %s\n", inv.StartedAt)
+	if inv.FinishedAt != "" {
+		_, _ = fmt.Fprintf(w, "finished_at:            %s\n", inv.FinishedAt)
+	}
+	_, _ = fmt.Fprintf(w, "sandbox_path:           %s\n", inv.SandboxPath)
+	if inv.LogsDir != "" {
+		_, _ = fmt.Fprintf(w, "logs_dir:               %s\n", inv.LogsDir)
+	}
 	return nil
 }
 
@@ -807,7 +722,7 @@ type AgentDiffOpts struct {
 }
 
 // AgentDiff shows the diff between sandbox and base_commit.
-// This is a CLI-local, read-only operation - no daemon call needed.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiffOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -824,74 +739,68 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// Resolve invocation
+	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true, // diff can be viewed for finished invocations
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	// PR-12: Call daemon GetInvocationDiff endpoint
+	result, err := client.GetInvocationDiff(ctx, opts.InvocationRef, repoIdentity.RepoID, daemonclient.GetInvocationDiffOpts{
+		IncludePatch:       true,
+		IncludeUncommitted: true,
 	})
 	if err != nil {
 		return err
 	}
 
-	if record.Broken {
-		return errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		)
-	}
+	diff := result.Diff
 
-	// Show commit list: base_commit..sandbox_branch
+	// Show commit list
 	_, _ = fmt.Fprintf(stdout, "Commits in sandbox:\n")
 	_, _ = fmt.Fprintf(stdout, "==================\n")
 
-	logResult, err := cr.Run(ctx, "git", []string{
-		"-C", repoRoot.Path,
-		"log", "--oneline", fmt.Sprintf("%s..%s", record.Meta.BaseCommit, record.Meta.SandboxBranch),
-	}, exec.RunOpts{})
-	if err == nil && logResult.ExitCode == 0 {
-		if logResult.Stdout == "" {
-			_, _ = fmt.Fprintf(stdout, "(no commits)\n")
-		} else {
-			_, _ = fmt.Fprint(stdout, logResult.Stdout)
+	if diff.HasCommits && diff.CommittedRange != nil {
+		for _, commit := range diff.CommittedRange.Commits {
+			sha := commit.SHA
+			if len(sha) > 8 {
+				sha = sha[:8]
+			}
+			_, _ = fmt.Fprintf(stdout, "%s %s\n", sha, commit.Summary)
 		}
 	} else {
-		_, _ = fmt.Fprintf(stdout, "(unable to list commits)\n")
+		_, _ = fmt.Fprintf(stdout, "(no commits)\n")
 	}
 
+	// Show committed diff
 	_, _ = fmt.Fprintf(stdout, "\nFile diff (base_commit vs sandbox):\n")
 	_, _ = fmt.Fprintf(stdout, "====================================\n")
 
-	// Show file diff: base_commit..sandbox_branch
-	diffResult, err := cr.Run(ctx, "git", []string{
-		"-C", repoRoot.Path,
-		"diff", fmt.Sprintf("%s..%s", record.Meta.BaseCommit, record.Meta.SandboxBranch),
-	}, exec.RunOpts{})
-	if err == nil && diffResult.ExitCode == 0 {
-		if diffResult.Stdout == "" {
-			_, _ = fmt.Fprintf(stdout, "(no changes)\n")
+	if diff.HasCommits && diff.CommittedRange != nil {
+		if diff.CommittedRange.Patch != "" {
+			_, _ = fmt.Fprint(stdout, diff.CommittedRange.Patch)
 		} else {
-			_, _ = fmt.Fprint(stdout, diffResult.Stdout)
+			_, _ = fmt.Fprintf(stdout, "(diffstat: %s)\n", diff.CommittedRange.Diffstat)
+		}
+		if diff.CommittedRange.PatchTruncated {
+			_, _ = fmt.Fprintf(stderr, "warning: patch was truncated (max bytes: %d)\n", diff.CommittedRange.PatchBytes)
 		}
 	} else {
-		_, _ = fmt.Fprintf(stderr, "warning: unable to generate diff: %s\n", diffResult.Stderr)
+		_, _ = fmt.Fprintf(stdout, "(no changes)\n")
 	}
 
-	// If sandbox exists and has uncommitted changes, show those too
-	if record.SandboxExists {
-		statusResult, err := cr.Run(ctx, "git", []string{
-			"-C", record.Meta.SandboxPath,
-			"status", "--porcelain",
-		}, exec.RunOpts{})
-		if err == nil && statusResult.ExitCode == 0 && statusResult.Stdout != "" {
-			_, _ = fmt.Fprintf(stdout, "\nUncommitted changes in sandbox:\n")
-			_, _ = fmt.Fprintf(stdout, "================================\n")
-			_, _ = fmt.Fprint(stdout, statusResult.Stdout)
+	// Show uncommitted changes
+	if diff.HasUncommitted && diff.WorkingTree != nil {
+		_, _ = fmt.Fprintf(stdout, "\nUncommitted changes in sandbox:\n")
+		_, _ = fmt.Fprintf(stdout, "================================\n")
+		if diff.WorkingTree.Patch != "" {
+			_, _ = fmt.Fprint(stdout, diff.WorkingTree.Patch)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "(diffstat: %s)\n", diff.WorkingTree.Diffstat)
 		}
 	}
 

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -33,6 +35,55 @@ type checkpointTestEnv struct {
 	SandboxDir   string
 	Runner       exec.CommandRunner
 	FS           fs.FS
+	SocketPath   string // test daemon socket path (set by startTestDaemonForCheckpoint)
+}
+
+// startTestDaemonForCheckpoint starts a daemon server backed by the test env's data dir.
+// Returns the Unix socket path. The daemon is shut down when the test finishes.
+func startTestDaemonForCheckpoint(t *testing.T, env *checkpointTestEnv) string {
+	t.Helper()
+
+	st := store.NewStore(env.FS, env.DataDir, time.Now)
+	configDir := filepath.Join(env.DataDir, "config")
+	srv := daemon.NewServer(st, env.Runner, env.FS, configDir)
+
+	// Use a short temp dir for the socket to stay under macOS ~104-byte limit.
+	sockDir, err := os.MkdirTemp("", "dsock")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+
+	socketPath := filepath.Join(sockDir, "d.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+
+	go func() { _ = srv.Serve(listener) }()
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+
+	// Wait for daemon to be healthy.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.Dial("unix", socketPath)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("test daemon did not become ready")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	env.SocketPath = socketPath
+	return socketPath
 }
 
 // setupCheckpointTestEnv creates a minimal environment for checkpoint command tests.
@@ -152,10 +203,13 @@ func TestCheckpointLS_TableOutput(t *testing.T) {
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
 
+	socketPath := startTestDaemonForCheckpoint(t, env)
+
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:   env.InvocationID,
-		DataDirOverride: env.DataDir,
+		InvocationRef:        env.InvocationID,
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -169,8 +223,8 @@ func TestCheckpointLS_TableOutput(t *testing.T) {
 	assert.Contains(t, out, "+10 -5 in 3 files", "expected diffstat for checkpoint 1")
 	assert.Contains(t, out, "+2 -1 in 1 files", "expected diffstat for checkpoint 2")
 
-	// Verify truncated head SHAs
-	assert.Contains(t, out, "deadbeef", "expected truncated head SHA deadbeef")
+	// Verify truncated snapshot commit SHAs (PR-12: uses SnapshotCommit, not SandboxHeadSHA)
+	assert.Contains(t, out, "aaa111bb", "expected truncated snapshot commit aaa111bb")
 }
 
 // 3.2 TestCheckpointLS_JSONOutput
@@ -186,18 +240,21 @@ func TestCheckpointLS_JSONOutput(t *testing.T) {
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
 
+	socketPath := startTestDaemonForCheckpoint(t, env)
+
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:   env.InvocationID,
-		JSON:            true,
-		DataDirOverride: env.DataDir,
+		InvocationRef:        env.InvocationID,
+		JSON:                 true,
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
-	// Verify valid JSON
-	var cpFile checkpoint.CheckpointsFile
-	require.NoError(t, json.NewDecoder(&stdout).Decode(&cpFile), "output is not valid JSON")
-	assert.Equal(t, 2, len(cpFile.Checkpoints), "expected 2 checkpoints")
+	// Verify valid JSON — daemon returns ListCheckpointsData, not CheckpointsFile
+	var result []map[string]interface{}
+	require.NoError(t, json.NewDecoder(&stdout).Decode(&result), "output is not valid JSON")
+	assert.Len(t, result, 2, "expected 2 checkpoints")
 }
 
 // 3.3 TestCheckpointLS_NoCheckpoints
@@ -207,11 +264,13 @@ func TestCheckpointLS_NoCheckpoints(t *testing.T) {
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, []checkpoint.Checkpoint{})
+	socketPath := startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:   env.InvocationID,
-		DataDirOverride: env.DataDir,
+		InvocationRef:        env.InvocationID,
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -226,11 +285,14 @@ func TestCheckpointLS_InvocationNotFound(t *testing.T) {
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, nil)
 
+	socketPath := startTestDaemonForCheckpoint(t, env)
+
 	var stdout, stderr bytes.Buffer
 	// Use a non-existent invocation ref
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:   "nonexistent-invocation",
-		DataDirOverride: env.DataDir,
+		InvocationRef:        "nonexistent-invocation",
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
 	}, &stdout, &stderr)
 	require.Error(t, err, "expected error, got nil")
 
@@ -238,21 +300,26 @@ func TestCheckpointLS_InvocationNotFound(t *testing.T) {
 }
 
 // 3.5 TestCheckpointLS_WrongMode
+// PR-12: The daemon read API does not enforce mode restrictions on
+// checkpoint listing (only on apply). So headed invocations return
+// an empty list rather than an error.
 func TestCheckpointLS_WrongMode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeaded, store.InvocationStatusFinished, nil)
+	socketPath := startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:   env.InvocationID,
-		DataDirOverride: env.DataDir,
+		InvocationRef:        env.InvocationID,
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
 	}, &stdout, &stderr)
-	require.Error(t, err, "expected error, got nil")
+	require.NoError(t, err, "CheckpointLS() error")
 
-	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
+	assert.Contains(t, stdout.String(), "No checkpoints found")
 }
 
 // ---------------------------------------------------------------------------
