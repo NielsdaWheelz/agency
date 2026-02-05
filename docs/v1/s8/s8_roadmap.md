@@ -546,7 +546,6 @@ Runners often modify files without committing. `agent land` must handle this:
   - `GET /invocations/{id}/diff` — sandbox diff (base_commit vs sandbox tip)
   - `GET /invocations/{id}/logs?stream=raw|stderr` — log file contents (non-streaming read; streaming is PR-13)
   - `GET /invocations/{id}/checkpoints` — checkpoint list
-  - `GET /summary` — cacheable convenience: pre-derived counts for watch (active invocations, ready-to-land, needs-attention). Not required — clients can derive from list endpoints.
 - CLI agent read commands (first implementation — cobra skeletons exist since PR-00):
   - `agent ls [--worktree <ref>]` → `GET /invocations` — list invocations, filterable by worktree. Shows name when present, truncated ID otherwise.
   - `agent show <name|id|prefix> [--json]` → `GET /invocations/{id}` — invocation details + derived status
@@ -582,6 +581,7 @@ CLI renders `display_status` directly. Watch uses `attention_flags` for sorting/
 **Explicit non-goals:**
 
 - No streaming (that's PR-13)
+- No `/summary` endpoint (deferred to PR-13; clients use list endpoints + client-side rollup)
 - No repo registry (that's PR-14)
 - CLI may still read log files directly for `--follow` tail (daemon log stream is PR-13)
 
@@ -597,7 +597,6 @@ CLI renders `display_status` directly. Watch uses `attention_flags` for sorting/
 - [ ] No CLI code scans store directories for v2 flows
 - [ ] Daemon returns consistent derived status for all invocation states
 - [ ] `display_status` precedence produces correct results for all state combinations
-- [ ] `/summary` returns correct counts (cacheable, not required for correctness)
 
 ---
 
@@ -614,6 +613,7 @@ CLI renders `display_status` directly. Watch uses `attention_flags` for sorting/
 - Daemon log stream (optional, recommended):
   - `GET /invocations/{id}/logs?stream=stdout|stderr|raw` (SSE)
   - Replaces file tail for `agent logs --follow` and watch log pane
+- `GET /summary` — cacheable aggregate (per-repo + per-worktree rollups). Deferred from PR-12; now built on real event data.
 - Watch TUI:
   - Bubbletea TUI
   - Hierarchical view: worktrees → invocations
@@ -719,7 +719,7 @@ After PR-14, the following must be true:
 | `GET /invocations/{id}` | PR-12 | Invocation details + derived status |
 | `GET /invocations/{id}/diff` | PR-12 | Sandbox diff |
 | `GET /invocations/{id}/checkpoints` | PR-12 | Checkpoint list |
-| `GET /summary` | PR-12 | Cacheable convenience: pre-derived counts for watch |
+| `GET /summary` | PR-13 | Cacheable aggregate: per-repo + per-worktree rollups for watch |
 | `GET /repos` | PR-14 | List registered repos |
 | `GET /repos/{repo_id}` | PR-14 | Repo details |
 
