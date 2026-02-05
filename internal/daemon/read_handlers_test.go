@@ -49,12 +49,13 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	configDir := filepath.Join(dataDir, "config")
 	repoID := "test-repo-read"
 
-	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
-	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-
-	// Fixed clock
+	// Fixed clock for deterministic time-based tests (stall detection, etc.)
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
-	srv.Clock = func() time.Time { return now }
+	clock := func() time.Time { return now }
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, clock)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	srv.Clock = clock
 
 	// Create repo index
 	idx := store.RepoIndex{
@@ -879,7 +880,7 @@ func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
 	// Seed a raw log file for inv-1
 	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	logContent := `{"event":"start"}\n{"event":"output","data":"hello"}\n`
+	logContent := "{\"event\":\"start\"}\n{\"event\":\"output\",\"data\":\"hello\"}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/logs?repo_id="+env.RepoID)
@@ -1210,6 +1211,22 @@ func TestHandleListInvocations_WorktreeRefFilter(t *testing.T) {
 		gotIDs = append(gotIDs, inv.InvocationID)
 	}
 	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
+}
+
+func TestHandleListInvocations_WorktreeRefFilter_NotFound(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Filter by nonexistent worktree_ref → should return empty list, not all invocations
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_ref=nonexistent")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Invocations, 0, "nonexistent worktree_ref should return empty list")
 }
 
 // ---------------------------------------------------------------------------

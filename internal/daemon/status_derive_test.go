@@ -299,9 +299,9 @@ func TestInvocationMetaToDTO(t *testing.T) {
 	assert.Equal(t, "/tmp/sandbox/inv-123", dto.SandboxPath)
 	assert.Equal(t, "/tmp/logs/inv-123", dto.LogsDir)
 
-	// Derived fields
-	assert.NotEmpty(t, dto.DisplayStatus)
-	assert.NotZero(t, dto.SortKey)
+	// Derived fields — status=finished, semantic=working, landing=pending → "finished"
+	assert.Equal(t, "finished", dto.DisplayStatus)
+	assert.Equal(t, daemon.SortKeyFinished, dto.SortKey)
 }
 
 func TestWorktreeMetaToDTO(t *testing.T) {

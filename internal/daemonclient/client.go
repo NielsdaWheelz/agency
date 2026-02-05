@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -538,22 +539,22 @@ type ListWorktreesResult struct {
 
 // ListWorktrees lists integration worktrees via the daemon.
 func (c *Client) ListWorktrees(ctx context.Context, opts ListWorktreesOpts) (*ListWorktreesResult, error) {
-	url := "http://daemon/worktrees?"
+	u := "http://daemon/worktrees?"
 	if opts.RepoID != "" {
-		url += "repo_id=" + opts.RepoID + "&"
+		u += "repo_id=" + url.QueryEscape(opts.RepoID) + "&"
 	}
 	if opts.State != "" {
-		url += "state=" + opts.State + "&"
+		u += "state=" + url.QueryEscape(opts.State) + "&"
 	}
 	if opts.Limit > 0 {
-		url += fmt.Sprintf("limit=%d&", opts.Limit)
+		u += fmt.Sprintf("limit=%d&", opts.Limit)
 	}
 	if opts.Cursor != "" {
-		url += "cursor=" + opts.Cursor + "&"
+		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
 	}
-	url = url[:len(url)-1] // trim trailing & or ?
+	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -598,12 +599,12 @@ type GetWorktreeResult struct {
 
 // GetWorktree gets a single worktree by reference via the daemon.
 func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*GetWorktreeResult, error) {
-	url := fmt.Sprintf("http://daemon/worktrees/%s", ref)
+	u := fmt.Sprintf("http://daemon/worktrees/%s", url.PathEscape(ref))
 	if repoID != "" {
-		url += "?repo_id=" + repoID
+		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -658,28 +659,28 @@ type ListInvocationsResult struct {
 
 // ListInvocations lists invocations via the daemon.
 func (c *Client) ListInvocations(ctx context.Context, opts ListInvocationsOpts) (*ListInvocationsResult, error) {
-	url := "http://daemon/invocations?"
+	u := "http://daemon/invocations?"
 	if opts.RepoID != "" {
-		url += "repo_id=" + opts.RepoID + "&"
+		u += "repo_id=" + url.QueryEscape(opts.RepoID) + "&"
 	}
 	if opts.WorktreeRef != "" {
-		url += "worktree_ref=" + opts.WorktreeRef + "&"
+		u += "worktree_ref=" + url.QueryEscape(opts.WorktreeRef) + "&"
 	}
 	if opts.State != "" {
-		url += "state=" + opts.State + "&"
+		u += "state=" + url.QueryEscape(opts.State) + "&"
 	}
 	if opts.Mode != "" {
-		url += "mode=" + opts.Mode + "&"
+		u += "mode=" + url.QueryEscape(opts.Mode) + "&"
 	}
 	if opts.Limit > 0 {
-		url += fmt.Sprintf("limit=%d&", opts.Limit)
+		u += fmt.Sprintf("limit=%d&", opts.Limit)
 	}
 	if opts.Cursor != "" {
-		url += "cursor=" + opts.Cursor + "&"
+		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
 	}
-	url = url[:len(url)-1] // trim trailing & or ?
+	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -724,12 +725,12 @@ type GetInvocationResult struct {
 
 // GetInvocation gets a single invocation by reference via the daemon.
 func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (*GetInvocationResult, error) {
-	url := fmt.Sprintf("http://daemon/invocations/%s", ref)
+	u := fmt.Sprintf("http://daemon/invocations/%s", url.PathEscape(ref))
 	if repoID != "" {
-		url += "?repo_id=" + repoID
+		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -780,22 +781,22 @@ type GetInvocationDiffResult struct {
 
 // GetInvocationDiff gets the diff for an invocation via the daemon.
 func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID string, opts GetInvocationDiffOpts) (*GetInvocationDiffResult, error) {
-	url := fmt.Sprintf("http://daemon/invocations/%s/diff?", ref)
+	u := fmt.Sprintf("http://daemon/invocations/%s/diff?", url.PathEscape(ref))
 	if repoID != "" {
-		url += "repo_id=" + repoID + "&"
+		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
 	if !opts.IncludePatch {
-		url += "include_patch=false&"
+		u += "include_patch=false&"
 	}
 	if opts.MaxPatchBytes > 0 {
-		url += fmt.Sprintf("max_patch_bytes=%d&", opts.MaxPatchBytes)
+		u += fmt.Sprintf("max_patch_bytes=%d&", opts.MaxPatchBytes)
 	}
 	if !opts.IncludeUncommitted {
-		url += "include_uncommitted=false&"
+		u += "include_uncommitted=false&"
 	}
-	url = url[:len(url)-1] // trim trailing & or ?
+	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -845,19 +846,19 @@ type GetInvocationLogsResult struct {
 
 // GetInvocationLogs gets logs for an invocation via the daemon.
 func (c *Client) GetInvocationLogs(ctx context.Context, ref string, repoID string, opts GetInvocationLogsOpts) (*GetInvocationLogsResult, error) {
-	url := fmt.Sprintf("http://daemon/invocations/%s/logs?", ref)
+	u := fmt.Sprintf("http://daemon/invocations/%s/logs?", url.PathEscape(ref))
 	if repoID != "" {
-		url += "repo_id=" + repoID + "&"
+		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
 	if opts.Kind != "" {
-		url += "kind=" + opts.Kind + "&"
+		u += "kind=" + url.QueryEscape(opts.Kind) + "&"
 	}
 	if opts.TailBytes > 0 {
-		url += fmt.Sprintf("tail_bytes=%d&", opts.TailBytes)
+		u += fmt.Sprintf("tail_bytes=%d&", opts.TailBytes)
 	}
-	url = url[:len(url)-1] // trim trailing & or ?
+	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -908,19 +909,19 @@ type ListCheckpointsResult struct {
 
 // ListCheckpoints lists checkpoints for an invocation via the daemon.
 func (c *Client) ListCheckpoints(ctx context.Context, invocationRef string, repoID string, opts ListCheckpointsOpts) (*ListCheckpointsResult, error) {
-	url := fmt.Sprintf("http://daemon/invocations/%s/checkpoints?", invocationRef)
+	u := fmt.Sprintf("http://daemon/invocations/%s/checkpoints?", url.PathEscape(invocationRef))
 	if repoID != "" {
-		url += "repo_id=" + repoID + "&"
+		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
 	if opts.Limit > 0 {
-		url += fmt.Sprintf("limit=%d&", opts.Limit)
+		u += fmt.Sprintf("limit=%d&", opts.Limit)
 	}
 	if opts.Cursor != "" {
-		url += "cursor=" + opts.Cursor + "&"
+		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
 	}
-	url = url[:len(url)-1] // trim trailing & or ?
+	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -189,12 +189,19 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 	var worktreeIDFilter string
 	if params.WorktreeRef != "" {
 		// Try to resolve worktree ref to ID
+		resolved := false
 		for _, repoID := range repoIDs {
 			record, err := s.resolveWorktreeRefForRepo(params.WorktreeRef, repoID)
 			if err == nil && record != nil {
 				worktreeIDFilter = record.WorktreeID
+				resolved = true
 				break
 			}
+		}
+		if !resolved {
+			// Worktree ref didn't match — use a sentinel that matches nothing,
+			// so the result is an empty list rather than an unfiltered list.
+			worktreeIDFilter = "__unresolved__"
 		}
 	} else if params.WorktreeID != "" {
 		worktreeIDFilter = params.WorktreeID
