@@ -9,6 +9,7 @@
 3. **low** Cleaner flags and confirmation. Add `--yes` to skip confirmation.
 4. **low** Short flags and easier commands.
 5. **low** Add a flag to `run --open` (open in IDE right away).
+6. **low** support other runners (Cursor, amp, droid, opencode) headed and headless.
 
 **Incremental Runtime Integration Plan**
 1. **high** Define a single source of truth for runtime dirs.
