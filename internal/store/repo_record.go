@@ -22,6 +22,7 @@ type RepoRecord struct {
 	RepoKey          string       `json:"repo_key"`
 	RepoID           string       `json:"repo_id"`
 	RepoRootLastSeen string       `json:"repo_root_last_seen"`
+	PreferredRoot    string       `json:"preferred_root,omitempty"` // PR-A: canonical root for operations
 	AgencyJSONPath   string       `json:"agency_json_path"`
 	OriginPresent    bool         `json:"origin_present"`
 	OriginURL        string       `json:"origin_url"`
@@ -36,6 +37,7 @@ type BuildRepoRecordInput struct {
 	RepoKey          string
 	RepoID           string
 	RepoRootLastSeen string
+	PreferredRoot    string // PR-A: set on register, updated on mutation ops
 	AgencyJSONPath   string
 	OriginPresent    bool
 	OriginURL        string
@@ -85,6 +87,7 @@ func (s *Store) UpsertRepoRecord(existing *RepoRecord, input BuildRepoRecordInpu
 		RepoKey:          input.RepoKey,
 		RepoID:           input.RepoID,
 		RepoRootLastSeen: input.RepoRootLastSeen,
+		PreferredRoot:    input.PreferredRoot,
 		AgencyJSONPath:   input.AgencyJSONPath,
 		OriginPresent:    input.OriginPresent,
 		OriginURL:        input.OriginURL,
@@ -96,6 +99,10 @@ func (s *Store) UpsertRepoRecord(existing *RepoRecord, input BuildRepoRecordInpu
 	if existing != nil {
 		// Preserve original creation time
 		rec.CreatedAt = existing.CreatedAt
+		// PR-A: Preserve PreferredRoot from existing if not explicitly set
+		if rec.PreferredRoot == "" && existing.PreferredRoot != "" {
+			rec.PreferredRoot = existing.PreferredRoot
+		}
 	} else {
 		// New record
 		rec.CreatedAt = now

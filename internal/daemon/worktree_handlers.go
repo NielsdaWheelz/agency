@@ -498,6 +498,7 @@ func (s *Server) forceStopAndDiscardInvocations(ctx context.Context, repoID, rep
 }
 
 // ensureRepoRecord writes/updates repo.json for the repo.
+// PR-A: Now sets PreferredRoot on mutations.
 func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot string, originInfo git.OriginInfo) error {
 	// Check if repo record exists
 	existing, exists, err := s.Store.LoadRepoRecord(repoIdentity.RepoID)
@@ -516,6 +517,7 @@ func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot s
 		RepoKey:          repoIdentity.RepoKey,
 		RepoID:           repoIdentity.RepoID,
 		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot, // PR-A: set preferred root on mutation
 		OriginPresent:    originInfo.Present,
 		OriginURL:        originInfo.URL,
 		OriginHost:       originInfo.Host,

@@ -20,7 +20,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -285,6 +284,12 @@ type AgentLSOpts struct {
 	// WorktreeRef filters by integration worktree (optional).
 	WorktreeRef string
 
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
+	// AllRepos lists across all repos (PR-A).
+	AllRepos bool
+
 	// All includes finished (landed/discarded) invocations.
 	All bool
 
@@ -294,6 +299,7 @@ type AgentLSOpts struct {
 
 // AgentLS lists agent invocations.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
+// PR-A: Supports --repo / --all-repos for CWD-less operation.
 func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLSOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -301,14 +307,6 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
 	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
@@ -320,14 +318,33 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		return err
 	}
 
-	// PR-12: Call daemon ListInvocations endpoint
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// PR-A: Resolve repo context via daemon
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllRepos:      opts.AllRepos,
+		AllowAllRepos: true,
+		CmdName:       "agent ls",
+	})
+	if err != nil {
+		return err
+	}
+
 	state := "active"
 	if opts.All {
 		state = "all"
 	}
 
+	var repoID string
+	if !repoCtx.AllRepos {
+		repoID = repoCtx.RepoID
+	}
+
 	result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-		RepoID:      repoIdentity.RepoID,
+		RepoID:      repoID,
 		WorktreeRef: opts.WorktreeRef,
 		State:       state,
 	})
@@ -397,29 +414,23 @@ type AgentShowOpts struct {
 	// InvocationRef is the invocation reference (id or prefix).
 	InvocationRef string
 
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
 	// JSON outputs as JSON.
 	JSON bool
 }
 
 // AgentShow shows details of an agent invocation.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShowOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	logPath := st.DaemonLogPath()
@@ -429,8 +440,20 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	// PR-12: Call daemon GetInvocation endpoint
-	result, err := client.GetInvocation(ctx, opts.InvocationRef, repoIdentity.RepoID)
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent show",
+	})
+	if err != nil {
+		return err
+	}
+
+	result, err := client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -488,6 +511,9 @@ type AgentAttachOpts struct {
 	// InvocationRef is the invocation reference (id or prefix).
 	InvocationRef string
 
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
 
@@ -531,19 +557,31 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		dataDir = dirs.DataDir
 	}
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// PR-10: Resolve invocation via local store read (read-only)
+	// PR-A: Resolve repo context via daemon
 	st := store.NewStore(fsys, dataDir, time.Now)
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent attach",
+	})
+	if err != nil {
+		return err
+	}
+
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
 		IncludeFinished: true, // allow attaching to see final state
 	})
 	if err != nil {
@@ -628,35 +666,48 @@ type AgentStopOpts struct {
 	// InvocationRef is the invocation reference (id or prefix).
 	InvocationRef string
 
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
 }
 
 // AgentStop sends a graceful stop signal (Ctrl-C) to a running invocation.
-// This does not guarantee termination - the runner may ignore the signal.
-// PR-10: Both headed and headless mode now route through daemon.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStopOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return err
 	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent stop",
+	})
+	if err != nil {
+		return err
+	}
 
 	// Resolve invocation
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: false, // can only stop running invocations
+	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: false,
 	})
 	if err != nil {
 		return err
@@ -673,16 +724,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		)
 	}
 
-	// PR-10: Route all invocations (headed and headless) through daemon
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.Stop(ctx, repoIdentity.RepoID, record.InvocationID)
+	resp, err := client.Stop(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
 		return err
 	}
@@ -711,6 +753,9 @@ type AgentKillOpts struct {
 	// InvocationRef is the invocation reference (id or prefix).
 	InvocationRef string
 
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
 }
@@ -719,27 +764,20 @@ type AgentKillOpts struct {
 type AgentDiffOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
+
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
 }
 
 // AgentDiff shows the diff between sandbox and base_commit.
-// PR-12: Routes through daemon read API - CLI never reads store directly.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiffOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	logPath := st.DaemonLogPath()
@@ -749,8 +787,20 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	// PR-12: Call daemon GetInvocationDiff endpoint
-	result, err := client.GetInvocationDiff(ctx, opts.InvocationRef, repoIdentity.RepoID, daemonclient.GetInvocationDiffOpts{
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent diff",
+	})
+	if err != nil {
+		return err
+	}
+
+	result, err := client.GetInvocationDiff(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationDiffOpts{
 		IncludePatch:       true,
 		IncludeUncommitted: true,
 	})
@@ -812,6 +862,9 @@ type AgentLandOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
 	// Apply enables apply mode for uncommitted changes.
 	Apply bool
 
@@ -820,28 +873,40 @@ type AgentLandOpts struct {
 }
 
 // AgentLand lands sandbox changes to the integration worktree via daemon.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLandOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return err
 	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent land",
+	})
+	if err != nil {
+		return err
+	}
 
 	// Resolve invocation
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true, // land works on finished invocations
+	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true,
 	})
 	if err != nil {
 		return err
@@ -858,23 +923,9 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		)
 	}
 
-	// Ensure daemon is running
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	// Check API version compatibility
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
 	// Call daemon to land
 	resp, err := client.Land(ctx, daemonclient.LandOpts{
-		RepoID:       repoIdentity.RepoID,
+		RepoID:       repoCtx.RepoID,
 		InvocationID: record.InvocationID,
 		Apply:        opts.Apply,
 		RequireBase:  opts.RequireBase,
@@ -913,31 +964,46 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 type AgentDiscardOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
+
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
 }
 
 // AgentDiscard discards a sandbox without landing via daemon.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiscardOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return err
 	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent discard",
+	})
+	if err != nil {
+		return err
+	}
 
 	// Resolve invocation
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true, // discard works on any non-landed/discarded invocation
+	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true,
 	})
 	if err != nil {
 		return err
@@ -954,22 +1020,8 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		)
 	}
 
-	// Ensure daemon is running
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	// Check API version compatibility
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
 	// Call daemon to discard
-	resp, err := client.Discard(ctx, repoIdentity.RepoID, record.InvocationID)
+	resp, err := client.Discard(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
 		return err
 	}
@@ -993,30 +1045,44 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 type AgentOpenOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
+
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
 }
 
 // AgentOpen opens the sandbox directory in the configured editor.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// Resolve invocation
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent open",
+	})
+	if err != nil {
+		return err
+	}
+
+	invSvc := invocation.NewService(st, cr, fsys, time.Now)
+	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
 		IncludeFinished: true,
 	})
 	if err != nil {
@@ -1070,29 +1136,40 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 }
 
 // AgentKill forcefully terminates a running invocation.
-// PR-10: Both headed and headless mode now route through daemon.
+// PR-A: Supports --repo for CWD-less operation.
 func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentKillOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return err
 	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent kill",
+	})
+	if err != nil {
+		return err
+	}
 
 	// Resolve invocation
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-
-	record, err := invSvc.Resolve(repoIdentity.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true, // allow killing already-finished to finalize state
+	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
+		IncludeFinished: true,
 	})
 	if err != nil {
 		return err
@@ -1109,16 +1186,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		)
 	}
 
-	// PR-10: Route all invocations (headed and headless) through daemon
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.Kill(ctx, repoIdentity.RepoID, record.InvocationID)
+	resp, err := client.Kill(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
 		return err
 	}

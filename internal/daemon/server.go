@@ -209,6 +209,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/invocations/", s.handleInvocations)
 	mux.HandleFunc("/worktrees/", s.handleWorktrees)
 	mux.HandleFunc("/worktrees", s.handleWorktrees) // Without trailing slash for create
+	mux.HandleFunc("/repos/", s.handleRepos)        // PR-A: repo registry
+	mux.HandleFunc("/repos", s.handleRepos)         // PR-A: repo registry (no trailing slash)
 }
 
 // handleHealth handles GET /health.

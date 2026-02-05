@@ -113,7 +113,7 @@ func TestUpsertRepoIndexEntry_NoDuplication(t *testing.T) {
 	assert.Len(t, entry.Paths, 1, "no duplication")
 }
 
-// TestUpsertRepoIndexEntry_NewPath verifies new paths are added at front.
+// TestUpsertRepoIndexEntry_NewPath verifies new paths are added and sorted.
 func TestUpsertRepoIndexEntry_NewPath(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
@@ -134,12 +134,13 @@ func TestUpsertRepoIndexEntry_NewPath(t *testing.T) {
 
 	entry := idx.Repos["github:owner/repo"]
 	require.Len(t, entry.Paths, 2)
-	assert.Equal(t, "/path/two", entry.Paths[0], "most recent first")
-	assert.Equal(t, "/path/one", entry.Paths[1])
+	// PR-A: paths are sorted lexicographically for stable diffs
+	assert.Equal(t, "/path/one", entry.Paths[0], "sorted alphabetically")
+	assert.Equal(t, "/path/two", entry.Paths[1])
 }
 
-// TestUpsertRepoIndexEntry_MoveExistingPathToFront verifies existing path moves to front.
-func TestUpsertRepoIndexEntry_MoveExistingPathToFront(t *testing.T) {
+// TestUpsertRepoIndexEntry_DeduplicatesExistingPath verifies duplicate paths are not added.
+func TestUpsertRepoIndexEntry_DeduplicatesExistingPath(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
@@ -155,12 +156,13 @@ func TestUpsertRepoIndexEntry_MoveExistingPathToFront(t *testing.T) {
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/one")
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/two")
 
-	// Touch first path again
+	// Touch first path again — should not duplicate
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/one")
 
 	entry := idx.Repos["github:owner/repo"]
 	require.Len(t, entry.Paths, 2)
-	assert.Equal(t, "/path/one", entry.Paths[0], "moved to front")
+	// PR-A: paths are sorted lexicographically
+	assert.Equal(t, "/path/one", entry.Paths[0])
 	assert.Equal(t, "/path/two", entry.Paths[1])
 }
 
