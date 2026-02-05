@@ -24,6 +24,12 @@ type OpenOpts struct {
 
 	// Editor overrides the default editor name.
 	Editor string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+
+	// ConfigDirOverride, if set, is used instead of resolving from environment.
+	ConfigDirOverride string
 }
 
 // Open opens the run worktree in the configured editor.
@@ -38,13 +44,21 @@ func Open(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dataDir := dirs.DataDir
+	configDir := dirs.ConfigDir
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	}
+	if opts.ConfigDirOverride != "" {
+		configDir = opts.ConfigDirOverride
+	}
 
-	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	userCfg, _, err := config.LoadUserConfig(fsys, configDir)
 	if err != nil {
 		return err
 	}
 
-	runRef, record, err := resolveRunForOpen(dirs.DataDir, opts.RunID)
+	runRef, record, err := resolveRunForOpen(dataDir, opts.RunID)
 	if err != nil {
 		return err
 	}
@@ -75,7 +89,7 @@ func Open(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	if editorName == "" {
 		editorName = userCfg.Defaults.Editor
 	}
-	editorCmd, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, editorName)
+	editorCmd, err := config.ResolveEditorCmd(cr, fsys, configDir, userCfg, editorName)
 	if err != nil {
 		return err
 	}

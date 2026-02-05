@@ -5,128 +5,98 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKill_SessionExists(t *testing.T) {
+	t.Parallel()
 	runID := "20260110120000-a3f2"
 	repoDir, dataDir, repoID, cr, fsys := setupStopTestEnv(t, runID, true)
 
-	fakeTmux := &fakeTmuxClient{
-		hasSessionResult: true,
-	}
+	fakeTmux := testutil.NewFakeTmuxClient()
+	fakeTmux.AlwaysHasSession = true
 
 	var stdout, stderr bytes.Buffer
-	opts := KillOpts{RunID: runID}
+	opts := KillOpts{RunID: runID, DataDirOverride: dataDir}
 
 	err := KillWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Kill() error = %v, want nil", err)
-	}
+	require.NoError(t, err, "Kill()")
 
 	// Verify KillSession was called
-	if len(fakeTmux.killCalls) != 1 {
-		t.Fatalf("expected 1 KillSession call, got %d", len(fakeTmux.killCalls))
-	}
+	require.Len(t, fakeTmux.KillSessionCalls, 1, "expected 1 KillSession call")
 	expectedSession := tmux.SessionName(runID)
-	if fakeTmux.killCalls[0] != expectedSession {
-		t.Errorf("KillSession session = %q, want %q", fakeTmux.killCalls[0], expectedSession)
-	}
+	assert.Equal(t, expectedSession, fakeTmux.KillSessionCalls[0], "KillSession session")
 
 	// Verify event was appended
 	st := store.NewStore(fsys, dataDir, nil)
 	eventsPath := filepath.Join(st.RunDir(repoID, runID), "events.jsonl")
 	eventsData, err := os.ReadFile(eventsPath)
-	if err != nil {
-		t.Fatalf("failed to read events.jsonl: %v", err)
-	}
-	if !strings.Contains(string(eventsData), `"event":"kill_session"`) {
-		t.Error("expected kill_session event in events.jsonl")
-	}
-	if !strings.Contains(string(eventsData), expectedSession) {
-		t.Error("expected session_name in kill_session event")
-	}
+	require.NoError(t, err, "failed to read events.jsonl")
+	assert.Contains(t, string(eventsData), `"event":"kill_session"`, "expected kill_session event")
+	assert.Contains(t, string(eventsData), expectedSession, "expected session_name in kill_session event")
 }
 
 func TestKill_SessionMissing(t *testing.T) {
+	t.Parallel()
 	runID := "20260110120000-a3f2"
 	repoDir, dataDir, repoID, cr, fsys := setupStopTestEnv(t, runID, true)
 
-	fakeTmux := &fakeTmuxClient{
-		hasSessionResult: false,
-	}
+	fakeTmux := testutil.NewFakeTmuxClient()
+	// default: Sessions map is empty, so HasSession returns false
 
 	var stdout, stderr bytes.Buffer
-	opts := KillOpts{RunID: runID}
+	opts := KillOpts{RunID: runID, DataDirOverride: dataDir}
 
 	err := KillWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Kill() error = %v, want nil (no-op)", err)
-	}
+	require.NoError(t, err, "Kill() should be no-op")
 
 	// Verify stderr message
-	if !strings.Contains(stderr.String(), "no session for") {
-		t.Errorf("stderr = %q, want contains 'no session for'", stderr.String())
-	}
+	assert.Contains(t, stderr.String(), "no session for")
 
 	// Verify KillSession was NOT called
-	if len(fakeTmux.killCalls) != 0 {
-		t.Errorf("expected 0 KillSession calls, got %d", len(fakeTmux.killCalls))
-	}
+	assert.Empty(t, fakeTmux.KillSessionCalls, "expected 0 KillSession calls")
 
 	// Verify NO event was appended
 	st := store.NewStore(fsys, dataDir, nil)
 	eventsPath := filepath.Join(st.RunDir(repoID, runID), "events.jsonl")
-	_, err = os.ReadFile(eventsPath)
-	if err == nil {
-		t.Error("expected events.jsonl to not exist for no-op kill")
-	}
+	assert.NoFileExists(t, eventsPath, "expected events.jsonl to not exist for no-op kill")
 }
 
 func TestKill_RunNotFound(t *testing.T) {
+	t.Parallel()
 	runID := "20260110120000-a3f2"
-	repoDir, _, _, cr, fsys := setupStopTestEnv(t, runID, false) // no meta
+	repoDir, dataDir, _, cr, fsys := setupStopTestEnv(t, runID, false) // no meta
 
-	fakeTmux := &fakeTmuxClient{}
+	fakeTmux := testutil.NewFakeTmuxClient()
 
 	var stdout, stderr bytes.Buffer
-	opts := KillOpts{RunID: runID}
+	opts := KillOpts{RunID: runID, DataDirOverride: dataDir}
 
 	err := KillWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, opts, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("Kill() error = nil, want E_RUN_NOT_FOUND")
-	}
-
-	code := errors.GetCode(err)
-	if code != errors.ERunNotFound {
-		t.Errorf("error code = %q, want %q", code, errors.ERunNotFound)
-	}
+	require.Error(t, err, "Kill() error = nil, want E_RUN_NOT_FOUND")
+	assert.Equal(t, errors.ERunNotFound, errors.GetCode(err))
 }
 
 func TestKill_KillSessionError(t *testing.T) {
+	t.Parallel()
 	runID := "20260110120000-a3f2"
-	repoDir, _, _, cr, fsys := setupStopTestEnv(t, runID, true)
+	repoDir, dataDir, _, cr, fsys := setupStopTestEnv(t, runID, true)
 
-	fakeTmux := &fakeTmuxClient{
-		hasSessionResult: true,
-		killSessionErr:   errors.New(errors.ETmuxFailed, "kill failed"),
-	}
+	fakeTmux := testutil.NewFakeTmuxClient()
+	fakeTmux.AlwaysHasSession = true
+	fakeTmux.KillSessionErr = errors.New(errors.ETmuxFailed, "kill failed")
 
 	var stdout, stderr bytes.Buffer
-	opts := KillOpts{RunID: runID}
+	opts := KillOpts{RunID: runID, DataDirOverride: dataDir}
 
 	err := KillWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, opts, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("Kill() error = nil, want error")
-	}
-
-	code := errors.GetCode(err)
-	if code != errors.ETmuxFailed {
-		t.Errorf("error code = %q, want %q", code, errors.ETmuxFailed)
-	}
+	require.Error(t, err, "Kill() error = nil, want error")
+	assert.Equal(t, errors.ETmuxFailed, errors.GetCode(err))
 }

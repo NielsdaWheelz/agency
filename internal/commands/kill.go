@@ -23,6 +23,9 @@ type KillOpts struct {
 
 	// RepoPath is the optional --repo flag to scope name resolution.
 	RepoPath string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // Kill kills the tmux session for a run. Workspace remains intact.
@@ -42,7 +45,7 @@ func KillWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, 
 	}
 
 	// Build resolution context using the new global resolver
-	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}

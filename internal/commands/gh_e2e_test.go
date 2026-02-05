@@ -19,6 +19,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGHE2EPushMerge(t *testing.T) {
@@ -59,21 +60,15 @@ func TestGHE2EPushMerge(t *testing.T) {
 	defaultBranch := resolveDefaultBranch(t, ctx, cr, repoRoot, repo)
 
 	runID, err := core.NewRunID(time.Now())
-	if err != nil {
-		t.Fatalf("runID: %v", err)
-	}
+	require.NoError(t, err, "runID")
 	branch := fmt.Sprintf("agency/e2e-%s", runID)
 
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
-	if repoIdentity.RepoID == "" {
-		t.Fatal("repoID empty")
-	}
+	require.NotEmpty(t, repoIdentity.RepoID, "repoID empty")
 
 	worktreePath := filepath.Join(dataDir, "repos", repoIdentity.RepoID, "worktrees", runID)
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-		t.Fatalf("mkdir worktrees: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(worktreePath), 0o755), "mkdir worktrees")
 	runCmd(t, ctx, cr, repoRoot, "git", "fetch", "origin", defaultBranch)
 	runCmd(t, ctx, cr, repoRoot, "git", "worktree", "add", "-b", branch, worktreePath, "origin/"+defaultBranch)
 
@@ -81,9 +76,7 @@ func TestGHE2EPushMerge(t *testing.T) {
 	// test runs don't conflict - Git auto-merges identical content.
 	// Only the e2e/<runID>/ directory contains unique-per-run data.
 	scriptsDir := filepath.Join(worktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		t.Fatalf("mkdir scripts: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "mkdir scripts")
 
 	// Fixed script content - same every run
 	writeScript(t, filepath.Join(scriptsDir, "agency_setup.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
@@ -109,16 +102,12 @@ func TestGHE2EPushMerge(t *testing.T) {
   }
 }
 `
-	if err := os.WriteFile(filepath.Join(worktreePath, "agency.json"), []byte(agencyJSON), 0o644); err != nil {
-		t.Fatalf("write agency.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "agency.json"), []byte(agencyJSON), 0o644), "write agency.json")
 
 	// Report goes in worktree .agency/ (required location for push command)
 	// Fixed content - same every run
 	reportDir := filepath.Join(worktreePath, ".agency")
-	if err := os.MkdirAll(reportDir, 0o755); err != nil {
-		t.Fatalf("mkdir report: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(reportDir, 0o755), "mkdir report")
 	report := `# e2e test
 
 ## summary
@@ -127,28 +116,20 @@ e2e report: verifying push/merge works
 ## how to test
 This is an automated e2e test - no manual testing required.
 `
-	if err := os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(report), 0o644); err != nil {
-		t.Fatalf("write report: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(report), 0o644), "write report")
 
 	// Unique test data under e2e/<runID>/ - this is the only unique-per-run content
 	e2eRunDir := filepath.Join(worktreePath, "e2e", runID)
-	if err := os.MkdirAll(e2eRunDir, 0o755); err != nil {
-		t.Fatalf("mkdir e2e run dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(e2eRunDir, 0o755), "mkdir e2e run dir")
 	logPath := filepath.Join(e2eRunDir, "log.txt")
 	logContent := fmt.Sprintf("%s %s\n", runID, time.Now().UTC().Format(time.RFC3339))
-	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
-		t.Fatalf("write e2e log: %v", err)
-	}
+	require.NoError(t, os.WriteFile(logPath, []byte(logContent), 0o644), "write e2e log")
 
 	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/report.md"}, exec.RunOpts{
 		Dir: worktreePath,
 		Env: nonInteractiveEnv(),
 	})
-	if err != nil {
-		t.Fatalf("git check-ignore .agency/report.md: %v", err)
-	}
+	require.NoError(t, err, "git check-ignore .agency/report.md")
 	reportIgnored := false
 	switch result.ExitCode {
 	case 0:
@@ -156,7 +137,7 @@ This is an automated e2e test - no manual testing required.
 	case 1:
 		reportIgnored = false
 	default:
-		t.Fatalf("git check-ignore .agency/report.md exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
+		require.Fail(t, "git check-ignore .agency/report.md unexpected exit code", "exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
 
 	// Add fixed infrastructure files + unique run data
@@ -174,27 +155,18 @@ This is an automated e2e test - no manual testing required.
 	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	if _, err := st.EnsureRunDir(repoIdentity.RepoID, runID); err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
+	_, err = st.EnsureRunDir(repoIdentity.RepoID, runID)
+	require.NoError(t, err, "EnsureRunDir")
 	meta := store.NewRunMeta(runID, repoIdentity.RepoID, "e2e", "claude", "claude", defaultBranch, branch, worktreePath, time.Now())
-	if err := st.WriteInitialMeta(repoIdentity.RepoID, runID, meta); err != nil {
-		t.Fatalf("WriteInitialMeta: %v", err)
-	}
+	require.NoError(t, st.WriteInitialMeta(repoIdentity.RepoID, runID, meta), "WriteInitialMeta")
 
 	var pushStdout, pushStderr bytes.Buffer
-	if err := Push(ctx, cr, fsys, worktreePath, PushOpts{RunID: runID}, &pushStdout, &pushStderr); err != nil {
-		t.Fatalf("push failed: %v\nstderr:\n%s", err, pushStderr.String())
-	}
+	require.NoError(t, Push(ctx, cr, fsys, worktreePath, PushOpts{RunID: runID}, &pushStdout, &pushStderr), "push failed\nstderr:\n%s", pushStderr.String())
 
 	meta, err = st.ReadMeta(repoIdentity.RepoID, runID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
+	require.NoError(t, err, "ReadMeta")
 	prNumber := meta.PRNumber
-	if prNumber == 0 {
-		t.Fatal("pr_number not recorded")
-	}
+	require.NotZero(t, prNumber, "pr_number not recorded")
 
 	merged := false
 	t.Cleanup(func() {
@@ -217,9 +189,7 @@ This is an automated e2e test - no manual testing required.
 		RunID:      runID,
 		TmuxClient: noopTmuxClient{},
 	}
-	if err := Merge(ctx, cr, fsys, worktreePath, mergeOpts, strings.NewReader("merge\n"), &mergeStdout, &mergeStderr); err != nil {
-		t.Fatalf("merge failed: %v\nstderr:\n%s", err, mergeStderr.String())
-	}
+	require.NoError(t, Merge(ctx, cr, fsys, worktreePath, mergeOpts, strings.NewReader("merge\n"), &mergeStdout, &mergeStderr), "merge failed\nstderr:\n%s", mergeStderr.String())
 
 	merged = true
 	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)
@@ -231,12 +201,8 @@ func runCmd(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name 
 		Dir: dir,
 		Env: nonInteractiveEnv(),
 	})
-	if err != nil {
-		t.Fatalf("%s %s: %v", name, strings.Join(args, " "), err)
-	}
-	if result.ExitCode != 0 {
-		t.Fatalf("%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
-	}
+	require.NoError(t, err, "%s %s", name, strings.Join(args, " "))
+	require.Equal(t, 0, result.ExitCode, "%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
 }
 
 func runCmdAllowMissingRemoteRef(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name string, args ...string) {
@@ -245,23 +211,19 @@ func runCmdAllowMissingRemoteRef(t *testing.T, ctx context.Context, cr exec.Comm
 		Dir: dir,
 		Env: nonInteractiveEnv(),
 	})
-	if err != nil {
-		t.Fatalf("%s %s: %v", name, strings.Join(args, " "), err)
-	}
+	require.NoError(t, err, "%s %s", name, strings.Join(args, " "))
 	if result.ExitCode != 0 {
 		msg := result.Stderr + result.Stdout
 		if strings.Contains(msg, "remote ref does not exist") {
 			return
 		}
-		t.Fatalf("%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
+		require.Equal(t, 0, result.ExitCode, "%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
 	}
 }
 
 func writeScript(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o755), "write %s", path)
 }
 
 func resolveDefaultBranch(t *testing.T, ctx context.Context, cr exec.CommandRunner, repoRoot, repo string) string {

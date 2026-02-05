@@ -2,6 +2,9 @@ package tmux
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // MockExecutor is a test double for Executor.
@@ -50,6 +53,7 @@ func (m *MockExecutor) Run(name string, args ...string) (stdout string, stderr s
 }
 
 func TestHasSession(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		session   string
@@ -96,30 +100,25 @@ func TestHasSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			exec := NewMockExecutor(tt.responses...)
 			got := HasSession(exec, tt.session)
 
-			if got != tt.want {
-				t.Errorf("HasSession() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 
-			if len(exec.Calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(exec.Calls))
-			}
+			require.Len(t, exec.Calls, 1)
 
 			call := exec.Calls[0]
-			if call.Name != tt.wantCall.Name {
-				t.Errorf("call.Name = %q, want %q", call.Name, tt.wantCall.Name)
-			}
-			if !slicesEqual(call.Args, tt.wantCall.Args) {
-				t.Errorf("call.Args = %v, want %v", call.Args, tt.wantCall.Args)
-			}
+			assert.Equal(t, tt.wantCall.Name, call.Name)
+			assert.Equal(t, tt.wantCall.Args, call.Args)
 		})
 	}
 }
 
 func TestCaptureScrollback(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		target    string
@@ -183,35 +182,31 @@ func TestCaptureScrollback(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			exec := NewMockExecutor(tt.responses...)
 			got, err := CaptureScrollback(exec, tt.target)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CaptureScrollback() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
-			if got != tt.want {
-				t.Errorf("CaptureScrollback() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 
-			if len(exec.Calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(exec.Calls))
-			}
+			require.Len(t, exec.Calls, 1)
 
 			call := exec.Calls[0]
-			if call.Name != tt.wantCall.Name {
-				t.Errorf("call.Name = %q, want %q", call.Name, tt.wantCall.Name)
-			}
-			if !slicesEqual(call.Args, tt.wantCall.Args) {
-				t.Errorf("call.Args = %v, want %v", call.Args, tt.wantCall.Args)
-			}
+			assert.Equal(t, tt.wantCall.Name, call.Name)
+			assert.Equal(t, tt.wantCall.Args, call.Args)
 		})
 	}
 }
 
 func TestSessionTarget(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		runID string
 		want  string
@@ -222,16 +217,17 @@ func TestSessionTarget(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.runID, func(t *testing.T) {
+			t.Parallel()
 			got := SessionTarget(tt.runID)
-			if got != tt.want {
-				t.Errorf("SessionTarget(%q) = %q, want %q", tt.runID, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestSessionName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		runID string
 		want  string
@@ -242,11 +238,11 @@ func TestSessionName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.runID, func(t *testing.T) {
+			t.Parallel()
 			got := SessionName(tt.runID)
-			if got != tt.want {
-				t.Errorf("SessionName(%q) = %q, want %q", tt.runID, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -258,17 +254,4 @@ type mockError struct {
 
 func (e *mockError) Error() string {
 	return e.msg
-}
-
-// slicesEqual compares two string slices for equality.
-func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
 }

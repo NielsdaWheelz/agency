@@ -27,16 +27,25 @@ import (
 type CheckpointLSOpts struct {
 	InvocationRef string
 	JSON          bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // CheckpointLS lists checkpoints for an invocation.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
-	// 1. Get home directory and resolve paths
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	// 1. Resolve paths
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
 	// 2. Get repo context
 	gitRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -48,10 +57,10 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	repoIdentity := identity.DeriveRepoIdentity(gitRoot.Path, originInfo.URL)
 
 	// 3. Set up store
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// 4. Scan invocations and resolve
-	records, err := store.ScanInvocationsForRepo(dirs.DataDir, repoIdentity.RepoID)
+	records, err := store.ScanInvocationsForRepo(dataDir, repoIdentity.RepoID)
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to scan invocations", err)
 	}
@@ -154,6 +163,9 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 type CheckpointApplyOpts struct {
 	InvocationRef string
 	CheckpointID  string // Parsed as int
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // CheckpointApply restores a sandbox to a checkpoint state.
@@ -167,12 +179,18 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		return errors.New(errors.EUsage, "checkpoint_id must be a positive integer")
 	}
 
-	// 2. Get home directory and resolve paths
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	// 2. Resolve paths
+	var applyDataDir string
+	if opts.DataDirOverride != "" {
+		applyDataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		applyDataDir = dirs.DataDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
 	// 3. Get repo context
 	gitRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -184,10 +202,10 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	repoIdentity := identity.DeriveRepoIdentity(gitRoot.Path, originInfo.URL)
 
 	// 4. Set up store
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	st := store.NewStore(fsys, applyDataDir, time.Now)
 
 	// 5. Scan invocations and resolve
-	records, err := store.ScanInvocationsForRepo(dirs.DataDir, repoIdentity.RepoID)
+	records, err := store.ScanInvocationsForRepo(applyDataDir, repoIdentity.RepoID)
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to scan invocations", err)
 	}

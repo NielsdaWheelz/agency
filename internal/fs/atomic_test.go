@@ -6,112 +6,96 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteFileAtomic_Basic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	fs := NewRealFS()
 
 	// Write initial content
 	data := []byte(`{"version": 1}`)
-	if err := WriteFileAtomic(fs, path, data, 0644); err != nil {
-		t.Fatalf("WriteFileAtomic failed: %v", err)
-	}
+	err := WriteFileAtomic(fs, path, data, 0644)
+	require.NoError(t, err, "WriteFileAtomic failed")
 
 	// Verify content
 	got, err := fs.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	if string(got) != string(data) {
-		t.Errorf("content = %q, want %q", string(got), string(data))
-	}
+	require.NoError(t, err, "ReadFile failed")
+	assert.Equal(t, string(data), string(got))
 
 	// Verify no temp files left behind
 	assertNoTempFiles(t, dir)
 }
 
 func TestWriteFileAtomic_Overwrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	fs := NewRealFS()
 
 	// Write initial content
 	initial := []byte(`{"old": true}`)
-	if err := WriteFileAtomic(fs, path, initial, 0644); err != nil {
-		t.Fatalf("initial write failed: %v", err)
-	}
+	err := WriteFileAtomic(fs, path, initial, 0644)
+	require.NoError(t, err, "initial write failed")
 
 	// Overwrite with new content
 	updated := []byte(`{"new": true, "version": 2}`)
-	if err := WriteFileAtomic(fs, path, updated, 0644); err != nil {
-		t.Fatalf("overwrite failed: %v", err)
-	}
+	err = WriteFileAtomic(fs, path, updated, 0644)
+	require.NoError(t, err, "overwrite failed")
 
 	// Verify content is exactly the new bytes
 	got, err := fs.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	if string(got) != string(updated) {
-		t.Errorf("content = %q, want %q", string(got), string(updated))
-	}
+	require.NoError(t, err, "ReadFile failed")
+	assert.Equal(t, string(updated), string(got))
 
 	// Verify no temp files left behind
 	assertNoTempFiles(t, dir)
 }
 
 func TestWriteFileAtomic_Permissions(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	fs := NewRealFS()
 
 	// Write with specific permissions
-	if err := WriteFileAtomic(fs, path, []byte("test"), 0600); err != nil {
-		t.Fatalf("WriteFileAtomic failed: %v", err)
-	}
+	err := WriteFileAtomic(fs, path, []byte("test"), 0600)
+	require.NoError(t, err, "WriteFileAtomic failed")
 
 	info, err := fs.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
+	require.NoError(t, err, "Stat failed")
 
 	// Check permissions (mask out type bits)
 	got := info.Mode().Perm()
-	if got != 0600 {
-		t.Errorf("permissions = %o, want %o", got, 0600)
-	}
+	assert.Equal(t, os.FileMode(0600), got)
 }
 
 func TestWriteFileAtomic_RenameFailure(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 
 	// Write initial content that should be preserved on failure
 	realFS := NewRealFS()
 	initial := []byte(`{"initial": true}`)
-	if err := realFS.WriteFile(path, initial, 0644); err != nil {
-		t.Fatalf("setup failed: %v", err)
-	}
+	err := realFS.WriteFile(path, initial, 0644)
+	require.NoError(t, err, "setup failed")
 
 	// Use a stubbed FS that fails on rename
 	stubFS := &failingRenameFS{FS: realFS, dir: dir}
 
 	// Attempt write that will fail on rename
-	err := WriteFileAtomic(stubFS, path, []byte(`{"new": true}`), 0644)
-	if err == nil {
-		t.Fatal("expected error on rename failure")
-	}
+	err = WriteFileAtomic(stubFS, path, []byte(`{"new": true}`), 0644)
+	require.Error(t, err, "expected error on rename failure")
 
 	// Verify original file is unchanged
 	got, err := realFS.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	if string(got) != string(initial) {
-		t.Errorf("original content changed: got %q, want %q", string(got), string(initial))
-	}
+	require.NoError(t, err, "ReadFile failed")
+	assert.Equal(t, string(initial), string(got))
 
 	// Verify temp file was cleaned up
 	assertNoTempFiles(t, dir)
@@ -132,84 +116,68 @@ func (f *failingRenameFS) Rename(oldpath, newpath string) error {
 func assertNoTempFiles(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("ReadDir failed: %v", err)
-	}
+	require.NoError(t, err, "ReadDir failed")
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".agency-tmp-") || strings.HasPrefix(e.Name(), ".agency-atomic-") {
-			t.Errorf("temp file left behind: %s", e.Name())
-		}
+		assert.False(t, strings.HasPrefix(e.Name(), ".agency-tmp-") || strings.HasPrefix(e.Name(), ".agency-atomic-"),
+			"temp file left behind: %s", e.Name())
 	}
 }
 
 func TestWriteJSONAtomic_ReplacesAndIsValidJSON(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 
 	// Write initial file
 	initial := map[string]string{"key": "initial"}
-	if err := WriteJSONAtomic(path, initial, 0o644); err != nil {
-		t.Fatalf("initial write failed: %v", err)
-	}
+	err := WriteJSONAtomic(path, initial, 0o644)
+	require.NoError(t, err, "initial write failed")
 
 	// Verify initial content
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile failed")
 
 	var got map[string]string
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("initial JSON is invalid: %v", err)
-	}
-	if got["key"] != "initial" {
-		t.Errorf("initial content = %v, want key=initial", got)
-	}
+	err = json.Unmarshal(data, &got)
+	require.NoError(t, err, "initial JSON is invalid")
+	assert.Equal(t, "initial", got["key"])
 
 	// Overwrite with new content
 	updated := map[string]string{"key": "updated", "new": "value"}
-	if err := WriteJSONAtomic(path, updated, 0o644); err != nil {
-		t.Fatalf("update failed: %v", err)
-	}
+	err = WriteJSONAtomic(path, updated, 0o644)
+	require.NoError(t, err, "update failed")
 
 	// Verify updated content
 	data, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile failed")
 
 	got = make(map[string]string)
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("updated JSON is invalid: %v", err)
-	}
-	if got["key"] != "updated" || got["new"] != "value" {
-		t.Errorf("updated content = %v, want key=updated, new=value", got)
-	}
+	err = json.Unmarshal(data, &got)
+	require.NoError(t, err, "updated JSON is invalid")
+	assert.Equal(t, "updated", got["key"])
+	assert.Equal(t, "value", got["new"])
 
 	assertNoTempFiles(t, dir)
 }
 
 func TestWriteJSONAtomic_PermApplied(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test_perm.json")
 
 	data := map[string]int{"num": 42}
-	if err := WriteJSONAtomic(path, data, 0o600); err != nil {
-		t.Fatalf("WriteJSONAtomic failed: %v", err)
-	}
+	err := WriteJSONAtomic(path, data, 0o600)
+	require.NoError(t, err, "WriteJSONAtomic failed")
 
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
+	require.NoError(t, err, "Stat failed")
 
 	perm := info.Mode().Perm()
-	if perm != 0o600 {
-		t.Errorf("permission = %o, want 0600", perm)
-	}
+	assert.Equal(t, os.FileMode(0o600), perm)
 }
 
 func TestWriteJSONAtomic_PrettyFormat(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pretty.json")
 
@@ -220,27 +188,21 @@ func TestWriteJSONAtomic_PrettyFormat(t *testing.T) {
 		},
 	}
 
-	if err := WriteJSONAtomic(path, data, 0o644); err != nil {
-		t.Fatalf("WriteJSONAtomic failed: %v", err)
-	}
+	err := WriteJSONAtomic(path, data, 0o644)
+	require.NoError(t, err, "WriteJSONAtomic failed")
 
 	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile failed")
 
 	s := string(content)
 	// Should have trailing newline
-	if s[len(s)-1] != '\n' {
-		t.Error("JSON should end with newline")
-	}
+	assert.Equal(t, byte('\n'), s[len(s)-1], "JSON should end with newline")
 	// Should contain indented content (more chars than compact)
-	if len(content) < 20 {
-		t.Error("pretty JSON should have more characters than compact")
-	}
+	assert.True(t, len(content) >= 20, "pretty JSON should have more characters than compact")
 }
 
 func TestWriteJSONAtomic_StructType(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "struct.json")
 
@@ -250,31 +212,25 @@ func TestWriteJSONAtomic_StructType(t *testing.T) {
 	}
 
 	data := TestStruct{Name: "test", Value: 123}
-	if err := WriteJSONAtomic(path, data, 0o644); err != nil {
-		t.Fatalf("WriteJSONAtomic failed: %v", err)
-	}
+	err := WriteJSONAtomic(path, data, 0o644)
+	require.NoError(t, err, "WriteJSONAtomic failed")
 
 	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile failed")
 
 	var got TestStruct
-	if err := json.Unmarshal(content, &got); err != nil {
-		t.Fatalf("JSON unmarshal failed: %v", err)
-	}
+	err = json.Unmarshal(content, &got)
+	require.NoError(t, err, "JSON unmarshal failed")
 
-	if got.Name != "test" || got.Value != 123 {
-		t.Errorf("got %+v, want Name=test, Value=123", got)
-	}
+	assert.Equal(t, "test", got.Name)
+	assert.Equal(t, 123, got.Value)
 }
 
 func TestWriteJSONAtomic_ParentDirMustExist(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nonexistent", "test.json")
 
 	err := WriteJSONAtomic(path, "test", 0o644)
-	if err == nil {
-		t.Error("WriteJSONAtomic should fail when parent dir doesn't exist")
-	}
+	require.Error(t, err, "WriteJSONAtomic should fail when parent dir doesn't exist")
 }

@@ -263,13 +263,15 @@ agency agent open 20260131
 
 ## Daemon (v2)
 
-The agency daemon is the **control plane** for headless invocations. For headless execution, the daemon:
-- Creates invocation IDs
-- Creates sandbox worktrees
+The agency daemon is the **unified control plane** for all agent invocations — both headed (tmux) and headless (subprocess). As of PR-10, the daemon:
+- Creates invocation IDs for all invocation types
+- Creates sandbox worktrees atomically
 - Manages all invocation metadata
-- Supervises runner processes
-- Streams logs to disk
-- Handles lifecycle transitions
+- For headed: Creates and owns tmux sessions
+- For headless: Supervises runner processes
+- Streams logs to disk (headless mode)
+- Handles lifecycle transitions (stop, kill)
+- Provides idempotent start operations
 
 ```bash
 # Start daemon (runs in foreground, Ctrl-C to stop)
@@ -286,12 +288,14 @@ agency daemon stop --force
 
 ### Daemon Features
 
-- **Auto-start**: Daemon starts automatically when a headless invocation is created
-- **Log capture**: Captures stdout/stderr to `raw.jsonl` and `stderr.log` in sandbox logs
+- **Auto-start**: Daemon starts automatically when any invocation is created (headed or headless)
+- **Unified invocation creation**: Single control plane for both headed and headless modes
+- **Headed mode management**: Creates and manages tmux sessions for interactive agents
+- **Log capture**: Captures stdout/stderr to `raw.jsonl` and `stderr.log` (headless mode)
 - **Stream parsing**: Parses runner output and writes normalized events to `stream.jsonl`
 - **Semantic status**: Derives meaningful status (`working`, `ready_for_review`) from parsed output
-- **Graceful stop**: Escalates SIGINT → SIGTERM (5s) → SIGKILL (2s) on `agent stop`
-- **Forceful kill**: Immediate SIGKILL via process groups on `agent kill`
+- **Graceful stop**: For headed: sends C-c via tmux; for headless: SIGINT → SIGTERM → SIGKILL escalation
+- **Forceful kill**: For headed: tmux kill-session; for headless: immediate SIGKILL via process groups
 - **Orphan detection**: Detects and marks orphaned invocations on restart
 - **Idempotency**: Duplicate requests return existing invocation (via client_request_id)
 - **API versioning**: CLI checks daemon API version before operations
@@ -403,16 +407,26 @@ Checkpoint events are emitted to `invocations/<id>/events.jsonl`:
 - `agency.checkpoint_applied` — checkpoint was applied (rollback)
 - `agency.checkpoint_denylist_triggered` — denylisted files found, degraded to tracked-only
 
-### Headless Mode Architecture
+### Invocation Architecture (PR-10)
 
-When you run `agency agent start --headless`:
-1. CLI sends a single RPC to the daemon with repo_root, worktree_ref, runner, and prompt
-2. Daemon resolves the integration worktree and validates the request
+Both headed and headless invocations are created and managed by the daemon:
+
+**Headed mode** (`agency agent start --worktree my-feature`):
+1. CLI sends RPC to daemon with repo_root, worktree_ref, runner
+2. Daemon resolves integration worktree and validates request
 3. Daemon atomically creates sandbox worktree and invocation record
-4. Daemon spawns the runner process and streams logs
+4. Daemon creates tmux session with runner command in sandbox directory
+5. CLI receives invocation_id, sandbox_path, tmux_session
+6. CLI optionally attaches to the tmux session (unless `--detached`)
+
+**Headless mode** (`agency agent start --headless --prompt "..."`):
+1. CLI sends RPC to daemon with repo_root, worktree_ref, runner, and prompt
+2. Daemon resolves integration worktree and validates request
+3. Daemon atomically creates sandbox worktree and invocation record
+4. Daemon spawns runner process and streams logs
 5. CLI receives invocation_id and sandbox_path, then exits
 
-The CLI **never** writes invocation or sandbox files for headless mode — the daemon is the single writer.
+The CLI **never** writes invocation or sandbox files — the daemon is the **single writer** for all invocation types.
 
 ### Daemon-Owned Worktree Mutations
 

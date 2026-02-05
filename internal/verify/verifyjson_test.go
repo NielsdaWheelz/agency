@@ -4,123 +4,94 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadVerifyJSON_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	result := ReadVerifyJSON(path)
 
-	if result.Exists {
-		t.Errorf("Exists = true, want false for missing file")
-	}
-	if result.VJ != nil {
-		t.Errorf("VJ = %v, want nil for missing file", result.VJ)
-	}
-	if result.Err != nil {
-		t.Errorf("Err = %v, want nil for missing file", result.Err)
-	}
+	assert.False(t, result.Exists, "Exists = true, want false for missing file")
+	assert.Nil(t, result.VJ, "VJ should be nil for missing file")
+	assert.NoError(t, result.Err, "Err should be nil for missing file")
 }
 
 func TestReadVerifyJSON_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write invalid JSON
-	if err := os.WriteFile(path, []byte("not valid json"), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("not valid json"), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if !result.Exists {
-		t.Errorf("Exists = false, want true for existing file")
-	}
-	if result.VJ != nil {
-		t.Errorf("VJ = %v, want nil for invalid JSON", result.VJ)
-	}
-	if result.Err == nil {
-		t.Errorf("Err = nil, want non-nil for invalid JSON")
-	}
+	assert.True(t, result.Exists, "Exists = false, want true for existing file")
+	assert.Nil(t, result.VJ, "VJ should be nil for invalid JSON")
+	require.Error(t, result.Err, "Err should be non-nil for invalid JSON")
 }
 
 func TestReadVerifyJSON_MissingSchemaVersion(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write JSON without schema_version
-	if err := os.WriteFile(path, []byte(`{"ok": true}`), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"ok": true}`), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if !result.Exists {
-		t.Errorf("Exists = false, want true for existing file")
-	}
-	if result.VJ != nil {
-		t.Errorf("VJ = %v, want nil for missing schema_version", result.VJ)
-	}
-	if result.Err == nil {
-		t.Errorf("Err = nil, want non-nil for missing schema_version")
-	}
-	if result.Err != nil && result.Err.Error() != "verify.json: schema_version is required and must be non-empty" {
-		t.Errorf("Err = %q, want specific schema_version error", result.Err.Error())
-	}
+	assert.True(t, result.Exists, "Exists = false, want true for existing file")
+	assert.Nil(t, result.VJ, "VJ should be nil for missing schema_version")
+	require.Error(t, result.Err, "Err should be non-nil for missing schema_version")
+	assert.Equal(t, "verify.json: schema_version is required and must be non-empty", result.Err.Error())
 }
 
 func TestReadVerifyJSON_EmptySchemaVersion(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write JSON with empty schema_version
-	if err := os.WriteFile(path, []byte(`{"schema_version": "", "ok": true}`), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "", "ok": true}`), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if !result.Exists {
-		t.Errorf("Exists = false, want true for existing file")
-	}
-	if result.VJ != nil {
-		t.Errorf("VJ = %v, want nil for empty schema_version", result.VJ)
-	}
-	if result.Err == nil {
-		t.Errorf("Err = nil, want non-nil for empty schema_version")
-	}
+	assert.True(t, result.Exists, "Exists = false, want true for existing file")
+	assert.Nil(t, result.VJ, "VJ should be nil for empty schema_version")
+	require.Error(t, result.Err, "Err should be non-nil for empty schema_version")
 }
 
 func TestReadVerifyJSON_ValidMinimal(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write minimal valid JSON
-	if err := os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true}`), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true}`), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if !result.Exists {
-		t.Errorf("Exists = false, want true")
-	}
-	if result.VJ == nil {
-		t.Fatalf("VJ = nil, want non-nil for valid JSON")
-	}
-	if result.Err != nil {
-		t.Errorf("Err = %v, want nil for valid JSON", result.Err)
-	}
-	if result.VJ.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want \"1.0\"", result.VJ.SchemaVersion)
-	}
-	if !result.VJ.OK {
-		t.Errorf("OK = false, want true")
-	}
+	assert.True(t, result.Exists, "Exists = false, want true")
+	require.NotNil(t, result.VJ, "VJ should be non-nil for valid JSON")
+	assert.NoError(t, result.Err, "Err should be nil for valid JSON")
+	assert.Equal(t, "1.0", result.VJ.SchemaVersion)
+	assert.True(t, result.VJ.OK, "OK = false, want true")
 }
 
 func TestReadVerifyJSON_ValidFull(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
@@ -131,111 +102,77 @@ func TestReadVerifyJSON_ValidFull(t *testing.T) {
 		"summary": "3 tests failed",
 		"data": {"failures": ["test_a", "test_b", "test_c"]}
 	}`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if !result.Exists {
-		t.Errorf("Exists = false, want true")
-	}
-	if result.VJ == nil {
-		t.Fatalf("VJ = nil, want non-nil for valid JSON")
-	}
-	if result.Err != nil {
-		t.Errorf("Err = %v, want nil for valid JSON", result.Err)
-	}
-	if result.VJ.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want \"1.0\"", result.VJ.SchemaVersion)
-	}
-	if result.VJ.OK {
-		t.Errorf("OK = true, want false")
-	}
-	if result.VJ.Summary != "3 tests failed" {
-		t.Errorf("Summary = %q, want \"3 tests failed\"", result.VJ.Summary)
-	}
-	if result.VJ.Data == nil {
-		t.Errorf("Data = nil, want non-nil")
-	}
+	assert.True(t, result.Exists, "Exists = false, want true")
+	require.NotNil(t, result.VJ, "VJ should be non-nil for valid JSON")
+	assert.NoError(t, result.Err, "Err should be nil for valid JSON")
+	assert.Equal(t, "1.0", result.VJ.SchemaVersion)
+	assert.False(t, result.VJ.OK, "OK = true, want false")
+	assert.Equal(t, "3 tests failed", result.VJ.Summary)
+	assert.NotNil(t, result.VJ.Data, "Data should be non-nil")
 }
 
 func TestReadVerifyJSON_OKFalse(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write JSON with ok=false (explicit)
-	if err := os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": false}`), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": false}`), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if !result.Exists {
-		t.Errorf("Exists = false, want true")
-	}
-	if result.VJ == nil {
-		t.Fatalf("VJ = nil, want non-nil for valid JSON")
-	}
-	if result.VJ.OK {
-		t.Errorf("OK = true, want false")
-	}
+	assert.True(t, result.Exists, "Exists = false, want true")
+	require.NotNil(t, result.VJ, "VJ should be non-nil for valid JSON")
+	assert.False(t, result.VJ.OK, "OK = true, want false")
 }
 
 func TestReadVerifyJSON_TolerateMissingSummary(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write JSON without summary (should be tolerated)
-	if err := os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true}`), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true}`), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if result.VJ == nil {
-		t.Fatalf("VJ = nil, want non-nil")
-	}
-	if result.VJ.Summary != "" {
-		t.Errorf("Summary = %q, want empty string", result.VJ.Summary)
-	}
+	require.NotNil(t, result.VJ, "VJ should be non-nil")
+	assert.Equal(t, "", result.VJ.Summary)
 }
 
 func TestReadVerifyJSON_TolerateMissingData(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write JSON without data (should be tolerated)
-	if err := os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true, "summary": "passed"}`), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true, "summary": "passed"}`), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if result.VJ == nil {
-		t.Fatalf("VJ = nil, want non-nil")
-	}
-	if result.VJ.Data != nil {
-		t.Errorf("Data = %v, want nil", result.VJ.Data)
-	}
+	require.NotNil(t, result.VJ, "VJ should be non-nil")
+	assert.Nil(t, result.VJ.Data, "Data should be nil")
 }
 
 func TestReadVerifyJSON_ExtraFieldsIgnored(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "verify.json")
 
 	// Write JSON with extra unknown fields (should be ignored)
 	content := `{"schema_version": "1.0", "ok": true, "extra_field": "ignored", "nested": {"foo": "bar"}}`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	result := ReadVerifyJSON(path)
 
-	if result.VJ == nil {
-		t.Fatalf("VJ = nil, want non-nil")
-	}
-	if !result.VJ.OK {
-		t.Errorf("OK = false, want true")
-	}
+	require.NotNil(t, result.VJ, "VJ should be non-nil")
+	assert.True(t, result.VJ.OK, "OK = false, want true")
 }

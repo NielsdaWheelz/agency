@@ -24,10 +24,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// Server is the daemon HTTP server that supervises headless invocations.
+// Server is the daemon HTTP server that supervises invocations (headless and headed).
 type Server struct {
 	// Store provides access to agency data.
 	Store *store.Store
@@ -38,11 +39,18 @@ type Server struct {
 	// FS is the filesystem interface (injectable for testing).
 	FS fs.FS
 
+	// TmuxClient is the tmux client interface (injectable for testing). PR-10.
+	TmuxClient tmux.Client
+
 	// Clock returns the current time (injectable for testing).
 	Clock func() time.Time
 
 	// PIDChecker checks if a PID is alive (injectable for testing).
 	PIDChecker func(int) bool
+
+	// CheckpointDebounceOverride, if set, overrides the default checkpoint debounce interval.
+	// Used in tests to avoid long waits.
+	CheckpointDebounceOverride *time.Duration
 
 	// ConfigDir is the path to the config directory.
 	ConfigDir string
@@ -56,15 +64,22 @@ type Server struct {
 	// mu protects the processes map.
 	mu sync.RWMutex
 
-	// processes maps invocation_id -> supervised process state.
+	// processes maps invocation_id -> supervised process state (headless and headed).
 	processes map[string]*SupervisedProcess
 
 	// idempotencyMu protects the idempotency map.
 	idempotencyMu sync.RWMutex
 
 	// idempotency maps (repo_id, client_request_id) -> IdempotencyEntry.
-	// Used to prevent duplicate invocations from retried requests.
+	// Used to prevent duplicate headless invocations from retried requests.
 	idempotency map[string]IdempotencyEntry
+
+	// headedIdempotencyMu protects the headed idempotency map. PR-10.
+	headedIdempotencyMu sync.RWMutex
+
+	// headedIdempotency maps (repo_id, client_request_id) -> HeadedIdempotencyEntry. PR-10.
+	// Used to prevent duplicate headed invocations from retried requests.
+	headedIdempotency map[string]HeadedIdempotencyEntry
 
 	// worktreeIdempotencyMu protects the worktree idempotency map.
 	worktreeIdempotencyMu sync.RWMutex
@@ -93,12 +108,14 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		Store:               st,
 		Runner:              runner,
 		FS:                  fsys,
+		TmuxClient:          tmux.NewExecClient(runner), // PR-10: create real tmux client
 		ConfigDir:           configDir,
 		Clock:               time.Now,
 		PIDChecker:          IsPIDAlive,
 		InstanceID:          uuid.New().String(),
 		processes:           make(map[string]*SupervisedProcess),
 		idempotency:         make(map[string]IdempotencyEntry),
+		headedIdempotency:   make(map[string]HeadedIdempotencyEntry), // PR-10
 		worktreeIdempotency: make(map[string]WorktreeIdempotencyEntry),
 		repoLock:            &repoLock,
 		shutdownCh:          make(chan struct{}),
@@ -233,8 +250,11 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// terminateAllInvocations terminates all active headless invocations.
+// terminateAllInvocations terminates all active invocations (headless and headed).
 func (s *Server) terminateAllInvocations() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -243,6 +263,33 @@ func (s *Server) terminateAllInvocations() {
 		// the correct reason if the process exits from SIGINT.
 		proc.exitReason.Store("killed")
 		proc.failureReason.Store("killed")
+
+		if proc.Mode == "headed" {
+			// Headed path: kill tmux session, close done, write terminal meta
+			if proc.TmuxSession != "" {
+				_ = s.TmuxClient.KillSession(ctx, proc.TmuxSession)
+			}
+			proc.CloseDone()
+
+			now := s.Clock().UTC().Format(time.RFC3339)
+			_ = s.Store.UpdateInvocationMeta(proc.RepoID, id, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusFailed
+				meta.ExitReason = "killed"
+				meta.FailureReason = "killed"
+				meta.FinishedAt = now
+				meta.LifecycleOwner = ""
+			})
+
+			delete(s.processes, id)
+			continue
+		}
+
+		// Headless path: SIGINT → 5s → SIGKILL escalation
+		if proc.PGID <= 0 {
+			// Safety guard: skip signaling if PGID is invalid
+			delete(s.processes, id)
+			continue
+		}
 
 		// Send SIGINT to process group
 		_ = syscall.Kill(-proc.PGID, syscall.SIGINT)
@@ -296,6 +343,16 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleControlPlaneStartHeadless(w, r)
+		return
+	}
+
+	// PR-10: Check for control plane endpoint: POST /invocations/start_headed (no ID)
+	if remaining == "start_headed" {
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleControlPlaneStartHeaded(w, r)
 		return
 	}
 
@@ -745,6 +802,72 @@ func (s *Server) cleanupExpiredWorktreeIdempotency() {
 	for key, entry := range s.worktreeIdempotency {
 		if now-entry.CreatedAt > IdempotencyTTL {
 			delete(s.worktreeIdempotency, key)
+		}
+	}
+}
+
+// ----- PR-10 Headed Idempotency Helpers -----
+
+// headedIdempotencyKey generates a key for the headed idempotency map.
+func headedIdempotencyKey(repoID, clientRequestID string) string {
+	return repoID + ":headed:" + clientRequestID
+}
+
+// checkHeadedIdempotency checks if a headed start request is a duplicate.
+// Returns the entry and true if this is a duplicate request.
+func (s *Server) checkHeadedIdempotency(repoID, clientRequestID string) (HeadedIdempotencyEntry, bool) {
+	if clientRequestID == "" {
+		return HeadedIdempotencyEntry{}, false
+	}
+
+	s.headedIdempotencyMu.RLock()
+	defer s.headedIdempotencyMu.RUnlock()
+
+	key := headedIdempotencyKey(repoID, clientRequestID)
+	entry, exists := s.headedIdempotency[key]
+	if !exists {
+		return HeadedIdempotencyEntry{}, false
+	}
+
+	// Check if entry is expired
+	now := s.Clock().Unix()
+	if now-entry.CreatedAt > IdempotencyTTL {
+		return HeadedIdempotencyEntry{}, false
+	}
+
+	return entry, true
+}
+
+// recordHeadedIdempotency records a successful headed start request.
+func (s *Server) recordHeadedIdempotency(repoID, clientRequestID, invocationID, tmuxSession, sandboxPath string) {
+	if clientRequestID == "" {
+		return
+	}
+
+	s.headedIdempotencyMu.Lock()
+	defer s.headedIdempotencyMu.Unlock()
+
+	key := headedIdempotencyKey(repoID, clientRequestID)
+	s.headedIdempotency[key] = HeadedIdempotencyEntry{
+		InvocationID: invocationID,
+		TmuxSession:  tmuxSession,
+		SandboxPath:  sandboxPath,
+		CreatedAt:    s.Clock().Unix(),
+	}
+
+	// Opportunistically clean up expired entries
+	if len(s.headedIdempotency) > 100 {
+		s.cleanupExpiredHeadedIdempotency()
+	}
+}
+
+// cleanupExpiredHeadedIdempotency removes expired entries.
+// Must be called with headedIdempotencyMu held.
+func (s *Server) cleanupExpiredHeadedIdempotency() {
+	now := s.Clock().Unix()
+	for key, entry := range s.headedIdempotency {
+		if now-entry.CreatedAt > IdempotencyTTL {
+			delete(s.headedIdempotency, key)
 		}
 	}
 }

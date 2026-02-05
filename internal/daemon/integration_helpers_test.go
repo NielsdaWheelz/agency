@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -23,18 +25,17 @@ import (
 func fakeRunnerPath(t *testing.T) string {
 	t.Helper()
 	p := os.Getenv("TEST_FAKE_RUNNER_PATH")
-	if p == "" {
-		t.Fatal("TEST_FAKE_RUNNER_PATH not set; TestMain should compile fakerunner")
-	}
+	require.NotEmpty(t, p, "TEST_FAKE_RUNNER_PATH not set; TestMain should compile fakerunner")
 	return p
 }
 
 // testDaemonEnv holds the daemon server, client, and paths for a test.
 type testDaemonEnv struct {
-	Client  *daemonclient.Client
-	Server  *daemon.Server
-	DataDir string
-	Store   *store.Store
+	Client     *daemonclient.Client
+	Server     *daemon.Server
+	DataDir    string
+	Store      *store.Store
+	SocketPath string
 }
 
 // startTestDaemon boots a real daemon server on a temp Unix socket and
@@ -45,9 +46,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("mkdir config: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 
 	// Write config.json pointing "claude" at the fake runner binary.
 	// Must include "defaults" for LoadUserConfig validation to pass.
@@ -63,26 +62,24 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644), "write config.json")
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
 
+	// Use short debounce for checkpoint engine in tests.
+	testDebounce := 100 * time.Millisecond
+	srv.CheckpointDebounceOverride = &testDebounce
+
 	// Unix sockets on macOS have a ~104 byte path limit.
 	// Use a short temp dir for the socket to avoid exceeding it.
 	sockDir, err := os.MkdirTemp("", "dsock")
-	if err != nil {
-		t.Fatalf("mkdir sockdir: %v", err)
-	}
+	require.NoError(t, err, "mkdir sockdir")
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
 	socketPath := filepath.Join(sockDir, "d.sock")
 	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	require.NoError(t, err, "listen")
 
 	// Serve in background goroutine.
 	serveDone := make(chan error, 1)
@@ -95,9 +92,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	// Wait for daemon to be ready.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := client.WaitForReady(ctx, 5*time.Second); err != nil {
-		t.Fatalf("daemon not ready: %v", err)
-	}
+	require.NoError(t, client.WaitForReady(ctx, 5*time.Second), "daemon not ready")
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -108,10 +103,11 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	})
 
 	return &testDaemonEnv{
-		Client:  client,
-		Server:  srv,
-		DataDir: dataDir,
-		Store:   st,
+		Client:     client,
+		Server:     srv,
+		DataDir:    dataDir,
+		Store:      st,
+		SocketPath: socketPath,
 	}
 }
 
@@ -126,22 +122,20 @@ func setupTestGitRepo(t *testing.T) string {
 
 	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git init failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+		require.FailNow(t, "git init failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
 	}
 
 	testFile := filepath.Join(repoDir, "README.md")
-	if err := os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644), "failed to write test file")
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git add failed: %v, exit %d", err, result.ExitCode)
+		require.FailNow(t, "git add failed", "err=%v, exit %d", err, result.ExitCode)
 	}
 
 	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git commit failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+		require.FailNow(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
 	}
 
 	return repoDir
@@ -157,12 +151,8 @@ func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, nam
 		Name:         name,
 		ParentBranch: "main",
 	})
-	if err != nil {
-		t.Fatalf("worktree create: %v", err)
-	}
-	if !resp.OK {
-		t.Fatalf("worktree create failed: %s - %s", resp.ErrorCode, resp.Message)
-	}
+	require.NoError(t, err, "worktree create")
+	require.True(t, resp.OK, "worktree create failed: %s - %s", resp.ErrorCode, resp.Message)
 
 	return resp.WorktreeID, resp.TreePath, resp.RepoID
 }
@@ -179,12 +169,8 @@ func startTestInvocation(t *testing.T, client *daemonclient.Client, repoRoot, wo
 		Prompt:      "test prompt",
 		Env:         map[string]string{"FAKE_RUNNER_MODE": mode},
 	})
-	if err != nil {
-		t.Fatalf("control plane start: %v", err)
-	}
-	if !resp.OK {
-		t.Fatalf("control plane start failed: %s - %s", resp.ErrorCode, resp.Message)
-	}
+	require.NoError(t, err, "control plane start")
+	require.True(t, resp.OK, "control plane start failed: %s - %s", resp.ErrorCode, resp.Message)
 
 	return resp
 }
@@ -192,21 +178,19 @@ func startTestInvocation(t *testing.T, client *daemonclient.Client, repoRoot, wo
 // waitForInvocationTerminal polls invocation meta until it reaches a terminal status or times out.
 func waitForInvocationTerminal(t *testing.T, st *store.Store, repoID, invocationID string, timeout time.Duration) *store.InvocationMeta {
 	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	var result *store.InvocationMeta
+	require.Eventually(t, func() bool {
 		meta, err := st.ReadInvocationMeta(repoID, invocationID)
 		if err != nil {
-			t.Fatalf("read invocation meta: %v", err)
+			return false
 		}
 		if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
-			return meta
+			result = meta
+			return true
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	t.Fatalf("invocation %s did not reach terminal status within %v", invocationID, timeout)
-	return nil
+		return false
+	}, timeout, 50*time.Millisecond, "invocation %s did not reach terminal status within %v", invocationID, timeout)
+	return result
 }
 
 // gitExec runs a git command in the given directory and returns trimmed stdout.
@@ -215,11 +199,29 @@ func gitExec(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cr := exec.NewRealRunner()
 	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir})
-	if err != nil {
-		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
-	}
-	if result.ExitCode != 0 {
-		t.Fatalf("git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
-	}
+	require.NoError(t, err, "git %s", strings.Join(args, " "))
+	require.Equal(t, 0, result.ExitCode, "git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
 	return strings.TrimSpace(result.Stdout)
+}
+
+// newFakeTmuxClient returns a testutil.FakeTmuxClient for daemon tests.
+func newFakeTmuxClient() *testutil.FakeTmuxClient {
+	return testutil.NewFakeTmuxClient()
+}
+
+// startTestHeadedInvocation starts a headed invocation via the daemon client.
+// Fatals on error. Caller is responsible for killing the invocation.
+func startTestHeadedInvocation(t *testing.T, client *daemonclient.Client, repoRoot, worktreeRef string) *daemon.ControlPlaneStartHeadedResponse {
+	t.Helper()
+	ctx := context.Background()
+
+	resp, err := client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: worktreeRef,
+		Runner:      "claude",
+	})
+	require.NoError(t, err, "control plane start headed")
+	require.True(t, resp.OK, "control plane start headed failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	return resp
 }

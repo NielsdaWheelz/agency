@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
 
@@ -47,6 +50,7 @@ func (f *fakeRunner) LookPath(file string) (string, error) {
 }
 
 func TestExecClient_HasSession(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		session   string
@@ -108,35 +112,32 @@ func TestExecClient_HasSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
 			exists, err := client.HasSession(context.Background(), tt.session)
 
-			if exists != tt.wantExist {
-				t.Errorf("HasSession() exists = %v, want %v", exists, tt.wantExist)
-			}
-			if (err != nil) != tt.wantErr {
-				t.Errorf("HasSession() error = %v, wantErr %v", err, tt.wantErr)
+			assert.Equal(t, tt.wantExist, exists)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
-			if len(runner.calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(runner.calls))
-			}
+			require.Len(t, runner.calls, 1)
 
 			call := runner.calls[0]
-			if call.Name != "tmux" {
-				t.Errorf("call.Name = %q, want %q", call.Name, "tmux")
-			}
-			if !slicesEqual(call.Args, tt.wantArgs) {
-				t.Errorf("call.Args = %v, want %v", call.Args, tt.wantArgs)
-			}
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
 		})
 	}
 }
 
 func TestExecClient_NewSession(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		sessionName    string
@@ -194,38 +195,34 @@ func TestExecClient_NewSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
 			err := client.NewSession(context.Background(), tt.sessionName, tt.cwd, tt.argv)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewSession() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
 			// For empty argv, no command should be run
 			if len(tt.argv) == 0 {
-				if len(runner.calls) != 0 {
-					t.Errorf("expected 0 calls for empty argv, got %d", len(runner.calls))
-				}
+				assert.Empty(t, runner.calls, "expected 0 calls for empty argv")
 				return
 			}
 
-			if len(runner.calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(runner.calls))
-			}
+			require.Len(t, runner.calls, 1)
 
 			call := runner.calls[0]
-			if call.Name != "tmux" {
-				t.Errorf("call.Name = %q, want %q", call.Name, "tmux")
-			}
+			assert.Equal(t, "tmux", call.Name)
 
 			// Verify args structure: prefix + "--" + tail
 			expectedArgs := append(tt.wantArgsPrefix, tt.wantArgsTail...)
-			if !slicesEqual(call.Args, expectedArgs) {
-				t.Errorf("call.Args = %v, want %v", call.Args, expectedArgs)
-			}
+			assert.Equal(t, expectedArgs, call.Args)
 
 			// Verify "--" separator is present
 			found := false
@@ -235,14 +232,13 @@ func TestExecClient_NewSession(t *testing.T) {
 					break
 				}
 			}
-			if !found {
-				t.Errorf("call.Args missing '--' separator")
-			}
+			assert.True(t, found, "call.Args missing '--' separator")
 		})
 	}
 }
 
 func TestExecClient_Attach(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		session   string
@@ -271,32 +267,31 @@ func TestExecClient_Attach(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
 			err := client.Attach(context.Background(), tt.session)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Attach() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
-			if len(runner.calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(runner.calls))
-			}
+			require.Len(t, runner.calls, 1)
 
 			call := runner.calls[0]
-			if call.Name != "tmux" {
-				t.Errorf("call.Name = %q, want %q", call.Name, "tmux")
-			}
-			if !slicesEqual(call.Args, tt.wantArgs) {
-				t.Errorf("call.Args = %v, want %v", call.Args, tt.wantArgs)
-			}
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
 		})
 	}
 }
 
 func TestExecClient_KillSession(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		session   string
@@ -325,32 +320,31 @@ func TestExecClient_KillSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
 			err := client.KillSession(context.Background(), tt.session)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("KillSession() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
-			if len(runner.calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(runner.calls))
-			}
+			require.Len(t, runner.calls, 1)
 
 			call := runner.calls[0]
-			if call.Name != "tmux" {
-				t.Errorf("call.Name = %q, want %q", call.Name, "tmux")
-			}
-			if !slicesEqual(call.Args, tt.wantArgs) {
-				t.Errorf("call.Args = %v, want %v", call.Args, tt.wantArgs)
-			}
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
 		})
 	}
 }
 
 func TestExecClient_SendKeys(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		session   string
@@ -399,40 +393,37 @@ func TestExecClient_SendKeys(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
 			err := client.SendKeys(context.Background(), tt.session, tt.keys)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("SendKeys() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
 			// For empty keys, no command should be run
 			if len(tt.keys) == 0 {
-				if len(runner.calls) != 0 {
-					t.Errorf("expected 0 calls for empty keys, got %d", len(runner.calls))
-				}
+				assert.Empty(t, runner.calls, "expected 0 calls for empty keys")
 				return
 			}
 
-			if len(runner.calls) != 1 {
-				t.Fatalf("expected 1 call, got %d", len(runner.calls))
-			}
+			require.Len(t, runner.calls, 1)
 
 			call := runner.calls[0]
-			if call.Name != "tmux" {
-				t.Errorf("call.Name = %q, want %q", call.Name, "tmux")
-			}
-			if !slicesEqual(call.Args, tt.wantArgs) {
-				t.Errorf("call.Args = %v, want %v", call.Args, tt.wantArgs)
-			}
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
 		})
 	}
 }
 
 func TestExecClient_ErrorFormatting(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		stderr       string
@@ -460,7 +451,9 @@ func TestExecClient_ErrorFormatting(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			runner := newFakeRunner(fakeResponse{
 				Result: exec.CmdResult{ExitCode: tt.exitCode, Stderr: tt.stderr},
 			})
@@ -468,21 +461,18 @@ func TestExecClient_ErrorFormatting(t *testing.T) {
 
 			_, err := client.HasSession(context.Background(), "test")
 
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
+			require.Error(t, err)
 
 			errStr := err.Error()
 			for _, want := range tt.wantContains {
-				if !strings.Contains(errStr, want) {
-					t.Errorf("error %q should contain %q", errStr, want)
-				}
+				assert.Contains(t, errStr, want)
 			}
 		})
 	}
 }
 
 func TestExecClient_ErrorStderrCapping(t *testing.T) {
+	t.Parallel()
 	// Create a long stderr string
 	longStderr := strings.Repeat("x", 5000)
 
@@ -493,19 +483,13 @@ func TestExecClient_ErrorStderrCapping(t *testing.T) {
 
 	_, err := client.HasSession(context.Background(), "test")
 
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 
 	errStr := err.Error()
 
 	// Error should be capped and include "..."
-	if !strings.Contains(errStr, "...") {
-		t.Errorf("long stderr should be capped with '...', got: %q", errStr)
-	}
+	assert.Contains(t, errStr, "...")
 
 	// Error should not be longer than reasonable (4kb + overhead)
-	if len(errStr) > 5000 {
-		t.Errorf("error message too long: %d chars", len(errStr))
-	}
+	assert.True(t, len(errStr) <= 5000, "error message too long: %d chars", len(errStr))
 }

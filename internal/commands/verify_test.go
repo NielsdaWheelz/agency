@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDeriveFailureReason(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		record *store.VerifyRecord
@@ -58,16 +60,17 @@ func TestDeriveFailureReason(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := deriveFailureReason(tt.record)
-			if got != tt.want {
-				t.Errorf("deriveFailureReason() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestComputeRecordPath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		record  *store.VerifyRecord
@@ -90,11 +93,11 @@ func TestComputeRecordPath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := computeRecordPath(tt.record)
-			if got != tt.wantSfx {
-				t.Errorf("computeRecordPath() = %q, want %q", got, tt.wantSfx)
-			}
+			assert.Equal(t, tt.wantSfx, got)
 		})
 	}
 }

@@ -8,60 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-// fakeTmuxClient is a test fake for tmux.Client.
-type fakeTmuxClient struct {
-	hasSession  bool
-	killErr     error
-	killCalled  bool
-	sessionName string
-}
-
-func (f *fakeTmuxClient) HasSession(ctx context.Context, name string) (bool, error) {
-	return f.hasSession, nil
-}
-
-func (f *fakeTmuxClient) NewSession(ctx context.Context, name, cwd string, argv []string) error {
-	return nil
-}
-
-func (f *fakeTmuxClient) Attach(ctx context.Context, name string) error {
-	return nil
-}
-
-func (f *fakeTmuxClient) KillSession(ctx context.Context, name string) error {
-	f.killCalled = true
-	f.sessionName = name
-	return f.killErr
-}
-
-func (f *fakeTmuxClient) SendKeys(ctx context.Context, name string, keys []tmux.Key) error {
-	return nil
-}
-
-// fakeRunner is a test fake for exec.CommandRunner.
-type fakeRunner struct {
-	results map[string]exec.CmdResult
-}
-
-func (f *fakeRunner) Run(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
-	key := name
-	if result, ok := f.results[key]; ok {
-		return result, nil
-	}
-	return exec.CmdResult{ExitCode: 0}, nil
-}
-
-func (f *fakeRunner) LookPath(file string) (string, error) {
-	return "/usr/bin/" + file, nil
-}
-
 func TestArchive_HappyPath(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	// Create data directory structure
@@ -73,24 +29,16 @@ func TestArchive_HappyPath(t *testing.T) {
 	worktreePath := filepath.Join(worktreesDir, runID)
 	logsDir := filepath.Join(dataDir, "repos", repoID, "runs", runID, "logs")
 
-	if err := os.MkdirAll(worktreePath, 0755); err != nil {
-		t.Fatalf("failed to create worktree dir: %v", err)
-	}
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatalf("failed to create logs dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(worktreePath, 0755), "failed to create worktree dir")
+	require.NoError(t, os.MkdirAll(logsDir, 0755), "failed to create logs dir")
 
 	// Create a test file in worktree to verify deletion
 	testFile := filepath.Join(worktreePath, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644), "failed to create test file")
 
 	// Create archive script that exits 0
 	scriptPath := filepath.Join(tmpDir, "archive.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-		t.Fatalf("failed to create archive script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755), "failed to create archive script")
 
 	meta := &store.RunMeta{
 		RunID:        runID,
@@ -110,10 +58,9 @@ func TestArchive_HappyPath(t *testing.T) {
 		Timeout:       5 * time.Second,
 	}
 
-	fakeTmux := &fakeTmuxClient{hasSession: false}
 	deps := Deps{
-		CR:         &fakeRunner{results: map[string]exec.CmdResult{}},
-		TmuxClient: fakeTmux,
+		CR:         testutil.NewFakeCommandRunner(),
+		TmuxClient: testutil.NewFakeTmuxClient(),
 		Stdout:     io.Discard,
 		Stderr:     io.Discard,
 	}
@@ -121,19 +68,18 @@ func TestArchive_HappyPath(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	result := Archive(context.Background(), cfg, deps, st)
 
-	if !result.Success() {
-		t.Errorf("Archive failed: ScriptOK=%v DeleteOK=%v TmuxOK=%v\nReasons: script=%q delete=%q tmux=%q",
-			result.ScriptOK, result.DeleteOK, result.TmuxOK,
-			result.ScriptReason, result.DeleteReason, result.TmuxReason)
-	}
+	assert.True(t, result.Success(),
+		"Archive failed: ScriptOK=%v DeleteOK=%v TmuxOK=%v\nReasons: script=%q delete=%q tmux=%q",
+		result.ScriptOK, result.DeleteOK, result.TmuxOK,
+		result.ScriptReason, result.DeleteReason, result.TmuxReason)
 
 	// Verify worktree is deleted
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Error("worktree still exists after archive")
-	}
+	_, err := os.Stat(worktreePath)
+	assert.True(t, os.IsNotExist(err), "worktree still exists after archive")
 }
 
 func TestArchive_TmuxMissingSessionIsOK(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	dataDir := filepath.Join(tmpDir, "data")
@@ -144,17 +90,11 @@ func TestArchive_TmuxMissingSessionIsOK(t *testing.T) {
 	worktreePath := filepath.Join(worktreesDir, runID)
 	logsDir := filepath.Join(dataDir, "repos", repoID, "runs", runID, "logs")
 
-	if err := os.MkdirAll(worktreePath, 0755); err != nil {
-		t.Fatalf("failed to create worktree dir: %v", err)
-	}
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatalf("failed to create logs dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(worktreePath, 0755), "failed to create worktree dir")
+	require.NoError(t, os.MkdirAll(logsDir, 0755), "failed to create logs dir")
 
 	scriptPath := filepath.Join(tmpDir, "archive.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-		t.Fatalf("failed to create archive script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755), "failed to create archive script")
 
 	meta := &store.RunMeta{
 		RunID:        runID,
@@ -170,12 +110,11 @@ func TestArchive_TmuxMissingSessionIsOK(t *testing.T) {
 	}
 
 	// Tmux kill returns "no sessions" error - simulate via fake
-	fakeTmux := &fakeTmuxClient{
-		killErr: &noSessionError{},
-	}
+	fakeTmux := testutil.NewFakeTmuxClient()
+	fakeTmux.KillSessionErr = &noSessionError{}
 
 	deps := Deps{
-		CR:         &fakeRunner{results: map[string]exec.CmdResult{}},
+		CR:         testutil.NewFakeCommandRunner(),
 		TmuxClient: fakeTmux,
 		Stdout:     io.Discard,
 		Stderr:     io.Discard,
@@ -184,9 +123,7 @@ func TestArchive_TmuxMissingSessionIsOK(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	result := Archive(context.Background(), cfg, deps, st)
 
-	if !result.TmuxOK {
-		t.Error("TmuxOK should be true when session doesn't exist")
-	}
+	assert.True(t, result.TmuxOK, "TmuxOK should be true when session doesn't exist")
 }
 
 // noSessionError simulates a tmux "no session" error
@@ -197,6 +134,7 @@ func (e *noSessionError) Error() string {
 }
 
 func TestArchive_ScriptFailure(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	dataDir := filepath.Join(tmpDir, "data")
@@ -207,18 +145,12 @@ func TestArchive_ScriptFailure(t *testing.T) {
 	worktreePath := filepath.Join(worktreesDir, runID)
 	logsDir := filepath.Join(dataDir, "repos", repoID, "runs", runID, "logs")
 
-	if err := os.MkdirAll(worktreePath, 0755); err != nil {
-		t.Fatalf("failed to create worktree dir: %v", err)
-	}
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatalf("failed to create logs dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(worktreePath, 0755), "failed to create worktree dir")
+	require.NoError(t, os.MkdirAll(logsDir, 0755), "failed to create logs dir")
 
 	// Create archive script that fails
 	scriptPath := filepath.Join(tmpDir, "archive.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 1"), 0755); err != nil {
-		t.Fatalf("failed to create archive script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 1"), 0755), "failed to create archive script")
 
 	meta := &store.RunMeta{
 		RunID:        runID,
@@ -233,10 +165,9 @@ func TestArchive_ScriptFailure(t *testing.T) {
 		Timeout:       5 * time.Second,
 	}
 
-	fakeTmux := &fakeTmuxClient{hasSession: false}
 	deps := Deps{
-		CR:         &fakeRunner{results: map[string]exec.CmdResult{}},
-		TmuxClient: fakeTmux,
+		CR:         testutil.NewFakeCommandRunner(),
+		TmuxClient: testutil.NewFakeTmuxClient(),
 		Stdout:     io.Discard,
 		Stderr:     io.Discard,
 	}
@@ -244,21 +175,15 @@ func TestArchive_ScriptFailure(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	result := Archive(context.Background(), cfg, deps, st)
 
-	if result.ScriptOK {
-		t.Error("ScriptOK should be false when script exits non-zero")
-	}
-
-	if result.Success() {
-		t.Error("Archive should not succeed when script fails")
-	}
+	assert.False(t, result.ScriptOK, "ScriptOK should be false when script exits non-zero")
+	assert.False(t, result.Success(), "Archive should not succeed when script fails")
 
 	// Delete should still be attempted and succeed
-	if !result.DeleteOK {
-		t.Errorf("DeleteOK should be true even when script fails: %s", result.DeleteReason)
-	}
+	assert.True(t, result.DeleteOK, "DeleteOK should be true even when script fails: %s", result.DeleteReason)
 }
 
 func TestArchive_DeleteOutsidePrefix(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	dataDir := filepath.Join(tmpDir, "data")
@@ -269,17 +194,11 @@ func TestArchive_DeleteOutsidePrefix(t *testing.T) {
 	outsidePath := filepath.Join(tmpDir, "outside", "worktree")
 	logsDir := filepath.Join(dataDir, "repos", repoID, "runs", runID, "logs")
 
-	if err := os.MkdirAll(outsidePath, 0755); err != nil {
-		t.Fatalf("failed to create outside dir: %v", err)
-	}
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatalf("failed to create logs dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(outsidePath, 0755), "failed to create outside dir")
+	require.NoError(t, os.MkdirAll(logsDir, 0755), "failed to create logs dir")
 
 	scriptPath := filepath.Join(tmpDir, "archive.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-		t.Fatalf("failed to create archive script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755), "failed to create archive script")
 
 	meta := &store.RunMeta{
 		RunID:        runID,
@@ -295,10 +214,9 @@ func TestArchive_DeleteOutsidePrefix(t *testing.T) {
 		Timeout:       5 * time.Second,
 	}
 
-	fakeTmux := &fakeTmuxClient{hasSession: false}
 	deps := Deps{
-		CR:         &fakeRunner{results: map[string]exec.CmdResult{}},
-		TmuxClient: fakeTmux,
+		CR:         testutil.NewFakeCommandRunner(),
+		TmuxClient: testutil.NewFakeTmuxClient(),
 		Stdout:     io.Discard,
 		Stderr:     io.Discard,
 	}
@@ -306,17 +224,15 @@ func TestArchive_DeleteOutsidePrefix(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	result := Archive(context.Background(), cfg, deps, st)
 
-	if result.DeleteOK {
-		t.Error("DeleteOK should be false when worktree is outside allowed prefix")
-	}
+	assert.False(t, result.DeleteOK, "DeleteOK should be false when worktree is outside allowed prefix")
 
 	// Verify the outside path still exists (wasn't deleted)
-	if _, err := os.Stat(outsidePath); os.IsNotExist(err) {
-		t.Error("path outside prefix was deleted")
-	}
+	_, err := os.Stat(outsidePath)
+	assert.False(t, os.IsNotExist(err), "path outside prefix was deleted")
 }
 
 func TestResult_Success(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		result Result
@@ -350,11 +266,11 @@ func TestResult_Success(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.result.Success()
-			if got != tt.wantOK {
-				t.Errorf("Success() = %v, want %v", got, tt.wantOK)
-			}
+			assert.Equal(t, tt.wantOK, got)
 		})
 	}
 }

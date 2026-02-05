@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -19,6 +22,7 @@ import (
 // This was a critical routing bug: action was "checkpoints/apply" but
 // the switch only matched "checkpoints".
 func TestHandleInvocations_CheckpointRouting(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -33,17 +37,14 @@ func TestHandleInvocations_CheckpointRouting(t *testing.T) {
 	// Should NOT be a 404 "unknown action".
 	// It might be 400 (missing body) or 404 (invocation not found), but not "unknown action".
 	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v, body: %s", err, w.Body.String())
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response: body: %s", w.Body.String())
 
 	// The key assertion: the error code should NOT be "E_NOT_FOUND" with "unknown action" message
 	if code, ok := resp["error_code"].(string); ok {
 		if code == "E_NOT_FOUND" {
 			msg, _ := resp["message"].(string)
-			if msg == "unknown action: checkpoints/apply" {
-				t.Fatal("routing bug: checkpoints/apply not routed correctly; got 'unknown action: checkpoints/apply'")
-			}
+			require.NotEqual(t, "unknown action: checkpoints/apply", msg,
+				"routing bug: checkpoints/apply not routed correctly")
 		}
 	}
 
@@ -60,6 +61,7 @@ func TestHandleInvocations_CheckpointRouting(t *testing.T) {
 
 // 2.1 TestHandleCheckpointApply_ValidationErrors
 func TestHandleCheckpointApply_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		repoID     string
@@ -98,7 +100,9 @@ func TestHandleCheckpointApply_ValidationErrors(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tmpDir := t.TempDir()
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -121,25 +125,18 @@ func TestHandleCheckpointApply_ValidationErrors(t *testing.T) {
 			s.handleCheckpointApply(w, req, "test-inv")
 
 			var resp CheckpointApplyResponse
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-			if w.Code != tc.wantStatus {
-				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
-			}
-			if resp.ErrorCode != tc.wantCode {
-				t.Errorf("error_code = %q, want %q", resp.ErrorCode, tc.wantCode)
-			}
-			if resp.OK {
-				t.Error("expected OK=false")
-			}
+			assert.Equal(t, tc.wantStatus, w.Code)
+			assert.Equal(t, tc.wantCode, resp.ErrorCode)
+			assert.False(t, resp.OK, "expected OK=false")
 		})
 	}
 }
 
 // 2.2 TestHandleCheckpointApply_InvocationNotFound
 func TestHandleCheckpointApply_InvocationNotFound(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -151,16 +148,10 @@ func TestHandleCheckpointApply_InvocationNotFound(t *testing.T) {
 	s.handleCheckpointApply(w, req, "nonexistent")
 
 	var resp CheckpointApplyResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
-	if resp.ErrorCode != "E_INVOCATION_NOT_FOUND" {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_INVOCATION_NOT_FOUND")
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "E_INVOCATION_NOT_FOUND", resp.ErrorCode)
 }
 
 // setupInvocationMeta is a helper that writes an invocation meta.json for testing.
@@ -168,9 +159,8 @@ func setupInvocationMeta(t *testing.T, st *store.Store, repoID, invocationID str
 	t.Helper()
 
 	// Create directory structure
-	if _, err := st.EnsureInvocationDir(repoID, invocationID); err != nil {
-		t.Fatal(err)
-	}
+	_, err := st.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
 
 	meta := store.NewInvocationMeta(
 		invocationID,
@@ -188,13 +178,12 @@ func setupInvocationMeta(t *testing.T, st *store.Store, repoID, invocationID str
 		meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	if err := st.WriteInvocationMeta(repoID, invocationID, meta); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 }
 
 // 2.3 TestHandleCheckpointApply_WrongMode
 func TestHandleCheckpointApply_WrongMode(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -208,20 +197,15 @@ func TestHandleCheckpointApply_WrongMode(t *testing.T) {
 	s.handleCheckpointApply(w, req, "test-inv")
 
 	var resp CheckpointApplyResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-	if resp.ErrorCode != "E_INVOCATION_INVALID_MODE" {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_INVOCATION_INVALID_MODE")
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "E_INVOCATION_INVALID_MODE", resp.ErrorCode)
 }
 
 // 2.4 TestHandleCheckpointApply_StillRunning
 func TestHandleCheckpointApply_StillRunning(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -235,20 +219,15 @@ func TestHandleCheckpointApply_StillRunning(t *testing.T) {
 	s.handleCheckpointApply(w, req, "test-inv")
 
 	var resp CheckpointApplyResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
-	}
-	if resp.ErrorCode != "E_INVOCATION_STILL_RUNNING" {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_INVOCATION_STILL_RUNNING")
-	}
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
 }
 
 // 2.5 TestHandleCheckpointApply_Starting
 func TestHandleCheckpointApply_Starting(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -262,14 +241,8 @@ func TestHandleCheckpointApply_Starting(t *testing.T) {
 	s.handleCheckpointApply(w, req, "test-inv")
 
 	var resp CheckpointApplyResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
-	}
-	if resp.ErrorCode != "E_INVOCATION_STILL_RUNNING" {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_INVOCATION_STILL_RUNNING")
-	}
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
 }

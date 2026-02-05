@@ -11,6 +11,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/status"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ============================================================
@@ -33,9 +35,7 @@ func TestSortSummaries_ByCreatedAtDescending(t *testing.T) {
 	// Expected order: run2 (newest), run1, run3 (oldest)
 	expected := []string{"run2", "run1", "run3"}
 	for i, exp := range expected {
-		if summaries[i].RunID != exp {
-			t.Errorf("summaries[%d].RunID = %q, want %q", i, summaries[i].RunID, exp)
-		}
+		assert.Equal(t, exp, summaries[i].RunID, "summaries[%d].RunID", i)
 	}
 }
 
@@ -55,9 +55,7 @@ func TestSortSummaries_BrokenRunsLast(t *testing.T) {
 	// Non-broken should come first (newer first), broken last (sorted by run_id)
 	expected := []string{"run2", "run1", "broken1", "broken2"}
 	for i, exp := range expected {
-		if summaries[i].RunID != exp {
-			t.Errorf("summaries[%d].RunID = %q, want %q", i, summaries[i].RunID, exp)
-		}
+		assert.Equal(t, exp, summaries[i].RunID, "summaries[%d].RunID", i)
 	}
 }
 
@@ -75,9 +73,7 @@ func TestSortSummaries_TieBreaker(t *testing.T) {
 	// Same timestamp: sort by run_id ascending
 	expected := []string{"runA", "runB", "runC"}
 	for i, exp := range expected {
-		if summaries[i].RunID != exp {
-			t.Errorf("summaries[%d].RunID = %q, want %q", i, summaries[i].RunID, exp)
-		}
+		assert.Equal(t, exp, summaries[i].RunID, "summaries[%d].RunID", i)
 	}
 }
 
@@ -93,9 +89,7 @@ func TestSortSummaries_AllBroken(t *testing.T) {
 	// All broken: sort by run_id ascending
 	expected := []string{"broken-a", "broken-m", "broken-z"}
 	for i, exp := range expected {
-		if summaries[i].RunID != exp {
-			t.Errorf("summaries[%d].RunID = %q, want %q", i, summaries[i].RunID, exp)
-		}
+		assert.Equal(t, exp, summaries[i].RunID, "summaries[%d].RunID", i)
 	}
 }
 
@@ -107,22 +101,13 @@ func TestWriteLSJSON_SchemaVersion(t *testing.T) {
 	var buf bytes.Buffer
 	summaries := []render.RunSummary{}
 
-	if err := render.WriteLSJSON(&buf, summaries); err != nil {
-		t.Fatalf("WriteLSJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSJSON(&buf, summaries))
 
 	var env render.LSJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
-	if env.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", env.SchemaVersion, "1.0")
-	}
-
-	if len(env.Data) != 0 {
-		t.Errorf("len(Data) = %d, want 0", len(env.Data))
-	}
+	assert.Equal(t, "1.0", env.SchemaVersion)
+	assert.Len(t, env.Data, 0)
 }
 
 func TestWriteLSJSON_AllFields(t *testing.T) {
@@ -155,70 +140,39 @@ func TestWriteLSJSON_AllFields(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteLSJSON(&buf, summaries); err != nil {
-		t.Fatalf("WriteLSJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSJSON(&buf, summaries))
 
 	var env render.LSJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
-	if len(env.Data) != 1 {
-		t.Fatalf("len(Data) = %d, want 1", len(env.Data))
-	}
+	require.Len(t, env.Data, 1)
 
 	s := env.Data[0]
 
 	// Check all fields
-	if s.RunID != "20260110-a3f2" {
-		t.Errorf("RunID = %q, want %q", s.RunID, "20260110-a3f2")
-	}
-	if s.RepoID != "abc123" {
-		t.Errorf("RepoID = %q, want %q", s.RepoID, "abc123")
-	}
-	if s.RepoKey == nil || *s.RepoKey != repoKey {
-		t.Errorf("RepoKey = %v, want %q", s.RepoKey, repoKey)
-	}
-	if s.OriginURL == nil || *s.OriginURL != originURL {
-		t.Errorf("OriginURL = %v, want %q", s.OriginURL, originURL)
-	}
-	if s.Name != "test run" {
-		t.Errorf("Title = %q, want %q", s.Name, "test run")
-	}
-	if s.Runner == nil || *s.Runner != "claude" {
-		t.Errorf("Runner = %v, want %q", s.Runner, "claude")
-	}
-	if !s.TmuxActive {
-		t.Error("TmuxActive = false, want true")
-	}
-	if !s.WorktreePresent {
-		t.Error("WorktreePresent = false, want true")
-	}
-	if s.Archived {
-		t.Error("Archived = true, want false")
-	}
-	if s.PRNumber == nil || *s.PRNumber != 123 {
-		t.Errorf("PRNumber = %v, want 123", s.PRNumber)
-	}
-	if s.PRURL == nil || *s.PRURL != prURL {
-		t.Errorf("PRURL = %v, want %q", s.PRURL, prURL)
-	}
-	if s.DerivedStatus != "ready for review" {
-		t.Errorf("DerivedStatus = %q, want %q", s.DerivedStatus, "ready for review")
-	}
-	if s.Broken {
-		t.Error("Broken = true, want false")
-	}
+	assert.Equal(t, "20260110-a3f2", s.RunID)
+	assert.Equal(t, "abc123", s.RepoID)
+	require.NotNil(t, s.RepoKey)
+	assert.Equal(t, repoKey, *s.RepoKey)
+	require.NotNil(t, s.OriginURL)
+	assert.Equal(t, originURL, *s.OriginURL)
+	assert.Equal(t, "test run", s.Name)
+	require.NotNil(t, s.Runner)
+	assert.Equal(t, "claude", *s.Runner)
+	assert.True(t, s.TmuxActive, "TmuxActive")
+	assert.True(t, s.WorktreePresent, "WorktreePresent")
+	assert.False(t, s.Archived, "Archived")
+	require.NotNil(t, s.PRNumber)
+	assert.Equal(t, 123, *s.PRNumber)
+	require.NotNil(t, s.PRURL)
+	assert.Equal(t, prURL, *s.PRURL)
+	assert.Equal(t, "ready for review", s.DerivedStatus)
+	assert.False(t, s.Broken, "Broken")
 
 	// Check timestamps are valid RFC3339 when parsed back from JSON
 	// The JSON encoder uses RFC3339Nano format
-	if s.CreatedAt == nil {
-		t.Error("CreatedAt is nil")
-	}
-	if s.LastPushAt == nil {
-		t.Error("LastPushAt is nil")
-	}
+	assert.NotNil(t, s.CreatedAt, "CreatedAt")
+	assert.NotNil(t, s.LastPushAt, "LastPushAt")
 }
 
 func TestWriteLSJSON_BrokenRun(t *testing.T) {
@@ -243,49 +197,29 @@ func TestWriteLSJSON_BrokenRun(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteLSJSON(&buf, summaries); err != nil {
-		t.Fatalf("WriteLSJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSJSON(&buf, summaries))
 
 	var env render.LSJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
-	if len(env.Data) != 1 {
-		t.Fatalf("len(Data) = %d, want 1", len(env.Data))
-	}
+	require.Len(t, env.Data, 1)
 
 	s := env.Data[0]
-	if !s.Broken {
-		t.Error("Broken = false, want true")
-	}
-	if s.Name != "<broken>" {
-		t.Errorf("Title = %q, want %q", s.Name, "<broken>")
-	}
-	if s.Runner != nil {
-		t.Errorf("Runner = %v, want nil", s.Runner)
-	}
-	if s.CreatedAt != nil {
-		t.Errorf("CreatedAt = %v, want nil", s.CreatedAt)
-	}
+	assert.True(t, s.Broken, "Broken")
+	assert.Equal(t, "<broken>", s.Name)
+	assert.Nil(t, s.Runner, "Runner")
+	assert.Nil(t, s.CreatedAt, "CreatedAt")
 }
 
 func TestWriteLSJSON_NilSummaries(t *testing.T) {
 	var buf bytes.Buffer
-	if err := render.WriteLSJSON(&buf, nil); err != nil {
-		t.Fatalf("WriteLSJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSJSON(&buf, nil))
 
 	var env render.LSJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
 	// Should output empty array, not null
-	if env.Data == nil {
-		t.Error("Data is nil, want empty slice")
-	}
+	require.NotNil(t, env.Data, "Data should be empty slice, not nil")
 }
 
 // ============================================================
@@ -300,15 +234,11 @@ func TestWriteLSHuman_EmptyList_RepoScope(t *testing.T) {
 		IncludesArchived: false,
 	}
 
-	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
-		t.Fatalf("WriteLSHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSHuman(&buf, rows, ctx))
 
 	// Empty list in repo scope without --all should suggest using --all
 	expected := "no active runs (use --all to include archived)\n"
-	if buf.String() != expected {
-		t.Errorf("output = %q, want %q", buf.String(), expected)
-	}
+	assert.Equal(t, expected, buf.String())
 }
 
 func TestWriteLSHuman_EmptyList_RepoScopeWithAll(t *testing.T) {
@@ -319,15 +249,11 @@ func TestWriteLSHuman_EmptyList_RepoScopeWithAll(t *testing.T) {
 		IncludesArchived: true,
 	}
 
-	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
-		t.Fatalf("WriteLSHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSHuman(&buf, rows, ctx))
 
 	// Empty list in repo scope with --all should just say no runs
 	expected := "no runs found\n"
-	if buf.String() != expected {
-		t.Errorf("output = %q, want %q", buf.String(), expected)
-	}
+	assert.Equal(t, expected, buf.String())
 }
 
 func TestWriteLSHuman_EmptyList_AllReposScope(t *testing.T) {
@@ -338,15 +264,11 @@ func TestWriteLSHuman_EmptyList_AllReposScope(t *testing.T) {
 		IncludesArchived: false,
 	}
 
-	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
-		t.Fatalf("WriteLSHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSHuman(&buf, rows, ctx))
 
 	// Empty list in all-repos scope should just say no runs
 	expected := "no runs found\n"
-	if buf.String() != expected {
-		t.Errorf("output = %q, want %q", buf.String(), expected)
-	}
+	assert.Equal(t, expected, buf.String())
 }
 
 func TestWriteLSHuman_WithRows(t *testing.T) {
@@ -365,33 +287,19 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteLSHuman(&buf, rows, ctx); err != nil {
-		t.Fatalf("WriteLSHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSHuman(&buf, rows, ctx))
 
 	output := buf.String()
 
 	// Check header exists
-	if !bytes.Contains(buf.Bytes(), []byte("RUN_ID")) {
-		t.Error("missing RUN_ID header")
-	}
-	if !bytes.Contains(buf.Bytes(), []byte("NAME")) {
-		t.Error("missing NAME header")
-	}
-	if !bytes.Contains(buf.Bytes(), []byte("SUMMARY")) {
-		t.Error("missing SUMMARY header")
-	}
+	assert.Contains(t, output, "RUN_ID", "missing RUN_ID header")
+	assert.Contains(t, output, "NAME", "missing NAME header")
+	assert.Contains(t, output, "SUMMARY", "missing SUMMARY header")
 
 	// Check row data exists
-	if !bytes.Contains(buf.Bytes(), []byte("20260110-a3f2")) {
-		t.Errorf("missing run_id in output: %s", output)
-	}
-	if !bytes.Contains(buf.Bytes(), []byte("test run")) {
-		t.Errorf("missing name in output: %s", output)
-	}
-	if !bytes.Contains(buf.Bytes(), []byte("#123")) {
-		t.Errorf("missing PR in output: %s", output)
-	}
+	assert.Contains(t, output, "20260110-a3f2", "missing run_id in output")
+	assert.Contains(t, output, "test run", "missing name in output")
+	assert.Contains(t, output, "#123", "missing PR in output")
 }
 
 func TestFormatHumanRow_TitleTruncation(t *testing.T) {
@@ -411,14 +319,10 @@ func TestFormatHumanRow_TitleTruncation(t *testing.T) {
 	row := render.FormatHumanRow(summary, now)
 
 	// Title should be truncated with ellipsis
-	if len([]rune(row.Name)) > render.NameMaxLen {
-		t.Errorf("title length = %d, want <= %d", len([]rune(row.Name)), render.NameMaxLen)
-	}
+	assert.LessOrEqual(t, len([]rune(row.Name)), render.NameMaxLen, "title length exceeds max")
 
 	// Should end with ellipsis
-	if !bytes.HasSuffix([]byte(row.Name), []byte("…")) {
-		t.Errorf("truncated title should end with ellipsis: %q", row.Name)
-	}
+	assert.True(t, bytes.HasSuffix([]byte(row.Name), []byte("…")), "truncated title should end with ellipsis: %q", row.Name)
 }
 
 func TestFormatHumanRow_BrokenRun(t *testing.T) {
@@ -432,12 +336,8 @@ func TestFormatHumanRow_BrokenRun(t *testing.T) {
 	now := time.Now()
 	row := render.FormatHumanRow(summary, now)
 
-	if row.Name != render.NameBroken {
-		t.Errorf("Title = %q, want %q", row.Name, render.NameBroken)
-	}
-	if row.Summary != "-" {
-		t.Errorf("Summary = %q, want '-'", row.Summary)
-	}
+	assert.Equal(t, render.NameBroken, row.Name)
+	assert.Equal(t, "-", row.Summary)
 }
 
 func TestFormatHumanRow_UntitledRun(t *testing.T) {
@@ -454,9 +354,7 @@ func TestFormatHumanRow_UntitledRun(t *testing.T) {
 
 	row := render.FormatHumanRow(summary, time.Now())
 
-	if row.Name != render.NameUntitled {
-		t.Errorf("Title = %q, want %q", row.Name, render.NameUntitled)
-	}
+	assert.Equal(t, render.NameUntitled, row.Name)
 }
 
 func TestFormatHumanRow_ArchivedStatus(t *testing.T) {
@@ -473,9 +371,7 @@ func TestFormatHumanRow_ArchivedStatus(t *testing.T) {
 
 	row := render.FormatHumanRow(summary, time.Now())
 
-	if row.Status != "idle (archived)" {
-		t.Errorf("Status = %q, want %q", row.Status, "idle (archived)")
-	}
+	assert.Equal(t, "idle (archived)", row.Status)
 }
 
 // ============================================================
@@ -483,11 +379,10 @@ func TestFormatHumanRow_ArchivedStatus(t *testing.T) {
 // ============================================================
 
 func TestLS_IntegrationWithFakeData(t *testing.T) {
+	t.Parallel()
+
 	// Create temp data directory
 	dataDir := t.TempDir()
-
-	// Set AGENCY_DATA_DIR to our temp dir
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create repos with runs
 	createValidMetaForLS(t, dataDir, "r1", "20260110-a3f2", time.Date(2026, 1, 10, 14, 0, 0, 0, time.UTC))
@@ -497,13 +392,8 @@ func TestLS_IntegrationWithFakeData(t *testing.T) {
 
 	// Scan all runs
 	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		t.Fatalf("ScanAllRuns() error = %v", err)
-	}
-
-	if len(records) != 3 {
-		t.Fatalf("len(records) = %d, want 3", len(records))
-	}
+	require.NoError(t, err)
+	require.Len(t, records, 3)
 
 	// Convert to summaries (without tmux - use empty session map)
 	tmuxSessions := make(map[string]bool)
@@ -527,49 +417,30 @@ func TestLS_IntegrationWithFakeData(t *testing.T) {
 	}
 
 	for i, exp := range expectedOrder {
-		if summaries[i].RunID != exp.runID {
-			t.Errorf("summaries[%d].RunID = %q, want %q", i, summaries[i].RunID, exp.runID)
-		}
-		if summaries[i].Broken != exp.broken {
-			t.Errorf("summaries[%d].Broken = %v, want %v", i, summaries[i].Broken, exp.broken)
-		}
+		assert.Equal(t, exp.runID, summaries[i].RunID, "summaries[%d].RunID", i)
+		assert.Equal(t, exp.broken, summaries[i].Broken, "summaries[%d].Broken", i)
 	}
 
 	// Verify broken run has correct fields
 	brokenIdx := 2
-	if summaries[brokenIdx].Name != render.NameBroken {
-		t.Errorf("broken run Title = %q, want %q", summaries[brokenIdx].Name, render.NameBroken)
-	}
-	if summaries[brokenIdx].DerivedStatus != status.StatusBroken {
-		t.Errorf("broken run DerivedStatus = %q, want %q", summaries[brokenIdx].DerivedStatus, status.StatusBroken)
-	}
+	assert.Equal(t, render.NameBroken, summaries[brokenIdx].Name, "broken run Title")
+	assert.Equal(t, status.StatusBroken, summaries[brokenIdx].DerivedStatus, "broken run DerivedStatus")
 
 	// Verify repo join
-	if summaries[0].RepoKey == nil || *summaries[0].RepoKey != "github:owner/repo1" {
-		t.Errorf("r1 run RepoKey = %v, want %q", summaries[0].RepoKey, "github:owner/repo1")
-	}
+	require.NotNil(t, summaries[0].RepoKey, "r1 run RepoKey")
+	assert.Equal(t, "github:owner/repo1", *summaries[0].RepoKey)
 	// r2 runs should have nil repo_key (no repo.json)
-	if summaries[1].RepoKey != nil {
-		t.Errorf("r2 run RepoKey = %v, want nil", summaries[1].RepoKey)
-	}
+	assert.Nil(t, summaries[1].RepoKey, "r2 run RepoKey")
 
 	// Test JSON output
 	var buf bytes.Buffer
-	if err := render.WriteLSJSON(&buf, summaries); err != nil {
-		t.Fatalf("WriteLSJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteLSJSON(&buf, summaries))
 
 	var env render.LSJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
-	if env.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", env.SchemaVersion, "1.0")
-	}
-	if len(env.Data) != 3 {
-		t.Errorf("len(Data) = %d, want 3", len(env.Data))
-	}
+	assert.Equal(t, "1.0", env.SchemaVersion)
+	assert.Len(t, env.Data, 3)
 }
 
 // Helper functions for tests
@@ -577,9 +448,7 @@ func TestLS_IntegrationWithFakeData(t *testing.T) {
 func createValidMetaForLS(t *testing.T, dataDir, repoID, runID string, createdAt time.Time) {
 	t.Helper()
 	runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(runDir, 0755))
 
 	meta := store.RunMeta{
 		SchemaVersion: "1.0",
@@ -595,31 +464,21 @@ func createValidMetaForLS(t *testing.T, dataDir, repoID, runID string, createdAt
 	}
 
 	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "meta.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(runDir, "meta.json"), data, 0644))
 }
 
 func createCorruptMetaForLS(t *testing.T, dataDir, repoID, runID string) {
 	t.Helper()
 	runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "meta.json"), []byte("{invalid json"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(runDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(runDir, "meta.json"), []byte("{invalid json"), 0644))
 }
 
 func createRepoJSONForLS(t *testing.T, dataDir, repoID, repoKey, originURL string) {
 	t.Helper()
 	repoDir := filepath.Join(dataDir, "repos", repoID)
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
 
 	rec := store.RepoRecord{
 		SchemaVersion: "1.0",
@@ -629,10 +488,6 @@ func createRepoJSONForLS(t *testing.T, dataDir, repoID, repoKey, originURL strin
 	}
 
 	data, err := json.MarshalIndent(rec, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repoDir, "repo.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "repo.json"), data, 0644))
 }

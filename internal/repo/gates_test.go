@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -27,22 +30,14 @@ func setupTempRepo(t *testing.T) string {
 	dir := t.TempDir()
 
 	// Initialize git repo
-	if err := runGit(dir, "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
+	require.NoError(t, runGit(dir, "init"), "git init failed")
 
 	// Create and commit a file
 	readme := filepath.Join(dir, "README.md")
-	if err := os.WriteFile(readme, []byte("# Test Repo\n"), 0644); err != nil {
-		t.Fatalf("failed to write README.md: %v", err)
-	}
+	require.NoError(t, os.WriteFile(readme, []byte("# Test Repo\n"), 0644), "failed to write README.md")
 
-	if err := runGit(dir, "add", "-A"); err != nil {
-		t.Fatalf("git add failed: %v", err)
-	}
-	if err := runGit(dir, "commit", "-m", "initial commit"); err != nil {
-		t.Fatalf("git commit failed: %v", err)
-	}
+	require.NoError(t, runGit(dir, "add", "-A"), "git add failed")
+	require.NoError(t, runGit(dir, "commit", "-m", "initial commit"), "git commit failed")
 
 	return dir
 }
@@ -56,9 +51,7 @@ func setupEmptyRepo(t *testing.T) string {
 	dir := t.TempDir()
 
 	// Initialize git repo only
-	if err := runGit(dir, "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
+	require.NoError(t, runGit(dir, "init"), "git init failed")
 
 	return dir
 }
@@ -81,9 +74,7 @@ func getCurrentBranch(t *testing.T, dir string) string {
 	cmd := exec.Command("git", "branch", "--show-current")
 	cmd.Dir = dir
 	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git branch --show-current failed: %v", err)
-	}
+	require.NoError(t, err, "git branch --show-current failed")
 	branch := string(output)
 	if len(branch) > 0 && branch[len(branch)-1] == '\n' {
 		branch = branch[:len(branch)-1]
@@ -94,9 +85,7 @@ func getCurrentBranch(t *testing.T, dir string) string {
 func TestCheckRepoSafe_CleanRepoSuccess(t *testing.T) {
 	repoRoot := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR to a temp directory (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Get current branch name
 	branch := getCurrentBranch(t, repoRoot)
@@ -109,86 +98,57 @@ func TestCheckRepoSafe_CleanRepoSuccess(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	result, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: branch,
+		ParentBranch:    branch,
+		DataDirOverride: dataDir,
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err, "unexpected error")
 
 	// Verify returned context
 	// Note: On macOS, git may resolve symlinks (e.g., /var -> /private/var),
 	// so we compare resolved paths.
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		t.Fatalf("failed to resolve repo root: %v", err)
-	}
-	if result.RepoRoot != resolvedRepoRoot {
-		t.Errorf("RepoRoot = %q, want %q", result.RepoRoot, resolvedRepoRoot)
-	}
-	if result.RepoID == "" {
-		t.Error("RepoID should not be empty")
-	}
-	if len(result.RepoID) != 16 {
-		t.Errorf("RepoID length = %d, want 16", len(result.RepoID))
-	}
+	require.NoError(t, err, "failed to resolve repo root")
+	assert.Equal(t, resolvedRepoRoot, result.RepoRoot)
+	assert.NotEmpty(t, result.RepoID, "RepoID should not be empty")
+	assert.Equal(t, 16, len(result.RepoID), "RepoID length")
 	// DataDir should match what was set in AGENCY_DATA_DIR
-	if result.DataDir != dataDir {
-		t.Errorf("DataDir = %q, want %q", result.DataDir, dataDir)
-	}
+	assert.Equal(t, dataDir, result.DataDir)
 
 	// Verify repo.json was created
 	repoJSONPath := filepath.Join(dataDir, "repos", result.RepoID, "repo.json")
-	if _, err := os.Stat(repoJSONPath); os.IsNotExist(err) {
-		t.Fatal("repo.json was not created")
-	}
+	_, err = os.Stat(repoJSONPath)
+	require.False(t, os.IsNotExist(err), "repo.json was not created")
 
 	// Verify repo.json contents
 	data, err := os.ReadFile(repoJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read repo.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read repo.json")
 
 	var rec map[string]interface{}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		t.Fatalf("failed to unmarshal repo.json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(data, &rec), "failed to unmarshal repo.json")
 
 	// Check required fields
-	if rec["schema_version"] != "1.0" {
-		t.Errorf("schema_version = %v, want 1.0", rec["schema_version"])
-	}
-	if rec["repo_id"] != result.RepoID {
-		t.Errorf("repo_id = %v, want %s", rec["repo_id"], result.RepoID)
-	}
-	if rec["updated_at"] == nil || rec["updated_at"] == "" {
-		t.Error("updated_at should be set")
-	}
+	assert.Equal(t, "1.0", rec["schema_version"])
+	assert.Equal(t, result.RepoID, rec["repo_id"])
+	assert.NotNil(t, rec["updated_at"], "updated_at should be set")
+	assert.NotEqual(t, "", rec["updated_at"], "updated_at should be set")
 
 	// Check file permissions (0644)
 	info, err := os.Stat(repoJSONPath)
-	if err != nil {
-		t.Fatalf("failed to stat repo.json: %v", err)
-	}
+	require.NoError(t, err, "failed to stat repo.json")
 	perm := info.Mode().Perm()
 	// On some systems, file permissions may differ slightly, so we check the essentials
-	if perm&0600 != 0600 {
-		t.Errorf("repo.json permissions = %o, want at least 0600", perm)
-	}
+	assert.Equal(t, os.FileMode(0600), perm&0600, "repo.json permissions should have at least 0600")
 }
 
 func TestCheckRepoSafe_DirtyRepoFails(t *testing.T) {
 	repoRoot := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Make the repo dirty
 	dirty := filepath.Join(repoRoot, "dirty.txt")
-	if err := os.WriteFile(dirty, []byte("dirty\n"), 0644); err != nil {
-		t.Fatalf("failed to create dirty file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(dirty, []byte("dirty\n"), 0644), "failed to create dirty file")
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {
@@ -200,80 +160,64 @@ func TestCheckRepoSafe_DirtyRepoFails(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: branch,
+		ParentBranch:    branch,
+		DataDirOverride: dataDir,
 	})
 
-	if err == nil {
-		t.Fatal("expected error for dirty repo")
-	}
+	require.Error(t, err, "expected error for dirty repo")
 
 	code := errors.GetCode(err)
-	if code != errors.EParentDirty {
-		t.Errorf("error code = %q, want %q", code, errors.EParentDirty)
-	}
+	assert.Equal(t, errors.EParentDirty, code)
 }
 
 func TestCheckRepoSafe_EmptyRepoFails(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupEmptyRepo(t)
 
-	// Set AGENCY_DATA_DIR
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	ctx := context.Background()
 	cr := agencyexec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: "main",
+		ParentBranch:    "main",
+		DataDirOverride: dataDir,
 	})
 
-	if err == nil {
-		t.Fatal("expected error for empty repo")
-	}
+	require.Error(t, err, "expected error for empty repo")
 
 	code := errors.GetCode(err)
-	if code != errors.EEmptyRepo {
-		t.Errorf("error code = %q, want %q", code, errors.EEmptyRepo)
-	}
+	assert.Equal(t, errors.EEmptyRepo, code)
 }
 
 func TestCheckRepoSafe_MissingParentBranchFails(t *testing.T) {
 	repoRoot := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	ctx := context.Background()
 	cr := agencyexec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: "nonexistent-branch",
+		ParentBranch:    "nonexistent-branch",
+		DataDirOverride: dataDir,
 	})
 
-	if err == nil {
-		t.Fatal("expected error for missing parent branch")
-	}
+	require.Error(t, err, "expected error for missing parent branch")
 
 	code := errors.GetCode(err)
-	if code != errors.EParentBranchNotFound {
-		t.Errorf("error code = %q, want %q", code, errors.EParentBranchNotFound)
-	}
+	assert.Equal(t, errors.EParentBranchNotFound, code)
 }
 
 func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
 	repoRoot := setupTempRepo(t)
 
 	// Add a fake origin
-	if err := runGit(repoRoot, "remote", "add", "origin", "git@github.com:test/repo.git"); err != nil {
-		t.Fatalf("failed to add origin: %v", err)
-	}
+	require.NoError(t, runGit(repoRoot, "remote", "add", "origin", "git@github.com:test/repo.git"), "failed to add origin")
 
-	// Set AGENCY_DATA_DIR
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {
@@ -285,37 +229,26 @@ func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	result, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: branch,
+		ParentBranch:    branch,
+		DataDirOverride: dataDir,
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err, "unexpected error")
 
 	// Verify origin URL in context
 	expectedURL := "git@github.com:test/repo.git"
-	if result.OriginURL != expectedURL {
-		t.Errorf("OriginURL = %q, want %q", result.OriginURL, expectedURL)
-	}
+	assert.Equal(t, expectedURL, result.OriginURL)
 
 	// Verify repo.json contains origin URL
 	repoJSONPath := filepath.Join(dataDir, "repos", result.RepoID, "repo.json")
 	data, err := os.ReadFile(repoJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read repo.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read repo.json")
 
 	var rec map[string]interface{}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		t.Fatalf("failed to unmarshal repo.json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(data, &rec), "failed to unmarshal repo.json")
 
-	if rec["origin_url"] != expectedURL {
-		t.Errorf("repo.json origin_url = %v, want %s", rec["origin_url"], expectedURL)
-	}
-	if rec["origin_present"] != true {
-		t.Errorf("repo.json origin_present = %v, want true", rec["origin_present"])
-	}
+	assert.Equal(t, expectedURL, rec["origin_url"])
+	assert.Equal(t, true, rec["origin_present"])
 }
 
 func TestCheckRepoSafe_NoOriginURL(t *testing.T) {
@@ -323,9 +256,7 @@ func TestCheckRepoSafe_NoOriginURL(t *testing.T) {
 
 	// No origin is set (default state after setupTempRepo)
 
-	// Set AGENCY_DATA_DIR
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {
@@ -337,39 +268,29 @@ func TestCheckRepoSafe_NoOriginURL(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	result, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: branch,
+		ParentBranch:    branch,
+		DataDirOverride: dataDir,
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err, "unexpected error")
 
 	// Verify origin URL is empty
-	if result.OriginURL != "" {
-		t.Errorf("OriginURL = %q, want empty", result.OriginURL)
-	}
+	assert.Equal(t, "", result.OriginURL)
 
 	// Verify repo.json has empty origin URL and origin_present=false
 	repoJSONPath := filepath.Join(dataDir, "repos", result.RepoID, "repo.json")
 	data, err := os.ReadFile(repoJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read repo.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read repo.json")
 
 	var rec map[string]interface{}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		t.Fatalf("failed to unmarshal repo.json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(data, &rec), "failed to unmarshal repo.json")
 
-	if rec["origin_url"] != "" {
-		t.Errorf("repo.json origin_url = %v, want empty", rec["origin_url"])
-	}
-	if rec["origin_present"] != false {
-		t.Errorf("repo.json origin_present = %v, want false", rec["origin_present"])
-	}
+	assert.Equal(t, "", rec["origin_url"])
+	assert.Equal(t, false, rec["origin_present"])
 }
 
 func TestCheckRepoSafe_NotInsideRepo(t *testing.T) {
+	t.Parallel()
 	// Create a temp directory that is NOT a git repo (t.TempDir handles cleanup)
 	dir := t.TempDir()
 
@@ -381,22 +302,16 @@ func TestCheckRepoSafe_NotInsideRepo(t *testing.T) {
 		ParentBranch: "main",
 	})
 
-	if err == nil {
-		t.Fatal("expected error for non-repo directory")
-	}
+	require.Error(t, err, "expected error for non-repo directory")
 
 	code := errors.GetCode(err)
-	if code != errors.ENoRepo {
-		t.Errorf("error code = %q, want %q", code, errors.ENoRepo)
-	}
+	assert.Equal(t, errors.ENoRepo, code)
 }
 
 func TestCheckRepoSafe_RepoJSONUpdatedOnSecondCall(t *testing.T) {
 	repoRoot := setupTempRepo(t)
 
-	// Set AGENCY_DATA_DIR
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	branch := getCurrentBranch(t, repoRoot)
 	if branch == "" {
@@ -409,55 +324,40 @@ func TestCheckRepoSafe_RepoJSONUpdatedOnSecondCall(t *testing.T) {
 
 	// First call
 	result1, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: branch,
+		ParentBranch:    branch,
+		DataDirOverride: dataDir,
 	})
-	if err != nil {
-		t.Fatalf("first call failed: %v", err)
-	}
+	require.NoError(t, err, "first call failed")
 
 	// Read first timestamp
 	repoJSONPath := filepath.Join(dataDir, "repos", result1.RepoID, "repo.json")
 	data1, err := os.ReadFile(repoJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read repo.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read repo.json")
 	var rec1 map[string]interface{}
-	if err := json.Unmarshal(data1, &rec1); err != nil {
-		t.Fatalf("failed to unmarshal repo.json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(data1, &rec1), "failed to unmarshal repo.json")
 	createdAt := rec1["created_at"].(string)
 
 	// Second call
 	result2, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch: branch,
+		ParentBranch:    branch,
+		DataDirOverride: dataDir,
 	})
-	if err != nil {
-		t.Fatalf("second call failed: %v", err)
-	}
+	require.NoError(t, err, "second call failed")
 
 	// Verify same repo ID
-	if result2.RepoID != result1.RepoID {
-		t.Errorf("repo ID changed between calls: %q -> %q", result1.RepoID, result2.RepoID)
-	}
+	assert.Equal(t, result1.RepoID, result2.RepoID)
 
 	// Read second record
 	data2, err := os.ReadFile(repoJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read repo.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read repo.json")
 	var rec2 map[string]interface{}
-	if err := json.Unmarshal(data2, &rec2); err != nil {
-		t.Fatalf("failed to unmarshal repo.json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(data2, &rec2), "failed to unmarshal repo.json")
 
 	// created_at should be preserved
-	if rec2["created_at"].(string) != createdAt {
-		t.Errorf("created_at changed: %q -> %q", createdAt, rec2["created_at"])
-	}
+	assert.Equal(t, createdAt, rec2["created_at"].(string))
 
 	// updated_at should be updated (or same if called within same second)
 	// Just verify it exists
-	if rec2["updated_at"] == nil || rec2["updated_at"] == "" {
-		t.Error("updated_at should be set on second call")
-	}
+	assert.NotNil(t, rec2["updated_at"], "updated_at should be set on second call")
+	assert.NotEqual(t, "", rec2["updated_at"], "updated_at should be set on second call")
 }

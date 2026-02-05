@@ -4,35 +4,36 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNew(t *testing.T) {
+	t.Parallel()
+
 	err := New(EUsage, "test message")
 
-	if err.Error() != "E_USAGE: test message" {
-		t.Errorf("Error() = %q, want %q", err.Error(), "E_USAGE: test message")
-	}
+	assert.Equal(t, "E_USAGE: test message", err.Error())
 }
 
 func TestWrap(t *testing.T) {
+	t.Parallel()
+
 	cause := errors.New("underlying")
 	err := Wrap(ENotImplemented, "wrapped message", cause)
 
-	if err.Error() != "E_NOT_IMPLEMENTED: wrapped message" {
-		t.Errorf("Error() = %q, want %q", err.Error(), "E_NOT_IMPLEMENTED: wrapped message")
-	}
+	assert.Equal(t, "E_NOT_IMPLEMENTED: wrapped message", err.Error())
 
 	// Test Unwrap
 	var ae *AgencyError
-	if !errors.As(err, &ae) {
-		t.Fatal("errors.As failed")
-	}
-	if ae.Cause != cause {
-		t.Error("Unwrap did not return cause")
-	}
+	require.True(t, errors.As(err, &ae), "errors.As failed")
+	assert.Equal(t, cause, ae.Cause, "Unwrap did not return cause")
 }
 
 func TestGetCode(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		err  error
@@ -45,16 +46,19 @@ func TestGetCode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := GetCode(tt.err)
-			if got != tt.want {
-				t.Errorf("GetCode() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestExitCode(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		err  error
@@ -67,16 +71,19 @@ func TestExitCode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := ExitCode(tt.err)
-			if got != tt.want {
-				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestPrint(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		err  error
@@ -89,60 +96,55 @@ func TestPrint(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			var buf bytes.Buffer
 			Print(&buf, tt.err)
 			got := buf.String()
-			if got != tt.want {
-				t.Errorf("Print() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestErrorFormatStability(t *testing.T) {
+	t.Parallel()
+
 	// This test ensures the error format is stable and matches the spec exactly.
 	// The format MUST be: "CODE: message"
 	err := New(EUsage, "x")
 	expected := "E_USAGE: x"
-	if err.Error() != expected {
-		t.Errorf("error format changed: got %q, want %q", err.Error(), expected)
-	}
+	assert.Equal(t, expected, err.Error())
 }
 
 func TestNewWithDetails(t *testing.T) {
+	t.Parallel()
+
 	details := map[string]string{"key": "value"}
 	err := NewWithDetails(EUsage, "test message", details)
 
 	var ae *AgencyError
-	if !errors.As(err, &ae) {
-		t.Fatal("errors.As failed")
-	}
+	require.True(t, errors.As(err, &ae), "errors.As failed")
 
-	if ae.Code != EUsage {
-		t.Errorf("Code = %q, want %q", ae.Code, EUsage)
-	}
-	if ae.Msg != "test message" {
-		t.Errorf("Msg = %q, want %q", ae.Msg, "test message")
-	}
-	if ae.Details["key"] != "value" {
-		t.Errorf("Details[key] = %q, want %q", ae.Details["key"], "value")
-	}
+	assert.Equal(t, EUsage, ae.Code)
+	assert.Equal(t, "test message", ae.Msg)
+	assert.Equal(t, "value", ae.Details["key"])
 }
 
 func TestNewWithDetails_NilDetails(t *testing.T) {
+	t.Parallel()
+
 	err := NewWithDetails(EUsage, "test", nil)
 
 	var ae *AgencyError
-	if !errors.As(err, &ae) {
-		t.Fatal("errors.As failed")
-	}
-	if ae.Details != nil {
-		t.Errorf("Details should be nil, got %v", ae.Details)
-	}
+	require.True(t, errors.As(err, &ae), "errors.As failed")
+	assert.Nil(t, ae.Details, "Details should be nil")
 }
 
 func TestNewWithDetails_DefensiveCopy(t *testing.T) {
+	t.Parallel()
+
 	details := map[string]string{"key": "value"}
 	err := NewWithDetails(EUsage, "test", details)
 
@@ -150,69 +152,59 @@ func TestNewWithDetails_DefensiveCopy(t *testing.T) {
 	details["key"] = "modified"
 
 	var ae *AgencyError
-	if !errors.As(err, &ae) {
-		t.Fatal("errors.As failed")
-	}
+	require.True(t, errors.As(err, &ae), "errors.As failed")
 	// The error's details should not be affected
-	if ae.Details["key"] != "value" {
-		t.Errorf("Details should be defensively copied")
-	}
+	assert.Equal(t, "value", ae.Details["key"], "Details should be defensively copied")
 }
 
 func TestWrapWithDetails(t *testing.T) {
+	t.Parallel()
+
 	cause := errors.New("underlying")
 	details := map[string]string{"file": "test.go"}
 	err := WrapWithDetails(EUsage, "wrapped", cause, details)
 
 	var ae *AgencyError
-	if !errors.As(err, &ae) {
-		t.Fatal("errors.As failed")
-	}
+	require.True(t, errors.As(err, &ae), "errors.As failed")
 
-	if ae.Cause != cause {
-		t.Error("Cause not set")
-	}
-	if ae.Details["file"] != "test.go" {
-		t.Errorf("Details[file] = %q, want %q", ae.Details["file"], "test.go")
-	}
+	assert.Equal(t, cause, ae.Cause, "Cause not set")
+	assert.Equal(t, "test.go", ae.Details["file"])
 }
 
 func TestAsAgencyError(t *testing.T) {
+	t.Parallel()
+
 	t.Run("direct AgencyError", func(t *testing.T) {
+		t.Parallel()
+
 		err := New(EUsage, "test")
 		ae, ok := AsAgencyError(err)
-		if !ok {
-			t.Error("should return true for AgencyError")
-		}
-		if ae.Code != EUsage {
-			t.Errorf("Code = %q, want %q", ae.Code, EUsage)
-		}
+		assert.True(t, ok, "should return true for AgencyError")
+		assert.Equal(t, EUsage, ae.Code)
 	})
 
 	t.Run("non AgencyError", func(t *testing.T) {
+		t.Parallel()
+
 		err := errors.New("regular error")
 		ae, ok := AsAgencyError(err)
-		if ok {
-			t.Error("should return false for non-AgencyError")
-		}
-		if ae != nil {
-			t.Error("should return nil for non-AgencyError")
-		}
+		assert.False(t, ok, "should return false for non-AgencyError")
+		assert.Nil(t, ae, "should return nil for non-AgencyError")
 	})
 
 	t.Run("nil error", func(t *testing.T) {
+		t.Parallel()
+
 		ae, ok := AsAgencyError(nil)
-		if ok {
-			t.Error("should return false for nil")
-		}
-		if ae != nil {
-			t.Error("should return nil for nil")
-		}
+		assert.False(t, ok, "should return false for nil")
+		assert.Nil(t, ae, "should return nil for nil")
 	})
 }
 
 // TestSlice3ErrorCodesExist verifies slice 03 error codes are defined and stable.
 func TestSlice3ErrorCodesExist(t *testing.T) {
+	t.Parallel()
+
 	// This test ensures slice 03 error codes exist as constants.
 	// If any are missing or renamed, this test will fail to compile.
 	codes := []Code{
@@ -245,14 +237,14 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 
 	for _, code := range codes {
 		expected := expectedStrings[code]
-		if string(code) != expected {
-			t.Errorf("code = %q, want %q", code, expected)
-		}
+		assert.Equal(t, expected, string(code))
 	}
 }
 
 // TestPR09ErrorCodesExist verifies PR-09 landing error codes are defined and stable.
 func TestPR09ErrorCodesExist(t *testing.T) {
+	t.Parallel()
+
 	codes := []Code{
 		ELandConflict,
 		ELandNothingToLand,
@@ -279,14 +271,14 @@ func TestPR09ErrorCodesExist(t *testing.T) {
 
 	for _, code := range codes {
 		expected := expectedStrings[code]
-		if string(code) != expected {
-			t.Errorf("code = %q, want %q", code, expected)
-		}
+		assert.Equal(t, expected, string(code))
 	}
 }
 
 // TestPR09ErrorFormat verifies PR-09 error codes format correctly.
 func TestPR09ErrorFormat(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		code Code
 		msg  string
@@ -304,17 +296,20 @@ func TestPR09ErrorFormat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
+
 			err := New(tt.code, tt.msg)
-			if err.Error() != tt.want {
-				t.Errorf("Error() = %q, want %q", err.Error(), tt.want)
-			}
+			assert.Equal(t, tt.want, err.Error())
 		})
 	}
 }
 
 // TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
 func TestSlice3ErrorFormat(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		code Code
 		msg  string
@@ -334,11 +329,12 @@ func TestSlice3ErrorFormat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
+
 			err := New(tt.code, tt.msg)
-			if err.Error() != tt.want {
-				t.Errorf("Error() = %q, want %q", err.Error(), tt.want)
-			}
+			assert.Equal(t, tt.want, err.Error())
 		})
 	}
 }

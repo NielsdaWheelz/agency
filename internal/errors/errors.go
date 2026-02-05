@@ -172,6 +172,9 @@ const (
 	ESandboxMissing         Code = "E_SANDBOX_MISSING"          // sandbox tree no longer exists
 	EIntegrationTreeMissing Code = "E_INTEGRATION_TREE_MISSING" // integration worktree tree no longer exists
 	ELandDenylistViolation  Code = "E_LAND_DENYLIST_VIOLATION"  // denylisted files found in uncommitted changes
+
+	// Slice 8 headed invocation error codes (PR-10)
+	ESessionEnded Code = "E_SESSION_ENDED" // tmux session ended; use logs or open to view
 )
 
 // AgencyError is the standard error type for agency errors.

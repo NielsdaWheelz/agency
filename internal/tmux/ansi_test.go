@@ -3,9 +3,12 @@ package tmux
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestStripANSI(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -149,16 +152,17 @@ func TestStripANSI(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := StripANSI(tt.input)
-			if result != tt.expected {
-				t.Errorf("StripANSI(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
 func TestStripANSI_NoPanic(t *testing.T) {
+	t.Parallel()
 	// Test that StripANSI never panics, even with weird input
 	testCases := []string{
 		"",
@@ -177,18 +181,15 @@ func TestStripANSI_NoPanic(t *testing.T) {
 	}
 
 	for i, input := range testCases {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("StripANSI panicked on input %d: %v", i, r)
-				}
-			}()
+		i, input := i, input
+		assert.NotPanicsf(t, func() {
 			_ = StripANSI(input)
-		}()
+		}, "StripANSI panicked on input %d", i)
 	}
 }
 
 func TestStripANSI_NoEscapeBytes(t *testing.T) {
+	t.Parallel()
 	// Test that output contains no ESC bytes
 	inputs := []string{
 		"\x1b[31mred\x1b[0m",
@@ -199,8 +200,7 @@ func TestStripANSI_NoEscapeBytes(t *testing.T) {
 
 	for _, input := range inputs {
 		result := StripANSI(input)
-		if strings.Contains(result, "\x1b") {
-			t.Errorf("StripANSI(%q) still contains ESC byte: %q", input, result)
-		}
+		assert.False(t, strings.Contains(result, "\x1b"),
+			"StripANSI(%q) still contains ESC byte: %q", input, result)
 	}
 }

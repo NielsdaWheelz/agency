@@ -37,6 +37,9 @@ type CleanOpts struct {
 	// DeleteBranch deletes the local and remote branch after archiving.
 	// Also closes any associated PR.
 	DeleteBranch bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // Clean archives a run without merging.
@@ -61,7 +64,7 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	}
 
 	// Build resolution context using the new global resolver
-	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
@@ -81,15 +84,18 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 		)
 	}
 
-	// Get home directory for path resolution
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-
 	// Resolve data directory
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
 
 	// Use the resolved run_id
 	runID := resolved.RunID

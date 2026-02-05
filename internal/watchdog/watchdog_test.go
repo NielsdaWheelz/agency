@@ -3,9 +3,14 @@ package watchdog
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCheckStall(t *testing.T) {
+	t.Parallel()
+
 	threshold := 15 * time.Minute
 
 	tests := []struct {
@@ -72,16 +77,19 @@ func TestCheckStall(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := CheckStall(tt.signals, threshold)
-			if result.IsStalled != tt.wantIsStalled {
-				t.Errorf("CheckStall().IsStalled = %v, want %v", result.IsStalled, tt.wantIsStalled)
-			}
+			assert.Equal(t, tt.wantIsStalled, result.IsStalled)
 		})
 	}
 }
 
 func TestCheckStall_StalledDuration(t *testing.T) {
+	t.Parallel()
+
 	threshold := 15 * time.Minute
 	stalledTime := time.Now().Add(-30 * time.Minute)
 
@@ -91,17 +99,16 @@ func TestCheckStall_StalledDuration(t *testing.T) {
 	}
 
 	result := CheckStall(signals, threshold)
-	if !result.IsStalled {
-		t.Fatal("expected IsStalled = true")
-	}
+	require.True(t, result.IsStalled, "expected IsStalled = true")
 
 	// Allow some tolerance for test execution time
-	if result.StalledDuration < 29*time.Minute || result.StalledDuration > 31*time.Minute {
-		t.Errorf("StalledDuration = %v, want ~30m", result.StalledDuration)
-	}
+	assert.True(t, result.StalledDuration >= 29*time.Minute && result.StalledDuration <= 31*time.Minute,
+		"StalledDuration = %v, want ~30m", result.StalledDuration)
 }
 
 func TestCheckStallWithDefault(t *testing.T) {
+	t.Parallel()
+
 	// Just verify it uses the default threshold
 	signals := ActivitySignals{
 		TmuxSessionExists: true,
@@ -109,22 +116,18 @@ func TestCheckStallWithDefault(t *testing.T) {
 	}
 
 	result := CheckStallWithDefault(signals)
-	if !result.IsStalled {
-		t.Error("expected IsStalled = true with 20m old status file")
-	}
+	assert.True(t, result.IsStalled, "expected IsStalled = true with 20m old status file")
 
 	// Recent file should not be stalled
 	signals.StatusFileModTime = ptr(time.Now().Add(-5 * time.Minute))
 	result = CheckStallWithDefault(signals)
-	if result.IsStalled {
-		t.Error("expected IsStalled = false with 5m old status file")
-	}
+	assert.False(t, result.IsStalled, "expected IsStalled = false with 5m old status file")
 }
 
 func TestDefaultStallThreshold(t *testing.T) {
-	if DefaultStallThreshold != 15*time.Minute {
-		t.Errorf("DefaultStallThreshold = %v, want 15m", DefaultStallThreshold)
-	}
+	t.Parallel()
+
+	assert.Equal(t, 15*time.Minute, DefaultStallThreshold)
 }
 
 // ptr is a helper to create a pointer to a time.Time value.

@@ -25,6 +25,9 @@ type VerifyOpts struct {
 
 	// Timeout is the script timeout (default: 30m).
 	Timeout time.Duration
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // Verify runs the repo's scripts.verify for a run and records results.
@@ -40,7 +43,7 @@ func Verify(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	timeout := opts.Timeout
 
 	// Build resolution context using the new global resolver
-	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}

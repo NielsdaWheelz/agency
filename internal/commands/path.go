@@ -15,6 +15,9 @@ import (
 type PathOpts struct {
 	// RunRef is the run reference (name, run_id, or unique prefix).
 	RunRef string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // Path outputs the worktree path for a run.
@@ -26,13 +29,19 @@ func Path(ctx context.Context, opts PathOpts, stdout, stderr io.Writer) error {
 		return errors.New(errors.EUsage, "run reference is required")
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	_, record, err := resolveRunGlobal(opts.RunRef, dirs.DataDir)
+	_, record, err := resolveRunGlobal(opts.RunRef, dataDir)
 	if err != nil {
 		return err
 	}

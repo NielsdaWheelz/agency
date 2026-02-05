@@ -1,8 +1,14 @@
 package core
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestBranchName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		testName string
 		name     string
@@ -48,11 +54,12 @@ func TestBranchName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.testName, func(t *testing.T) {
+			t.Parallel()
+
 			got := BranchName(tt.name, tt.runID)
-			if got != tt.expect {
-				t.Errorf("BranchName(%q, %q) = %q, want %q", tt.name, tt.runID, got, tt.expect)
-			}
+			assert.Equal(t, tt.expect, got)
 		})
 	}
 }

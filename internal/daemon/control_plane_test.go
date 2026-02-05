@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateRunnerArgs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		runner    string
@@ -104,16 +108,21 @@ func TestValidateRunnerArgs(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateRunnerArgs(tt.runner, tt.args)
-			if (err != nil) != tt.wantError {
-				t.Errorf("validateRunnerArgs() error = %v, wantError %v", err, tt.wantError)
+			if tt.wantError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
 }
 
 func TestIsInsideAgencyManagedWorktree(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		path     string
@@ -171,16 +180,17 @@ func TestIsInsideAgencyManagedWorktree(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := isInsideAgencyManagedWorktree(tt.path, tt.dataDir)
-			if result != tt.expected {
-				t.Errorf("isInsideAgencyManagedWorktree(%q, %q) = %v, want %v", tt.path, tt.dataDir, result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
 func TestBuildRunnerArgsWithSandbox(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		runner      string
@@ -232,27 +242,21 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := buildRunnerArgsWithSandbox(tt.runner, tt.prompt, tt.sandboxPath, tt.extraArgs)
-			if len(got) != len(tt.wantArgs) {
-				t.Errorf("buildRunnerArgsWithSandbox() length = %d, want %d", len(got), len(tt.wantArgs))
-				t.Errorf("got: %v", got)
-				t.Errorf("want: %v", tt.wantArgs)
-				return
-			}
+			require.Equal(t, len(tt.wantArgs), len(got), "got: %v, want: %v", got, tt.wantArgs)
 			for i := range got {
-				if got[i] != tt.wantArgs[i] {
-					t.Errorf("buildRunnerArgsWithSandbox()[%d] = %q, want %q", i, got[i], tt.wantArgs[i])
-				}
+				assert.Equal(t, tt.wantArgs[i], got[i], "arg[%d]", i)
 			}
 		})
 	}
 }
 
 func TestIdempotencyKey(t *testing.T) {
+	t.Parallel()
 	key := idempotencyKey("repo123", "client-uuid-456")
 	expected := "repo123:client-uuid-456"
-	if key != expected {
-		t.Errorf("idempotencyKey() = %q, want %q", key, expected)
-	}
+	assert.Equal(t, expected, key)
 }

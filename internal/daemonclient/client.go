@@ -94,7 +94,7 @@ func (c *Client) StartHeadless(ctx context.Context, req *daemon.StartHeadlessReq
 	return &result, nil
 }
 
-// ControlPlaneStartOpts holds options for control plane start.
+// ControlPlaneStartOpts holds options for control plane start (headless).
 type ControlPlaneStartOpts struct {
 	RepoRoot           string
 	WorktreeRef        string
@@ -104,6 +104,17 @@ type ControlPlaneStartOpts struct {
 	RunnerArgs         []string
 	Env                map[string]string
 	NoIncludeUntracked bool // PR-08: exclude untracked files from checkpoints
+}
+
+// ControlPlaneStartHeadedOpts holds options for control plane headed start (PR-10).
+type ControlPlaneStartHeadedOpts struct {
+	RepoRoot           string
+	WorktreeRef        string
+	Runner             string
+	InvocationName     string
+	RunnerArgs         []string
+	Env                map[string]string
+	NoIncludeUntracked bool
 }
 
 // ControlPlaneStartHeadless starts a headless invocation via the control plane endpoint (PR-05).
@@ -143,6 +154,49 @@ func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlan
 	defer func() { _ = resp.Body.Close() }()
 
 	var result daemon.ControlPlaneStartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// ControlPlaneStartHeaded starts a headed (tmux) invocation via the control plane endpoint (PR-10).
+// This endpoint handles all creation: invocation ID generation, sandbox creation, and tmux session start.
+func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts ControlPlaneStartHeadedOpts) (*daemon.ControlPlaneStartHeadedResponse, error) {
+	// Generate client request ID for idempotency
+	clientRequestID := uuid.New().String()
+
+	req := daemon.ControlPlaneStartHeadedRequest{
+		RepoRoot:           opts.RepoRoot,
+		WorktreeRef:        opts.WorktreeRef,
+		Runner:             opts.Runner,
+		InvocationName:     opts.InvocationName,
+		RunnerArgs:         opts.RunnerArgs,
+		Env:                opts.Env,
+		ClientRequestID:    clientRequestID,
+		NoIncludeUntracked: opts.NoIncludeUntracked,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	url := "http://daemon/invocations/start_headed"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.ControlPlaneStartHeadedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}

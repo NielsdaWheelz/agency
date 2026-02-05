@@ -17,6 +17,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -46,33 +48,25 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 	// Create git repo
 	repoDir := t.TempDir()
 	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git init failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git init failed: exit %d, stderr: %s", result.ExitCode, result.Stderr)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0o644))
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git add failed: %v", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git add failed")
 	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "init"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git commit failed: %v, stderr: %s", err, result.Stderr)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git commit failed: stderr: %s", result.Stderr)
 
-	// Set up data dir via env
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Derive repo ID using the same logic the commands will use.
 	// The commands call git rev-parse --show-toplevel which resolves symlinks
 	// (e.g., /var -> /private/var on macOS), so we must do the same.
 	st := store.NewStore(fsys, dataDir, time.Now)
 	gitRoot, err := cr.Run(ctx, "git", []string{"rev-parse", "--show-toplevel"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || gitRoot.ExitCode != 0 {
-		t.Fatalf("git rev-parse --show-toplevel failed: %v", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, gitRoot.ExitCode, "git rev-parse --show-toplevel failed")
 	resolvedRepoDir := strings.TrimSpace(gitRoot.Stdout)
 	repoIdentity := identity.DeriveRepoIdentity(resolvedRepoDir, "") // no origin URL
 	repoID := repoIdentity.RepoID
@@ -81,9 +75,7 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 	invocationID := "20260115120000-abcd"
 
 	invDir := filepath.Join(dataDir, "repos", repoID, "invocations", invocationID)
-	if err := os.MkdirAll(invDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(invDir, 0o700))
 
 	meta := store.NewInvocationMeta(
 		invocationID,
@@ -101,15 +93,11 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 		meta.FinishedAt = "2026-01-15T12:30:00Z"
 	}
 
-	if err := st.WriteInvocationMeta(repoID, invocationID, meta); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 
 	// Create sandbox dir and write checkpoints.json if checkpoints provided
 	sandboxDir := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID)
-	if err := os.MkdirAll(sandboxDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
 
 	if checkpoints != nil {
 		cpFile := &checkpoint.CheckpointsFile{
@@ -117,9 +105,7 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 			Checkpoints:   checkpoints,
 		}
 		cpData, _ := json.MarshalIndent(cpFile, "", "  ")
-		if err := os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
 	}
 
 	return &checkpointTestEnv{
@@ -168,34 +154,23 @@ func TestCheckpointLS_TableOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef: env.InvocationID,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("CheckpointLS() error: %v", err)
-	}
+	require.NoError(t, err, "CheckpointLS() error")
 
 	out := stdout.String()
 
 	// Verify header row
-	if !strings.Contains(out, "ID") {
-		t.Error("expected header row with ID")
-	}
-	if !strings.Contains(out, "Created") {
-		t.Error("expected header row with Created")
-	}
+	assert.Contains(t, out, "ID", "expected header row with ID")
+	assert.Contains(t, out, "Created", "expected header row with Created")
 
 	// Verify data rows
-	if !strings.Contains(out, "+10 -5 in 3 files") {
-		t.Error("expected diffstat for checkpoint 1")
-	}
-	if !strings.Contains(out, "+2 -1 in 1 files") {
-		t.Error("expected diffstat for checkpoint 2")
-	}
+	assert.Contains(t, out, "+10 -5 in 3 files", "expected diffstat for checkpoint 1")
+	assert.Contains(t, out, "+2 -1 in 1 files", "expected diffstat for checkpoint 2")
 
 	// Verify truncated head SHAs
-	if !strings.Contains(out, "deadbeef") {
-		t.Error("expected truncated head SHA deadbeef")
-	}
+	assert.Contains(t, out, "deadbeef", "expected truncated head SHA deadbeef")
 }
 
 // 3.2 TestCheckpointLS_JSONOutput
@@ -213,21 +188,16 @@ func TestCheckpointLS_JSONOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef: env.InvocationID,
-		JSON:          true,
+		InvocationRef:   env.InvocationID,
+		JSON:            true,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("CheckpointLS() error: %v", err)
-	}
+	require.NoError(t, err, "CheckpointLS() error")
 
 	// Verify valid JSON
 	var cpFile checkpoint.CheckpointsFile
-	if err := json.NewDecoder(&stdout).Decode(&cpFile); err != nil {
-		t.Fatalf("output is not valid JSON: %v", err)
-	}
-	if len(cpFile.Checkpoints) != 2 {
-		t.Errorf("expected 2 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, json.NewDecoder(&stdout).Decode(&cpFile), "output is not valid JSON")
+	assert.Equal(t, 2, len(cpFile.Checkpoints), "expected 2 checkpoints")
 }
 
 // 3.3 TestCheckpointLS_NoCheckpoints
@@ -240,15 +210,12 @@ func TestCheckpointLS_NoCheckpoints(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef: env.InvocationID,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("CheckpointLS() error: %v", err)
-	}
+	require.NoError(t, err, "CheckpointLS() error")
 
-	if !strings.Contains(stdout.String(), "No checkpoints found") {
-		t.Errorf("expected 'No checkpoints found', got: %s", stdout.String())
-	}
+	assert.Contains(t, stdout.String(), "No checkpoints found")
 }
 
 // 3.4 TestCheckpointLS_InvocationNotFound
@@ -262,16 +229,12 @@ func TestCheckpointLS_InvocationNotFound(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Use a non-existent invocation ref
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef: "nonexistent-invocation",
+		InvocationRef:   "nonexistent-invocation",
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err, "expected error, got nil")
 
-	code := errors.GetCode(err)
-	if code != errors.EInvocationNotFound {
-		t.Errorf("error code = %q, want %q", code, errors.EInvocationNotFound)
-	}
+	assert.Equal(t, errors.EInvocationNotFound, errors.GetCode(err))
 }
 
 // 3.5 TestCheckpointLS_WrongMode
@@ -284,16 +247,12 @@ func TestCheckpointLS_WrongMode(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef: env.InvocationID,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err, "expected error, got nil")
 
-	code := errors.GetCode(err)
-	if code != errors.EInvocationInvalidMode {
-		t.Errorf("error code = %q, want %q", code, errors.EInvocationInvalidMode)
-	}
+	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
 }
 
 // ---------------------------------------------------------------------------
@@ -321,14 +280,9 @@ func TestCheckpointApply_InvalidID(t *testing.T) {
 				InvocationRef: "some-inv",
 				CheckpointID:  tt.id,
 			}, &stdout, &stderr)
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
+			require.Error(t, err, "expected error, got nil")
 
-			code := errors.GetCode(err)
-			if code != errors.EUsage {
-				t.Errorf("error code = %q, want %q", code, errors.EUsage)
-			}
+			assert.Equal(t, errors.EUsage, errors.GetCode(err))
 		})
 	}
 }
@@ -343,17 +297,13 @@ func TestCheckpointApply_InvocationNotFound(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointApply(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointApplyOpts{
-		InvocationRef: "nonexistent-invocation",
-		CheckpointID:  "1",
+		InvocationRef:   "nonexistent-invocation",
+		CheckpointID:    "1",
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err, "expected error, got nil")
 
-	code := errors.GetCode(err)
-	if code != errors.EInvocationNotFound {
-		t.Errorf("error code = %q, want %q", code, errors.EInvocationNotFound)
-	}
+	assert.Equal(t, errors.EInvocationNotFound, errors.GetCode(err))
 }
 
 // 3.8 TestCheckpointApply_WrongMode
@@ -366,15 +316,11 @@ func TestCheckpointApply_WrongMode(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointApply(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointApplyOpts{
-		InvocationRef: env.InvocationID,
-		CheckpointID:  "1",
+		InvocationRef:   env.InvocationID,
+		CheckpointID:    "1",
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err, "expected error, got nil")
 
-	code := errors.GetCode(err)
-	if code != errors.EInvocationInvalidMode {
-		t.Errorf("error code = %q, want %q", code, errors.EInvocationInvalidMode)
-	}
+	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
 }

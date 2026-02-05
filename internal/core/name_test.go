@@ -4,10 +4,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func TestValidateName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		input    string
@@ -68,57 +73,43 @@ func TestValidateName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := ValidateName(tt.input)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("ValidateName(%q) = nil, want error", tt.input)
-					return
-				}
+				require.Error(t, err)
 				gotCode := errors.GetCode(err)
-				if gotCode != tt.wantCode {
-					t.Errorf("ValidateName(%q) error code = %q, want %q", tt.input, gotCode, tt.wantCode)
-				}
+				assert.Equal(t, tt.wantCode, gotCode)
 			} else {
-				if err != nil {
-					t.Errorf("ValidateName(%q) = %v, want nil", tt.input, err)
-				}
+				require.NoError(t, err)
 			}
 		})
 	}
 }
 
 func TestValidateName_ErrorDetails(t *testing.T) {
+	t.Parallel()
+
 	// Verify error details contain the invalid name
 	err := ValidateName("Bad-Name")
-	if err == nil {
-		t.Fatal("expected error for invalid name")
-	}
+	require.Error(t, err, "expected error for invalid name")
 
 	ae, ok := errors.AsAgencyError(err)
-	if !ok {
-		t.Fatal("expected AgencyError")
-	}
+	require.True(t, ok, "expected AgencyError")
 
-	if ae.Details == nil {
-		t.Fatal("expected error details")
-	}
+	require.NotNil(t, ae.Details, "expected error details")
 
-	if ae.Details["name"] != "Bad-Name" {
-		t.Errorf("error details[name] = %q, want %q", ae.Details["name"], "Bad-Name")
-	}
+	assert.Equal(t, "Bad-Name", ae.Details["name"])
 }
 
 func TestNameConstants(t *testing.T) {
+	t.Parallel()
+
 	// Verify constants are sensible
-	if NameMinLen < 1 {
-		t.Errorf("NameMinLen = %d, want >= 1", NameMinLen)
-	}
-	if NameMaxLen < NameMinLen {
-		t.Errorf("NameMaxLen = %d, want >= NameMinLen (%d)", NameMaxLen, NameMinLen)
-	}
-	if NameMaxLen > 100 {
-		t.Errorf("NameMaxLen = %d, want <= 100 (reasonable limit)", NameMaxLen)
-	}
+	assert.True(t, NameMinLen >= 1, "NameMinLen = %d, want >= 1", NameMinLen)
+	assert.True(t, NameMaxLen >= NameMinLen, "NameMaxLen = %d, want >= NameMinLen (%d)", NameMaxLen, NameMinLen)
+	assert.True(t, NameMaxLen <= 100, "NameMaxLen = %d, want <= 100 (reasonable limit)", NameMaxLen)
 }

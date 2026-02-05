@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
@@ -62,6 +65,7 @@ func (m *mockRunService) StartTmux(_ context.Context, _ *PipelineState) error {
 // TestShortCircuitPreservesErrorCode tests that the pipeline short-circuits
 // on first step error and preserves AgencyError codes.
 func TestShortCircuitPreservesErrorCode(t *testing.T) {
+	t.Parallel()
 	mock := &mockRunService{
 		checkRepoSafeErr: errors.New(errors.EParentDirty, "working tree has uncommitted changes"),
 	}
@@ -72,33 +76,25 @@ func TestShortCircuitPreservesErrorCode(t *testing.T) {
 	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should return error
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 
 	// runID should still be returned
-	if runID == "" {
-		t.Error("expected runID to be set even on error")
-	}
+	assert.NotEmpty(t, runID, "expected runID to be set even on error")
 
 	// Error code should be preserved
 	code := errors.GetCode(err)
-	if code != errors.EParentDirty {
-		t.Errorf("expected error code %s, got %s", errors.EParentDirty, code)
-	}
+	assert.Equal(t, errors.EParentDirty, code)
 
 	// Only CheckRepoSafe should have been called
-	if len(mock.called) != 1 {
-		t.Errorf("expected 1 step called, got %d: %v", len(mock.called), mock.called)
-	}
-	if len(mock.called) > 0 && mock.called[0] != StepCheckRepoSafe {
-		t.Errorf("expected first step to be %s, got %s", StepCheckRepoSafe, mock.called[0])
-	}
+	assert.Len(t, mock.called, 1)
+	require.NotEmpty(t, mock.called)
+	assert.Equal(t, StepCheckRepoSafe, mock.called[0])
 }
 
 // TestReachesThirdStepReturnsNotImplemented tests that the pipeline reaches
 // the third step and returns E_NOT_IMPLEMENTED with the step name in details.
 func TestReachesThirdStepReturnsNotImplemented(t *testing.T) {
+	t.Parallel()
 	mock := &mockRunService{
 		// First two succeed, third fails
 		createWorktreeErr: errors.NewWithDetails(
@@ -114,48 +110,33 @@ func TestReachesThirdStepReturnsNotImplemented(t *testing.T) {
 	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should return error
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 
 	// runID should still be returned
-	if runID == "" {
-		t.Error("expected runID to be set even on error")
-	}
+	assert.NotEmpty(t, runID, "expected runID to be set even on error")
 
 	// Error code should be E_NOT_IMPLEMENTED
 	code := errors.GetCode(err)
-	if code != errors.ENotImplemented {
-		t.Errorf("expected error code %s, got %s", errors.ENotImplemented, code)
-	}
+	assert.Equal(t, errors.ENotImplemented, code)
 
-	// Check error message
+	// Check it's an AgencyError
 	ae, ok := errors.AsAgencyError(err)
-	if !ok {
-		t.Fatal("expected AgencyError")
-	}
-	if ae.Msg != "not implemented" {
-		t.Errorf("expected message 'not implemented', got %q", ae.Msg)
-	}
+	require.True(t, ok, "expected AgencyError")
+	assert.Equal(t, "not implemented", ae.Msg)
 
 	// Check details contain step name
-	if ae.Details == nil {
-		t.Fatal("expected details to be set")
-	}
-	if ae.Details["step"] != StepCreateWorktree {
-		t.Errorf("expected step detail %q, got %q", StepCreateWorktree, ae.Details["step"])
-	}
+	require.NotNil(t, ae.Details)
+	assert.Equal(t, StepCreateWorktree, ae.Details["step"])
 
 	// Only first three steps should have been called
 	expected := []string{StepCheckRepoSafe, StepLoadAgencyConfig, StepCreateWorktree}
-	if len(mock.called) != len(expected) {
-		t.Errorf("expected %d steps called, got %d: %v", len(expected), len(mock.called), mock.called)
-	}
+	assert.Len(t, mock.called, len(expected))
 }
 
 // TestWrapsNonAgencyError tests that non-AgencyError errors are wrapped
 // into E_INTERNAL with the step name in details.
 func TestWrapsNonAgencyError(t *testing.T) {
+	t.Parallel()
 	mock := &mockRunService{
 		checkRepoSafeErr: stderrors.New("boom"),
 	}
@@ -166,51 +147,35 @@ func TestWrapsNonAgencyError(t *testing.T) {
 	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should return error
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 
 	// runID should still be returned
-	if runID == "" {
-		t.Error("expected runID to be set even on error")
-	}
+	assert.NotEmpty(t, runID, "expected runID to be set even on error")
 
 	// Error should be wrapped as E_INTERNAL
 	code := errors.GetCode(err)
-	if code != errors.EInternal {
-		t.Errorf("expected error code %s, got %s", errors.EInternal, code)
-	}
+	assert.Equal(t, errors.EInternal, code)
 
 	// Check it's an AgencyError
 	ae, ok := errors.AsAgencyError(err)
-	if !ok {
-		t.Fatal("expected AgencyError")
-	}
+	require.True(t, ok, "expected AgencyError")
 
 	// Check message
-	if ae.Msg != "internal error" {
-		t.Errorf("expected message 'internal error', got %q", ae.Msg)
-	}
+	assert.Equal(t, "internal error", ae.Msg)
 
 	// Check cause is preserved
-	if ae.Cause == nil {
-		t.Error("expected cause to be set")
-	} else if ae.Cause.Error() != "boom" {
-		t.Errorf("expected cause 'boom', got %q", ae.Cause.Error())
-	}
+	require.NotNil(t, ae.Cause)
+	assert.Equal(t, "boom", ae.Cause.Error())
 
 	// Check details contain step name
-	if ae.Details == nil {
-		t.Fatal("expected details to be set")
-	}
-	if ae.Details["step"] != StepCheckRepoSafe {
-		t.Errorf("expected step detail %q, got %q", StepCheckRepoSafe, ae.Details["step"])
-	}
+	require.NotNil(t, ae.Details)
+	assert.Equal(t, StepCheckRepoSafe, ae.Details["step"])
 }
 
 // TestSuccessPath tests that the pipeline returns runID without error
 // when all steps succeed.
 func TestSuccessPath(t *testing.T) {
+	t.Parallel()
 	mock := &mockRunService{} // all methods succeed (return nil)
 
 	p := NewPipeline(mock)
@@ -219,14 +184,10 @@ func TestSuccessPath(t *testing.T) {
 	runID, err := p.Run(context.Background(), RunPipelineOpts{Name: "test"})
 
 	// Should succeed
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	require.NoError(t, err)
 
 	// runID should be set
-	if runID == "" {
-		t.Error("expected runID to be set")
-	}
+	assert.NotEmpty(t, runID, "expected runID to be set")
 
 	// All 6 steps should have been called in order
 	expected := []string{
@@ -237,19 +198,16 @@ func TestSuccessPath(t *testing.T) {
 		StepRunSetup,
 		StepStartTmux,
 	}
-	if len(mock.called) != len(expected) {
-		t.Errorf("expected %d steps called, got %d: %v", len(expected), len(mock.called), mock.called)
-	}
+	require.Len(t, mock.called, len(expected))
 	for i, step := range expected {
-		if i < len(mock.called) && mock.called[i] != step {
-			t.Errorf("step %d: expected %q, got %q", i, step, mock.called[i])
-		}
+		assert.Equal(t, step, mock.called[i], "step %d", i)
 	}
 }
 
 // TestRunIDGeneratedBeforeSteps tests that run_id is generated before
 // any steps execute, and is available even if the first step fails.
 func TestRunIDGeneratedBeforeSteps(t *testing.T) {
+	t.Parallel()
 	var capturedRunID string
 
 	// Create a mock that captures the runID when CheckRepoSafe is called.
@@ -265,12 +223,8 @@ func TestRunIDGeneratedBeforeSteps(t *testing.T) {
 	capturedRunID = stateCapturer.capturedRunID
 
 	// Returned runID should match what was in state
-	if capturedRunID == "" {
-		t.Error("expected RunID to be set in state before step execution")
-	}
-	if runID != capturedRunID {
-		t.Errorf("returned runID %q doesn't match state runID %q", runID, capturedRunID)
-	}
+	assert.NotEmpty(t, capturedRunID, "expected RunID to be set in state before step execution")
+	assert.Equal(t, capturedRunID, runID)
 }
 
 // stateCapturingMock captures the PipelineState.RunID when CheckRepoSafe is called.
@@ -296,6 +250,7 @@ func (m *stateCapturingMock) StartTmux(_ context.Context, _ *PipelineState) erro
 // TestOptsPassedToState tests that RunPipelineOpts are correctly copied
 // into the pipeline state.
 func TestOptsPassedToState(t *testing.T) {
+	t.Parallel()
 	var capturedState *PipelineState
 
 	captureMock := &optCapturingMock{
@@ -315,25 +270,13 @@ func TestOptsPassedToState(t *testing.T) {
 	}
 
 	_, err := p.Run(context.Background(), opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if capturedState == nil {
-		t.Fatal("expected state to be captured")
-	}
-	if capturedState.Name != opts.Name {
-		t.Errorf("expected Title %q, got %q", opts.Name, capturedState.Name)
-	}
-	if capturedState.Runner != opts.Runner {
-		t.Errorf("expected Runner %q, got %q", opts.Runner, capturedState.Runner)
-	}
-	if capturedState.Parent != opts.Parent {
-		t.Errorf("expected Parent %q, got %q", opts.Parent, capturedState.Parent)
-	}
-	if capturedState.Attach != opts.Attach {
-		t.Errorf("expected Attach %v, got %v", opts.Attach, capturedState.Attach)
-	}
+	require.NotNil(t, capturedState)
+	assert.Equal(t, opts.Name, capturedState.Name)
+	assert.Equal(t, opts.Runner, capturedState.Runner)
+	assert.Equal(t, opts.Parent, capturedState.Parent)
+	assert.Equal(t, opts.Attach, capturedState.Attach)
 }
 
 // optCapturingMock captures the PipelineState for inspection.
@@ -355,15 +298,14 @@ func (m *optCapturingMock) StartTmux(_ context.Context, _ *PipelineState) error 
 
 // TestStepsExecuteInOrder tests that steps execute in the expected fixed order.
 func TestStepsExecuteInOrder(t *testing.T) {
+	t.Parallel()
 	mock := &mockRunService{}
 
 	p := NewPipeline(mock)
 	p.SetNowFunc(fixedTime)
 
 	_, err := p.Run(context.Background(), RunPipelineOpts{Name: "test-run"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	expected := []string{
 		StepCheckRepoSafe,
@@ -374,18 +316,15 @@ func TestStepsExecuteInOrder(t *testing.T) {
 		StepStartTmux,
 	}
 
-	if len(mock.called) != len(expected) {
-		t.Fatalf("expected %d steps, got %d", len(expected), len(mock.called))
-	}
+	require.Len(t, mock.called, len(expected))
 	for i, step := range expected {
-		if mock.called[i] != step {
-			t.Errorf("step %d: expected %q, got %q", i, step, mock.called[i])
-		}
+		assert.Equal(t, step, mock.called[i], "step %d", i)
 	}
 }
 
 // TestMiddleStepFailure tests that failure in a middle step short-circuits correctly.
 func TestMiddleStepFailure(t *testing.T) {
+	t.Parallel()
 	mock := &mockRunService{
 		runSetupErr: errors.New(errors.EScriptFailed, "setup script failed"),
 	}
@@ -395,14 +334,10 @@ func TestMiddleStepFailure(t *testing.T) {
 
 	_, err := p.Run(context.Background(), RunPipelineOpts{Name: "test-run"})
 
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 
 	code := errors.GetCode(err)
-	if code != errors.EScriptFailed {
-		t.Errorf("expected error code %s, got %s", errors.EScriptFailed, code)
-	}
+	assert.Equal(t, errors.EScriptFailed, code)
 
 	// Steps up to and including RunSetup should have been called
 	expected := []string{
@@ -412,7 +347,5 @@ func TestMiddleStepFailure(t *testing.T) {
 		StepWriteMeta,
 		StepRunSetup,
 	}
-	if len(mock.called) != len(expected) {
-		t.Errorf("expected %d steps called, got %d: %v", len(expected), len(mock.called), mock.called)
-	}
+	assert.Len(t, mock.called, len(expected))
 }

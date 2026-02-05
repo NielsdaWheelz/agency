@@ -13,6 +13,8 @@ import (
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockRunner implements exec.CommandRunner for testing.
@@ -87,14 +89,10 @@ func setupTestRepo(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	// Create minimal directory structure
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755); err != nil {
-		t.Fatalf("failed to create .git dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755), "failed to create .git dir")
 
 	scriptsDir := filepath.Join(tmpDir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	// Create agency.json
 	agencyJSON := `{
@@ -114,18 +112,14 @@ func setupTestRepo(t *testing.T) string {
     }
   }
 }`
-	if err := os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644); err != nil {
-		t.Fatalf("failed to write agency.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644), "failed to write agency.json")
 
 	// Create executable stub scripts
 	stubScript := "#!/usr/bin/env bash\nexit 0\n"
 	scripts := []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"}
 	for _, script := range scripts {
 		path := filepath.Join(scriptsDir, script)
-		if err := os.WriteFile(path, []byte(stubScript), 0755); err != nil {
-			t.Fatalf("failed to write script %s: %v", script, err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte(stubScript), 0755), "failed to write script %s", script)
 	}
 
 	return tmpDir
@@ -133,9 +127,7 @@ func setupTestRepo(t *testing.T) string {
 
 func writeUserConfig(t *testing.T, configDir string) {
 	t.Helper()
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("failed to create config dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "failed to create config dir")
 	cfg := `{
   "version": 1,
   "defaults": {
@@ -150,9 +142,7 @@ func writeUserConfig(t *testing.T, configDir string) {
     "code": "code"
   }
 }`
-	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644); err != nil {
-		t.Fatalf("failed to write config.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "failed to write config.json")
 }
 
 // setupMockRunnerAllOK sets up mock runner to respond OK for all tool checks.
@@ -200,15 +190,13 @@ func setupMockRunnerAllOK(m *mockRunner, repoRoot string) {
 }
 
 func TestDoctor_Success(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
 
-	// Set env var for data dir (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	// Setup mock
@@ -218,10 +206,8 @@ func TestDoctor_Success(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("doctor failed: %v", err)
-	}
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err, "doctor failed")
 
 	output := stdout.String()
 
@@ -248,27 +234,22 @@ func TestDoctor_Success(t *testing.T) {
 	}
 
 	for _, line := range expectedLines {
-		if !strings.Contains(output, line) {
-			t.Errorf("output missing expected line: %s\nfull output:\n%s", line, output)
-		}
+		assert.Contains(t, output, line, "output missing expected line")
 	}
 
 	// Check persistence files were created
 	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
-	if _, err := os.Stat(repoIndexPath); os.IsNotExist(err) {
-		t.Error("repo_index.json was not created")
-	}
+	assert.FileExists(t, repoIndexPath, "repo_index.json was not created")
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
 
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
@@ -282,41 +263,30 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for unauthenticated gh")
-	}
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err, "expected error for unauthenticated gh")
 
-	if !strings.Contains(err.Error(), "E_GH_NOT_AUTHENTICATED") {
-		t.Errorf("expected E_GH_NOT_AUTHENTICATED error, got: %v", err)
-	}
+	assert.Contains(t, err.Error(), "E_GH_NOT_AUTHENTICATED")
 
 	// stdout should be empty on failure
-	if stdout.Len() > 0 {
-		t.Errorf("stdout should be empty on failure, got: %s", stdout.String())
-	}
+	assert.Empty(t, stdout.String(), "stdout should be empty on failure")
 
 	// Persistence files should NOT be created on failure
 	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
-	if _, err := os.Stat(repoIndexPath); !os.IsNotExist(err) {
-		t.Error("repo_index.json should not be created on failure")
-	}
+	assert.NoFileExists(t, repoIndexPath, "repo_index.json should not be created on failure")
 }
 
 func TestDoctor_ScriptNotExecutable(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	// Make setup script non-executable
 	setupScript := filepath.Join(repoRoot, "scripts", "agency_setup.sh")
-	if err := os.Chmod(setupScript, 0644); err != nil {
-		t.Fatalf("failed to chmod script: %v", err)
-	}
+	require.NoError(t, os.Chmod(setupScript, 0644), "failed to chmod script")
 
 	dataDir := t.TempDir()
 
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
@@ -325,35 +295,24 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for non-executable script")
-	}
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err, "expected error for non-executable script")
 
-	if !strings.Contains(err.Error(), "E_SCRIPT_NOT_EXECUTABLE") {
-		t.Errorf("expected E_SCRIPT_NOT_EXECUTABLE error, got: %v", err)
-	}
-
-	// Check chmod hint
-	if !strings.Contains(err.Error(), "chmod +x") {
-		t.Errorf("expected chmod hint in error, got: %v", err)
-	}
+	assert.Contains(t, err.Error(), "E_SCRIPT_NOT_EXECUTABLE")
+	assert.Contains(t, err.Error(), "chmod +x", "expected chmod hint in error")
 }
 
 func TestDoctor_ScriptMissing(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	// Remove setup script
 	setupScript := filepath.Join(repoRoot, "scripts", "agency_setup.sh")
-	if err := os.Remove(setupScript); err != nil {
-		t.Fatalf("failed to remove script: %v", err)
-	}
+	require.NoError(t, os.Remove(setupScript), "failed to remove script")
 
 	dataDir := t.TempDir()
 
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
@@ -362,24 +321,19 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for missing script")
-	}
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err, "expected error for missing script")
 
-	if !strings.Contains(err.Error(), "E_SCRIPT_NOT_FOUND") {
-		t.Errorf("expected E_SCRIPT_NOT_FOUND error, got: %v", err)
-	}
+	assert.Contains(t, err.Error(), "E_SCRIPT_NOT_FOUND")
 }
 
 func TestDoctor_NoGitHubOrigin(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
 
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
@@ -393,37 +347,24 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	// Doctor should still succeed with missing origin
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("doctor should succeed without GitHub origin: %v", err)
-	}
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err, "doctor should succeed without GitHub origin")
 
 	output := stdout.String()
 
-	// Check that github_flow_available is false
-	if !strings.Contains(output, "github_flow_available: false") {
-		t.Errorf("expected github_flow_available: false, got:\n%s", output)
-	}
-	if !strings.Contains(output, "origin_present: false") {
-		t.Errorf("expected origin_present: false, got:\n%s", output)
-	}
-	// repo_key should be path-based
-	if !strings.Contains(output, "repo_key: path:") {
-		t.Errorf("expected path-based repo_key, got:\n%s", output)
-	}
-	if !strings.Contains(output, "status: ok") {
-		t.Errorf("expected status: ok, got:\n%s", output)
-	}
+	assert.Contains(t, output, "github_flow_available: false")
+	assert.Contains(t, output, "origin_present: false")
+	assert.Contains(t, output, "repo_key: path:", "expected path-based repo_key")
+	assert.Contains(t, output, "status: ok")
 }
 
 func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
 
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
@@ -433,31 +374,20 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 
 	// Run doctor twice
 	var stdout1, stderr1 bytes.Buffer
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout1, &stderr1)
-	if err != nil {
-		t.Fatalf("first doctor run failed: %v", err)
-	}
-
-	// Small delay to ensure different timestamps
-	time.Sleep(10 * time.Millisecond)
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout1, &stderr1)
+	require.NoError(t, err, "first doctor run failed")
 
 	var stdout2, stderr2 bytes.Buffer
-	err = Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout2, &stderr2)
-	if err != nil {
-		t.Fatalf("second doctor run failed: %v", err)
-	}
+	err = Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout2, &stderr2)
+	require.NoError(t, err, "second doctor run failed")
 
 	// Load repo.json and verify created_at is preserved
 	st := store.NewStore(fsys, dataDir, time.Now)
 	idx, err := st.LoadRepoIndex()
-	if err != nil {
-		t.Fatalf("failed to load repo_index: %v", err)
-	}
+	require.NoError(t, err, "failed to load repo_index")
 
 	// Should have exactly one entry
-	if len(idx.Repos) != 1 {
-		t.Errorf("expected 1 repo entry, got %d", len(idx.Repos))
-	}
+	assert.Len(t, idx.Repos, 1, "expected 1 repo entry")
 
 	// Get the repo_id
 	var repoID string
@@ -467,31 +397,23 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 	}
 
 	rec, exists, err := st.LoadRepoRecord(repoID)
-	if err != nil || !exists {
-		t.Fatalf("failed to load repo.json: exists=%v err=%v", exists, err)
-	}
+	require.NoError(t, err, "failed to load repo.json")
+	require.True(t, exists, "repo.json should exist")
 
 	// Verify timestamps
-	if rec.CreatedAt == "" {
-		t.Error("created_at should not be empty")
-	}
-	if rec.UpdatedAt == "" {
-		t.Error("updated_at should not be empty")
-	}
+	assert.NotEmpty(t, rec.CreatedAt, "created_at should not be empty")
+	assert.NotEmpty(t, rec.UpdatedAt, "updated_at should not be empty")
 	// updated_at should be >= created_at (we can't easily test they're different due to timing)
-	if rec.UpdatedAt < rec.CreatedAt {
-		t.Errorf("updated_at (%s) should be >= created_at (%s)", rec.UpdatedAt, rec.CreatedAt)
-	}
+	assert.GreaterOrEqual(t, rec.UpdatedAt, rec.CreatedAt, "updated_at should be >= created_at")
 }
 
 func TestDoctor_OutputOrder(t *testing.T) {
+	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
 
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	writeUserConfig(t, configDir)
 
 	m := newMockRunner()
@@ -500,10 +422,8 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
 
-	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("doctor failed: %v", err)
-	}
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err, "doctor failed")
 
 	output := stdout.String()
 	lines := strings.Split(output, "\n")
@@ -540,17 +460,13 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		if keyIndex >= len(expectedKeyOrder) {
-			t.Errorf("unexpected extra line: %s", line)
+		if !assert.Less(t, keyIndex, len(expectedKeyOrder), "unexpected extra line: %s", line) {
 			continue
 		}
-		if !strings.HasPrefix(line, expectedKeyOrder[keyIndex]) {
-			t.Errorf("line %d: expected prefix %q, got %q", keyIndex, expectedKeyOrder[keyIndex], line)
-		}
+		assert.True(t, strings.HasPrefix(line, expectedKeyOrder[keyIndex]),
+			"line %d: expected prefix %q, got %q", keyIndex, expectedKeyOrder[keyIndex], line)
 		keyIndex++
 	}
 
-	if keyIndex != len(expectedKeyOrder) {
-		t.Errorf("expected %d lines, got %d", len(expectedKeyOrder), keyIndex)
-	}
+	assert.Equal(t, len(expectedKeyOrder), keyIndex, "expected %d lines, got %d", len(expectedKeyOrder), keyIndex)
 }

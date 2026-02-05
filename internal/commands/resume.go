@@ -39,6 +39,9 @@ type ResumeOpts struct {
 
 	// Yes skips confirmation prompt for --restart when session exists.
 	Yes bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // isInteractive is a package-level var for testing override.
@@ -61,7 +64,7 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 	}
 
 	// Build resolution context using the new global resolver
-	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath)
+	rctx, err := ResolveRunContext(ctx, cr, cwd, opts.RepoPath, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
@@ -81,15 +84,16 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 		)
 	}
 
-	// Get home directory for path resolution
+	// Resolve directories
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
-
-	// Resolve directories
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 	dataDir := dirs.DataDir
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	}
 
 	// Use the resolved run_id and update opts for helper functions
 	runID := resolved.RunID

@@ -5,9 +5,12 @@ import (
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrintRunSuccess(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		result   *RunResult
@@ -82,17 +85,18 @@ next: agency attach fix-bug
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			printRunSuccess(&buf, tt.result, tt.detached)
-			if buf.String() != tt.expected {
-				t.Errorf("printRunSuccess() output mismatch:\ngot:\n%s\nwant:\n%s", buf.String(), tt.expected)
-			}
+			assert.Equal(t, tt.expected, buf.String())
 		})
 	}
 }
 
 func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
+	t.Parallel()
 	// Verify the exact order and keys per spec:
 	// 1. run_id
 	// 2. name
@@ -131,12 +135,10 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 	lines := bytes.Split(buf.Bytes(), []byte("\n"))
 	for i, key := range expectedKeysDetached {
 		if i >= len(lines) {
-			t.Errorf("detached: missing line %d: expected key %s", i, key)
+			assert.Fail(t, "detached: missing line", "line %d: expected key %s", i, key)
 			continue
 		}
-		if !bytes.HasPrefix(lines[i], []byte(key)) {
-			t.Errorf("detached: line %d: expected prefix %q, got %q", i, key, string(lines[i]))
-		}
+		assert.True(t, bytes.HasPrefix(lines[i], []byte(key)), "detached: line %d: expected prefix %q, got %q", i, key, string(lines[i]))
 	}
 
 	// Test attached mode (no next: hint)
@@ -156,20 +158,17 @@ func TestPrintRunSuccessOrderAndKeys(t *testing.T) {
 	lines = bytes.Split(buf.Bytes(), []byte("\n"))
 	for i, key := range expectedKeysAttached {
 		if i >= len(lines) {
-			t.Errorf("attached: missing line %d: expected key %s", i, key)
+			assert.Fail(t, "attached: missing line", "line %d: expected key %s", i, key)
 			continue
 		}
-		if !bytes.HasPrefix(lines[i], []byte(key)) {
-			t.Errorf("attached: line %d: expected prefix %q, got %q", i, key, string(lines[i]))
-		}
+		assert.True(t, bytes.HasPrefix(lines[i], []byte(key)), "attached: line %d: expected prefix %q, got %q", i, key, string(lines[i]))
 	}
 	// Verify no extra lines (just the empty line from trailing newline)
-	if len(lines) > len(expectedKeysAttached)+1 {
-		t.Errorf("attached: expected %d lines, got %d", len(expectedKeysAttached)+1, len(lines))
-	}
+	assert.LessOrEqual(t, len(lines), len(expectedKeysAttached)+1, "attached: too many lines")
 }
 
 func TestRunResultWarnings(t *testing.T) {
+	t.Parallel()
 	// Test that warnings are stored correctly in result
 	result := &RunResult{
 		RunID:           "id",
@@ -184,33 +183,23 @@ func TestRunResultWarnings(t *testing.T) {
 		},
 	}
 
-	if len(result.Warnings) != 1 {
-		t.Errorf("expected 1 warning, got %d", len(result.Warnings))
-	}
-	if result.Warnings[0].Code != "W_TEST" {
-		t.Errorf("expected warning code W_TEST, got %s", result.Warnings[0].Code)
-	}
+	require.Len(t, result.Warnings, 1)
+	assert.Equal(t, "W_TEST", result.Warnings[0].Code)
 }
 
 func TestRunOptsDefaults(t *testing.T) {
+	t.Parallel()
 	// Test that empty opts are valid (defaults resolved later)
 	opts := RunOpts{}
 
-	if opts.Name != "" {
-		t.Error("expected empty title by default")
-	}
-	if opts.Runner != "" {
-		t.Error("expected empty runner by default")
-	}
-	if opts.Parent != "" {
-		t.Error("expected empty parent by default")
-	}
-	if opts.Attach {
-		t.Error("expected attach=false by default")
-	}
+	assert.Equal(t, "", opts.Name, "expected empty title by default")
+	assert.Equal(t, "", opts.Runner, "expected empty runner by default")
+	assert.Equal(t, "", opts.Parent, "expected empty parent by default")
+	assert.False(t, opts.Attach, "expected attach=false by default")
 }
 
 func TestRunOptsWithValues(t *testing.T) {
+	t.Parallel()
 	opts := RunOpts{
 		Name:   "my title",
 		Runner: "claude",
@@ -218,16 +207,8 @@ func TestRunOptsWithValues(t *testing.T) {
 		Attach: true,
 	}
 
-	if opts.Name != "my title" {
-		t.Errorf("expected title 'my title', got %q", opts.Name)
-	}
-	if opts.Runner != "claude" {
-		t.Errorf("expected runner 'claude', got %q", opts.Runner)
-	}
-	if opts.Parent != "main" {
-		t.Errorf("expected parent 'main', got %q", opts.Parent)
-	}
-	if !opts.Attach {
-		t.Error("expected attach=true")
-	}
+	assert.Equal(t, "my title", opts.Name)
+	assert.Equal(t, "claude", opts.Runner)
+	assert.Equal(t, "main", opts.Parent)
+	assert.True(t, opts.Attach, "expected attach=true")
 }

@@ -16,6 +16,7 @@ import (
 )
 
 func TestHandleLandDiscardRouting(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)

@@ -2,9 +2,13 @@ package identity
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseGitHubOwnerRepo(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		raw       string
@@ -152,23 +156,24 @@ func TestParseGitHubOwnerRepo(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			owner, repo, ok := ParseGitHubOwnerRepo(tt.raw)
 
-			if ok != tt.wantOK {
-				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
-			}
-			if ok && owner != tt.wantOwner {
-				t.Errorf("owner = %q, want %q", owner, tt.wantOwner)
-			}
-			if ok && repo != tt.wantRepo {
-				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
+			assert.Equal(t, tt.wantOK, ok)
+			if ok {
+				assert.Equal(t, tt.wantOwner, owner)
+				assert.Equal(t, tt.wantRepo, repo)
 			}
 		})
 	}
 }
 
 func TestDeriveRepoIdentity_GitHub(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		absRepoRoot string
@@ -200,26 +205,23 @@ func TestDeriveRepoIdentity_GitHub(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			id := DeriveRepoIdentity(tt.absRepoRoot, tt.originURL)
 
-			if id.RepoKey != tt.wantKey {
-				t.Errorf("RepoKey = %q, want %q", id.RepoKey, tt.wantKey)
-			}
-			if id.GitHubFlowAvailable != tt.wantGHFlow {
-				t.Errorf("GitHubFlowAvailable = %v, want %v", id.GitHubFlowAvailable, tt.wantGHFlow)
-			}
-			if len(id.RepoID) != RepoIDLen {
-				t.Errorf("RepoID length = %d, want %d", len(id.RepoID), RepoIDLen)
-			}
-			if !id.Origin.Present {
-				t.Error("Origin.Present = false, want true")
-			}
+			assert.Equal(t, tt.wantKey, id.RepoKey)
+			assert.Equal(t, tt.wantGHFlow, id.GitHubFlowAvailable)
+			assert.Len(t, id.RepoID, RepoIDLen)
+			assert.True(t, id.Origin.Present, "Origin.Present = false, want true")
 		})
 	}
 }
 
 func TestDeriveRepoIdentity_PathFallback(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		absRepoRoot string
@@ -243,31 +245,28 @@ func TestDeriveRepoIdentity_PathFallback(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			id := DeriveRepoIdentity(tt.absRepoRoot, tt.originURL)
 
 			// Should use path-based key
-			if len(id.RepoKey) < 5 || id.RepoKey[:5] != "path:" {
-				t.Errorf("RepoKey = %q, expected path: prefix", id.RepoKey)
-			}
+			assert.True(t, len(id.RepoKey) >= 5 && id.RepoKey[:5] == "path:", "RepoKey = %q, expected path: prefix", id.RepoKey)
 
 			// Path hash should be full sha256 hex
 			pathHash := id.RepoKey[5:] // strip "path:"
-			if len(pathHash) != PathHashLen {
-				t.Errorf("path hash length = %d, want %d", len(pathHash), PathHashLen)
-			}
+			assert.Len(t, pathHash, PathHashLen)
 
-			if id.GitHubFlowAvailable {
-				t.Error("GitHubFlowAvailable = true, want false")
-			}
-			if len(id.RepoID) != RepoIDLen {
-				t.Errorf("RepoID length = %d, want %d", len(id.RepoID), RepoIDLen)
-			}
+			assert.False(t, id.GitHubFlowAvailable, "GitHubFlowAvailable = true, want false")
+			assert.Len(t, id.RepoID, RepoIDLen)
 		})
 	}
 }
 
 func TestDeriveRepoIdentity_Determinism(t *testing.T) {
+	t.Parallel()
+
 	// Same inputs should always produce same outputs
 	absRepoRoot := "/home/user/project"
 	originURL := "git@github.com:owner/repo.git"
@@ -275,108 +274,92 @@ func TestDeriveRepoIdentity_Determinism(t *testing.T) {
 	id1 := DeriveRepoIdentity(absRepoRoot, originURL)
 	id2 := DeriveRepoIdentity(absRepoRoot, originURL)
 
-	if id1.RepoKey != id2.RepoKey {
-		t.Errorf("RepoKey not deterministic: %q != %q", id1.RepoKey, id2.RepoKey)
-	}
-	if id1.RepoID != id2.RepoID {
-		t.Errorf("RepoID not deterministic: %q != %q", id1.RepoID, id2.RepoID)
-	}
+	assert.Equal(t, id1.RepoKey, id2.RepoKey, "RepoKey not deterministic")
+	assert.Equal(t, id1.RepoID, id2.RepoID, "RepoID not deterministic")
 }
 
 func TestDeriveRepoIdentity_PathHashDeterminism(t *testing.T) {
+	t.Parallel()
+
 	// Same path should always produce same hash
 	absRepoRoot := "/home/user/project"
 
 	id1 := DeriveRepoIdentity(absRepoRoot, "")
 	id2 := DeriveRepoIdentity(absRepoRoot, "")
 
-	if id1.RepoKey != id2.RepoKey {
-		t.Errorf("path-based RepoKey not deterministic: %q != %q", id1.RepoKey, id2.RepoKey)
-	}
+	assert.Equal(t, id1.RepoKey, id2.RepoKey, "path-based RepoKey not deterministic")
 }
 
 func TestDeriveRepoIdentity_DifferentPaths(t *testing.T) {
+	t.Parallel()
+
 	// Different paths should produce different hashes
 	id1 := DeriveRepoIdentity("/path/one", "")
 	id2 := DeriveRepoIdentity("/path/two", "")
 
-	if id1.RepoKey == id2.RepoKey {
-		t.Error("different paths produced same RepoKey")
-	}
-	if id1.RepoID == id2.RepoID {
-		t.Error("different paths produced same RepoID")
-	}
+	assert.NotEqual(t, id1.RepoKey, id2.RepoKey, "different paths produced same RepoKey")
+	assert.NotEqual(t, id1.RepoID, id2.RepoID, "different paths produced same RepoID")
 }
 
 func TestSha256Hex(t *testing.T) {
+	t.Parallel()
+
 	// Verify hash is lowercase hex and correct length
 	hash := Sha256Hex("test")
 
-	if len(hash) != 64 {
-		t.Errorf("hash length = %d, want 64", len(hash))
-	}
+	assert.Len(t, hash, 64)
 
 	// Verify it's all lowercase hex
 	for _, c := range hash {
 		isDigit := c >= '0' && c <= '9'
 		isLowerHex := c >= 'a' && c <= 'f'
-		if !isDigit && !isLowerHex {
-			t.Errorf("hash contains non-lowercase-hex character: %c", c)
-		}
+		assert.True(t, isDigit || isLowerHex, "hash contains non-lowercase-hex character: %c", c)
 	}
 
 	// Verify determinism
 	hash2 := Sha256Hex("test")
-	if hash != hash2 {
-		t.Errorf("Sha256Hex not deterministic")
-	}
+	assert.Equal(t, hash, hash2, "Sha256Hex not deterministic")
 
 	// Known value test
 	// echo -n "test" | sha256sum -> 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 	expected := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-	if hash != expected {
-		t.Errorf("Sha256Hex(\"test\") = %q, want %q", hash, expected)
-	}
+	assert.Equal(t, expected, hash)
 }
 
 func TestRepoIDLen(t *testing.T) {
+	t.Parallel()
+
 	// Verify constant value per spec
-	if RepoIDLen != 16 {
-		t.Errorf("RepoIDLen = %d, want 16", RepoIDLen)
-	}
+	assert.Equal(t, 16, RepoIDLen)
 }
 
 func TestPathHashLen(t *testing.T) {
+	t.Parallel()
+
 	// Verify constant value per spec
-	if PathHashLen != 64 {
-		t.Errorf("PathHashLen = %d, want 64", PathHashLen)
-	}
+	assert.Equal(t, 64, PathHashLen)
 }
 
 func TestDeriveRepoIdentity_OriginInfo(t *testing.T) {
+	t.Parallel()
+
 	// Test that Origin info is properly populated
 	t.Run("with origin", func(t *testing.T) {
+		t.Parallel()
+
 		id := DeriveRepoIdentity("/path", "git@github.com:owner/repo.git")
 
-		if !id.Origin.Present {
-			t.Error("Origin.Present = false, want true")
-		}
-		if id.Origin.URL != "git@github.com:owner/repo.git" {
-			t.Errorf("Origin.URL = %q, want %q", id.Origin.URL, "git@github.com:owner/repo.git")
-		}
-		if id.Origin.Host != "github.com" {
-			t.Errorf("Origin.Host = %q, want %q", id.Origin.Host, "github.com")
-		}
+		assert.True(t, id.Origin.Present, "Origin.Present = false, want true")
+		assert.Equal(t, "git@github.com:owner/repo.git", id.Origin.URL)
+		assert.Equal(t, "github.com", id.Origin.Host)
 	})
 
 	t.Run("without origin", func(t *testing.T) {
+		t.Parallel()
+
 		id := DeriveRepoIdentity("/path", "")
 
-		if id.Origin.Present {
-			t.Error("Origin.Present = true, want false")
-		}
-		if id.Origin.URL != "" {
-			t.Errorf("Origin.URL = %q, want empty", id.Origin.URL)
-		}
+		assert.False(t, id.Origin.Present, "Origin.Present = true, want false")
+		assert.Equal(t, "", id.Origin.URL)
 	})
 }

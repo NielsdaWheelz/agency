@@ -12,6 +12,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/scaffold"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // stubRunner is a CommandRunner that returns a fixed repo root.
@@ -37,23 +39,21 @@ func (s *stubRunner) LookPath(file string) (string, error) {
 }
 
 // setupTempGitRepo creates a temp directory and initializes a minimal git repo.
-// It also sets AGENCY_CONFIG_DIR to a temp directory.
+// Returns the repo root and a temp config directory.
 func setupTempGitRepo(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	// Create .git directory to simulate a git repo
 	gitDir := filepath.Join(dir, ".git")
-	if err := os.MkdirAll(gitDir, 0755); err != nil {
-		t.Fatalf("failed to create .git dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(gitDir, 0755), "failed to create .git dir")
 
 	return dir, configDir
 }
 
 func TestInit_CreatesConfigAndStubs(t *testing.T) {
+	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
@@ -61,21 +61,15 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// Check agency.json exists and matches template
 	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
 	content, err := os.ReadFile(agencyJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read agency.json: %v", err)
-	}
-	if string(content) != scaffold.AgencyJSONTemplate {
-		t.Errorf("agency.json content mismatch:\ngot:\n%s\nwant:\n%s", string(content), scaffold.AgencyJSONTemplate)
-	}
+	require.NoError(t, err, "failed to read agency.json")
+	assert.Equal(t, scaffold.AgencyJSONTemplate, string(content), "agency.json content mismatch")
 
 	// Check stub scripts exist and are executable
 	scripts := []string{
@@ -86,253 +80,179 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 	for _, script := range scripts {
 		path := filepath.Join(repoRoot, script)
 		info, err := os.Stat(path)
-		if err != nil {
-			t.Errorf("script %s not found: %v", script, err)
-			continue
-		}
-		// Check owner executable bit
-		if info.Mode()&0100 == 0 {
-			t.Errorf("script %s is not executable: mode=%o", script, info.Mode())
+		if assert.NoError(t, err, "script %s not found", script) {
+			// Check owner executable bit
+			assert.NotZero(t, info.Mode()&0100, "script %s is not executable: mode=%o", script, info.Mode())
 		}
 	}
 
 	// Check .gitignore exists and contains .agency/
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
 	gitignoreContent, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("failed to read .gitignore: %v", err)
-	}
-	if !strings.Contains(string(gitignoreContent), ".agency/") {
-		t.Errorf(".gitignore does not contain .agency/: %q", string(gitignoreContent))
-	}
+	require.NoError(t, err, "failed to read .gitignore")
+	assert.Contains(t, string(gitignoreContent), ".agency/", ".gitignore does not contain .agency/")
 	// Check ends with newline
-	if len(gitignoreContent) > 0 && gitignoreContent[len(gitignoreContent)-1] != '\n' {
-		t.Error(".gitignore does not end with newline")
+	if len(gitignoreContent) > 0 {
+		assert.Equal(t, byte('\n'), gitignoreContent[len(gitignoreContent)-1], ".gitignore does not end with newline")
 	}
 
 	// Check output
 	output := stdout.String()
-	if !strings.Contains(output, "repo_root:") {
-		t.Error("output missing repo_root")
-	}
-	if !strings.Contains(output, "agency_json: created") {
-		t.Error("output missing agency_json: created")
-	}
-	if !strings.Contains(output, "scripts_created:") {
-		t.Error("output missing scripts_created")
-	}
-	if !strings.Contains(output, "gitignore: updated") {
-		t.Error("output missing gitignore: updated")
-	}
-	if !strings.Contains(output, "user_config_path:") {
-		t.Error("output missing user_config_path")
-	}
-	if !strings.Contains(output, "user_config: created") {
-		t.Error("output missing user_config: created")
-	}
+	assert.Contains(t, output, "repo_root:", "output missing repo_root")
+	assert.Contains(t, output, "agency_json: created", "output missing agency_json: created")
+	assert.Contains(t, output, "scripts_created:", "output missing scripts_created")
+	assert.Contains(t, output, "gitignore: updated", "output missing gitignore: updated")
+	assert.Contains(t, output, "user_config_path:", "output missing user_config_path")
+	assert.Contains(t, output, "user_config: created", "output missing user_config: created")
 
 	userConfigPath := filepath.Join(configDir, "config.json")
-	if _, err := os.Stat(userConfigPath); err != nil {
-		t.Fatalf("expected user config at %s: %v", userConfigPath, err)
-	}
+	assert.FileExists(t, userConfigPath, "expected user config")
 }
 
 func TestInit_RefusesOverwrite(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	// Create existing agency.json
 	existingContent := `{"version": 999}`
 	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
-	if err := os.WriteFile(agencyJSONPath, []byte(existingContent), 0644); err != nil {
-		t.Fatalf("failed to write existing agency.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(agencyJSONPath, []byte(existingContent), 0644), "failed to write existing agency.json")
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 
 	// Should error
-	if err == nil {
-		t.Fatal("expected error for existing agency.json")
-	}
-	if errors.GetCode(err) != errors.EAgencyJSONExists {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.EAgencyJSONExists)
-	}
+	require.Error(t, err, "expected error for existing agency.json")
+	assert.Equal(t, errors.EAgencyJSONExists, errors.GetCode(err))
 
 	// Original file should be unchanged
 	content, err := os.ReadFile(agencyJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read agency.json: %v", err)
-	}
-	if string(content) != existingContent {
-		t.Errorf("agency.json was modified: got %q, want %q", string(content), existingContent)
-	}
+	require.NoError(t, err, "failed to read agency.json")
+	assert.Equal(t, existingContent, string(content), "agency.json was modified")
 }
 
 func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	// Create existing agency.json with different content
 	existingContent := `{"version": 999}`
 	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
-	if err := os.WriteFile(agencyJSONPath, []byte(existingContent), 0644); err != nil {
-		t.Fatalf("failed to write existing agency.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(agencyJSONPath, []byte(existingContent), 0644), "failed to write existing agency.json")
 
 	// Create existing script with custom content
 	scriptsDir := filepath.Join(repoRoot, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 	customScript := "#!/bin/bash\necho custom\n"
 	setupPath := filepath.Join(scriptsDir, "agency_setup.sh")
-	if err := os.WriteFile(setupPath, []byte(customScript), 0755); err != nil {
-		t.Fatalf("failed to write existing script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(setupPath, []byte(customScript), 0755), "failed to write existing script")
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: true}
+	opts := InitOpts{NoGitignore: false, Force: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init with --force failed: %v", err)
-	}
+	require.NoError(t, err, "Init with --force failed")
 
 	// agency.json should be replaced with template
 	content, err := os.ReadFile(agencyJSONPath)
-	if err != nil {
-		t.Fatalf("failed to read agency.json: %v", err)
-	}
-	if string(content) != scaffold.AgencyJSONTemplate {
-		t.Errorf("agency.json not replaced:\ngot:\n%s\nwant:\n%s", string(content), scaffold.AgencyJSONTemplate)
-	}
+	require.NoError(t, err, "failed to read agency.json")
+	assert.Equal(t, scaffold.AgencyJSONTemplate, string(content), "agency.json not replaced")
 
 	// Existing script should NOT be overwritten
 	scriptContent, err := os.ReadFile(setupPath)
-	if err != nil {
-		t.Fatalf("failed to read script: %v", err)
-	}
-	if string(scriptContent) != customScript {
-		t.Errorf("script was overwritten: got %q, want %q", string(scriptContent), customScript)
-	}
+	require.NoError(t, err, "failed to read script")
+	assert.Equal(t, customScript, string(scriptContent), "script was overwritten")
 
 	// Check output says overwritten
 	output := stdout.String()
-	if !strings.Contains(output, "agency_json: overwritten") {
-		t.Errorf("output should say 'overwritten': %s", output)
-	}
+	assert.Contains(t, output, "agency_json: overwritten")
 }
 
 func TestInit_GitignoreIdempotent(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	// Create .gitignore with .agency/ already present
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
 	existing := "node_modules/\n.agency/\n"
-	if err := os.WriteFile(gitignorePath, []byte(existing), 0644); err != nil {
-		t.Fatalf("failed to write .gitignore: %v", err)
-	}
+	require.NoError(t, os.WriteFile(gitignorePath, []byte(existing), 0644), "failed to write .gitignore")
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// .gitignore should have .agency/ exactly once
 	content, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("failed to read .gitignore: %v", err)
-	}
-	count := strings.Count(string(content), ".agency")
-	if count != 1 {
-		t.Errorf(".agency appears %d times, want 1: %q", count, string(content))
-	}
+	require.NoError(t, err, "failed to read .gitignore")
+	assert.Equal(t, 1, strings.Count(string(content), ".agency"), ".agency count mismatch in: %q", string(content))
 
 	// Check output says unchanged
-	output := stdout.String()
-	if !strings.Contains(output, "gitignore: unchanged") {
-		t.Errorf("output should say 'unchanged': %s", output)
-	}
+	assert.Contains(t, stdout.String(), "gitignore: unchanged")
 }
 
 func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	// Create .gitignore with .agency (no trailing slash) - should be treated as present
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
 	existing := "node_modules/\n.agency\n"
-	if err := os.WriteFile(gitignorePath, []byte(existing), 0644); err != nil {
-		t.Fatalf("failed to write .gitignore: %v", err)
-	}
+	require.NoError(t, os.WriteFile(gitignorePath, []byte(existing), 0644), "failed to write .gitignore")
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// .gitignore should NOT have .agency/ added (since .agency is treated as equivalent)
 	content, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("failed to read .gitignore: %v", err)
-	}
+	require.NoError(t, err, "failed to read .gitignore")
 	// Should have exactly one .agency entry (the original without slash)
-	count := strings.Count(string(content), ".agency")
-	if count != 1 {
-		t.Errorf(".agency appears %d times, want 1: %q", count, string(content))
-	}
+	assert.Equal(t, 1, strings.Count(string(content), ".agency"), ".agency count mismatch in: %q", string(content))
 }
 
 func TestInit_NoGitignore(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: true, Force: false}
+	opts := InitOpts{NoGitignore: true, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// .gitignore should NOT exist
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
-	_, err = os.Stat(gitignorePath)
-	if !os.IsNotExist(err) {
-		t.Error(".gitignore should not be created with --no-gitignore")
-	}
+	assert.NoFileExists(t, gitignorePath, ".gitignore should not be created with --no-gitignore")
 
 	// Check output says skipped and warning
 	output := stdout.String()
-	if !strings.Contains(output, "gitignore: skipped") {
-		t.Errorf("output should say 'skipped': %s", output)
-	}
-	if !strings.Contains(output, "warning: gitignore_skipped") {
-		t.Errorf("output should contain warning: %s", output)
-	}
+	assert.Contains(t, output, "gitignore: skipped")
+	assert.Contains(t, output, "warning: gitignore_skipped")
 }
 
 func TestInit_NotInRepo(t *testing.T) {
+	t.Parallel()
 	// Use a temp dir that is NOT a git repo
 	dir := t.TempDir()
 
@@ -344,153 +264,106 @@ func TestInit_NotInRepo(t *testing.T) {
 	opts := InitOpts{NoGitignore: false, Force: false}
 	err := Init(ctx, cr, fsys, dir, opts, &stdout, &stderr)
 
-	if err == nil {
-		t.Fatal("expected error when not in git repo")
-	}
-	if errors.GetCode(err) != errors.ENoRepo {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.ENoRepo)
-	}
+	require.Error(t, err, "expected error when not in git repo")
+	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
 func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	// Create .gitignore WITHOUT trailing newline
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
 	existing := "node_modules/" // no newline at end
-	if err := os.WriteFile(gitignorePath, []byte(existing), 0644); err != nil {
-		t.Fatalf("failed to write .gitignore: %v", err)
-	}
+	require.NoError(t, os.WriteFile(gitignorePath, []byte(existing), 0644), "failed to write .gitignore")
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// .gitignore should end with newline after init
 	content, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("failed to read .gitignore: %v", err)
-	}
-	if len(content) == 0 || content[len(content)-1] != '\n' {
-		t.Errorf(".gitignore should end with newline: %q", string(content))
-	}
+	require.NoError(t, err, "failed to read .gitignore")
+	require.NotEmpty(t, content, ".gitignore should not be empty")
+	assert.Equal(t, byte('\n'), content[len(content)-1], ".gitignore should end with newline")
 	// Should contain .agency/
-	if !strings.Contains(string(content), ".agency/") {
-		t.Errorf(".gitignore should contain .agency/: %q", string(content))
-	}
+	assert.Contains(t, string(content), ".agency/")
 }
 
 func TestInit_VerifyStubContent(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// Verify setup script content
 	setupPath := filepath.Join(repoRoot, "scripts/agency_setup.sh")
 	setupContent, err := os.ReadFile(setupPath)
-	if err != nil {
-		t.Fatalf("failed to read setup script: %v", err)
-	}
-	if string(setupContent) != scaffold.SetupStub {
-		t.Errorf("setup script content mismatch:\ngot:\n%s\nwant:\n%s", string(setupContent), scaffold.SetupStub)
-	}
+	require.NoError(t, err, "failed to read setup script")
+	assert.Equal(t, scaffold.SetupStub, string(setupContent), "setup script content mismatch")
 
 	// Verify verify script content (should exit 1 and print message)
 	verifyPath := filepath.Join(repoRoot, "scripts/agency_verify.sh")
 	verifyContent, err := os.ReadFile(verifyPath)
-	if err != nil {
-		t.Fatalf("failed to read verify script: %v", err)
-	}
-	if string(verifyContent) != scaffold.VerifyStub {
-		t.Errorf("verify script content mismatch:\ngot:\n%s\nwant:\n%s", string(verifyContent), scaffold.VerifyStub)
-	}
-	if !strings.Contains(string(verifyContent), "exit 1") {
-		t.Error("verify script should exit 1")
-	}
-	if !strings.Contains(string(verifyContent), `echo "replace scripts/agency_verify.sh"`) {
-		t.Error("verify script should print replacement message")
-	}
+	require.NoError(t, err, "failed to read verify script")
+	assert.Equal(t, scaffold.VerifyStub, string(verifyContent), "verify script content mismatch")
+	assert.Contains(t, string(verifyContent), "exit 1", "verify script should exit 1")
+	assert.Contains(t, string(verifyContent), `echo "replace scripts/agency_verify.sh"`, "verify script should print replacement message")
 
 	// Verify archive script content
 	archivePath := filepath.Join(repoRoot, "scripts/agency_archive.sh")
 	archiveContent, err := os.ReadFile(archivePath)
-	if err != nil {
-		t.Fatalf("failed to read archive script: %v", err)
-	}
-	if string(archiveContent) != scaffold.ArchiveStub {
-		t.Errorf("archive script content mismatch:\ngot:\n%s\nwant:\n%s", string(archiveContent), scaffold.ArchiveStub)
-	}
+	require.NoError(t, err, "failed to read archive script")
+	assert.Equal(t, scaffold.ArchiveStub, string(archiveContent), "archive script content mismatch")
 }
 
 func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
-	repoRoot, _ := setupTempGitRepo(t)
+	t.Parallel()
+	repoRoot, configDir := setupTempGitRepo(t)
 
 	// Pre-create scripts with custom content
 	scriptsDir := filepath.Join(repoRoot, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	customSetup := "#!/bin/bash\n# custom setup\n"
 	customVerify := "#!/bin/bash\n# custom verify\n"
 	customArchive := "#!/bin/bash\n# custom archive\n"
 
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(customSetup), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_verify.sh"), []byte(customVerify), 0755); err != nil {
-		t.Fatalf("failed to write verify script: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_archive.sh"), []byte(customArchive), 0755); err != nil {
-		t.Fatalf("failed to write archive script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(customSetup), 0755), "failed to write setup script")
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_verify.sh"), []byte(customVerify), 0755), "failed to write verify script")
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_archive.sh"), []byte(customArchive), 0755), "failed to write archive script")
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false}
+	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	require.NoError(t, err, "Init failed")
 
 	// All scripts should be unchanged
 	gotSetup, _ := os.ReadFile(filepath.Join(scriptsDir, "agency_setup.sh"))
-	if string(gotSetup) != customSetup {
-		t.Errorf("setup script was modified: got %q, want %q", string(gotSetup), customSetup)
-	}
+	assert.Equal(t, customSetup, string(gotSetup), "setup script was modified")
 
 	gotVerify, _ := os.ReadFile(filepath.Join(scriptsDir, "agency_verify.sh"))
-	if string(gotVerify) != customVerify {
-		t.Errorf("verify script was modified: got %q, want %q", string(gotVerify), customVerify)
-	}
+	assert.Equal(t, customVerify, string(gotVerify), "verify script was modified")
 
 	gotArchive, _ := os.ReadFile(filepath.Join(scriptsDir, "agency_archive.sh"))
-	if string(gotArchive) != customArchive {
-		t.Errorf("archive script was modified: got %q, want %q", string(gotArchive), customArchive)
-	}
+	assert.Equal(t, customArchive, string(gotArchive), "archive script was modified")
 
 	// Output should say scripts_created: none
-	output := stdout.String()
-	if !strings.Contains(output, "scripts_created: none") {
-		t.Errorf("output should say 'scripts_created: none': %s", output)
-	}
+	assert.Contains(t, stdout.String(), "scripts_created: none")
 }

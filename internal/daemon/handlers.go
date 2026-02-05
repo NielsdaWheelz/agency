@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
@@ -26,6 +28,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
@@ -374,8 +377,11 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 }
 
 // handleStop handles POST /invocations/{id}/stop.
-// Implements PR-05 stop semantics: SIGINT → wait 5s → SIGTERM → wait 2s → SIGKILL
+// PR-05 headless: SIGINT → wait 5s → SIGTERM → wait 2s → SIGKILL
+// PR-10 headed: tmux send-keys C-c (does not mark as finished; reconcile handles that)
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
+	ctx := r.Context()
+
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
@@ -394,13 +400,64 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	// Only for headless invocations
-	if meta.Mode != store.RunnerModeHeadless {
-		s.writeError(w, http.StatusBadRequest, string(errors.EInvocationInvalidMode), "stop via daemon is only for headless invocations", "use tmux send-keys for headed invocations")
+	// Early return if invocation is already in a terminal state
+	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
+		resp := StopResponse{OK: true}
+		s.writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	// Get PGID from meta (for orphaned invocations)
+	// Update invocation meta - mark stop requested (idempotent)
+	now := s.Clock().UTC().Format(time.RFC3339)
+	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		if m.StopRequestedAt == "" {
+			m.StopRequestedAt = now
+		}
+		m.Flags.NeedsAttention = true
+	})
+
+	// PR-10: Handle headed invocations via tmux
+	if meta.Mode == store.RunnerModeHeaded {
+		sessionName := meta.TmuxSession
+		if sessionName == "" {
+			sessionName = tmux.SessionName(invocationID)
+		}
+
+		// Check if session exists
+		exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+		if err != nil {
+			// Non-fatal, log but continue
+			fmt.Fprintf(os.Stderr, "warning: could not check tmux session: %v\n", err)
+		}
+
+		if !exists {
+			// Session already gone - mark as finished if still running
+			if meta.Status == store.InvocationStatusRunning {
+				finishedAt := s.Clock().UTC().Format(time.RFC3339)
+				_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+					m.Status = store.InvocationStatusFinished
+					m.ExitReason = "exited"
+					m.FinishedAt = finishedAt
+				})
+			}
+			resp := StopResponse{OK: true}
+			s.writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		// Send C-c via tmux (does not mark finished per PR-10 spec)
+		err = s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC})
+		if err != nil {
+			// Log but don't fail - session may be in a state that doesn't accept input
+			fmt.Fprintf(os.Stderr, "warning: could not send C-c to tmux session: %v\n", err)
+		}
+
+		resp := StopResponse{OK: true}
+		s.writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// Headless mode: signal escalation
 	pgid := 0
 	if meta.PGID != nil {
 		pgid = *meta.PGID
@@ -412,13 +469,6 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
 		return
 	}
-
-	// Update invocation meta - mark stop requested
-	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
-		m.StopRequestedAt = now
-		m.Flags.NeedsAttention = true
-	})
 
 	// Check if we're supervising this process
 	s.mu.RLock()
@@ -505,7 +555,10 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 }
 
 // handleKill handles POST /invocations/{id}/kill.
+// PR-10: Now supports both headless (SIGKILL) and headed (tmux kill-session) invocations.
 func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID string) {
+	ctx := r.Context()
+
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
@@ -524,13 +577,42 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	// Only for headless invocations
-	if meta.Mode != store.RunnerModeHeadless {
-		s.writeError(w, http.StatusBadRequest, string(errors.EInvocationInvalidMode), "kill via daemon is only for headless invocations", "use tmux kill-session for headed invocations")
+	// PR-10: Handle headed invocations via tmux kill-session
+	if meta.Mode == store.RunnerModeHeaded {
+		sessionName := meta.TmuxSession
+		if sessionName == "" {
+			sessionName = tmux.SessionName(invocationID)
+		}
+
+		// Kill the tmux session
+		err = s.TmuxClient.KillSession(ctx, sessionName)
+		if err != nil && !tmux.IsNoSessionErr(err) {
+			// Log but don't fail - session may already be gone
+			fmt.Fprintf(os.Stderr, "warning: could not kill tmux session: %v\n", err)
+		}
+
+		// Mark invocation as failed with exit_reason = "killed"
+		now := s.Clock().UTC().Format(time.RFC3339)
+		_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+			m.Status = store.InvocationStatusFailed
+			m.ExitReason = "killed"
+			m.FinishedAt = now
+		})
+
+		// Remove from supervised processes if present
+		s.mu.Lock()
+		if proc, ok := s.processes[invocationID]; ok {
+			proc.CloseDone()
+			delete(s.processes, invocationID)
+		}
+		s.mu.Unlock()
+
+		resp := KillResponse{OK: true}
+		s.writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	// Get PGID from meta
+	// Headless mode: SIGKILL
 	pgid := 0
 	if meta.PGID != nil {
 		pgid = *meta.PGID
@@ -582,7 +664,7 @@ func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, 
 			_ = streamFile.Close()
 		}
 	}()
-	defer close(proc.done)
+	defer proc.CloseDone()
 
 	// Wait for process to exit
 	err := cmd.Wait()
@@ -877,8 +959,18 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		}
 	}
 
-	// 14. Create invocation and sandbox atomically
-	result, err := s.createInvocationAndSandbox(ctx, repoIdentity.RepoID, repoRoot, wtRecord, req)
+	// 14. Create invocation and sandbox via invocation.Service.Create (unified path)
+	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
+		IntegrationWorktreeID:   wtRecord.WorktreeID,
+		IntegrationWorktreeMeta: wtRecord.Meta,
+		RepoRoot:                repoRoot,
+		RepoID:                  repoIdentity.RepoID,
+		Runner:                  req.Runner,
+		Mode:                    store.RunnerModeHeadless,
+		InvocationName:          req.InvocationName,
+		NoIncludeUntracked:      req.NoIncludeUntracked,
+	})
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -889,11 +981,29 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// 14a. Create logs directory (headless-specific, not handled by invocation.Service.Create)
+	logsDir := s.Store.SandboxLogsDir(repoIdentity.RepoID, createResult.InvocationID)
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
+		s.writeControlPlaneError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
+		return
+	}
+
+	// 14b. Write prompt file (headless-specific)
+	promptPath := s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
+	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
+		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
+		s.writeControlPlaneError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
+		return
+	}
+
 	// 15. Start the runner process
-	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, result, req)
+	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, wtRecord.WorktreeID, req)
 	if err != nil {
 		// Cleanup on failure
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, result, repoRoot, "spawn_failed")
+		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "spawn_failed")
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerStartFailed
@@ -904,7 +1014,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 
 	// 16. Record idempotency entry
-	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, result.InvocationID)
+	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID)
 
 	// 17. Update invocation meta with running state
 	now := s.Clock().UTC().Format(time.RFC3339)
@@ -912,7 +1022,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
 
-	_ = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, result.InvocationID, func(m *store.InvocationMeta) {
+	_ = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(m *store.InvocationMeta) {
 		m.Status = store.InvocationStatusRunning
 		m.PID = &pid
 		m.PGID = &pgid
@@ -920,13 +1030,13 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		m.DaemonInstanceID = s.InstanceID
 		m.ClaimedAt = now
 		m.LifecycleOwner = "daemon"
-		m.PromptPath = s.Store.InvocationPromptPath(repoIdentity.RepoID, result.InvocationID)
+		m.PromptPath = s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
 		m.PromptSHA256 = promptSHA
 	})
 
 	// 18. Read final meta and return success
-	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, result.InvocationID)
-	s.writeControlPlaneSuccess(w, result.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, false)
+	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
+	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, false)
 }
 
 // writeControlPlaneError writes an error response for control plane endpoints.
@@ -1083,201 +1193,8 @@ func (s *Server) checkInvocationNameUniqueness(repoID, name string) error {
 	return nil
 }
 
-// invocationCreateResult holds the result of createInvocationAndSandbox.
-type invocationCreateResult struct {
-	InvocationID          string
-	SandboxPath           string
-	SandboxBranch         string
-	BaseCommit            string
-	IntegrationWorktreeID string // PR-06: track worktree for rm guard
-	RepoRoot              string // PR-08: repo root for checkpoint engine
-}
-
-// createInvocationAndSandbox creates invocation directory, sandbox directory, and git worktree atomically.
-func (s *Server) createInvocationAndSandbox(ctx context.Context, repoID, repoRoot string, wtRecord *store.IntegrationWorktreeRecord, req ControlPlaneStartRequest) (*invocationCreateResult, error) {
-	// 1. Generate invocation_id
-	invocationID, err := core.NewRunID(s.Clock())
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate invocation_id: %w", err)
-	}
-
-	// 2. Compute paths
-	sandboxTreePath := s.Store.SandboxTreePath(repoID, invocationID)
-	sandboxBranch := "agency/sandbox-" + invocationID
-	integrationTreePath := wtRecord.Meta.TreePath
-	integrationBranch := wtRecord.Meta.Branch
-
-	// 3. Validate sandbox path safety
-	if err := validateSandboxPath(sandboxTreePath, integrationTreePath); err != nil {
-		return nil, err
-	}
-
-	// 4. Create invocation directory (exclusive)
-	_, err = s.Store.EnsureInvocationDir(repoID, invocationID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Track cleanup state
-	invocationDirCreated := true
-	sandboxDirCreated := false
-	gitWorktreeCreated := false
-	branchCreated := false
-
-	// Cleanup function
-	cleanup := func() {
-		if gitWorktreeCreated {
-			args := []string{"-C", repoRoot, "worktree", "remove", "--force", sandboxTreePath}
-			_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-		}
-		if branchCreated {
-			args := []string{"-C", repoRoot, "branch", "-D", sandboxBranch}
-			_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-		}
-		if sandboxDirCreated {
-			_ = s.Store.RemoveSandboxDir(repoID, invocationID)
-		}
-		if invocationDirCreated {
-			_ = s.Store.RemoveInvocationDir(repoID, invocationID)
-		}
-	}
-
-	// 5. Create sandbox directory
-	_, err = s.Store.EnsureSandboxDir(repoID, invocationID)
-	if err != nil {
-		cleanup()
-		return nil, err
-	}
-	sandboxDirCreated = true
-
-	// 6. Capture base_commit
-	baseCommitResult, err := s.Runner.Run(ctx, "git", []string{
-		"-C", repoRoot,
-		"rev-parse", integrationBranch,
-	}, exec.RunOpts{})
-	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("failed to get base commit: %w", err)
-	}
-	if baseCommitResult.ExitCode != 0 {
-		cleanup()
-		return nil, fmt.Errorf("failed to get base commit: %s", strings.TrimSpace(baseCommitResult.Stderr))
-	}
-	baseCommit := strings.TrimSpace(baseCommitResult.Stdout)
-
-	// 7. Create sandbox git worktree + branch
-	args := []string{
-		"-C", repoRoot,
-		"worktree", "add",
-		"-b", sandboxBranch,
-		sandboxTreePath,
-		integrationBranch,
-	}
-
-	result, err := s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("failed to execute git worktree add: %w", err)
-	}
-	if result.ExitCode != 0 {
-		cleanup()
-		return nil, fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(result.Stderr))
-	}
-
-	gitWorktreeCreated = true
-	branchCreated = true
-
-	// 8. Write SANDBOX_MARKER
-	agencyDir := filepath.Join(sandboxTreePath, ".agency")
-	if err := s.FS.MkdirAll(agencyDir, 0o755); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("failed to create .agency directory in sandbox: %w", err)
-	}
-
-	markerPath := filepath.Join(agencyDir, invocation.SandboxMarkerFileName)
-	markerContent := "# This directory is a sandbox worktree.\n# Runners may execute here.\n"
-	if err := s.FS.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("failed to write SANDBOX_MARKER: %w", err)
-	}
-
-	// 9. Verify sandbox does NOT have integration marker
-	if integrationworktree.HasIntegrationMarker(sandboxTreePath) {
-		cleanup()
-		return nil, fmt.Errorf("CRITICAL: sandbox tree contains INTEGRATION_MARKER")
-	}
-
-	// 10. Write invocation meta.json with status=starting
-	meta := store.NewInvocationMeta(
-		invocationID,
-		req.InvocationName,
-		wtRecord.WorktreeID,
-		sandboxTreePath,
-		sandboxBranch,
-		baseCommit,
-		req.Runner,
-		store.RunnerModeHeadless,
-		s.Clock(),
-	)
-
-	// PR-08: Set checkpoint configuration
-	meta.CheckpointIncludeUntracked = !req.NoIncludeUntracked
-
-	if err := s.Store.WriteInvocationMeta(repoID, invocationID, meta); err != nil {
-		cleanup()
-		return nil, err
-	}
-
-	// 11. Create logs directory
-	logsDir := s.Store.SandboxLogsDir(repoID, invocationID)
-	if err := os.MkdirAll(logsDir, 0o700); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("failed to create logs directory: %w", err)
-	}
-
-	// 12. Write prompt file
-	promptPath := s.Store.InvocationPromptPath(repoID, invocationID)
-	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("failed to write prompt file: %w", err)
-	}
-
-	return &invocationCreateResult{
-		InvocationID:          invocationID,
-		SandboxPath:           sandboxTreePath,
-		SandboxBranch:         sandboxBranch,
-		BaseCommit:            baseCommit,
-		IntegrationWorktreeID: wtRecord.WorktreeID,
-		RepoRoot:              repoRoot, // PR-08: pass to checkpoint engine
-	}, nil
-}
-
-// validateSandboxPath ensures the sandbox path does not resolve to the integration tree.
-func validateSandboxPath(sandboxPath, integrationPath string) error {
-	sandboxClean := filepath.Clean(sandboxPath)
-	integrationClean := filepath.Clean(integrationPath)
-
-	if sandboxClean == integrationClean {
-		return fmt.Errorf("sandbox path equals integration tree path")
-	}
-
-	if strings.HasPrefix(integrationClean, sandboxClean+string(filepath.Separator)) {
-		return fmt.Errorf("sandbox path is a parent of integration tree path")
-	}
-
-	if strings.HasPrefix(sandboxClean, integrationClean+string(filepath.Separator)) {
-		return fmt.Errorf("sandbox path is a child of integration tree path")
-	}
-
-	if integrationworktree.HasIntegrationMarker(sandboxPath) {
-		return fmt.Errorf("sandbox path already contains INTEGRATION_MARKER")
-	}
-
-	return nil
-}
-
 // startRunner starts the runner process and returns PID and PGID.
-func (s *Server) startRunner(ctx context.Context, repoID string, result *invocationCreateResult, req ControlPlaneStartRequest) (int, int, error) {
+func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest) (int, int, error) {
 	// Load user config for runner resolution
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
@@ -1367,12 +1284,15 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
+	if s.CheckpointDebounceOverride != nil {
+		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
+	}
 
 	cpEngine := checkpoint.NewEngine(
 		result.InvocationID,
 		repoID,
 		result.SandboxPath,
-		result.RepoRoot,
+		repoRoot,
 		checkpointsDir,
 		eventsPath,
 		cpConfig,
@@ -1385,14 +1305,14 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	proc := &SupervisedProcess{
 		InvocationID:          result.InvocationID,
 		RepoID:                repoID,
-		IntegrationWorktreeID: result.IntegrationWorktreeID, // PR-06: track for worktree rm guard
+		IntegrationWorktreeID: integrationWorktreeID, // PR-06: track for worktree rm guard
 		PID:                   pid,
 		PGID:                  pgid,
 		RawLogFile:            rawLogPath,
 		StderrFile:            stderrLogPath,
 		StreamLogFile:         streamLogPath,
 		Runner:                req.Runner,
-		RepoRoot:              result.RepoRoot, // PR-08: for checkpoint engine
+		RepoRoot:              repoRoot, // PR-08: for checkpoint engine
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
@@ -1446,7 +1366,7 @@ func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []
 }
 
 // cleanupFailedInvocation cleans up after a failed invocation start.
-func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocationCreateResult, repoRoot, failureReason string) {
+func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string) {
 	// Mark invocation as failed
 	now := s.Clock().UTC().Format(time.RFC3339)
 	_ = s.Store.UpdateInvocationMeta(repoID, result.InvocationID, func(m *store.InvocationMeta) {
@@ -1477,7 +1397,7 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 			_ = streamFile.Close()
 		}
 	}()
-	defer close(proc.done)
+	defer proc.CloseDone()
 
 	// Wait for process to exit
 	err := cmd.Wait()
@@ -1553,4 +1473,308 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 	s.mu.Lock()
 	delete(s.processes, proc.InvocationID)
 	s.mu.Unlock()
+}
+
+// ----- PR-10: Headed (tmux) Control Plane Handler -----
+
+// handleControlPlaneStartHeaded handles POST /invocations/start_headed (PR-10 control plane).
+// This endpoint creates and starts a headed (tmux) invocation end-to-end.
+func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Parse request body
+	var req ControlPlaneStartHeadedRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "", "")
+		return
+	}
+
+	// Generate daemon-side request_id (included in all responses)
+	requestID := uuid.New().String()
+
+	// 1. Validate required fields
+	if req.ClientRequestID == "" {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "client_request_id is required", "provide a UUID for idempotency", "", requestID)
+		return
+	}
+	if req.RepoRoot == "" {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_root is required", "", req.ClientRequestID, requestID)
+		return
+	}
+	if req.WorktreeRef == "" {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree_ref is required", "", req.ClientRequestID, requestID)
+		return
+	}
+	if req.Runner == "" {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 2. Validate runner
+	if req.Runner != "claude" && req.Runner != "codex" {
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.ERunnerNotFound),
+			"unrecognized runner: "+req.Runner, "valid runners: claude, codex", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 3. Validate invocation name if provided
+	if req.InvocationName != "" {
+		if err := core.ValidateName(req.InvocationName); err != nil {
+			s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidName),
+				"invalid invocation name: "+err.Error(),
+				"names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID, requestID)
+			return
+		}
+	}
+
+	// 4. Resolve repo_root to canonical absolute path
+	repoRoot, err := filepath.Abs(req.RepoRoot)
+	if err != nil {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+			"failed to resolve repo_root: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+	repoRoot, err = filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+			"failed to resolve repo_root symlinks: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 5. Recursion guard: reject if repo_root is inside agency-managed worktree
+	if isInsideAgencyManagedWorktree(repoRoot, s.Store.DataDir) {
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
+			"repo_root is inside an agency-managed worktree",
+			"use the original repository, not a sandbox or integration worktree", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 6. Derive git root via git rev-parse --show-toplevel
+	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
+	if err != nil {
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.ENoRepo),
+			"repo_root is not inside a git repository: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+	repoRoot = gitRoot.Path // Use the actual git root
+
+	// 7. Derive repo identity
+	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
+
+	// 8. Check idempotency before doing any work
+	if entry, isDuplicate := s.checkHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID); isDuplicate {
+		// Return the existing invocation
+		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
+		if err == nil {
+			s.writeHeadedSuccess(w, entry.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+			return
+		}
+		// If we can't read meta, fall through to create new (idempotency entry may be stale)
+	}
+
+	// 9. Self-register repo if needed
+	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
+		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to register repo: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 10. Resolve integration worktree
+	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, req.WorktreeRef, false)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeHeadedError(w, http.StatusNotFound, string(code),
+			err.Error(), "run 'agency worktree ls' to see available worktrees", req.ClientRequestID, requestID)
+		return
+	}
+
+	if wtRecord.Broken || wtRecord.Meta == nil {
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EWorktreeBroken),
+			"integration worktree exists but meta.json is unreadable",
+			"inspect or recreate the worktree", req.ClientRequestID, requestID)
+		return
+	}
+
+	if wtRecord.Meta.State != store.WorktreeStatePresent {
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EWorktreeNotFound),
+			"integration worktree is archived", "use a present (non-archived) integration worktree", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 11. Check invocation name uniqueness if name provided
+	if req.InvocationName != "" {
+		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
+			s.writeHeadedError(w, http.StatusConflict, string(errors.EInvocationNameExists),
+				err.Error(), "use a different name or wait for the existing invocation to complete", req.ClientRequestID, requestID)
+			return
+		}
+	}
+
+	// 12. Create invocation and sandbox via invocation.Service.Create
+	// This is the unified path per PR-10 spec requirements
+	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
+
+	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
+		IntegrationWorktreeID:   wtRecord.WorktreeID,
+		IntegrationWorktreeMeta: wtRecord.Meta,
+		RepoRoot:                repoRoot,
+		RepoID:                  repoIdentity.RepoID,
+		Runner:                  req.Runner,
+		Mode:                    store.RunnerModeHeaded,
+		InvocationName:          req.InvocationName,
+		NoIncludeUntracked:      req.NoIncludeUntracked,
+	})
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeHeadedError(w, http.StatusInternalServerError, string(code),
+			err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 13. Resolve runner command
+	userCfg, err := s.LoadUserConfig()
+	if err != nil {
+		userCfg = config.UserConfig{}
+	}
+
+	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
+	if err != nil {
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound),
+			"failed to resolve runner command: "+err.Error(),
+			"ensure runner is installed and configured", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 14. Generate tmux session name
+	sessionName := tmux.SessionName(createResult.InvocationID)
+
+	// 15. Preflight: check if session already exists
+	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+	if err != nil {
+		// Non-fatal error checking, log but proceed
+		fmt.Fprintf(os.Stderr, "warning: could not check for existing tmux session: %v\n", err)
+	} else if exists {
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusConflict, string(errors.ETmuxSessionExists),
+			"tmux session already exists: "+sessionName,
+			"a tmux session with this name already exists; kill it with 'tmux kill-session -t "+sessionName+"'",
+			req.ClientRequestID, requestID)
+		return
+	}
+
+	// 16. Create tmux session with CWD = sandbox tree, argv = [runnerCmd]
+	// Per spec: No shell wrapping, no prompt - headed mode gets prompt interactively
+	argv := []string{runnerCmd}
+	if len(req.RunnerArgs) > 0 {
+		argv = append(argv, req.RunnerArgs...)
+	}
+
+	err = s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv)
+	if err != nil {
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed),
+			"failed to create tmux session: "+err.Error(),
+			"ensure tmux is installed and working",
+			req.ClientRequestID, requestID)
+		return
+	}
+
+	// 17. Update invocation meta: status = "running", tmux_session set, daemon ownership
+	now := s.Clock().UTC().Format(time.RFC3339)
+	daemonPID := os.Getpid()
+	err = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.TmuxSession = sessionName
+		meta.DaemonPID = &daemonPID
+		meta.DaemonInstanceID = s.InstanceID
+		meta.ClaimedAt = now
+		meta.LifecycleOwner = "daemon"
+	})
+	if err != nil {
+		// Best-effort: kill the session we just created
+		_ = s.TmuxClient.KillSession(ctx, sessionName)
+		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to update invocation meta: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+
+	// 18. Register headed process in supervised map
+	proc := &SupervisedProcess{
+		InvocationID:          createResult.InvocationID,
+		RepoID:                repoIdentity.RepoID,
+		IntegrationWorktreeID: wtRecord.WorktreeID,
+		Mode:                  "headed",
+		TmuxSession:           sessionName,
+		Runner:                req.Runner,
+		RepoRoot:              repoRoot,
+		done:                  make(chan struct{}),
+	}
+
+	s.mu.Lock()
+	s.processes[createResult.InvocationID] = proc
+	s.mu.Unlock()
+
+	// 19. Record idempotency entry
+	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, sessionName, createResult.SandboxPath)
+
+	// 20. Read final meta and return success
+	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
+	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
+}
+
+// writeHeadedError writes an error response for headed control plane endpoints.
+func (s *Server) writeHeadedError(w http.ResponseWriter, status int, code, message, hint, clientRequestID, requestID string) {
+	resp := ControlPlaneStartHeadedResponse{
+		OK:              false,
+		ErrorCode:       code,
+		Message:         message,
+		Hint:            hint,
+		RequestID:       requestID,
+		APIVersion:      APIVersion,
+		BuildVersion:    version.FullVersion(),
+		GitSHA:          version.Commit,
+		ClientRequestID: clientRequestID,
+	}
+	s.writeJSON(w, status, resp)
+}
+
+// writeHeadedSuccess writes a success response for headed control plane endpoints.
+func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
+	resp := ControlPlaneStartHeadedResponse{
+		OK:                    true,
+		InvocationID:          invocationID,
+		SandboxPath:           meta.SandboxPath,
+		RepoID:                repoID,
+		IntegrationWorktreeID: meta.IntegrationWorktreeID,
+		TmuxSession:           meta.TmuxSession,
+		AlreadyRunning:        alreadyRunning,
+		RequestID:             requestID,
+		APIVersion:            APIVersion,
+		BuildVersion:          version.FullVersion(),
+		GitSHA:                version.Commit,
+		ClientRequestID:       clientRequestID,
+		DaemonInstanceID:      s.InstanceID,
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// markHeadedInvocationFailed marks a headed invocation as failed.
+func (s *Server) markHeadedInvocationFailed(repoID, invocationID, exitReason string) {
+	now := s.Clock().UTC().Format(time.RFC3339)
+	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFailed
+		meta.ExitReason = exitReason
+		meta.FinishedAt = now
+		meta.Flags.NeedsAttention = true
+	})
 }

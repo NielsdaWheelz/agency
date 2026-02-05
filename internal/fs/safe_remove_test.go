@@ -4,150 +4,133 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSafeRemoveAll_ValidSubpath(t *testing.T) {
+	t.Parallel()
 	// Create temp directory structure
 	tmpDir := t.TempDir()
 	prefix := filepath.Join(tmpDir, "prefix")
 	target := filepath.Join(prefix, "subdir", "target")
 
 	// Create the directories
-	if err := os.MkdirAll(target, 0755); err != nil {
-		t.Fatalf("failed to create target dir: %v", err)
-	}
+	err := os.MkdirAll(target, 0755)
+	require.NoError(t, err, "failed to create target dir")
 
 	// Create a file in the target
 	testFile := filepath.Join(target, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	err = os.WriteFile(testFile, []byte("test"), 0644)
+	require.NoError(t, err, "failed to create test file")
 
 	// Safe remove should succeed
-	err := SafeRemoveAll(target, prefix)
-	if err != nil {
-		t.Errorf("SafeRemoveAll failed: %v", err)
-	}
+	err = SafeRemoveAll(target, prefix)
+	require.NoError(t, err, "SafeRemoveAll failed")
 
 	// Verify target is gone
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Error("target directory still exists after SafeRemoveAll")
-	}
+	_, err = os.Stat(target)
+	assert.True(t, os.IsNotExist(err), "target directory still exists after SafeRemoveAll")
 }
 
 func TestSafeRemoveAll_OutsidePrefix(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	// Create two separate directories
 	prefix := filepath.Join(tmpDir, "prefix")
 	target := filepath.Join(tmpDir, "outside", "target")
 
-	if err := os.MkdirAll(prefix, 0755); err != nil {
-		t.Fatalf("failed to create prefix: %v", err)
-	}
-	if err := os.MkdirAll(target, 0755); err != nil {
-		t.Fatalf("failed to create target: %v", err)
-	}
+	err := os.MkdirAll(prefix, 0755)
+	require.NoError(t, err, "failed to create prefix")
+	err = os.MkdirAll(target, 0755)
+	require.NoError(t, err, "failed to create target")
 
 	// Safe remove should fail
-	err := SafeRemoveAll(target, prefix)
-	if err == nil {
-		t.Error("SafeRemoveAll should have failed for target outside prefix")
-	}
+	err = SafeRemoveAll(target, prefix)
+	require.Error(t, err, "SafeRemoveAll should have failed for target outside prefix")
 
 	// Check it's the right error type
-	if _, ok := err.(*ErrNotUnderPrefix); !ok {
-		t.Errorf("expected ErrNotUnderPrefix, got %T: %v", err, err)
-	}
+	_, ok := err.(*ErrNotUnderPrefix)
+	assert.True(t, ok, "expected ErrNotUnderPrefix, got %T: %v", err, err)
 
 	// Verify target still exists
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		t.Error("target was deleted even though it's outside prefix")
-	}
+	_, err = os.Stat(target)
+	assert.False(t, os.IsNotExist(err), "target was deleted even though it's outside prefix")
 }
 
 func TestSafeRemoveAll_TargetEqualsPrefix(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	target := filepath.Join(tmpDir, "samedir")
 
-	if err := os.MkdirAll(target, 0755); err != nil {
-		t.Fatalf("failed to create target: %v", err)
-	}
+	err := os.MkdirAll(target, 0755)
+	require.NoError(t, err, "failed to create target")
 
 	// Safe remove should fail when target equals prefix
-	err := SafeRemoveAll(target, target)
-	if err == nil {
-		t.Error("SafeRemoveAll should have failed when target equals prefix")
-	}
+	err = SafeRemoveAll(target, target)
+	require.Error(t, err, "SafeRemoveAll should have failed when target equals prefix")
 
 	// Verify target still exists
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		t.Error("target was deleted when it equals prefix")
-	}
+	_, err = os.Stat(target)
+	assert.False(t, os.IsNotExist(err), "target was deleted when it equals prefix")
 }
 
 func TestSafeRemoveAll_TargetDoesNotExist(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	prefix := filepath.Join(tmpDir, "prefix")
 	target := filepath.Join(prefix, "nonexistent")
 
-	if err := os.MkdirAll(prefix, 0755); err != nil {
-		t.Fatalf("failed to create prefix: %v", err)
-	}
+	err := os.MkdirAll(prefix, 0755)
+	require.NoError(t, err, "failed to create prefix")
 
 	// Safe remove should succeed (no-op) for non-existent target
-	err := SafeRemoveAll(target, prefix)
-	if err != nil {
-		t.Errorf("SafeRemoveAll should succeed for non-existent target: %v", err)
-	}
+	err = SafeRemoveAll(target, prefix)
+	require.NoError(t, err, "SafeRemoveAll should succeed for non-existent target")
 }
 
 func TestSafeRemoveAll_ParentTraversal(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	prefix := filepath.Join(tmpDir, "prefix")
 	target := filepath.Join(prefix, "..", "outside")
 
-	if err := os.MkdirAll(prefix, 0755); err != nil {
-		t.Fatalf("failed to create prefix: %v", err)
-	}
-	if err := os.MkdirAll(target, 0755); err != nil {
-		t.Fatalf("failed to create target: %v", err)
-	}
+	err := os.MkdirAll(prefix, 0755)
+	require.NoError(t, err, "failed to create prefix")
+	err = os.MkdirAll(target, 0755)
+	require.NoError(t, err, "failed to create target")
 
 	// Safe remove should fail for parent traversal
-	err := SafeRemoveAll(target, prefix)
-	if err == nil {
-		t.Error("SafeRemoveAll should have failed for parent traversal")
-	}
+	err = SafeRemoveAll(target, prefix)
+	require.Error(t, err, "SafeRemoveAll should have failed for parent traversal")
 
 	// Verify target still exists
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		t.Error("target was deleted despite parent traversal attack")
-	}
+	_, err = os.Stat(target)
+	assert.False(t, os.IsNotExist(err), "target was deleted despite parent traversal attack")
 }
 
 func TestSafeRemoveAll_PrefixDoesNotExist(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	prefix := filepath.Join(tmpDir, "nonexistent_prefix")
 	target := filepath.Join(tmpDir, "some_target")
 
-	if err := os.MkdirAll(target, 0755); err != nil {
-		t.Fatalf("failed to create target: %v", err)
-	}
+	err := os.MkdirAll(target, 0755)
+	require.NoError(t, err, "failed to create target")
 
 	// Safe remove should fail when prefix doesn't exist
-	err := SafeRemoveAll(target, prefix)
-	if err == nil {
-		t.Error("SafeRemoveAll should have failed when prefix doesn't exist")
-	}
+	err = SafeRemoveAll(target, prefix)
+	require.Error(t, err, "SafeRemoveAll should have failed when prefix doesn't exist")
 
 	// Verify target still exists (fail closed)
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		t.Error("target was deleted when prefix doesn't exist")
-	}
+	_, err = os.Stat(target)
+	assert.False(t, os.IsNotExist(err), "target was deleted when prefix doesn't exist")
 }
 
 func TestIsSubpath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		target string
@@ -187,11 +170,11 @@ func TestIsSubpath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := IsSubpath(tt.target, tt.prefix)
-			if got != tt.want {
-				t.Errorf("IsSubpath(%q, %q) = %v, want %v", tt.target, tt.prefix, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
