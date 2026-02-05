@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,8 +25,8 @@ import (
 // ---------------------------------------------------------------------------
 
 // setupReconcileTestEnv creates a minimal daemon environment for reconciliation tests.
-// Returns the server, store, and a function to wait for the reconcile loop to run.
-func setupReconcileTestEnv(t *testing.T, fakeTmux *testutil.FakeTmuxClient) (*daemon.Server, *store.Store, func()) {
+// Returns the server and store. Use waitForStatus / waitForStableStatus to poll.
+func setupReconcileTestEnv(t *testing.T, fakeTmux *testutil.FakeTmuxClient) (*daemon.Server, *store.Store) {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -46,10 +47,7 @@ func setupReconcileTestEnv(t *testing.T, fakeTmux *testutil.FakeTmuxClient) (*da
 	fixedTime := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
 	srv.Clock = func() time.Time { return fixedTime }
 
-	return srv, st, func() {
-		// Wait for at least one reconcile tick (interval is 200ms)
-		time.Sleep(250 * time.Millisecond)
-	}
+	return srv, st
 }
 
 // startTestServer starts the daemon server and returns a cleanup function.
@@ -140,10 +138,41 @@ func ensureRepoDir(t *testing.T, st *store.Store, repoID string) {
 	require.NoError(t, err, "save repo index")
 }
 
+// waitForStatus polls the store until the invocation reaches the expected status.
+// Uses require.Eventually with tight polling interval.
+func waitForStatus(t *testing.T, st *store.Store, repoID, invocationID string, expected store.InvocationStatus) *store.InvocationMeta {
+	t.Helper()
+	var result *store.InvocationMeta
+	require.Eventually(t, func() bool {
+		meta, err := st.ReadInvocationMeta(repoID, invocationID)
+		if err != nil {
+			return false
+		}
+		if meta.Status == expected {
+			result = meta
+			return true
+		}
+		return false
+	}, 3*time.Second, 50*time.Millisecond, "invocation %s did not reach status %s", invocationID, expected)
+	return result
+}
+
+// waitForStableStatus polls the store and confirms the invocation STAYS at the expected status
+// after at least N reconcile ticks. Used for negative tests (asserting no transition).
+func waitForStableStatus(t *testing.T, st *store.Store, repoID, invocationID string, expected store.InvocationStatus, duration time.Duration) {
+	t.Helper()
+	// Wait for enough ticks to have fired
+	time.Sleep(duration)
+	meta, err := st.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	assert.Equal(t, expected, meta.Status, "status should remain %s", expected)
+}
+
 func TestReconcile_RunningToFinished(t *testing.T) {
+	t.Parallel()
 	// Test: Running → Finished when tmux session disappears
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-1"
 	invocationID := "20260205120000-a1b2"
@@ -170,22 +199,18 @@ func TestReconcile_RunningToFinished(t *testing.T) {
 	delete(fakeTmux.Sessions, sessionName)
 	fakeTmux.Mu.Unlock()
 
-	// Wait for reconciliation
-	waitForReconcile()
-	waitForReconcile() // Extra wait to be safe
-
-	// Verify invocation is now finished
-	meta, err = st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	// Wait for reconciliation to transition to finished
+	meta = waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
 	assert.Equal(t, "exited", meta.ExitReason)
-	assert.NotEmpty(t, meta.FinishedAt)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
 }
 
 func TestReconcile_StartingToFailed_GraceWindow(t *testing.T) {
+	t.Parallel()
 	// Test: Starting → Failed only after grace window (2 consecutive ticks)
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-2"
 	invocationID := "20260205120001-c3d4"
@@ -200,26 +225,22 @@ func TestReconcile_StartingToFailed_GraceWindow(t *testing.T) {
 	defer cleanup()
 
 	// After first reconcile tick, should still be starting (grace window)
-	waitForReconcile()
-	meta, err := st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusStarting, meta.Status, "should still be starting after first tick")
+	// Use waitForStableStatus to confirm it stays starting through one tick
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusStarting, 250*time.Millisecond)
 
 	// After second reconcile tick, should be failed (grace window exceeded)
-	waitForReconcile()
-	waitForReconcile() // Extra safety
-
-	meta, err = st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFailed, meta.Status, "should be failed after grace window")
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
 	assert.Equal(t, "start_failed", meta.ExitReason)
 	assert.Equal(t, "tmux_session_missing", meta.FailureReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
 }
 
 func TestReconcile_NoTransitionOnTransientError(t *testing.T) {
+	t.Parallel()
 	// Test: Transient tmux errors don't finalize invocation
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-3"
 	invocationID := "20260205120002-e5f6"
@@ -236,20 +257,15 @@ func TestReconcile_NoTransitionOnTransientError(t *testing.T) {
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// Wait for reconciliation
-	waitForReconcile()
-	waitForReconcile()
-
-	// Verify invocation is still running (not finalized due to error)
-	meta, err := st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusRunning, meta.Status, "should not finalize on transient error")
+	// Verify invocation stays running through multiple ticks
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
 }
 
 func TestReconcile_Idempotence_TerminalUnchanged(t *testing.T) {
+	t.Parallel()
 	// Test: Terminal invocations remain unchanged
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-4"
 	invocationID := "20260205120003-g7h8"
@@ -271,25 +287,23 @@ func TestReconcile_Idempotence_TerminalUnchanged(t *testing.T) {
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// Wait for reconciliation
-	waitForReconcile()
-	waitForReconcile()
+	// Verify invocation stays unchanged through multiple ticks
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusFinished, 500*time.Millisecond)
 
-	// Verify invocation is unchanged
 	meta, err := st.ReadInvocationMeta(repoID, invocationID)
 	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 	assert.Equal(t, originalFinishedAt, meta.FinishedAt, "finished_at should not change")
 }
 
 func TestReconcile_TmuxFlaps(t *testing.T) {
+	t.Parallel()
 	// Test: Adversarial tmux session flapping
 	// For "running" invocations, recovery scan also calls HasSession, so we must account for that.
 	// Sequence: error (recovery) → error (tick 1) → exists (tick 2) → not exists (tick 3)
 	// Expected: no transition until tick 3
 
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-5"
 	invocationID := "20260205120004-i9j0"
@@ -302,10 +316,10 @@ func TestReconcile_TmuxFlaps(t *testing.T) {
 	// Track call count for sequential behavior
 	// Note: Recovery scan calls HasSession once for "running" invocations,
 	// so callCount=1 is recovery, callCount=2+ are reconcile ticks.
-	callCount := 0
+	var callCount int64
 	fakeTmux.HasSessionFunc = func(name string) (bool, error) {
-		callCount++
-		switch callCount {
+		c := atomic.AddInt64(&callCount, 1)
+		switch c {
 		case 1:
 			// Recovery scan: transient error
 			return false, errors.New("connection refused")
@@ -325,32 +339,28 @@ func TestReconcile_TmuxFlaps(t *testing.T) {
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// Tick 1: Error - should not finalize
-	waitForReconcile()
-	meta, err := st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusRunning, meta.Status, "should not finalize on error (tick 1)")
+	// Should stay running through errors and session-exists ticks
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
 
-	// Tick 2: Session exists - should not finalize
-	waitForReconcile()
-	meta, err = st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusRunning, meta.Status, "should not finalize when session exists (tick 2)")
-
-	// Tick 3: Session gone - should finalize
-	waitForReconcile()
-	meta, err = st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFinished, meta.Status, "should finalize when session gone (tick 3)")
+	// Eventually finalize when session is gone
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta.ExitReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
 }
 
 func TestReconcile_StartingGraceWindowReset(t *testing.T) {
-	// Test: Grace window resets when tmux session appears
-	// Starting invocation with no session → session appears → no session
-	// Should need 2 more ticks after session disappears again
+	t.Parallel()
+	// Test: Grace window resets when tmux session appears then disappears
+	// Sequence:
+	//   Call 1 (recovery): no session, but age <= 30s so left for reconcile loop
+	//   Call 2 (tick 1): no session → grace count = 1
+	//   Call 3 (tick 2): session exists → grace count reset to 0
+	//   Call 4 (tick 3): no session → grace count = 1
+	//   Call 5 (tick 4): no session → grace count = 2 → transition to failed
 
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-6"
 	invocationID := "20260205120005-k1l2"
@@ -360,43 +370,49 @@ func TestReconcile_StartingGraceWindowReset(t *testing.T) {
 	ensureRepoDir(t, st, repoID)
 	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusStarting, sessionName)
 
-	// Update to running so we can test the grace window reset scenario properly
-	err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusRunning
-	})
-	require.NoError(t, err)
+	var callCount int64
+	fakeTmux.HasSessionFunc = func(name string) (bool, error) {
+		c := atomic.AddInt64(&callCount, 1)
+		switch c {
+		case 1:
+			// Recovery scan: no session (age <= 30s, left for loop)
+			return false, nil
+		case 2:
+			// Tick 1: no session → grace count = 1
+			return false, nil
+		case 3:
+			// Tick 2: session exists → grace count reset
+			return true, nil
+		case 4:
+			// Tick 3: no session → grace count = 1
+			return false, nil
+		default:
+			// Tick 4+: no session → grace count = 2 → failed
+			return false, nil
+		}
+	}
 
-	// Session exists initially
-	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
-
-	// Start server
+	// Start server (recovery call fires = call 1)
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// First tick: session exists
-	waitForReconcile()
-	meta, err := st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusRunning, meta.Status)
+	// Ticks 1-2 fire: no session then session appears (grace reset).
+	// Should still be starting after these ticks.
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusStarting, 500*time.Millisecond)
 
-	// Remove session
-	fakeTmux.Mu.Lock()
-	delete(fakeTmux.Sessions, sessionName)
-	fakeTmux.Mu.Unlock()
-
-	// Next tick: session gone, should finalize immediately (running state)
-	waitForReconcile()
-	waitForReconcile()
-
-	meta, err = st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	// Ticks 3-4: no session twice → grace window exceeded → failed
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "start_failed", meta.ExitReason)
+	assert.Equal(t, "tmux_session_missing", meta.FailureReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
 }
 
 func TestReconcile_HeadlessUnaffected(t *testing.T) {
+	t.Parallel()
 	// Test: Headless invocations are not affected by headed reconciliation
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, waitForReconcile := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-7"
 	invocationID := "20260205120006-m3n4"
@@ -425,20 +441,15 @@ func TestReconcile_HeadlessUnaffected(t *testing.T) {
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// Wait for reconciliation
-	waitForReconcile()
-	waitForReconcile()
-
-	// Verify headless invocation is unchanged (reconcile only affects headed)
-	meta, err = st.ReadInvocationMeta(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusRunning, meta.Status, "headless invocations should not be affected by headed reconciliation")
+	// Verify headless invocation stays running through multiple ticks
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
 }
 
 func TestReconcile_ShutdownOrdering(t *testing.T) {
+	t.Parallel()
 	// Test: Shutdown waits for reconcile loop to exit before terminating
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv, st, _ := setupReconcileTestEnv(t, fakeTmux)
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-8"
 	invocationID := "20260205120007-o5p6"
@@ -467,4 +478,335 @@ func TestReconcile_ShutdownOrdering(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown timed out - possible deadlock in reconcile loop ordering")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// New tests: Landing status, idempotence, recovery, multi-invocation, fallback
+// ---------------------------------------------------------------------------
+
+func TestReconcile_LandingStatusPreserved(t *testing.T) {
+	t.Parallel()
+	// Test: LandingStatus is never modified through a transition
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-landing"
+	invocationID := "20260205120010-land"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create a running headed invocation with LandingStatus = "pending"
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName)
+	err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		m.LandingStatus = store.LandingStatusPending
+	})
+	require.NoError(t, err)
+
+	// Initially, tmux session exists
+	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+	// Start server
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Remove the tmux session to trigger transition
+	fakeTmux.Mu.Lock()
+	delete(fakeTmux.Sessions, sessionName)
+	fakeTmux.Mu.Unlock()
+
+	// Wait for transition to finished
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, store.LandingStatusPending, meta.LandingStatus, "landing_status should be preserved")
+	assert.Equal(t, "exited", meta.ExitReason)
+}
+
+func TestReconcile_Idempotence_FailedUnchanged(t *testing.T) {
+	t.Parallel()
+	// Test: Failed terminal state is a no-op for reconciliation
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-failed-idem"
+	invocationID := "20260205120011-fail"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create a failed headed invocation with specific fields
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusFailed, sessionName)
+
+	originalFinishedAt := "2026-02-05T11:58:00Z"
+	err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		m.FinishedAt = originalFinishedAt
+		m.ExitReason = "start_failed"
+		m.FailureReason = "tmux_session_missing"
+	})
+	require.NoError(t, err)
+
+	// Start server
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Verify invocation stays unchanged through multiple ticks
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusFailed, 500*time.Millisecond)
+
+	meta, err := st.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, originalFinishedAt, meta.FinishedAt, "finished_at should not change")
+	assert.Equal(t, "start_failed", meta.ExitReason, "exit_reason should not change")
+	assert.Equal(t, "tmux_session_missing", meta.FailureReason, "failure_reason should not change")
+}
+
+// ---------------------------------------------------------------------------
+// Recovery scan tests
+// ---------------------------------------------------------------------------
+
+func TestRecovery_RunningNoSession(t *testing.T) {
+	t.Parallel()
+	// Test: Recovery scan: running + no tmux session → finished
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-rec-run"
+	invocationID := "20260205120020-rec1"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create running headed invocation, age 60s (well past any grace)
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName, -60*time.Second)
+
+	// No tmux session in fake (default empty map)
+
+	// Start server (recovery runs synchronously before HTTP listener)
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Recovery should have transitioned to finished
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta.ExitReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
+}
+
+func TestRecovery_StartingOldNoSession(t *testing.T) {
+	t.Parallel()
+	// Test: Recovery scan: starting + age > 30s + no tmux → failed
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-rec-old"
+	invocationID := "20260205120021-rec2"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create starting headed invocation, age 60s (> 30s threshold)
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusStarting, sessionName, -60*time.Second)
+
+	// No tmux session
+
+	// Start server (recovery runs)
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Recovery should have transitioned to failed
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "start_failed", meta.ExitReason)
+	assert.Equal(t, "tmux_session_missing", meta.FailureReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
+}
+
+func TestRecovery_StartingYoungNoSession(t *testing.T) {
+	t.Parallel()
+	// Test: Recovery scan: starting + age < 30s → left for reconcile loop → eventually failed
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-rec-young"
+	invocationID := "20260205120022-rec3"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create starting headed invocation, age 5s (< 30s threshold)
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusStarting, sessionName, -5*time.Second)
+
+	// No tmux session
+
+	// Start server (recovery leaves it for reconcile loop)
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Should still be starting immediately after recovery
+	meta, err := st.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusStarting, meta.Status, "recovery should leave young starting invocations for reconcile loop")
+
+	// Wait for reconcile ticks to apply grace window (2 ticks)
+	meta = waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "start_failed", meta.ExitReason)
+	assert.Equal(t, "tmux_session_missing", meta.FailureReason)
+}
+
+func TestRecovery_RunningWithSession(t *testing.T) {
+	t.Parallel()
+	// Test: Recovery scan: running + tmux session alive → no change
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-rec-alive"
+	invocationID := "20260205120023-rec4"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create running headed invocation
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName, -60*time.Second)
+
+	// Add tmux session to fake
+	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+	// Start server (recovery runs)
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Should still be running (session is alive)
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
+}
+
+func TestRecovery_TmuxError(t *testing.T) {
+	t.Parallel()
+	// Test: Recovery scan: tmux transient error → no finalization
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-rec-err"
+	invocationID := "20260205120024-rec5"
+	sessionName := tmux.SessionName(invocationID)
+
+	// Setup: Create running headed invocation
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName, -60*time.Second)
+
+	// Set transient error for HasSession
+	fakeTmux.HasSessionErr = errors.New("connection refused")
+
+	// Start server (recovery runs)
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Should still be running (transient error, no finalization)
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
+}
+
+// ---------------------------------------------------------------------------
+// Multi-invocation and edge case tests
+// ---------------------------------------------------------------------------
+
+func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
+	t.Parallel()
+	// Test: Multiple invocations in same repo with different statuses
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-multi"
+	ensureRepoDir(t, st, repoID)
+
+	// inv-1: running headed, tmux session present → should stay running
+	inv1 := "20260205120030-mul1"
+	session1 := tmux.SessionName(inv1)
+	createTestHeadedInvocationMeta(t, st, repoID, inv1, store.InvocationStatusRunning, session1)
+	fakeTmux.Sessions[session1] = testutil.FakeTmuxSession{Name: session1}
+
+	// inv-2: running headed, tmux session absent → should become finished
+	inv2 := "20260205120031-mul2"
+	session2 := tmux.SessionName(inv2)
+	createTestHeadedInvocationMeta(t, st, repoID, inv2, store.InvocationStatusRunning, session2)
+	// No session added for inv2
+
+	// inv-3: finished headed → should remain finished (idempotent)
+	inv3 := "20260205120032-mul3"
+	session3 := tmux.SessionName(inv3)
+	createTestHeadedInvocationMeta(t, st, repoID, inv3, store.InvocationStatusFinished, session3)
+	err := st.UpdateInvocationMeta(repoID, inv3, func(m *store.InvocationMeta) {
+		m.FinishedAt = "2026-02-05T11:50:00Z"
+		m.ExitReason = "exited"
+	})
+	require.NoError(t, err)
+
+	// inv-4: headless running → should be unaffected
+	inv4 := "20260205120033-mul4"
+	_, err = st.EnsureInvocationDir(repoID, inv4)
+	require.NoError(t, err)
+	err = st.WriteInvocationMeta(repoID, inv4, &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          inv4,
+		IntegrationWorktreeID: "test-worktree",
+		SandboxPath:           "/tmp/sandbox",
+		SandboxBranch:         "agency/sandbox-" + inv4,
+		BaseCommit:            "abc123",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             "2026-02-05T11:59:50Z",
+		Status:                store.InvocationStatusRunning,
+	})
+	require.NoError(t, err)
+
+	// Start server
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// inv-2 should transition to finished
+	meta2 := waitForStatus(t, st, repoID, inv2, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta2.ExitReason)
+
+	// inv-1: still running
+	meta1, err := st.ReadInvocationMeta(repoID, inv1)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusRunning, meta1.Status, "inv-1 should still be running")
+
+	// inv-3: still finished, unchanged
+	meta3, err := st.ReadInvocationMeta(repoID, inv3)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFinished, meta3.Status, "inv-3 should remain finished")
+	assert.Equal(t, "2026-02-05T11:50:00Z", meta3.FinishedAt, "inv-3 finished_at should be unchanged")
+
+	// inv-4: still running (headless)
+	meta4, err := st.ReadInvocationMeta(repoID, inv4)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusRunning, meta4.Status, "inv-4 headless should still be running")
+}
+
+func TestReconcile_EmptyTmuxSessionFallback(t *testing.T) {
+	t.Parallel()
+	// Test: Empty TmuxSession field falls back to tmux.SessionName(invocationID)
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-fallback"
+	invocationID := "20260205120040-fall"
+
+	// Setup: Create running headed invocation with TmuxSession = "" (empty)
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusRunning, "") // empty TmuxSession
+
+	// Add session under the fallback name
+	fallbackName := tmux.SessionName(invocationID)
+	fakeTmux.Sessions[fallbackName] = testutil.FakeTmuxSession{Name: fallbackName}
+
+	// Start server
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Verify still running (fallback name correctly used to find session)
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
+
+	// Remove the fallback-named session
+	fakeTmux.Mu.Lock()
+	delete(fakeTmux.Sessions, fallbackName)
+	fakeTmux.Mu.Unlock()
+
+	// Should transition to finished
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta.ExitReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
 }
