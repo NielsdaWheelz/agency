@@ -175,6 +175,13 @@ const (
 
 	// Slice 8 headed invocation error codes (PR-10)
 	ESessionEnded Code = "E_SESSION_ENDED" // tmux session ended; use logs or open to view
+
+	// Slice 8 repo registry error codes (PR-14/PR-A)
+	ERepoRootInaccessible  Code = "E_REPO_ROOT_INACCESSIBLE"   // cannot stat / permission denied / path missing
+	ERepoNotAGitRepo       Code = "E_REPO_NOT_A_GIT_REPO"      // git rev-parse --show-toplevel fails
+	ERepoNoAccessibleRoots Code = "E_REPO_NO_ACCESSIBLE_ROOTS" // all registered roots are inaccessible
+	EAmbiguous             Code = "E_AMBIGUOUS"                // name/ref matches multiple entities across repos
+	ENoRepoContext         Code = "E_NO_REPO_CONTEXT"          // command requires repo context but none available
 )
 
 // AgencyError is the standard error type for agency errors.

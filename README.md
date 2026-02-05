@@ -80,6 +80,44 @@ agency merge feature-x
 
 see [getting started](docs/getting-started.md) for a complete walkthrough.
 
+## repository management
+
+Repositories must be registered with the daemon before creating worktrees or starting agents. Repositories are automatically registered on first use, but can be managed explicitly:
+
+```bash
+# Register a repository (defaults to current directory)
+agency repo add
+
+# Register a repository at a specific path
+agency repo add --path /path/to/repo
+
+# List registered repositories
+agency repo ls
+
+# Show details of a registered repository
+agency repo show <repo-id>
+```
+
+The `--repo` flag is available on worktree and agent subcommands for CWD-less operation, allowing you to run commands from any directory:
+
+```bash
+# Create worktree without being in the repo directory
+agency worktree create --name my-feature --repo <repo-id>
+
+# Start agent without being in the repo directory
+agency agent start --worktree my-feature --repo <repo-id>
+```
+
+List commands support `--all-repos` to show items across all registered repositories:
+
+```bash
+# List worktrees across all repositories
+agency worktree ls --all-repos
+
+# List agents across all repositories
+agency agent ls --all-repos
+```
+
 ## documentation
 
 - [getting started](docs/getting-started.md) — setup to merge walkthrough
@@ -161,9 +199,11 @@ Slice 8 introduces **integration worktrees** — stable branches you intend to m
 ```bash
 # Create an integration worktree
 agency worktree create --name my-feature
+agency worktree create --name my-feature --repo <repo-id>  # CWD-less operation
 
 # List integration worktrees
 agency worktree ls
+agency worktree ls --all-repos  # across all repositories
 
 # Show details
 agency worktree show my-feature
@@ -188,6 +228,7 @@ Agent invocations are executions of runners (Claude, Codex, etc.) inside isolate
 ```bash
 # Start a headed (interactive) agent - creates sandbox, launches tmux, attaches
 agency agent start --worktree my-feature
+agency agent start --worktree my-feature --repo <repo-id>  # CWD-less operation
 
 # Start in detached mode (don't attach immediately)
 agency agent start --worktree my-feature --detached
@@ -202,6 +243,7 @@ agency agent start --worktree my-feature --name auth-fix
 # List agent invocations
 agency agent ls
 agency agent ls --worktree my-feature  # filter by worktree
+agency agent ls --all-repos  # across all repositories
 
 # Show invocation details
 agency agent show 20260131

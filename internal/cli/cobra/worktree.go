@@ -99,7 +99,8 @@ Example:
 }
 
 func newWorktreeLSCmd() *cobra.Command {
-	var repoPath string
+	var repoFlag string
+	var allRepos bool
 	var all bool
 	var jsonOut bool
 
@@ -108,11 +109,14 @@ func newWorktreeLSCmd() *cobra.Command {
 		Short: "List integration worktrees",
 		Long: `List integration worktrees for the current repository.
 
-By default, only shows non-archived worktrees.
+By default, only shows non-archived worktrees for the current repo.
+Use --repo to specify a repo by id/prefix, or --all-repos to list globally.
 
 Example:
   agency worktree ls
   agency worktree ls --all
+  agency worktree ls --repo abc123
+  agency worktree ls --all-repos
   agency worktree ls --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -126,14 +130,16 @@ Example:
 			ctx := context.Background()
 
 			return commands.WorktreeLS(ctx, cr, fsys, cwd, commands.WorktreeLSOpts{
-				RepoPath: repoPath,
+				RepoFlag: repoFlag,
+				AllRepos: allRepos,
 				All:      all,
 				JSON:     jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVar(&repoPath, "repo", "", "Path to git repository")
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Filter by repo id or unique prefix")
+	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
@@ -141,6 +147,7 @@ Example:
 }
 
 func newWorktreeShowCmd() *cobra.Command {
+	var repoFlag string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -152,7 +159,7 @@ The worktree can be specified by name, id, or unique prefix.
 
 Example:
   agency worktree show my-feature
-  agency worktree show 20260131
+  agency worktree show --repo abc123 my-feature
   agency worktree show --json my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -167,17 +174,21 @@ Example:
 
 			return commands.WorktreeShow(ctx, cr, fsys, cwd, commands.WorktreeShowOpts{
 				WorktreeRef: args[0],
+				RepoFlag:    repoFlag,
 				JSON:        jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }
 
 func newWorktreePathCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "path <name|id|prefix>",
 		Short: "Output worktree path for scripting",
@@ -187,7 +198,8 @@ Outputs only the path, suitable for scripting:
   cd $(agency worktree path my-feature)
 
 Example:
-  agency worktree path my-feature`,
+  agency worktree path my-feature
+  agency worktree path --repo abc123 my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -201,14 +213,18 @@ Example:
 
 			return commands.WorktreePath(ctx, cr, fsys, cwd, commands.WorktreePathOpts{
 				WorktreeRef: args[0],
+				RepoFlag:    repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newWorktreeOpenCmd() *cobra.Command {
+	var repoFlag string
 	var editor string
 
 	cmd := &cobra.Command{
@@ -218,6 +234,7 @@ func newWorktreeOpenCmd() *cobra.Command {
 
 Example:
   agency worktree open my-feature
+  agency worktree open --repo abc123 my-feature
   agency worktree open my-feature --editor cursor`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -232,17 +249,21 @@ Example:
 
 			return commands.WorktreeOpen(ctx, cr, fsys, cwd, commands.WorktreeOpenOpts{
 				WorktreeRef: args[0],
+				RepoFlag:    repoFlag,
 				Editor:      editor,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
 
 	return cmd
 }
 
 func newWorktreeShellCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "shell <name|id|prefix>",
 		Short: "Open shell in worktree",
@@ -252,7 +273,8 @@ Spawns $SHELL (or /bin/sh) with the worktree as the working directory.
 Exiting the shell returns control to agency.
 
 Example:
-  agency worktree shell my-feature`,
+  agency worktree shell my-feature
+  agency worktree shell --repo abc123 my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -266,14 +288,18 @@ Example:
 
 			return commands.WorktreeShell(ctx, cr, fsys, cwd, commands.WorktreeShellOpts{
 				WorktreeRef: args[0],
+				RepoFlag:    repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newWorktreeRmCmd() *cobra.Command {
+	var repoFlag string
 	var force bool
 
 	cmd := &cobra.Command{
@@ -288,6 +314,7 @@ The worktree record is retained (archived state) but the tree directory is remov
 
 Example:
   agency worktree rm my-feature
+  agency worktree rm --repo abc123 my-feature
   agency worktree rm my-feature --force`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -302,11 +329,13 @@ Example:
 
 			return commands.WorktreeRm(ctx, cr, fsys, cwd, commands.WorktreeRmOpts{
 				WorktreeRef: args[0],
+				RepoFlag:    repoFlag,
 				Force:       force,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
 
 	return cmd

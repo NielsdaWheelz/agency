@@ -20,7 +20,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -130,13 +129,16 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 // WorktreeLSOpts holds options for the worktree ls command.
 type WorktreeLSOpts struct {
-	RepoPath string
+	RepoPath string // deprecated: use RepoFlag
+	RepoFlag string // PR-A: --repo <repo_id>
+	AllRepos bool   // PR-A: --all-repos
 	All      bool
 	JSON     bool
 }
 
 // WorktreeLS lists integration worktrees.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
+// PR-A: Supports --repo / --all-repos for CWD-less operation.
 func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeLSOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -144,26 +146,6 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Determine repo scope
-	var repoID string
-	if opts.RepoPath != "" {
-		repoRoot, repoIDFromPath, err := ResolveRepoContext(ctx, cr, cwd, opts.RepoPath)
-		if err != nil {
-			return err
-		}
-		repoID = repoIDFromPath
-		_ = repoRoot
-	} else {
-		// Try CWD-based repo discovery
-		repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-		if err != nil {
-			return errors.New(errors.ENoRepo, "not inside a git repository; use --repo to specify")
-		}
-		originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-		repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-		repoID = repoIdentity.RepoID
-	}
 
 	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
@@ -175,10 +157,41 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	// PR-12: Call daemon ListWorktrees endpoint
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// PR-A: Resolve repo context via daemon
+	// Support legacy --repo path as well as new --repo <id>
+	repoFlag := opts.RepoFlag
+	if repoFlag == "" && opts.RepoPath != "" {
+		// Legacy path-based --repo: register it and get the repo_id
+		result, regErr := client.RegisterRepo(ctx, opts.RepoPath)
+		if regErr != nil {
+			return regErr
+		}
+		repoFlag = result.RepoID
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      repoFlag,
+		AllRepos:      opts.AllRepos,
+		AllowAllRepos: true,
+		CmdName:       "worktree ls",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Call daemon ListWorktrees endpoint
 	state := "present"
 	if opts.All {
 		state = "all"
+	}
+
+	var repoID string
+	if !repoCtx.AllRepos {
+		repoID = repoCtx.RepoID
 	}
 
 	result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
@@ -227,25 +240,19 @@ func writeWorktreeLSHumanFromDTO(w io.Writer, worktrees []daemon.WorktreeDTO) er
 // WorktreeShowOpts holds options for the worktree show command.
 type WorktreeShowOpts struct {
 	WorktreeRef string
+	RepoFlag    string // PR-A: --repo <repo_id>
 	JSON        bool
 }
 
 // WorktreeShow shows details of an integration worktree.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
+// PR-A: Supports --repo for CWD-less operation.
 func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeShowOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
 	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
@@ -257,8 +264,21 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// PR-12: Call daemon GetWorktree endpoint
-	result, err := client.GetWorktree(ctx, opts.WorktreeRef, repoIdentity.RepoID)
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// PR-A: Resolve repo context via daemon (single-ref command, no --all-repos)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree show",
+	})
+	if err != nil {
+		return err
+	}
+
+	result, err := client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -296,10 +316,11 @@ func writeWorktreeShowHumanFromDTO(w io.Writer, wt *daemon.WorktreeDTO) error {
 // WorktreePathOpts holds options for the worktree path command.
 type WorktreePathOpts struct {
 	WorktreeRef string
+	RepoFlag    string // PR-A: --repo <repo_id>
 }
 
 // WorktreePath outputs the path to an integration worktree.
-// PR-12: Routes through daemon read API - CLI never reads store directly.
+// PR-A: Supports --repo for CWD-less operation.
 func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePathOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -307,15 +328,6 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	logPath := st.DaemonLogPath()
@@ -325,13 +337,24 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// PR-12: Call daemon GetWorktree endpoint
-	result, err := client.GetWorktree(ctx, opts.WorktreeRef, repoIdentity.RepoID)
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree path",
+	})
 	if err != nil {
 		return err
 	}
 
-	// Output just the path
+	result, err := client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	if err != nil {
+		return err
+	}
+
 	_, _ = fmt.Fprintln(stdout, result.Worktree.TreePath)
 	return nil
 }
@@ -339,10 +362,12 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // WorktreeOpenOpts holds options for the worktree open command.
 type WorktreeOpenOpts struct {
 	WorktreeRef string
+	RepoFlag    string // PR-A: --repo <repo_id>
 	Editor      string
 }
 
 // WorktreeOpen opens an integration worktree in the configured editor.
+// PR-A: Supports --repo for CWD-less operation.
 func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeOpenOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -350,19 +375,31 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// Resolve worktree
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := svc.Resolve(repoIdentity.RepoID, opts.WorktreeRef, false)
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree open",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Resolve worktree via local store (for tree path)
+	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
+	record, err := svc.Resolve(repoCtx.RepoID, opts.WorktreeRef, false)
 	if err != nil {
 		return err
 	}
@@ -411,9 +448,11 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // WorktreeShellOpts holds options for the worktree shell command.
 type WorktreeShellOpts struct {
 	WorktreeRef string
+	RepoFlag    string // PR-A: --repo <repo_id>
 }
 
 // WorktreeShell opens a shell in an integration worktree.
+// PR-A: Supports --repo for CWD-less operation.
 func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeShellOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -421,19 +460,31 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
-	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
-
-	// Resolve worktree
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := svc.Resolve(repoIdentity.RepoID, opts.WorktreeRef, false)
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree shell",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Resolve worktree via local store (for tree path)
+	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
+	record, err := svc.Resolve(repoCtx.RepoID, opts.WorktreeRef, false)
 	if err != nil {
 		return err
 	}
@@ -477,11 +528,13 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 // WorktreeRmOpts holds options for the worktree rm command.
 type WorktreeRmOpts struct {
 	WorktreeRef string
+	RepoFlag    string // PR-A: --repo <repo_id>
 	Force       bool
 }
 
 // WorktreeRm removes an integration worktree.
 // PR-06: Routes through daemon for single-writer ownership.
+// PR-A: Supports --repo for CWD-less operation.
 func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRmOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -489,19 +542,31 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return err
 	}
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree rm",
+	})
+	if err != nil {
+		return err
+	}
 
 	// Resolve worktree locally first to get worktree name for display
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
-
-	record, err := svc.Resolve(repoIdentity.RepoID, opts.WorktreeRef, false)
+	record, err := svc.Resolve(repoCtx.RepoID, opts.WorktreeRef, false)
 	if err != nil {
 		return err
 	}
@@ -520,25 +585,8 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	worktreeName := record.Meta.Name
 	worktreeID := record.WorktreeID
 
-	// Auto-start daemon if not running
-	client := daemonclient.NewClient(dirs.DataDir + "/agencyd.sock")
-	if !client.IsRunning(ctx) {
-		if err := daemonclient.AutoStartDaemon(ctx, dirs.DataDir); err != nil {
-			return errors.Wrap(errors.EDaemonStartFailed, "failed to auto-start daemon", err)
-		}
-		// Wait for daemon to be ready
-		if err := client.WaitForReady(ctx, 10*time.Second); err != nil {
-			return err
-		}
-	}
-
-	// Check API version compatibility
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
 	// Call daemon to remove worktree
-	result, err := client.WorktreeRm(ctx, repoIdentity.RepoID, worktreeID, opts.Force)
+	result, err := client.WorktreeRm(ctx, repoCtx.RepoID, worktreeID, opts.Force)
 	if err != nil {
 		return err
 	}

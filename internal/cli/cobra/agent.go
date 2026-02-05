@@ -136,6 +136,8 @@ Example:
 }
 
 func newAgentLSCmd() *cobra.Command {
+	var repoFlag string
+	var allRepos bool
 	var worktree string
 	var all bool
 	var jsonOut bool
@@ -146,14 +148,14 @@ func newAgentLSCmd() *cobra.Command {
 		Long: `List agent invocations for the current repository.
 
 By default, shows active invocations (not yet landed/discarded).
-Use --all to include finished invocations.
-Use --worktree to filter by integration worktree.
+Use --repo to specify a repo, or --all-repos to list globally.
 
 Example:
   agency agent ls
+  agency agent ls --repo abc123
+  agency agent ls --all-repos
   agency agent ls --worktree my-feature
-  agency agent ls --all
-  agency agent ls --json`,
+  agency agent ls --all --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -166,6 +168,8 @@ Example:
 			ctx := context.Background()
 
 			return commands.AgentLS(ctx, cr, fsys, cwd, commands.AgentLSOpts{
+				RepoFlag:    repoFlag,
+				AllRepos:    allRepos,
 				WorktreeRef: worktree,
 				All:         all,
 				JSON:        jsonOut,
@@ -173,6 +177,8 @@ Example:
 		},
 	}
 
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Filter by repo id or unique prefix")
+	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Filter by integration worktree")
 	cmd.Flags().BoolVar(&all, "all", false, "Include finished (landed/discarded) invocations")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
@@ -181,6 +187,7 @@ Example:
 }
 
 func newAgentShowCmd() *cobra.Command {
+	var repoFlag string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -192,7 +199,7 @@ The invocation can be specified by full ID or unique prefix.
 
 Example:
   agency agent show 20260131
-  agency agent show 20260131120500-a3f2
+  agency agent show --repo abc123 20260131
   agency agent show --json 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -207,17 +214,21 @@ Example:
 
 			return commands.AgentShow(ctx, cr, fsys, cwd, commands.AgentShowOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }
 
 func newAgentAttachCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "attach <invocation_id|prefix>",
 		Short: "Attach to a running headed invocation",
@@ -228,7 +239,7 @@ Detach from the session with Ctrl+b, d.
 
 Example:
   agency agent attach 20260131
-  agency agent attach my-inv-id`,
+  agency agent attach --repo abc123 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -242,14 +253,19 @@ Example:
 
 			return commands.AgentAttach(ctx, cr, fsys, cwd, commands.AgentAttachOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newAgentStopCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "stop <invocation_id|prefix>",
 		Short: "Stop an invocation gracefully",
@@ -259,7 +275,8 @@ For headed invocations, this sends C-c via tmux send-keys.
 The runner may ignore the signal; use 'kill' for forceful termination.
 
 Example:
-  agency agent stop 20260131`,
+  agency agent stop 20260131
+  agency agent stop --repo abc123 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -273,14 +290,19 @@ Example:
 
 			return commands.AgentStop(ctx, cr, fsys, cwd, commands.AgentStopOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newAgentKillCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "kill <invocation_id|prefix>",
 		Short: "Kill an invocation forcefully",
@@ -291,7 +313,8 @@ The invocation is marked as failed with exit_reason="killed".
 The sandbox is preserved for inspection.
 
 Example:
-  agency agent kill 20260131`,
+  agency agent kill 20260131
+  agency agent kill --repo abc123 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -305,14 +328,19 @@ Example:
 
 			return commands.AgentKill(ctx, cr, fsys, cwd, commands.AgentKillOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newAgentDiffCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "diff <invocation_ref>",
 		Short: "Show sandbox changes vs integration",
@@ -323,11 +351,9 @@ Displays:
 - File changes between base_commit and sandbox tip
 - Uncommitted changes in sandbox (if any)
 
-This is a read-only operation that does not require the daemon.
-
 Example:
   agency agent diff 20260131
-  agency agent diff my-invocation`,
+  agency agent diff --repo abc123 my-invocation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -341,14 +367,18 @@ Example:
 
 			return commands.AgentDiff(ctx, cr, fsys, cwd, commands.AgentDiffOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newAgentLandCmd() *cobra.Command {
+	var repoFlag string
 	var apply bool
 	var requireBase bool
 
@@ -360,18 +390,9 @@ func newAgentLandCmd() *cobra.Command {
 By default, cherry-picks sandbox commits onto the integration branch HEAD.
 If the sandbox has no commits but has uncommitted changes, use --apply.
 
-Landing fails if:
-- The invocation is still running (stop it first)
-- Cherry-pick results in conflicts (sandbox preserved for resolution)
-- The invocation has already been landed or discarded
-
-Options:
-  --apply        Apply uncommitted changes as a patch (when no commits exist)
-  --require-base Fail if integration has diverged from base_commit
-
 Example:
   agency agent land 20260131
-  agency agent land my-invocation --apply
+  agency agent land --repo abc123 my-invocation --apply
   agency agent land 20260131 --require-base`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -386,12 +407,14 @@ Example:
 
 			return commands.AgentLand(ctx, cr, fsys, cwd, commands.AgentLandOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 				Apply:         apply,
 				RequireBase:   requireBase,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Apply uncommitted changes (when no commits exist)")
 	cmd.Flags().BoolVar(&requireBase, "require-base", false, "Fail if integration has diverged from base_commit")
 
@@ -399,6 +422,8 @@ Example:
 }
 
 func newAgentDiscardCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "discard <invocation_ref>",
 		Short: "Discard sandbox changes",
@@ -407,12 +432,9 @@ func newAgentDiscardCmd() *cobra.Command {
 If the invocation is still running, it will be stopped first (gracefully,
 then forcefully killed after 5 seconds).
 
-The sandbox worktree, branch, and checkpoint refs are removed.
-The invocation record is preserved with landing_status="discarded".
-
 Example:
   agency agent discard 20260131
-  agency agent discard my-invocation`,
+  agency agent discard --repo abc123 my-invocation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -426,25 +448,27 @@ Example:
 
 			return commands.AgentDiscard(ctx, cr, fsys, cwd, commands.AgentDiscardOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }
 
 func newAgentOpenCmd() *cobra.Command {
+	var repoFlag string
+
 	cmd := &cobra.Command{
 		Use:   "open <invocation_ref>",
 		Short: "Open sandbox in editor",
 		Long: `Open the sandbox directory in your configured editor.
 
-Uses the editor from user config, EDITOR environment variable,
-or defaults to VS Code (code).
-
 Example:
   agency agent open 20260131
-  agency agent open my-invocation`,
+  agency agent open --repo abc123 my-invocation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -458,9 +482,12 @@ Example:
 
 			return commands.AgentOpen(ctx, cr, fsys, cwd, commands.AgentOpenOpts{
 				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }

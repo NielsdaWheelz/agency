@@ -957,3 +957,149 @@ func (c *Client) ListCheckpoints(ctx context.Context, invocationRef string, repo
 		RequestID:   apiResp.RequestID,
 	}, nil
 }
+
+// ----- PR-A: Repo Registry Client Methods -----
+
+// RegisterRepoResult wraps the register repo response.
+type RegisterRepoResult struct {
+	RepoID                  string
+	RepoKey                 string
+	Paths                   []string
+	PreferredRoot           string
+	PreferredRootAccessible bool
+	LastSeenAt              string
+}
+
+// RegisterRepo registers a repo root with the daemon and returns the resolved repo_id.
+// This is the canonical way to get repo_id — CLI should not compute it locally.
+func (c *Client) RegisterRepo(ctx context.Context, repoRoot string) (*RegisterRepoResult, error) {
+	reqBody := daemon.RepoRegisterRequest{
+		RepoRoot: repoRoot,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://daemon/repos/register", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.RepoRegisterResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if !result.OK {
+		return nil, errors.New(errors.Code(result.ErrorCode), result.Message)
+	}
+
+	if result.Data == nil {
+		return nil, errors.New(errors.EInternal, "daemon returned success but no data")
+	}
+
+	return &RegisterRepoResult{
+		RepoID:                  result.Data.RepoID,
+		RepoKey:                 result.Data.RepoKey,
+		Paths:                   result.Data.Paths,
+		PreferredRoot:           result.Data.PreferredRoot,
+		PreferredRootAccessible: result.Data.PreferredRootAccessible,
+		LastSeenAt:              result.Data.LastSeenAt,
+	}, nil
+}
+
+// ListReposResult wraps the list repos response.
+type ListReposResult struct {
+	Repos     []daemon.RepoDTO
+	RequestID string
+}
+
+// ListRepos lists all registered repos.
+func (c *Client) ListRepos(ctx context.Context) (*ListReposResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://daemon/repos", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.ListReposData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &ListReposResult{
+		Repos:     data.Repos,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// GetRepoResult wraps the get repo response.
+type GetRepoResult struct {
+	Repo      daemon.RepoDTO
+	RequestID string
+}
+
+// GetRepo gets a single repo by ID.
+func (c *Client) GetRepo(ctx context.Context, repoID string) (*GetRepoResult, error) {
+	u := fmt.Sprintf("http://daemon/repos/%s", url.PathEscape(repoID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var dto daemon.RepoDTO
+	if err := json.Unmarshal(dataBytes, &dto); err != nil {
+		return nil, err
+	}
+
+	return &GetRepoResult{
+		Repo:      dto,
+		RequestID: apiResp.RequestID,
+	}, nil
+}

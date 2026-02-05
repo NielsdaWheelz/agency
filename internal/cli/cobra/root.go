@@ -69,6 +69,7 @@ and provides commands to control the runner session.`,
 		newCheckpointCmd(),
 		newWatchCmd(),
 		newDaemonCmd(),
+		newRepoCmd(),
 	)
 
 	return rootCmd

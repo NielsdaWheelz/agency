@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -66,10 +67,10 @@ func (s *Store) LoadRepoIndex() (RepoIndex, error) {
 }
 
 // UpsertRepoIndexEntry updates or creates an entry in the repo index.
-// - If the entry exists: updates last_seen_at and moves absPath to front of paths
+// - If the entry exists: updates last_seen_at and adds absPath (deduped, sorted)
 // - If the entry is new: creates it with the given values
 // absPath is normalized via filepath.Clean.
-// Paths are de-duplicated case-sensitively.
+// Paths are de-duplicated case-sensitively and kept sorted for stable diffs.
 func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath string) RepoIndex {
 	now := s.Now().UTC().Format("2006-01-02T15:04:05Z")
 	absPath = filepath.Clean(absPath)
@@ -88,13 +89,17 @@ func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath str
 	// Update existing entry
 	entry.LastSeenAt = now
 
-	// Update paths: move absPath to front, de-duplicate
-	newPaths := []string{absPath}
+	// PR-A: Deduplicate and keep sorted for stable diffs
+	pathSet := make(map[string]bool, len(entry.Paths)+1)
+	pathSet[absPath] = true
 	for _, p := range entry.Paths {
-		if p != absPath {
-			newPaths = append(newPaths, p)
-		}
+		pathSet[p] = true
 	}
+	newPaths := make([]string, 0, len(pathSet))
+	for p := range pathSet {
+		newPaths = append(newPaths, p)
+	}
+	sort.Strings(newPaths)
 	entry.Paths = newPaths
 
 	idx.Repos[repoKey] = entry

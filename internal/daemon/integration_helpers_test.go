@@ -112,6 +112,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 }
 
 // setupTestGitRepo creates a temporary git repo with one initial commit.
+// Uses t.Setenv via HermeticGitEnv — incompatible with t.Parallel().
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
 	testutil.HermeticGitEnv(t)
@@ -134,6 +135,53 @@ func setupTestGitRepo(t *testing.T) string {
 	}
 
 	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
+	if err != nil || result.ExitCode != 0 {
+		require.FailNow(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+	}
+
+	return repoDir
+}
+
+// hermeticGitEnv returns per-command env vars that isolate git from the host
+// config. Unlike HermeticGitEnv, this does NOT call t.Setenv, so the calling
+// test can use t.Parallel().
+func hermeticGitEnv(t *testing.T) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
+		"GIT_AUTHOR_NAME":     "Test User",
+		"GIT_AUTHOR_EMAIL":    "test@test.com",
+		"GIT_COMMITTER_NAME":  "Test User",
+		"GIT_COMMITTER_EMAIL": "test@test.com",
+	}
+}
+
+// setupTestGitRepoParallel creates a temp git repo without touching process
+// env (no t.Setenv), making it safe for use in t.Parallel() tests. Git config
+// isolation is achieved via per-command RunOpts.Env.
+func setupTestGitRepoParallel(t *testing.T) string {
+	t.Helper()
+
+	gitEnv := hermeticGitEnv(t)
+	repoDir := t.TempDir()
+	cr := exec.NewRealRunner()
+	ctx := context.Background()
+
+	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir, Env: gitEnv})
+	if err != nil || result.ExitCode != 0 {
+		require.FailNow(t, "git init failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+	}
+
+	testFile := filepath.Join(repoDir, "README.md")
+	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644))
+
+	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir, Env: gitEnv})
+	if err != nil || result.ExitCode != 0 {
+		require.FailNow(t, "git add failed", "err=%v, exit %d", err, result.ExitCode)
+	}
+
+	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir, Env: gitEnv})
 	if err != nil || result.ExitCode != 0 {
 		require.FailNow(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
 	}
