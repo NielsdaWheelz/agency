@@ -12,92 +12,69 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPath_RunNotFound(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
 	var stdout, stderr bytes.Buffer
-	err := Path(context.Background(), PathOpts{RunRef: "missing"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for missing run")
-	}
-	if errors.GetCode(err) != errors.ERunNotFound {
-		t.Fatalf("expected E_RUN_NOT_FOUND, got %s", errors.GetCode(err))
-	}
+	err := Path(context.Background(), PathOpts{RunRef: "missing", DataDirOverride: dataDir}, &stdout, &stderr)
+	require.Error(t, err, "expected error for missing run")
+	require.Equal(t, errors.ERunNotFound, errors.GetCode(err))
 }
 
 func TestPath_WorktreeMissing(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, dataDir, time.Now)
 
 	repoID := "repo123456789012"
 	runID := "20260115120000-a3f2"
 
-	if _, err := st.EnsureRunDir(repoID, runID); err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
+	_, err := st.EnsureRunDir(repoID, runID)
+	require.NoError(t, err, "EnsureRunDir")
 
 	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", "/missing/worktree", time.Now())
-	if err := st.WriteInitialMeta(repoID, runID, meta); err != nil {
-		t.Fatalf("WriteInitialMeta: %v", err)
-	}
+	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	var stdout, stderr bytes.Buffer
-	err := Path(context.Background(), PathOpts{RunRef: runID}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for missing worktree")
-	}
-	if errors.GetCode(err) != errors.EWorktreeMissing {
-		t.Fatalf("expected E_WORKTREE_MISSING, got %s", errors.GetCode(err))
-	}
+	err = Path(context.Background(), PathOpts{RunRef: runID, DataDirOverride: dataDir}, &stdout, &stderr)
+	require.Error(t, err, "expected error for missing worktree")
+	require.Equal(t, errors.EWorktreeMissing, errors.GetCode(err))
 }
 
 func TestPath_Success(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, dataDir, time.Now)
 
 	repoID := "repo123456789012"
 	runID := "20260115120000-a3f2"
 	worktreePath := filepath.Join(dataDir, "worktree")
-	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
-		t.Fatalf("failed to create worktree: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(worktreePath, 0o755), "failed to create worktree")
 
-	if _, err := st.EnsureRunDir(repoID, runID); err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
+	_, err := st.EnsureRunDir(repoID, runID)
+	require.NoError(t, err, "EnsureRunDir")
 
 	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
-	if err := st.WriteInitialMeta(repoID, runID, meta); err != nil {
-		t.Fatalf("WriteInitialMeta: %v", err)
-	}
+	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	var stdout, stderr bytes.Buffer
-	err := Path(context.Background(), PathOpts{RunRef: runID}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	err = Path(context.Background(), PathOpts{RunRef: runID, DataDirOverride: dataDir}, &stdout, &stderr)
+	require.NoError(t, err)
 
 	// Check output is exactly the worktree path with a newline
 	got := stdout.String()
 	want := worktreePath + "\n"
-	if got != want {
-		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func TestPath_ByName(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, dataDir, time.Now)
 
@@ -105,77 +82,53 @@ func TestPath_ByName(t *testing.T) {
 	runID := "20260115120000-a3f2"
 	runName := "my-feature"
 	worktreePath := filepath.Join(dataDir, "worktree")
-	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
-		t.Fatalf("failed to create worktree: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(worktreePath, 0o755), "failed to create worktree")
 
-	if _, err := st.EnsureRunDir(repoID, runID); err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
+	_, err := st.EnsureRunDir(repoID, runID)
+	require.NoError(t, err, "EnsureRunDir")
 
 	meta := store.NewRunMeta(runID, repoID, runName, "claude", "claude", "main", "agency/my-feature-a3f2", worktreePath, time.Now())
-	if err := st.WriteInitialMeta(repoID, runID, meta); err != nil {
-		t.Fatalf("WriteInitialMeta: %v", err)
-	}
+	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	var stdout, stderr bytes.Buffer
-	err := Path(context.Background(), PathOpts{RunRef: runName}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	err = Path(context.Background(), PathOpts{RunRef: runName, DataDirOverride: dataDir}, &stdout, &stderr)
+	require.NoError(t, err)
 
 	got := strings.TrimSpace(stdout.String())
-	if got != worktreePath {
-		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", got, worktreePath)
-	}
+	require.Equal(t, worktreePath, got)
 }
 
 func TestPath_ByPrefix(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, dataDir, time.Now)
 
 	repoID := "repo123456789012"
 	runID := "20260115120000-a3f2"
 	worktreePath := filepath.Join(dataDir, "worktree")
-	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
-		t.Fatalf("failed to create worktree: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(worktreePath, 0o755), "failed to create worktree")
 
-	if _, err := st.EnsureRunDir(repoID, runID); err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
+	_, err := st.EnsureRunDir(repoID, runID)
+	require.NoError(t, err, "EnsureRunDir")
 
 	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
-	if err := st.WriteInitialMeta(repoID, runID, meta); err != nil {
-		t.Fatalf("WriteInitialMeta: %v", err)
-	}
+	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	// Use a prefix of the run_id
 	var stdout, stderr bytes.Buffer
-	err := Path(context.Background(), PathOpts{RunRef: "20260115"}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	err = Path(context.Background(), PathOpts{RunRef: "20260115", DataDirOverride: dataDir}, &stdout, &stderr)
+	require.NoError(t, err)
 
 	got := strings.TrimSpace(stdout.String())
-	if got != worktreePath {
-		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", got, worktreePath)
-	}
+	require.Equal(t, worktreePath, got)
 }
 
 func TestPath_EmptyRunRef(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
 	var stdout, stderr bytes.Buffer
-	err := Path(context.Background(), PathOpts{RunRef: ""}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for empty run ref")
-	}
-	if errors.GetCode(err) != errors.EUsage {
-		t.Fatalf("expected E_USAGE, got %s", errors.GetCode(err))
-	}
+	err := Path(context.Background(), PathOpts{RunRef: "", DataDirOverride: dataDir}, &stdout, &stderr)
+	require.Error(t, err, "expected error for empty run ref")
+	require.Equal(t, errors.EUsage, errors.GetCode(err))
 }

@@ -3,6 +3,8 @@ package status
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/watchdog"
@@ -43,6 +45,8 @@ func mkRunnerStatus(status runnerstatus.Status) *runnerstatus.RunnerStatus {
 }
 
 func TestDerive(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name              string
 		meta              *store.RunMeta
@@ -380,33 +384,32 @@ func TestDerive(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := Derive(tt.meta, tt.snapshot)
 
-			if got.DerivedStatus != tt.wantDerivedStatus {
-				t.Errorf("DerivedStatus = %q, want %q", got.DerivedStatus, tt.wantDerivedStatus)
-			}
-			if got.Archived != tt.wantArchived {
-				t.Errorf("Archived = %v, want %v", got.Archived, tt.wantArchived)
-			}
+			assert.Equal(t, tt.wantDerivedStatus, got.DerivedStatus)
+			assert.Equal(t, tt.wantArchived, got.Archived)
 		})
 	}
 }
 
 // TestDeriveNilMetaDoesNotPanic ensures Derive handles nil meta gracefully.
 func TestDeriveNilMetaDoesNotPanic(t *testing.T) {
-	// This test exists to explicitly verify the "must not panic" requirement
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("Derive panicked on nil meta: %v", r)
-		}
-	}()
+	t.Parallel()
 
-	_ = Derive(nil, Snapshot{TmuxActive: true, WorktreePresent: true})
+	// This test exists to explicitly verify the "must not panic" requirement
+	assert.NotPanics(t, func() {
+		_ = Derive(nil, Snapshot{TmuxActive: true, WorktreePresent: true})
+	}, "Derive panicked on nil meta")
 }
 
 // TestStatusStringConstants verifies status strings match expected values.
 func TestStatusStringConstants(t *testing.T) {
+	t.Parallel()
+
 	// These are user-visible contracts and must remain stable
 	expected := map[string]string{
 		"StatusBroken":         "broken",
@@ -440,8 +443,6 @@ func TestStatusStringConstants(t *testing.T) {
 
 	for name, want := range expected {
 		got := actual[name]
-		if got != want {
-			t.Errorf("%s = %q, want %q", name, got, want)
-		}
+		assert.Equal(t, want, got, "%s", name)
 	}
 }

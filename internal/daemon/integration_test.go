@@ -1,10 +1,15 @@
 package daemon_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +21,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,22 +37,12 @@ func TestDaemonHealth(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := env.Client.Health(ctx)
-	if err != nil {
-		t.Fatalf("health: %v", err)
-	}
+	require.NoError(t, err, "health")
 
-	if !resp.OK {
-		t.Error("expected OK=true")
-	}
-	if resp.APIVersion != daemon.APIVersion {
-		t.Errorf("api_version = %d, want %d", resp.APIVersion, daemon.APIVersion)
-	}
-	if resp.DaemonInstanceID == "" {
-		t.Error("expected daemon_instance_id to be set")
-	}
-	if resp.PID == 0 {
-		t.Error("expected pid to be set")
-	}
+	assert.True(t, resp.OK, "expected OK=true")
+	assert.Equal(t, daemon.APIVersion, resp.APIVersion)
+	assert.NotEmpty(t, resp.DaemonInstanceID, "expected daemon_instance_id to be set")
+	assert.NotZero(t, resp.PID, "expected pid to be set")
 }
 
 func TestDaemonShutdownClean(t *testing.T) {
@@ -58,18 +54,13 @@ func TestDaemonShutdownClean(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := env.Client.Shutdown(ctx, false)
-	if err != nil {
-		t.Fatalf("shutdown: %v", err)
-	}
-	if !resp.OK {
-		t.Errorf("expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
-	}
+	require.NoError(t, err, "shutdown")
+	assert.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
 
 	// After shutdown, health should fail.
-	time.Sleep(200 * time.Millisecond)
-	if env.Client.IsRunning(ctx) {
-		t.Error("daemon still running after shutdown")
-	}
+	require.Eventually(t, func() bool {
+		return !env.Client.IsRunning(ctx)
+	}, 5*time.Second, 50*time.Millisecond, "daemon still running after shutdown")
 }
 
 func TestDaemonShutdownBusyRejectsWithoutForce(t *testing.T) {
@@ -86,39 +77,21 @@ func TestDaemonShutdownBusyRejectsWithoutForce(t *testing.T) {
 
 	// Shutdown without force should fail.
 	shutResp, err := env.Client.Shutdown(ctx, false)
-	if err != nil {
-		t.Fatalf("shutdown: %v", err)
-	}
-	if shutResp.OK {
-		t.Error("expected shutdown to fail without force")
-	}
-	if shutResp.ErrorCode != "E_DAEMON_BUSY" {
-		t.Errorf("error_code = %q, want E_DAEMON_BUSY", shutResp.ErrorCode)
-	}
-	if len(shutResp.RunningInvocations) == 0 {
-		t.Error("expected running_invocations to be populated")
-	}
+	require.NoError(t, err, "shutdown")
+	assert.False(t, shutResp.OK, "expected shutdown to fail without force")
+	assert.Equal(t, "E_DAEMON_BUSY", shutResp.ErrorCode)
+	assert.NotEmpty(t, shutResp.RunningInvocations, "expected running_invocations to be populated")
 
 	// Shutdown with force should succeed.
 	shutResp, err = env.Client.Shutdown(ctx, true)
-	if err != nil {
-		t.Fatalf("shutdown force: %v", err)
-	}
-	if !shutResp.OK {
-		t.Errorf("expected OK=true with force, got error: %s - %s", shutResp.ErrorCode, shutResp.Message)
-	}
+	require.NoError(t, err, "shutdown force")
+	assert.True(t, shutResp.OK, "expected OK=true with force, got error: %s - %s", shutResp.ErrorCode, shutResp.Message)
 
-	// Give the async shutdown goroutine time to complete.
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify invocation meta was updated.
-	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
-	if err != nil {
-		t.Fatalf("read meta: %v", err)
-	}
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
+	// Wait for async shutdown to update invocation meta.
+	require.Eventually(t, func() bool {
+		meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
+		return err == nil && meta.Status == store.InvocationStatusFailed
+	}, 10*time.Second, 50*time.Millisecond, "invocation meta not updated after force shutdown")
 }
 
 // ---------------------------------------------------------------------------
@@ -143,37 +116,19 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 		Prompt:      "test prompt",
 		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
 	})
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	if !resp.OK {
-		t.Fatalf("start failed: %s - %s", resp.ErrorCode, resp.Message)
-	}
+	require.NoError(t, err, "start")
+	require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
 
-	if resp.InvocationID == "" {
-		t.Error("expected invocation_id to be set")
-	}
-	if resp.PID == 0 {
-		t.Error("expected pid to be set")
-	}
-	if resp.SandboxPath == "" {
-		t.Error("expected sandbox_path to be set")
-	}
-	if resp.RepoID != repoID {
-		t.Errorf("repo_id = %q, want %q", resp.RepoID, repoID)
-	}
-	if resp.DaemonInstanceID == "" {
-		t.Error("expected daemon_instance_id to be set")
-	}
-	if resp.LogPaths == nil {
-		t.Error("expected log_paths to be set")
-	}
+	assert.NotEmpty(t, resp.InvocationID, "expected invocation_id to be set")
+	assert.NotZero(t, resp.PID, "expected pid to be set")
+	assert.NotEmpty(t, resp.SandboxPath, "expected sandbox_path to be set")
+	assert.Equal(t, repoID, resp.RepoID)
+	assert.NotEmpty(t, resp.DaemonInstanceID, "expected daemon_instance_id to be set")
+	assert.NotNil(t, resp.LogPaths, "expected log_paths to be set")
 
 	// Wait for the exit-ok runner to finish.
 	meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
-	if meta.Status != store.InvocationStatusFinished {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFinished)
-	}
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 }
 
 func TestDaemonControlPlaneStartAndStop(t *testing.T) {
@@ -190,24 +145,14 @@ func TestDaemonControlPlaneStartAndStop(t *testing.T) {
 
 	// Stop the invocation.
 	stopResp, err := env.Client.Stop(ctx, startResp.RepoID, startResp.InvocationID)
-	if err != nil {
-		t.Fatalf("stop: %v", err)
-	}
-	if !stopResp.OK {
-		t.Errorf("stop failed: %s - %s", stopResp.ErrorCode, stopResp.Message)
-	}
+	require.NoError(t, err, "stop")
+	assert.True(t, stopResp.OK, "stop failed: %s - %s", stopResp.ErrorCode, stopResp.Message)
 
 	// Wait for the process to actually exit (stop escalation runs in background).
 	meta := waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 10*time.Second)
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
-	if meta.ExitReason != "stopped" {
-		t.Errorf("exit_reason = %q, want %q", meta.ExitReason, "stopped")
-	}
-	if meta.FailureReason != "stopped" {
-		t.Errorf("failure_reason = %q, want %q", meta.FailureReason, "stopped")
-	}
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "stopped", meta.ExitReason)
+	assert.Equal(t, "stopped", meta.FailureReason)
 }
 
 func TestDaemonStartAndKill(t *testing.T) {
@@ -224,24 +169,14 @@ func TestDaemonStartAndKill(t *testing.T) {
 
 	// Kill the invocation.
 	killResp, err := env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
-	if err != nil {
-		t.Fatalf("kill: %v", err)
-	}
-	if !killResp.OK {
-		t.Errorf("kill failed: %s - %s", killResp.ErrorCode, killResp.Message)
-	}
+	require.NoError(t, err, "kill")
+	assert.True(t, killResp.OK, "kill failed: %s - %s", killResp.ErrorCode, killResp.Message)
 
 	// After kill, meta should reach terminal state quickly (no escalation).
 	meta := waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
-	if meta.ExitReason != "killed" {
-		t.Errorf("exit_reason = %q, want %q", meta.ExitReason, "killed")
-	}
-	if meta.FailureReason != "killed" {
-		t.Errorf("failure_reason = %q, want %q", meta.FailureReason, "killed")
-	}
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "killed", meta.ExitReason)
+	assert.Equal(t, "killed", meta.FailureReason)
 }
 
 func TestDaemonStopEscalation(t *testing.T) {
@@ -260,21 +195,13 @@ func TestDaemonStopEscalation(t *testing.T) {
 
 	// Stop — should escalate from SIGINT to SIGTERM after 5s.
 	stopResp, err := env.Client.Stop(ctx, startResp.RepoID, startResp.InvocationID)
-	if err != nil {
-		t.Fatalf("stop: %v", err)
-	}
-	if !stopResp.OK {
-		t.Errorf("stop failed: %s - %s", stopResp.ErrorCode, stopResp.Message)
-	}
+	require.NoError(t, err, "stop")
+	assert.True(t, stopResp.OK, "stop failed: %s - %s", stopResp.ErrorCode, stopResp.Message)
 
 	// Must wait for escalation: 5s (SIGINT wait) + some buffer.
 	meta := waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 15*time.Second)
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
-	if meta.ExitReason != "stopped" {
-		t.Errorf("exit_reason = %q, want %q", meta.ExitReason, "stopped")
-	}
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "stopped", meta.ExitReason)
 }
 
 func TestDaemonIdempotency(t *testing.T) {
@@ -303,12 +230,8 @@ func TestDaemonIdempotency(t *testing.T) {
 	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
 
 	// The key point: the first start worked and returned valid fields.
-	if resp1.InvocationID == "" {
-		t.Error("expected invocation_id to be set")
-	}
-	if resp1.AlreadyRunning {
-		t.Error("first request should not be already_running")
-	}
+	assert.NotEmpty(t, resp1.InvocationID, "expected invocation_id to be set")
+	assert.False(t, resp1.AlreadyRunning, "first request should not be already_running")
 }
 
 func TestDaemonNameCollision(t *testing.T) {
@@ -331,12 +254,8 @@ func TestDaemonNameCollision(t *testing.T) {
 		InvocationName: "my-agent",
 		Env:            map[string]string{"FAKE_RUNNER_MODE": "sleep"},
 	})
-	if err != nil {
-		t.Fatalf("first start: %v", err)
-	}
-	if !resp1.OK {
-		t.Fatalf("first start failed: %s - %s", resp1.ErrorCode, resp1.Message)
-	}
+	require.NoError(t, err, "first start")
+	require.True(t, resp1.OK, "first start failed: %s - %s", resp1.ErrorCode, resp1.Message)
 
 	// Second invocation with same name should fail.
 	resp2, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
@@ -347,17 +266,13 @@ func TestDaemonNameCollision(t *testing.T) {
 		InvocationName: "my-agent",
 		Env:            map[string]string{"FAKE_RUNNER_MODE": "sleep"},
 	})
-	if err != nil {
-		t.Fatalf("second start: %v", err)
-	}
+	require.NoError(t, err, "second start")
 	if resp2.OK {
 		// Clean up the accidental second invocation.
 		_, _ = env.Client.Kill(ctx, resp2.RepoID, resp2.InvocationID)
-		t.Fatal("expected second start to fail due to name collision")
+		require.Fail(t, "expected second start to fail due to name collision")
 	}
-	if resp2.ErrorCode != "E_INVOCATION_NAME_EXISTS" {
-		t.Errorf("error_code = %q, want E_INVOCATION_NAME_EXISTS", resp2.ErrorCode)
-	}
+	assert.Equal(t, "E_INVOCATION_NAME_EXISTS", resp2.ErrorCode)
 
 	// Clean up.
 	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
@@ -376,18 +291,10 @@ func TestDaemonRunnerCrash(t *testing.T) {
 
 	// exit-error mode exits immediately with code 1.
 	meta := waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
-	if meta.FailureReason != "runner_exit_nonzero" {
-		t.Errorf("failure_reason = %q, want %q", meta.FailureReason, "runner_exit_nonzero")
-	}
-	if meta.ExitCode == nil || *meta.ExitCode != 1 {
-		exitCode := -1
-		if meta.ExitCode != nil {
-			exitCode = *meta.ExitCode
-		}
-		t.Errorf("exit_code = %d, want 1", exitCode)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "runner_exit_nonzero", meta.FailureReason)
+	if assert.NotNil(t, meta.ExitCode) {
+		assert.Equal(t, 1, *meta.ExitCode)
 	}
 }
 
@@ -407,38 +314,27 @@ func TestDaemonWorktreeCreateAndRemove(t *testing.T) {
 	wtID, treePath, repoID := createTestWorktree(t, env.Client, repoRoot, "lifecycle-test")
 
 	// Verify tree exists on disk.
-	if _, err := os.Stat(treePath); os.IsNotExist(err) {
-		t.Errorf("tree_path does not exist: %s", treePath)
-	}
+	_, err := os.Stat(treePath)
+	assert.False(t, os.IsNotExist(err), "tree_path does not exist: %s", treePath)
 
 	// Verify INTEGRATION_MARKER exists.
 	markerPath := filepath.Join(treePath, ".agency", "INTEGRATION_MARKER")
-	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
-		t.Errorf("INTEGRATION_MARKER does not exist: %s", markerPath)
-	}
+	_, err = os.Stat(markerPath)
+	assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER does not exist: %s", markerPath)
 
 	// Remove worktree (force=true because marker file is untracked).
 	rmResp, err := env.Client.WorktreeRm(ctx, repoID, wtID, true)
-	if err != nil {
-		t.Fatalf("worktree rm: %v", err)
-	}
-	if !rmResp.OK {
-		t.Errorf("worktree rm failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
-	}
+	require.NoError(t, err, "worktree rm")
+	assert.True(t, rmResp.OK, "worktree rm failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
 	// Verify tree is gone.
-	if _, err := os.Stat(treePath); !os.IsNotExist(err) {
-		t.Errorf("tree_path still exists: %s", treePath)
-	}
+	_, err = os.Stat(treePath)
+	assert.True(t, os.IsNotExist(err), "tree_path still exists: %s", treePath)
 
 	// Verify meta is archived.
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(repoID, wtID)
-	if err != nil {
-		t.Fatalf("read worktree meta: %v", err)
-	}
-	if meta.State != store.WorktreeStateArchived {
-		t.Errorf("state = %q, want %q", meta.State, store.WorktreeStateArchived)
-	}
+	require.NoError(t, err, "read worktree meta")
+	assert.Equal(t, store.WorktreeStateArchived, meta.State)
 }
 
 func TestDaemonWorktreeCreateIdempotent(t *testing.T) {
@@ -459,12 +355,8 @@ func TestDaemonWorktreeCreateIdempotent(t *testing.T) {
 		ParentBranch:   "main",
 		IdempotencyKey: idempotencyKey,
 	})
-	if err != nil {
-		t.Fatalf("first create: %v", err)
-	}
-	if !resp1.OK {
-		t.Fatalf("first create failed: %s - %s", resp1.ErrorCode, resp1.Message)
-	}
+	require.NoError(t, err, "first create")
+	require.True(t, resp1.OK, "first create failed: %s - %s", resp1.ErrorCode, resp1.Message)
 
 	// Second create with same key.
 	resp2, err := env.Client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
@@ -473,17 +365,11 @@ func TestDaemonWorktreeCreateIdempotent(t *testing.T) {
 		ParentBranch:   "main",
 		IdempotencyKey: idempotencyKey,
 	})
-	if err != nil {
-		t.Fatalf("second create: %v", err)
-	}
-	if !resp2.OK {
-		t.Fatalf("second create failed: %s - %s", resp2.ErrorCode, resp2.Message)
-	}
+	require.NoError(t, err, "second create")
+	require.True(t, resp2.OK, "second create failed: %s - %s", resp2.ErrorCode, resp2.Message)
 
 	// Should return same worktree.
-	if resp1.WorktreeID != resp2.WorktreeID {
-		t.Errorf("idempotent requests returned different IDs: %s vs %s", resp1.WorktreeID, resp2.WorktreeID)
-	}
+	assert.Equal(t, resp1.WorktreeID, resp2.WorktreeID, "idempotent requests returned different IDs")
 }
 
 func TestDaemonWorktreeRemoveWithActiveAgent(t *testing.T) {
@@ -502,34 +388,20 @@ func TestDaemonWorktreeRemoveWithActiveAgent(t *testing.T) {
 
 	// Remove without force should fail.
 	rmResp, err := env.Client.WorktreeRm(ctx, repoID, wtID, false)
-	if err != nil {
-		t.Fatalf("worktree rm: %v", err)
-	}
-	if rmResp.OK {
-		t.Fatal("expected rm to fail with active invocation")
-	}
-	if rmResp.ErrorCode != "E_WORKTREE_HAS_ACTIVE_INVOCATIONS" {
-		t.Errorf("error_code = %q, want E_WORKTREE_HAS_ACTIVE_INVOCATIONS", rmResp.ErrorCode)
-	}
+	require.NoError(t, err, "worktree rm")
+	require.False(t, rmResp.OK, "expected rm to fail with active invocation")
+	assert.Equal(t, "E_WORKTREE_HAS_ACTIVE_INVOCATIONS", rmResp.ErrorCode)
 
 	// Remove with force should succeed.
 	rmResp, err = env.Client.WorktreeRm(ctx, repoID, wtID, true)
-	if err != nil {
-		t.Fatalf("worktree rm force: %v", err)
-	}
-	if !rmResp.OK {
-		t.Errorf("worktree rm force failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
-	}
+	require.NoError(t, err, "worktree rm force")
+	assert.True(t, rmResp.OK, "worktree rm force failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
-	// Verify the invocation was killed.
-	time.Sleep(500 * time.Millisecond)
-	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
-	if err != nil {
-		t.Fatalf("read invocation meta: %v", err)
-	}
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("invocation status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
+	// Wait for invocation to be killed.
+	require.Eventually(t, func() bool {
+		meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
+		return err == nil && meta.Status == store.InvocationStatusFailed
+	}, 10*time.Second, 50*time.Millisecond, "invocation not killed after force worktree rm")
 }
 
 func TestDaemonWorktreeNameUniqueness(t *testing.T) {
@@ -550,15 +422,9 @@ func TestDaemonWorktreeNameUniqueness(t *testing.T) {
 		ParentBranch:   "main",
 		IdempotencyKey: "different-key",
 	})
-	if err != nil {
-		t.Fatalf("second create: %v", err)
-	}
-	if resp2.OK {
-		t.Fatal("expected second create to fail due to name collision")
-	}
-	if resp2.ErrorCode != "E_WORKTREE_NAME_EXISTS" {
-		t.Errorf("error_code = %q, want E_WORKTREE_NAME_EXISTS", resp2.ErrorCode)
-	}
+	require.NoError(t, err, "second create")
+	require.False(t, resp2.OK, "expected second create to fail due to name collision")
+	assert.Equal(t, "E_WORKTREE_NAME_EXISTS", resp2.ErrorCode)
 }
 
 // ---------------------------------------------------------------------------
@@ -604,22 +470,12 @@ func TestDaemonConcurrentStarts(t *testing.T) {
 	}()
 	wg.Wait()
 
-	if err1 != nil {
-		t.Fatalf("start a: %v", err1)
-	}
-	if err2 != nil {
-		t.Fatalf("start b: %v", err2)
-	}
-	if !resp1.OK {
-		t.Fatalf("start a failed: %s - %s", resp1.ErrorCode, resp1.Message)
-	}
-	if !resp2.OK {
-		t.Fatalf("start b failed: %s - %s", resp2.ErrorCode, resp2.Message)
-	}
+	require.NoError(t, err1, "start a")
+	require.NoError(t, err2, "start b")
+	require.True(t, resp1.OK, "start a failed: %s - %s", resp1.ErrorCode, resp1.Message)
+	require.True(t, resp2.OK, "start b failed: %s - %s", resp2.ErrorCode, resp2.Message)
 
-	if resp1.InvocationID == resp2.InvocationID {
-		t.Error("concurrent starts returned same invocation_id")
-	}
+	assert.NotEqual(t, resp1.InvocationID, resp2.InvocationID, "concurrent starts returned same invocation_id")
 
 	// Clean up.
 	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
@@ -647,16 +503,10 @@ func TestDaemonCheckpointApplyWhileRunning(t *testing.T) {
 
 	// Attempt checkpoint apply while invocation is still running.
 	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 1)
-	if err != nil {
-		t.Fatalf("CheckpointApply returned transport error: %v", err)
-	}
+	require.NoError(t, err, "CheckpointApply returned transport error")
 
-	if resp.OK {
-		t.Error("expected OK=false for checkpoint apply while running")
-	}
-	if resp.ErrorCode != "E_INVOCATION_STILL_RUNNING" {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_INVOCATION_STILL_RUNNING")
-	}
+	assert.False(t, resp.OK, "expected OK=false for checkpoint apply while running")
+	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
 
 	// Clean up: kill the invocation.
 	_, _ = env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
@@ -684,16 +534,10 @@ func TestDaemonCheckpointApplyNotFound(t *testing.T) {
 
 	// Apply non-existent checkpoint.
 	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 999)
-	if err != nil {
-		t.Fatalf("CheckpointApply returned transport error: %v", err)
-	}
+	require.NoError(t, err, "CheckpointApply returned transport error")
 
-	if resp.OK {
-		t.Error("expected OK=false for non-existent checkpoint")
-	}
-	if resp.ErrorCode != "E_CHECKPOINT_NOT_FOUND" {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, "E_CHECKPOINT_NOT_FOUND")
-	}
+	assert.False(t, resp.OK, "expected OK=false for non-existent checkpoint")
+	assert.Equal(t, "E_CHECKPOINT_NOT_FOUND", resp.ErrorCode)
 }
 
 // 5.3 TestDaemonCheckpointLifecycle
@@ -716,78 +560,66 @@ func TestDaemonCheckpointLifecycle(t *testing.T) {
 
 	// Write a file in the sandbox to trigger the checkpoint engine via fsnotify.
 	testFilePath := filepath.Join(sandboxPath, "checkpoint-test.txt")
-	if err := os.WriteFile(testFilePath, []byte("checkpoint test content\n"), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint test content\n"), 0o644), "failed to write test file")
 
-	// Wait for the checkpoint engine debounce (3s) + rate limit buffer.
-	// The fsnotify watcher should detect the file write, debounce for 3s,
-	// then create a checkpoint (if dirty).
-	time.Sleep(6 * time.Second)
+	// Wait for the checkpoint engine to process the file write.
+	// With test debounce override (100ms), this should be fast.
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(checkpointsPath)
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(data), "\"id\":")
+	}, 10*time.Second, 100*time.Millisecond, "checkpoint not created after file write")
 
 	// Kill the invocation. This triggers a final checkpoint via the engine's Stop().
 	killResp, err := env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
-	if err != nil {
-		t.Fatalf("kill: %v", err)
-	}
-	if !killResp.OK {
-		t.Fatalf("kill failed: %s - %s", killResp.ErrorCode, killResp.Message)
-	}
+	require.NoError(t, err, "kill")
+	require.True(t, killResp.OK, "kill failed: %s - %s", killResp.ErrorCode, killResp.Message)
 
 	// Wait for invocation to reach terminal state.
 	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
 
-	// Allow a brief pause for the checkpoint engine goroutine to finish writing.
-	time.Sleep(500 * time.Millisecond)
-
-	// Load checkpoints.json and verify at least one checkpoint was created.
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
-	cpData, err := os.ReadFile(checkpointsPath)
-	if err != nil {
-		t.Fatalf("failed to read checkpoints.json: %v (path: %s)", err, checkpointsPath)
-	}
+	// Wait for checkpoint engine goroutine to finish writing final checkpoint.
+	var cpData []byte
+	require.Eventually(t, func() bool {
+		var readErr error
+		cpData, readErr = os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFileCheck checkpoint.CheckpointsFile
+		if json.Unmarshal(cpData, &cpFileCheck) != nil {
+			return false
+		}
+		return len(cpFileCheck.Checkpoints) > 0
+	}, 10*time.Second, 100*time.Millisecond, "no checkpoints found after kill")
 
 	var cpFile checkpoint.CheckpointsFile
-	if err := json.Unmarshal(cpData, &cpFile); err != nil {
-		t.Fatalf("failed to parse checkpoints.json: %v", err)
-	}
-	if len(cpFile.Checkpoints) == 0 {
-		t.Fatal("expected at least one checkpoint, got none")
-	}
+	require.NoError(t, json.Unmarshal(cpData, &cpFile), "failed to parse checkpoints.json")
+	require.NotEmpty(t, cpFile.Checkpoints, "expected at least one checkpoint, got none")
 
 	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
 	t.Logf("found %d checkpoints, latest ID=%d", len(cpFile.Checkpoints), latestCP.ID)
 
 	// Verify the test file still exists in the sandbox (checkpoint captured it).
-	if _, err := os.Stat(testFilePath); os.IsNotExist(err) {
-		t.Error("test file should still exist in sandbox after kill")
-	}
+	_, err = os.Stat(testFilePath)
+	assert.False(t, os.IsNotExist(err), "test file should still exist in sandbox after kill")
 
 	// Modify the sandbox to verify that apply restores the checkpoint state.
-	if err := os.WriteFile(testFilePath, []byte("modified after kill\n"), 0o644); err != nil {
-		t.Fatalf("failed to modify test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFilePath, []byte("modified after kill\n"), 0o644), "failed to modify test file")
 
 	// Apply the latest checkpoint via the daemon client.
 	applyResp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, latestCP.ID)
-	if err != nil {
-		t.Fatalf("CheckpointApply transport error: %v", err)
-	}
-	if !applyResp.OK {
-		t.Fatalf("CheckpointApply failed: %s - %s", applyResp.ErrorCode, applyResp.Message)
-	}
-	if applyResp.CheckpointID != latestCP.ID {
-		t.Errorf("applied checkpoint_id = %d, want %d", applyResp.CheckpointID, latestCP.ID)
-	}
+	require.NoError(t, err, "CheckpointApply transport error")
+	require.True(t, applyResp.OK, "CheckpointApply failed: %s - %s", applyResp.ErrorCode, applyResp.Message)
+	assert.Equal(t, latestCP.ID, applyResp.CheckpointID)
 
 	// Verify the file was restored to the checkpoint state (original content).
 	restoredContent, err := os.ReadFile(testFilePath)
-	if err != nil {
-		t.Fatalf("failed to read restored file: %v", err)
-	}
-	if string(restoredContent) != "checkpoint test content\n" {
-		t.Errorf("restored content = %q, want %q", string(restoredContent), "checkpoint test content\n")
-	}
+	require.NoError(t, err, "failed to read restored file")
+	assert.Equal(t, "checkpoint test content\n", string(restoredContent))
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,12 +975,13 @@ func TestDaemonDiscardRunning(t *testing.T) {
 
 	require.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
 
-	// Wait for the process to actually terminate and meta to update.
-	time.Sleep(1 * time.Second)
-
-	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	// Wait for the process to terminate and meta to update.
+	var meta *store.InvocationMeta
+	require.Eventually(t, func() bool {
+		var readErr error
+		meta, readErr = env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
+		return readErr == nil && meta.Status == store.InvocationStatusFailed
+	}, 10*time.Second, 50*time.Millisecond, "invocation meta not updated after discard")
 	assert.Equal(t, "discarded", meta.ExitReason)
 	assert.Equal(t, store.LandingStatusDiscarded, meta.LandingStatus)
 }
@@ -1223,3 +1056,442 @@ func TestDaemonDiscardAlreadyDiscarded(t *testing.T) {
 // integration tests above — every successful Land/Discard call proves the
 // route is wired. Method-not-allowed (405) testing for GET is covered by
 // TestHandleLandDiscardRouting in landing_handlers_test.go (internal package).
+
+// ---------------------------------------------------------------------------
+// Headed Invocation Tests (PR-10)
+// ---------------------------------------------------------------------------
+
+func TestDaemonHeadedStartHappyPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-happy")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-happy")
+
+	// Verify response fields
+	require.True(t, resp.OK)
+	assert.NotEmpty(t, resp.InvocationID)
+	assert.NotEmpty(t, resp.SandboxPath)
+	assert.Equal(t, tmux.SessionName(resp.InvocationID), resp.TmuxSession)
+	assert.NotEmpty(t, resp.RepoID)
+	assert.NotEmpty(t, resp.DaemonInstanceID)
+	assert.NotEmpty(t, resp.RequestID)
+	assert.False(t, resp.AlreadyRunning)
+
+	// Verify invocation meta
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusRunning, meta.Status)
+	assert.Equal(t, store.RunnerModeHeaded, meta.Mode)
+	assert.NotEmpty(t, meta.TmuxSession)
+	assert.Equal(t, "daemon", meta.LifecycleOwner)
+
+	// Verify tmux calls
+	fakeTmux.Mu.Lock()
+	assert.Len(t, fakeTmux.NewSessionCalls, 1)
+	if len(fakeTmux.NewSessionCalls) == 1 {
+		call := fakeTmux.NewSessionCalls[0]
+		assert.Equal(t, resp.SandboxPath, call.CWD)
+		assert.Contains(t, call.Argv[0], fakeRunnerPath(t))
+	}
+	fakeTmux.Mu.Unlock()
+
+	// Cleanup
+	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonHeadedStartIdempotent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-idem")
+
+	// Use raw HTTP so we can control client_request_id.
+	clientRequestID := "test-idempotency-key-headed"
+
+	reqBody := daemon.ControlPlaneStartHeadedRequest{
+		RepoRoot:        repoRoot,
+		WorktreeRef:     "headed-idem",
+		Runner:          "claude",
+		ClientRequestID: clientRequestID,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	// Create an HTTP client that connects to the daemon unix socket.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", env.SocketPath)
+			},
+		},
+	}
+
+	// First request
+	httpReq, err := http.NewRequest(http.MethodPost, "http://daemon/invocations/start_headed", bytes.NewReader(bodyBytes))
+	require.NoError(t, err)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpResp, err := httpClient.Do(httpReq)
+	require.NoError(t, err)
+	defer func() { _ = httpResp.Body.Close() }()
+
+	var resp1 daemon.ControlPlaneStartHeadedResponse
+	require.NoError(t, json.NewDecoder(httpResp.Body).Decode(&resp1))
+	require.True(t, resp1.OK, "first request should succeed: %s - %s", resp1.ErrorCode, resp1.Message)
+	assert.False(t, resp1.AlreadyRunning)
+
+	// Second request with same client_request_id
+	httpReq2, err := http.NewRequest(http.MethodPost, "http://daemon/invocations/start_headed", bytes.NewReader(bodyBytes))
+	require.NoError(t, err)
+	httpReq2.Header.Set("Content-Type", "application/json")
+	httpResp2, err := httpClient.Do(httpReq2)
+	require.NoError(t, err)
+	defer func() { _ = httpResp2.Body.Close() }()
+
+	var resp2 daemon.ControlPlaneStartHeadedResponse
+	require.NoError(t, json.NewDecoder(httpResp2.Body).Decode(&resp2))
+	require.True(t, resp2.OK, "second request should succeed: %s - %s", resp2.ErrorCode, resp2.Message)
+	assert.True(t, resp2.AlreadyRunning)
+	assert.Equal(t, resp1.InvocationID, resp2.InvocationID)
+
+	// Tmux should only have been called once
+	fakeTmux.Mu.Lock()
+	assert.Len(t, fakeTmux.NewSessionCalls, 1, "tmux NewSession should only be called once")
+	fakeTmux.Mu.Unlock()
+
+	// Cleanup
+	ctx := context.Background()
+	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
+}
+
+func TestDaemonHeadedStartTmuxSessionExists(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+
+	fakeTmux := newFakeTmuxClient()
+	fakeTmux.AlwaysHasSession = true
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-exists")
+
+	ctx := context.Background()
+	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: "headed-exists",
+		Runner:      "claude",
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_TMUX_SESSION_EXISTS", resp.ErrorCode)
+
+	fakeTmux.Mu.Lock()
+	assert.Len(t, fakeTmux.NewSessionCalls, 0, "NewSession should not be called if session already exists")
+	fakeTmux.Mu.Unlock()
+}
+
+func TestDaemonHeadedStartTmuxCreationFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+
+	fakeTmux := newFakeTmuxClient()
+	fakeTmux.NewSessionErr = fmt.Errorf("tmux not running")
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-fail")
+
+	ctx := context.Background()
+	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: "headed-fail",
+		Runner:      "claude",
+	})
+	require.NoError(t, err)
+
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVOCATION_START_FAILED", resp.ErrorCode)
+}
+
+func TestDaemonHeadedStartWithName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-named")
+
+	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+		RepoRoot:       repoRoot,
+		WorktreeRef:    "headed-named",
+		Runner:         "claude",
+		InvocationName: "my-headed-agent",
+	})
+	require.NoError(t, err)
+	require.True(t, resp.OK, "start headed with name failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, "my-headed-agent", meta.InvocationName)
+
+	// Cleanup
+	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonHeadedStop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-stop")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-stop")
+
+	// Stop the headed invocation
+	stopResp, err := env.Client.Stop(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.True(t, stopResp.OK)
+
+	// Verify C-c was sent via tmux
+	fakeTmux.Mu.Lock()
+	require.Len(t, fakeTmux.SendKeysCalls, 1)
+	assert.Equal(t, []tmux.Key{tmux.KeyCtrlC}, fakeTmux.SendKeysCalls[0].Keys)
+	fakeTmux.Mu.Unlock()
+
+	// Verify meta: stop_requested_at set, needs_attention, still running
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, meta.StopRequestedAt)
+	assert.True(t, meta.Flags.NeedsAttention)
+	assert.Equal(t, store.InvocationStatusRunning, meta.Status, "headed stop should not terminate the invocation")
+
+	// Cleanup
+	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonHeadedStopSessionMissing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-stop-miss")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-stop-miss")
+
+	// Manually remove the session from the fake to simulate session gone
+	fakeTmux.Mu.Lock()
+	for k := range fakeTmux.Sessions {
+		delete(fakeTmux.Sessions, k)
+	}
+	fakeTmux.Mu.Unlock()
+
+	// Stop — session is missing
+	stopResp, err := env.Client.Stop(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.True(t, stopResp.OK)
+
+	// Verify meta: should be finished with exited reason
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Equal(t, "exited", meta.ExitReason)
+
+	// Verify no C-c was sent
+	fakeTmux.Mu.Lock()
+	assert.Len(t, fakeTmux.SendKeysCalls, 0, "no C-c should be sent when session is missing")
+	fakeTmux.Mu.Unlock()
+}
+
+func TestDaemonHeadedStopAlreadyFinished(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-stop-done")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-stop-done")
+
+	// Kill it first (puts it in terminal state)
+	killResp, err := env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	require.True(t, killResp.OK)
+
+	// Record current tmux call counts
+	fakeTmux.Mu.Lock()
+	sendKeysCountBefore := len(fakeTmux.SendKeysCalls)
+	killCountBefore := len(fakeTmux.KillSessionCalls)
+	fakeTmux.Mu.Unlock()
+
+	// Now stop — should be a no-op since already terminal
+	stopResp, err := env.Client.Stop(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.True(t, stopResp.OK)
+
+	// Verify no new tmux calls
+	fakeTmux.Mu.Lock()
+	assert.Equal(t, sendKeysCountBefore, len(fakeTmux.SendKeysCalls), "no new C-c should be sent")
+	assert.Equal(t, killCountBefore, len(fakeTmux.KillSessionCalls), "no new kill should be sent")
+	fakeTmux.Mu.Unlock()
+}
+
+func TestDaemonHeadedKill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-kill")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-kill")
+
+	// Kill the headed invocation
+	killResp, err := env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.True(t, killResp.OK)
+
+	// Verify tmux session was killed
+	fakeTmux.Mu.Lock()
+	assert.Len(t, fakeTmux.KillSessionCalls, 1)
+	// Session should be removed from the map
+	_, sessionExists := fakeTmux.Sessions[tmux.SessionName(resp.InvocationID)]
+	assert.False(t, sessionExists, "session should be removed after kill")
+	fakeTmux.Mu.Unlock()
+
+	// Verify meta
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "killed", meta.ExitReason)
+	assert.NotEmpty(t, meta.FinishedAt)
+}
+
+func TestDaemonHeadedKillSessionAlreadyGone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-kill-gone")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-kill-gone")
+
+	// Inject killSession error to simulate "can't find session"
+	fakeTmux.Mu.Lock()
+	fakeTmux.KillSessionErr = fmt.Errorf("can't find session: %s", tmux.SessionName(resp.InvocationID))
+	fakeTmux.Mu.Unlock()
+
+	// Kill — should succeed even though session is gone
+	killResp, err := env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.True(t, killResp.OK, "kill should succeed even if session already gone")
+
+	// Verify meta
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "killed", meta.ExitReason)
+}
+
+func TestDaemonForceShutdownWithHeaded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-shutdown")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-shutdown")
+
+	// Shutdown without force should fail (headed invocation is active)
+	shutResp, err := env.Client.Shutdown(ctx, false)
+	require.NoError(t, err)
+	assert.False(t, shutResp.OK)
+	assert.Equal(t, "E_DAEMON_BUSY", shutResp.ErrorCode)
+
+	// Shutdown with force should succeed
+	shutResp, err = env.Client.Shutdown(ctx, true)
+	require.NoError(t, err)
+	assert.True(t, shutResp.OK, "force shutdown should succeed: %s - %s", shutResp.ErrorCode, shutResp.Message)
+
+	// Wait for shutdown goroutine to update invocation meta.
+	var meta *store.InvocationMeta
+	require.Eventually(t, func() bool {
+		var readErr error
+		meta, readErr = env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+		return readErr == nil && meta.Status == store.InvocationStatusFailed
+	}, 10*time.Second, 50*time.Millisecond, "invocation meta not updated after force shutdown")
+	assert.Equal(t, "killed", meta.ExitReason)
+
+	// Verify tmux session was killed
+	fakeTmux.Mu.Lock()
+	assert.GreaterOrEqual(t, len(fakeTmux.KillSessionCalls), 1)
+	fakeTmux.Mu.Unlock()
+}

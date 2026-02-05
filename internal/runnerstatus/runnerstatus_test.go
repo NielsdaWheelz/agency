@@ -5,36 +5,37 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStatusPath(t *testing.T) {
+	t.Parallel()
+
 	worktreePath := "/path/to/worktree"
 	got := StatusPath(worktreePath)
 	want := "/path/to/worktree/.agency/state/runner_status.json"
-	if got != want {
-		t.Errorf("StatusPath() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func TestLoad_Missing(t *testing.T) {
+	t.Parallel()
+
 	// Create a temp dir without the status file
 	tmpDir := t.TempDir()
 
 	status, err := Load(tmpDir)
-	if err != nil {
-		t.Errorf("Load() error = %v, want nil for missing file", err)
-	}
-	if status != nil {
-		t.Errorf("Load() = %v, want nil for missing file", status)
-	}
+	assert.NoError(t, err, "Load() should not error for missing file")
+	assert.Nil(t, status, "Load() should return nil for missing file")
 }
 
 func TestLoad_Valid(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(stateDir, 0755))
 
 	content := `{
 		"schema_version": "1.0",
@@ -47,53 +48,37 @@ func TestLoad_Valid(t *testing.T) {
 		"risks": []
 	}`
 	statusPath := filepath.Join(stateDir, "runner_status.json")
-	if err := os.WriteFile(statusPath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(statusPath, []byte(content), 0644))
 
 	status, err := Load(tmpDir)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if status == nil {
-		t.Fatal("Load() = nil, want non-nil")
-	}
-	if status.Status != StatusWorking {
-		t.Errorf("status.Status = %q, want %q", status.Status, StatusWorking)
-	}
-	if status.Summary != "Test summary" {
-		t.Errorf("status.Summary = %q, want %q", status.Summary, "Test summary")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.Equal(t, StatusWorking, status.Status)
+	assert.Equal(t, "Test summary", status.Summary)
 }
 
 func TestLoad_Invalid(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(stateDir, 0755))
 
 	content := `not valid json`
 	statusPath := filepath.Join(stateDir, "runner_status.json")
-	if err := os.WriteFile(statusPath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(statusPath, []byte(content), 0644))
 
 	status, err := Load(tmpDir)
-	if err == nil {
-		t.Error("Load() error = nil, want error for invalid JSON")
-	}
-	if status != nil {
-		t.Errorf("Load() = %v, want nil for invalid JSON", status)
-	}
+	require.Error(t, err, "Load() should error for invalid JSON")
+	assert.Nil(t, status, "Load() should return nil for invalid JSON")
 }
 
 func TestLoadWithModTime(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(stateDir, 0755))
 
 	content := `{
 		"schema_version": "1.0",
@@ -102,38 +87,28 @@ func TestLoadWithModTime(t *testing.T) {
 		"summary": "Test summary"
 	}`
 	statusPath := filepath.Join(stateDir, "runner_status.json")
-	if err := os.WriteFile(statusPath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(statusPath, []byte(content), 0644))
 
 	status, modTime, err := LoadWithModTime(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadWithModTime() error = %v", err)
-	}
-	if status == nil {
-		t.Fatal("LoadWithModTime() status = nil, want non-nil")
-	}
-	if modTime.IsZero() {
-		t.Error("LoadWithModTime() modTime is zero, want non-zero")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.False(t, modTime.IsZero(), "LoadWithModTime() modTime should be non-zero")
 }
 
 func TestLoadWithModTime_Missing(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 
 	status, modTime, err := LoadWithModTime(tmpDir)
-	if err != nil {
-		t.Errorf("LoadWithModTime() error = %v, want nil for missing file", err)
-	}
-	if status != nil {
-		t.Errorf("LoadWithModTime() status = %v, want nil for missing file", status)
-	}
-	if !modTime.IsZero() {
-		t.Errorf("LoadWithModTime() modTime = %v, want zero for missing file", modTime)
-	}
+	assert.NoError(t, err, "LoadWithModTime() should not error for missing file")
+	assert.Nil(t, status, "LoadWithModTime() status should be nil for missing file")
+	assert.True(t, modTime.IsZero(), "LoadWithModTime() modTime should be zero for missing file")
 }
 
 func TestRunnerStatus_Validate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		status  *RunnerStatus
@@ -233,71 +208,72 @@ func TestRunnerStatus_Validate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := tt.status.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
 }
 
 func TestRunnerStatus_Age(t *testing.T) {
+	t.Parallel()
+
 	t.Run("nil status", func(t *testing.T) {
+		t.Parallel()
+
 		var s *RunnerStatus
-		if got := s.Age(); got != 0 {
-			t.Errorf("Age() = %v, want 0", got)
-		}
+		assert.Equal(t, time.Duration(0), s.Age())
 	})
 
 	t.Run("empty updated_at", func(t *testing.T) {
+		t.Parallel()
+
 		s := &RunnerStatus{UpdatedAt: ""}
-		if got := s.Age(); got != 0 {
-			t.Errorf("Age() = %v, want 0", got)
-		}
+		assert.Equal(t, time.Duration(0), s.Age())
 	})
 
 	t.Run("invalid updated_at", func(t *testing.T) {
+		t.Parallel()
+
 		s := &RunnerStatus{UpdatedAt: "not-a-timestamp"}
-		if got := s.Age(); got != 0 {
-			t.Errorf("Age() = %v, want 0", got)
-		}
+		assert.Equal(t, time.Duration(0), s.Age())
 	})
 
 	t.Run("valid updated_at", func(t *testing.T) {
+		t.Parallel()
+
 		// Set updated_at to 5 minutes ago
 		fiveMinutesAgo := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
 		s := &RunnerStatus{UpdatedAt: fiveMinutesAgo}
 		age := s.Age()
 		// Allow some tolerance
-		if age < 4*time.Minute || age > 6*time.Minute {
-			t.Errorf("Age() = %v, want ~5m", age)
-		}
+		assert.True(t, age >= 4*time.Minute && age <= 6*time.Minute, "Age() = %v, want ~5m", age)
 	})
 }
 
 func TestNewInitial(t *testing.T) {
+	t.Parallel()
+
 	s := NewInitial()
-	if s.SchemaVersion != SchemaVersion {
-		t.Errorf("SchemaVersion = %q, want %q", s.SchemaVersion, SchemaVersion)
-	}
-	if s.Status != StatusWorking {
-		t.Errorf("Status = %q, want %q", s.Status, StatusWorking)
-	}
-	if s.Summary != "Starting work" {
-		t.Errorf("Summary = %q, want %q", s.Summary, "Starting work")
-	}
-	if s.UpdatedAt == "" {
-		t.Error("UpdatedAt should not be empty")
-	}
+	assert.Equal(t, SchemaVersion, s.SchemaVersion)
+	assert.Equal(t, StatusWorking, s.Status)
+	assert.Equal(t, "Starting work", s.Summary)
+	assert.NotEmpty(t, s.UpdatedAt, "UpdatedAt should not be empty")
 	// Verify it parses as RFC3339
 	_, err := time.Parse(time.RFC3339, s.UpdatedAt)
-	if err != nil {
-		t.Errorf("UpdatedAt is not valid RFC3339: %v", err)
-	}
+	assert.NoError(t, err, "UpdatedAt is not valid RFC3339")
 }
 
 func TestStatus_IsValid(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		status Status
 		want   bool
@@ -312,10 +288,11 @@ func TestStatus_IsValid(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(string(tt.status), func(t *testing.T) {
-			if got := tt.status.IsValid(); got != tt.want {
-				t.Errorf("IsValid() = %v, want %v", got, tt.want)
-			}
+			t.Parallel()
+
+			assert.Equal(t, tt.want, tt.status.IsValid())
 		})
 	}
 }

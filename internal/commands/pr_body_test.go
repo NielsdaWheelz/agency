@@ -2,12 +2,13 @@ package commands
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type prBodyCommandRunner struct{}
@@ -46,6 +47,7 @@ func (r *prBodyCommandRunner) LookPath(file string) (string, error) {
 }
 
 func TestWriteFallbackPRBody(t *testing.T) {
+	t.Parallel()
 	workDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	meta := &store.RunMeta{
@@ -56,20 +58,12 @@ func TestWriteFallbackPRBody(t *testing.T) {
 	}
 
 	path, hash, err := writeFallbackPRBody(context.Background(), &prBodyCommandRunner{}, realFS, workDir, "main", meta.Branch, meta)
-	if err != nil {
-		t.Fatalf("writeFallbackPRBody() error = %v", err)
-	}
-	if path == "" {
-		t.Fatal("expected pr body path")
-	}
-	if hash == "" {
-		t.Fatal("expected non-empty body hash")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, path, "expected pr body path")
+	require.NotEmpty(t, hash, "expected non-empty body hash")
 
 	contentBytes, err := realFS.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read pr body: %v", err)
-	}
+	require.NoError(t, err, "read pr body")
 	content := string(contentBytes)
 
 	wantSnippets := []string{
@@ -93,8 +87,6 @@ func TestWriteFallbackPRBody(t *testing.T) {
 	}
 
 	for _, snippet := range wantSnippets {
-		if !strings.Contains(content, snippet) {
-			t.Errorf("expected pr body to contain %q", snippet)
-		}
+		assert.Contains(t, content, snippet)
 	}
 }

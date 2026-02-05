@@ -9,6 +9,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupResolveTestEnv creates a temporary test environment with runs for resolution tests.
@@ -20,9 +22,7 @@ func setupResolveTestEnv(t *testing.T, runs []testRun) string {
 
 	for _, run := range runs {
 		runDir := filepath.Join(dataDir, "repos", run.repoID, "runs", run.runID)
-		if err := os.MkdirAll(runDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(runDir, 0755))
 
 		meta := &store.RunMeta{
 			SchemaVersion: "1.0",
@@ -45,9 +45,7 @@ func setupResolveTestEnv(t *testing.T, runs []testRun) string {
 
 		metaBytes, _ := json.MarshalIndent(meta, "", "  ")
 		metaPath := filepath.Join(runDir, "meta.json")
-		if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
 	}
 
 	return dataDir
@@ -61,6 +59,7 @@ type testRun struct {
 }
 
 func TestResolveRunByNameOrID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		input       string
@@ -133,46 +132,37 @@ func TestResolveRunByNameOrID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ref, record, err := resolveRunByNameOrID(tt.input, tt.records)
 
 			if tt.wantErrType != "" {
-				if err == nil {
-					t.Fatalf("expected error type %s, got nil", tt.wantErrType)
-				}
+				require.Error(t, err, "expected error type %s", tt.wantErrType)
 				// Check for raw ids errors (before conversion by handleResolveErr)
 				switch tt.wantErrType {
 				case "not_found":
-					if _, ok := err.(*ids.ErrNotFound); !ok {
-						t.Errorf("expected *ids.ErrNotFound, got %T", err)
-					}
+					_, ok := err.(*ids.ErrNotFound)
+					assert.True(t, ok, "expected *ids.ErrNotFound, got %T", err)
 				case "ambiguous":
-					if _, ok := err.(*ids.ErrAmbiguous); !ok {
-						t.Errorf("expected *ids.ErrAmbiguous, got %T", err)
-					}
+					_, ok := err.(*ids.ErrAmbiguous)
+					assert.True(t, ok, "expected *ids.ErrAmbiguous, got %T", err)
 				}
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
-			if ref.RunID != tt.wantRunID {
-				t.Errorf("RunID = %s, want %s", ref.RunID, tt.wantRunID)
-			}
+			assert.Equal(t, tt.wantRunID, ref.RunID)
 
-			if record == nil {
-				t.Fatal("record is nil")
-			}
-			if record.RunID != tt.wantRunID {
-				t.Errorf("record.RunID = %s, want %s", record.RunID, tt.wantRunID)
-			}
+			require.NotNil(t, record, "record is nil")
+			assert.Equal(t, tt.wantRunID, record.RunID)
 		})
 	}
 }
 
 func TestResolveRunInRepo(t *testing.T) {
+	t.Parallel()
 	runs := []testRun{
 		{repoID: "repo1", runID: "20260110-aaaa", name: "feature-x"},
 		{repoID: "repo1", runID: "20260110-bbbb", name: "feature-y"},
@@ -220,36 +210,29 @@ func TestResolveRunInRepo(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ref, record, err := resolveRunInRepo(tt.input, tt.repoID, dataDir)
 
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error %s, got nil", tt.wantErr)
-				}
+				require.Error(t, err, "expected error %s", tt.wantErr)
 				code := errors.GetCode(err)
-				if code != tt.wantErr {
-					t.Errorf("error code = %s, want %s", code, tt.wantErr)
-				}
+				assert.Equal(t, tt.wantErr, code)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
-			if ref.RunID != tt.wantRunID {
-				t.Errorf("RunID = %s, want %s", ref.RunID, tt.wantRunID)
-			}
+			assert.Equal(t, tt.wantRunID, ref.RunID)
 
-			if record == nil {
-				t.Fatal("record is nil")
-			}
+			require.NotNil(t, record, "record is nil")
 		})
 	}
 }
 
 func TestResolveRunGlobal(t *testing.T) {
+	t.Parallel()
 	runs := []testRun{
 		{repoID: "repo1", runID: "20260110-aaaa", name: "feature-x"},
 		{repoID: "repo1", runID: "20260110-bbbb", name: "feature-y"},
@@ -297,36 +280,29 @@ func TestResolveRunGlobal(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ref, record, err := resolveRunGlobal(tt.input, dataDir)
 
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error %s, got nil", tt.wantErr)
-				}
+				require.Error(t, err, "expected error %s", tt.wantErr)
 				code := errors.GetCode(err)
-				if code != tt.wantErr {
-					t.Errorf("error code = %s, want %s", code, tt.wantErr)
-				}
+				assert.Equal(t, tt.wantErr, code)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
-			if ref.RunID != tt.wantRunID {
-				t.Errorf("RunID = %s, want %s", ref.RunID, tt.wantRunID)
-			}
+			assert.Equal(t, tt.wantRunID, ref.RunID)
 
-			if record == nil {
-				t.Fatal("record is nil")
-			}
+			require.NotNil(t, record, "record is nil")
 		})
 	}
 }
 
 func TestHandleResolveErr(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		err      error
@@ -354,12 +330,12 @@ func TestHandleResolveErr(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := handleResolveErr(tt.err, tt.input)
 			code := errors.GetCode(err)
-			if code != tt.wantCode {
-				t.Errorf("error code = %s, want %s", code, tt.wantCode)
-			}
+			assert.Equal(t, tt.wantCode, code)
 		})
 	}
 }

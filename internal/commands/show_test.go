@@ -14,6 +14,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/status"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ============================================================
@@ -21,51 +23,36 @@ import (
 // ============================================================
 
 func TestWriteShowJSON_SchemaVersion(t *testing.T) {
+	t.Parallel()
 	detail := &render.RunDetail{
 		RepoID: "abc123",
 		Broken: false,
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowJSON(&buf, detail); err != nil {
-		t.Fatalf("WriteShowJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowJSON(&buf, detail))
 
 	var env render.ShowJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
-	if env.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", env.SchemaVersion, "1.0")
-	}
-
-	if env.Data == nil {
-		t.Error("Data is nil, want non-nil")
-	}
+	assert.Equal(t, "1.0", env.SchemaVersion)
+	require.NotNil(t, env.Data)
 }
 
 func TestWriteShowJSON_NullData(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
-	if err := render.WriteShowJSON(&buf, nil); err != nil {
-		t.Fatalf("WriteShowJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowJSON(&buf, nil))
 
 	var env render.ShowJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
-	if env.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", env.SchemaVersion, "1.0")
-	}
-
-	if env.Data != nil {
-		t.Errorf("Data = %v, want nil", env.Data)
-	}
+	assert.Equal(t, "1.0", env.SchemaVersion)
+	assert.Nil(t, env.Data)
 }
 
 func TestWriteShowJSON_AllFields(t *testing.T) {
+	t.Parallel()
 	repoKey := "github:owner/repo"
 	originURL := "git@github.com:owner/repo.git"
 	repoRoot := "/path/to/repo"
@@ -115,75 +102,43 @@ func TestWriteShowJSON_AllFields(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowJSON(&buf, detail); err != nil {
-		t.Fatalf("WriteShowJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowJSON(&buf, detail))
 
 	var env render.ShowJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
 	d := env.Data
-	if d == nil {
-		t.Fatal("Data is nil")
-	}
+	require.NotNil(t, d)
 
 	// Check top-level fields
-	if d.RepoID != "abc123" {
-		t.Errorf("RepoID = %q, want %q", d.RepoID, "abc123")
-	}
-	if d.RepoKey == nil || *d.RepoKey != repoKey {
-		t.Errorf("RepoKey = %v, want %q", d.RepoKey, repoKey)
-	}
-	if d.OriginURL == nil || *d.OriginURL != originURL {
-		t.Errorf("OriginURL = %v, want %q", d.OriginURL, originURL)
-	}
-	if d.Archived {
-		t.Error("Archived = true, want false")
-	}
-	if d.Broken {
-		t.Error("Broken = true, want false")
-	}
+	assert.Equal(t, "abc123", d.RepoID)
+	require.NotNil(t, d.RepoKey)
+	assert.Equal(t, repoKey, *d.RepoKey)
+	require.NotNil(t, d.OriginURL)
+	assert.Equal(t, originURL, *d.OriginURL)
+	assert.False(t, d.Archived, "Archived = true, want false")
+	assert.False(t, d.Broken, "Broken = true, want false")
 
 	// Check meta fields
-	if d.Meta == nil {
-		t.Fatal("Meta is nil")
-	}
-	if d.Meta.RunID != "20260110-a3f2" {
-		t.Errorf("Meta.RunID = %q, want %q", d.Meta.RunID, "20260110-a3f2")
-	}
-	if d.Meta.Name != "test run" {
-		t.Errorf("Meta.Name = %q, want %q", d.Meta.Name, "test run")
-	}
+	require.NotNil(t, d.Meta)
+	assert.Equal(t, "20260110-a3f2", d.Meta.RunID)
+	assert.Equal(t, "test run", d.Meta.Name)
 
 	// Check derived fields
-	if d.Derived.DerivedStatus != "active" {
-		t.Errorf("Derived.DerivedStatus = %q, want %q", d.Derived.DerivedStatus, "active")
-	}
-	if !d.Derived.TmuxActive {
-		t.Error("Derived.TmuxActive = false, want true")
-	}
-	if !d.Derived.WorktreePresent {
-		t.Error("Derived.WorktreePresent = false, want true")
-	}
-	if !d.Derived.Report.Exists {
-		t.Error("Derived.Report.Exists = false, want true")
-	}
-	if d.Derived.Report.Bytes != 256 {
-		t.Errorf("Derived.Report.Bytes = %d, want 256", d.Derived.Report.Bytes)
-	}
+	assert.Equal(t, "active", d.Derived.DerivedStatus)
+	assert.True(t, d.Derived.TmuxActive, "Derived.TmuxActive = false, want true")
+	assert.True(t, d.Derived.WorktreePresent, "Derived.WorktreePresent = false, want true")
+	assert.True(t, d.Derived.Report.Exists, "Derived.Report.Exists = false, want true")
+	assert.Equal(t, 256, d.Derived.Report.Bytes)
 
 	// Check paths
-	if d.Paths.RepoRoot == nil || *d.Paths.RepoRoot != repoRoot {
-		t.Errorf("Paths.RepoRoot = %v, want %q", d.Paths.RepoRoot, repoRoot)
-	}
-	if d.Paths.WorktreeRoot != "/path/to/worktree" {
-		t.Errorf("Paths.WorktreeRoot = %q, want %q", d.Paths.WorktreeRoot, "/path/to/worktree")
-	}
+	require.NotNil(t, d.Paths.RepoRoot)
+	assert.Equal(t, repoRoot, *d.Paths.RepoRoot)
+	assert.Equal(t, "/path/to/worktree", d.Paths.WorktreeRoot)
 }
 
 func TestWriteShowJSON_BrokenRun(t *testing.T) {
+	t.Parallel()
 	detail := &render.RunDetail{
 		Meta:     nil, // broken
 		RepoID:   "abc123",
@@ -204,29 +159,17 @@ func TestWriteShowJSON_BrokenRun(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowJSON(&buf, detail); err != nil {
-		t.Fatalf("WriteShowJSON() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowJSON(&buf, detail))
 
 	var env render.ShowJSONEnvelope
-	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &env))
 
 	d := env.Data
-	if d == nil {
-		t.Fatal("Data is nil")
-	}
+	require.NotNil(t, d)
 
-	if !d.Broken {
-		t.Error("Broken = false, want true")
-	}
-	if d.Meta != nil {
-		t.Errorf("Meta = %v, want nil", d.Meta)
-	}
-	if d.Derived.DerivedStatus != status.StatusBroken {
-		t.Errorf("DerivedStatus = %q, want %q", d.Derived.DerivedStatus, status.StatusBroken)
-	}
+	assert.True(t, d.Broken, "Broken = false, want true")
+	assert.Nil(t, d.Meta)
+	assert.Equal(t, status.StatusBroken, d.Derived.DerivedStatus)
 }
 
 // ============================================================
@@ -234,6 +177,7 @@ func TestWriteShowJSON_BrokenRun(t *testing.T) {
 // ============================================================
 
 func TestWriteShowPaths_AllFields(t *testing.T) {
+	t.Parallel()
 	data := render.ShowPathsData{
 		RepoRoot:       "/path/to/repo",
 		WorktreeRoot:   "/path/to/worktree",
@@ -245,9 +189,7 @@ func TestWriteShowPaths_AllFields(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowPaths(&buf, data); err != nil {
-		t.Fatalf("WriteShowPaths() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowPaths(&buf, data))
 
 	output := buf.String()
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -262,18 +204,15 @@ func TestWriteShowPaths_AllFields(t *testing.T) {
 		"report_path: /path/to/worktree/.agency/report.md",
 	}
 
-	if len(lines) != len(expectedLines) {
-		t.Fatalf("got %d lines, want %d", len(lines), len(expectedLines))
-	}
+	require.Len(t, lines, len(expectedLines))
 
 	for i, expected := range expectedLines {
-		if lines[i] != expected {
-			t.Errorf("line[%d] = %q, want %q", i, lines[i], expected)
-		}
+		assert.Equal(t, expected, lines[i], "line[%d]", i)
 	}
 }
 
 func TestWriteShowPaths_EmptyRepoRoot(t *testing.T) {
+	t.Parallel()
 	data := render.ShowPathsData{
 		RepoRoot:       "", // empty when unknown
 		WorktreeRoot:   "/path/to/worktree",
@@ -285,17 +224,14 @@ func TestWriteShowPaths_EmptyRepoRoot(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowPaths(&buf, data); err != nil {
-		t.Fatalf("WriteShowPaths() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowPaths(&buf, data))
 
 	output := buf.String()
-	if !strings.Contains(output, "repo_root: \n") {
-		t.Errorf("expected empty repo_root value, got: %s", output)
-	}
+	assert.Contains(t, output, "repo_root: \n")
 }
 
 func TestWriteShowPaths_BrokenRun(t *testing.T) {
+	t.Parallel()
 	// Broken run paths: repo_root, worktree_root, report_path empty
 	data := render.ShowPathsData{
 		RepoRoot:       "",
@@ -308,18 +244,14 @@ func TestWriteShowPaths_BrokenRun(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowPaths(&buf, data); err != nil {
-		t.Fatalf("WriteShowPaths() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowPaths(&buf, data))
 
 	output := buf.String()
 
 	// Verify paths are still printed even if empty
 	expectedKeyCount := 7 // all path keys must be present
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) != expectedKeyCount {
-		t.Errorf("got %d lines, want %d", len(lines), expectedKeyCount)
-	}
+	assert.Len(t, lines, expectedKeyCount)
 }
 
 // ============================================================
@@ -327,6 +259,7 @@ func TestWriteShowPaths_BrokenRun(t *testing.T) {
 // ============================================================
 
 func TestWriteShowHuman_BasicOutput(t *testing.T) {
+	t.Parallel()
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
 		Name:             "test run",
@@ -357,43 +290,21 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowHuman(&buf, data); err != nil {
-		t.Fatalf("WriteShowHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowHuman(&buf, data))
 
 	output := buf.String()
 
 	// Check spec-required fields exist in order
-	if !strings.Contains(output, "run: 20260110-a3f2") {
-		t.Error("missing run field")
-	}
-	if !strings.Contains(output, "name: test run") {
-		t.Error("missing name field")
-	}
-	if !strings.Contains(output, "repo: abc123") {
-		t.Error("missing repo field")
-	}
-	if !strings.Contains(output, "runner: claude") {
-		t.Error("missing runner field")
-	}
-	if !strings.Contains(output, "parent: main") {
-		t.Error("missing parent field")
-	}
-	if !strings.Contains(output, "branch: agency/test-a3f2") {
-		t.Error("missing branch field")
-	}
-	if !strings.Contains(output, "worktree: /path/to/worktree") {
-		t.Error("missing worktree field")
-	}
-	if !strings.Contains(output, "tmux: agency_20260110-a3f2") {
-		t.Error("missing tmux field")
-	}
-	if !strings.Contains(output, "pr: https://github.com/owner/repo/pull/123 (#123)") {
-		t.Error("missing pr field with correct format")
-	}
-	if !strings.Contains(output, "status: active") {
-		t.Error("missing status field")
-	}
+	assert.Contains(t, output, "run: 20260110-a3f2", "missing run field")
+	assert.Contains(t, output, "name: test run", "missing name field")
+	assert.Contains(t, output, "repo: abc123", "missing repo field")
+	assert.Contains(t, output, "runner: claude", "missing runner field")
+	assert.Contains(t, output, "parent: main", "missing parent field")
+	assert.Contains(t, output, "branch: agency/test-a3f2", "missing branch field")
+	assert.Contains(t, output, "worktree: /path/to/worktree", "missing worktree field")
+	assert.Contains(t, output, "tmux: agency_20260110-a3f2", "missing tmux field")
+	assert.Contains(t, output, "pr: https://github.com/owner/repo/pull/123 (#123)", "missing pr field with correct format")
+	assert.Contains(t, output, "status: active", "missing status field")
 
 	// Check blank line between worktree and tmux
 	lines := strings.Split(output, "\n")
@@ -407,12 +318,13 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 			tmuxIdx = i
 		}
 	}
-	if worktreeIdx >= 0 && tmuxIdx >= 0 && tmuxIdx-worktreeIdx != 2 {
-		t.Errorf("expected blank line between worktree and tmux, got worktree at %d, tmux at %d", worktreeIdx, tmuxIdx)
+	if worktreeIdx >= 0 && tmuxIdx >= 0 {
+		assert.Equal(t, 2, tmuxIdx-worktreeIdx, "expected blank line between worktree and tmux")
 	}
 }
 
 func TestWriteShowHuman_UntitledRun(t *testing.T) {
+	t.Parallel()
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
 		Name:            "", // empty title
@@ -429,17 +341,14 @@ func TestWriteShowHuman_UntitledRun(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowHuman(&buf, data); err != nil {
-		t.Fatalf("WriteShowHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowHuman(&buf, data))
 
 	output := buf.String()
-	if !strings.Contains(output, "name: <untitled>") {
-		t.Errorf("expected untitled placeholder, got: %s", output)
-	}
+	assert.Contains(t, output, "name: <untitled>")
 }
 
 func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
+	t.Parallel()
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
 		Name:            "test run",
@@ -456,18 +365,15 @@ func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowHuman(&buf, data); err != nil {
-		t.Fatalf("WriteShowHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowHuman(&buf, data))
 
 	output := buf.String()
 	// Status should include archived suffix
-	if !strings.Contains(output, "status: idle (archived)") {
-		t.Errorf("expected archived suffix in status, got: %s", output)
-	}
+	assert.Contains(t, output, "status: idle (archived)")
 }
 
 func TestWriteShowHuman_WithPR(t *testing.T) {
+	t.Parallel()
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
 		Name:             "test run",
@@ -490,28 +396,19 @@ func TestWriteShowHuman_WithPR(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowHuman(&buf, data); err != nil {
-		t.Fatalf("WriteShowHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowHuman(&buf, data))
 
 	output := buf.String()
 
 	// PR should be displayed in spec format: pr: <url> (#<number>)
-	if !strings.Contains(output, "pr: https://github.com/owner/repo/pull/123 (#123)") {
-		t.Errorf("expected pr field in spec format, got: %s", output)
-	}
-	if !strings.Contains(output, "last_push_at: 2026-01-10T14:00:00Z") {
-		t.Error("missing last_push_at")
-	}
-	if !strings.Contains(output, "last_report_sync_at: 2026-01-10T14:00:00Z") {
-		t.Error("missing last_report_sync_at")
-	}
-	if !strings.Contains(output, "report_hash: abc123def456") {
-		t.Error("missing report_hash")
-	}
+	assert.Contains(t, output, "pr: https://github.com/owner/repo/pull/123 (#123)")
+	assert.Contains(t, output, "last_push_at: 2026-01-10T14:00:00Z")
+	assert.Contains(t, output, "last_report_sync_at: 2026-01-10T14:00:00Z")
+	assert.Contains(t, output, "report_hash: abc123def456")
 }
 
 func TestWriteShowHuman_NoPR(t *testing.T) {
+	t.Parallel()
 	// Test that when PR fields are missing, the output shows "none" and "-"
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
@@ -532,22 +429,14 @@ func TestWriteShowHuman_NoPR(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := render.WriteShowHuman(&buf, data); err != nil {
-		t.Fatalf("WriteShowHuman() error = %v", err)
-	}
+	require.NoError(t, render.WriteShowHuman(&buf, data))
 
 	output := buf.String()
 
 	// When no PR: pr: none (#-)
-	if !strings.Contains(output, "pr: none (#-)") {
-		t.Errorf("expected 'pr: none (#-)' for missing PR, got: %s", output)
-	}
-	if !strings.Contains(output, "last_push_at: none") {
-		t.Error("expected 'last_push_at: none' for missing timestamp")
-	}
-	if !strings.Contains(output, "report_hash: none") {
-		t.Error("expected 'report_hash: none' for missing hash")
-	}
+	assert.Contains(t, output, "pr: none (#-)")
+	assert.Contains(t, output, "last_push_at: none")
+	assert.Contains(t, output, "report_hash: none")
 }
 
 // ============================================================
@@ -555,18 +444,13 @@ func TestWriteShowHuman_NoPR(t *testing.T) {
 // ============================================================
 
 func TestResolveScriptLogPaths(t *testing.T) {
+	t.Parallel()
 	runDir := "/path/to/run"
 	setup, verify, archive := render.ResolveScriptLogPaths(runDir)
 
-	if setup != "/path/to/run/logs/setup.log" {
-		t.Errorf("setup = %q, want %q", setup, "/path/to/run/logs/setup.log")
-	}
-	if verify != "/path/to/run/logs/verify.log" {
-		t.Errorf("verify = %q, want %q", verify, "/path/to/run/logs/verify.log")
-	}
-	if archive != "/path/to/run/logs/archive.log" {
-		t.Errorf("archive = %q, want %q", archive, "/path/to/run/logs/archive.log")
-	}
+	assert.Equal(t, "/path/to/run/logs/setup.log", setup)
+	assert.Equal(t, "/path/to/run/logs/verify.log", verify)
+	assert.Equal(t, "/path/to/run/logs/archive.log", archive)
 }
 
 // ============================================================
@@ -574,11 +458,9 @@ func TestResolveScriptLogPaths(t *testing.T) {
 // ============================================================
 
 func TestShow_IntegrationWithFakeData_ValidRun(t *testing.T) {
+	t.Parallel()
 	// Create temp data directory
 	dataDir := t.TempDir()
-
-	// Set AGENCY_DATA_DIR to our temp dir
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create a valid run
 	runID := "20260110-a3f2"
@@ -588,42 +470,26 @@ func TestShow_IntegrationWithFakeData_ValidRun(t *testing.T) {
 
 	// Create worktree directory and report
 	reportDir := filepath.Join(worktreePath, ".agency")
-	if err := os.MkdirAll(reportDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(reportDir, 0755))
 	reportContent := "# Test Report\n\nThis is a test report with enough content to exceed the 64 byte threshold for non-empty."
-	if err := os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(reportContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(reportContent), 0644))
 
 	// Scan and verify
 	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		t.Fatalf("ScanAllRuns() error = %v", err)
-	}
+	require.NoError(t, err)
 
-	if len(records) != 1 {
-		t.Fatalf("len(records) = %d, want 1", len(records))
-	}
+	require.Len(t, records, 1)
 
 	rec := records[0]
-	if rec.Broken {
-		t.Error("run should not be broken")
-	}
-	if rec.Meta == nil {
-		t.Fatal("Meta is nil")
-	}
-	if rec.Meta.RunID != runID {
-		t.Errorf("RunID = %q, want %q", rec.Meta.RunID, runID)
-	}
+	assert.False(t, rec.Broken, "run should not be broken")
+	require.NotNil(t, rec.Meta)
+	assert.Equal(t, runID, rec.Meta.RunID)
 }
 
 func TestShow_IntegrationWithFakeData_BrokenRun(t *testing.T) {
+	t.Parallel()
 	// Create temp data directory
 	dataDir := t.TempDir()
-
-	// Set AGENCY_DATA_DIR to our temp dir
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create a broken run
 	runID := "20260110-bad1"
@@ -632,32 +498,20 @@ func TestShow_IntegrationWithFakeData_BrokenRun(t *testing.T) {
 
 	// Scan and verify
 	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		t.Fatalf("ScanAllRuns() error = %v", err)
-	}
+	require.NoError(t, err)
 
-	if len(records) != 1 {
-		t.Fatalf("len(records) = %d, want 1", len(records))
-	}
+	require.Len(t, records, 1)
 
 	rec := records[0]
-	if !rec.Broken {
-		t.Error("run should be broken")
-	}
-	if rec.Meta != nil {
-		t.Error("Meta should be nil for broken run")
-	}
-	if rec.RunID != runID {
-		t.Errorf("RunID = %q, want %q", rec.RunID, runID)
-	}
+	assert.True(t, rec.Broken, "run should be broken")
+	assert.Nil(t, rec.Meta, "Meta should be nil for broken run")
+	assert.Equal(t, runID, rec.RunID)
 }
 
 func TestShow_IDResolutionErrors(t *testing.T) {
+	t.Parallel()
 	// Create temp data directory
 	dataDir := t.TempDir()
-
-	// Set AGENCY_DATA_DIR to our temp dir
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	// Create two runs with similar prefixes
 	createValidMetaForShow(t, dataDir, "r1", "20260110-a3f2", "/path/wt1", time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC))
@@ -665,9 +519,7 @@ func TestShow_IDResolutionErrors(t *testing.T) {
 
 	// Test ambiguous resolution
 	records, err := store.ScanAllRuns(dataDir)
-	if err != nil {
-		t.Fatalf("ScanAllRuns() error = %v", err)
-	}
+	require.NoError(t, err)
 
 	refs := make([]struct {
 		RunID string
@@ -677,9 +529,7 @@ func TestShow_IDResolutionErrors(t *testing.T) {
 	}
 
 	// Verify we have both runs
-	if len(records) != 2 {
-		t.Fatalf("len(records) = %d, want 2", len(records))
-	}
+	require.Len(t, records, 2)
 
 	// Prefix "20260110-a3f" should match both
 	foundA3f2 := false
@@ -695,9 +545,8 @@ func TestShow_IDResolutionErrors(t *testing.T) {
 		}
 	}
 
-	if !foundA3f2 || !foundA3ff {
-		t.Errorf("expected both runs with prefix '20260110-a3f', got: a3f2=%v, a3ff=%v", foundA3f2, foundA3ff)
-	}
+	assert.True(t, foundA3f2, "expected run 20260110-a3f2 to be found")
+	assert.True(t, foundA3ff, "expected run 20260110-a3ff to be found")
 }
 
 // ============================================================
@@ -705,6 +554,7 @@ func TestShow_IDResolutionErrors(t *testing.T) {
 // ============================================================
 
 func TestHandleResolveError_Ambiguous(t *testing.T) {
+	t.Parallel()
 	opts := ShowOpts{RunID: "test", JSON: false}
 	var stdout, stderr bytes.Buffer
 
@@ -718,49 +568,36 @@ func TestHandleResolveError_Ambiguous(t *testing.T) {
 	}
 
 	err := handleResolveError(ambErr, opts, &stdout, &stderr)
-
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	require.Error(t, err)
 
 	ae, ok := errors.AsAgencyError(err)
-	if !ok {
-		t.Fatal("expected AgencyError")
-	}
+	require.True(t, ok, "expected AgencyError")
 
-	if ae.Code != errors.ERunIDAmbiguous {
-		t.Errorf("Code = %v, want %v", ae.Code, errors.ERunIDAmbiguous)
-	}
+	assert.Equal(t, errors.ERunIDAmbiguous, ae.Code)
 
 	// Error message should contain both candidates
-	if !strings.Contains(ae.Msg, "20260110-a3f2") || !strings.Contains(ae.Msg, "20260110-a3ff") {
-		t.Errorf("error message missing candidates: %s", ae.Msg)
-	}
+	assert.Contains(t, ae.Msg, "20260110-a3f2")
+	assert.Contains(t, ae.Msg, "20260110-a3ff")
 }
 
 func TestHandleResolveError_NotFound(t *testing.T) {
+	t.Parallel()
 	opts := ShowOpts{RunID: "nonexistent", JSON: false}
 	var stdout, stderr bytes.Buffer
 
 	// Use real ids.ErrNotFound type
 	notFoundErr := &ids.ErrNotFound{Input: "nonexistent"}
 	err := handleResolveError(notFoundErr, opts, &stdout, &stderr)
-
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	require.Error(t, err)
 
 	ae, ok := errors.AsAgencyError(err)
-	if !ok {
-		t.Fatal("expected AgencyError")
-	}
+	require.True(t, ok, "expected AgencyError")
 
-	if ae.Code != errors.ERunNotFound {
-		t.Errorf("Code = %v, want %v", ae.Code, errors.ERunNotFound)
-	}
+	assert.Equal(t, errors.ERunNotFound, ae.Code)
 }
 
 func TestHandleResolveError_JSONMode(t *testing.T) {
+	t.Parallel()
 	opts := ShowOpts{RunID: "nonexistent", JSON: true}
 	var stdout, stderr bytes.Buffer
 
@@ -770,21 +607,13 @@ func TestHandleResolveError_JSONMode(t *testing.T) {
 
 	// In JSON mode, should output JSON envelope to stdout
 	output := stdout.String()
-	if output == "" {
-		t.Error("expected JSON output to stdout")
-	}
+	assert.NotEmpty(t, output, "expected JSON output to stdout")
 
 	var env render.ShowJSONEnvelope
-	if err := json.Unmarshal([]byte(output), &env); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(output), &env))
 
-	if env.SchemaVersion != "1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", env.SchemaVersion, "1.0")
-	}
-	if env.Data != nil {
-		t.Errorf("Data = %v, want nil", env.Data)
-	}
+	assert.Equal(t, "1.0", env.SchemaVersion)
+	assert.Nil(t, env.Data)
 }
 
 // Helper functions
@@ -792,15 +621,11 @@ func TestHandleResolveError_JSONMode(t *testing.T) {
 func createValidMetaForShow(t *testing.T, dataDir, repoID, runID, worktreePath string, createdAt time.Time) {
 	t.Helper()
 	runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(runDir, 0755))
 
 	// Create logs directory
 	logsDir := filepath.Join(runDir, "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(logsDir, 0755))
 
 	meta := store.RunMeta{
 		SchemaVersion:   "1.0",
@@ -817,28 +642,18 @@ func createValidMetaForShow(t *testing.T, dataDir, repoID, runID, worktreePath s
 	}
 
 	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "meta.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(runDir, "meta.json"), data, 0644))
 }
 
 func createCorruptMetaForShow(t *testing.T, dataDir, repoID, runID string) {
 	t.Helper()
 	runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(runDir, 0755))
 
 	// Create logs directory
 	logsDir := filepath.Join(runDir, "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(logsDir, 0755))
 
-	if err := os.WriteFile(filepath.Join(runDir, "meta.json"), []byte("{invalid json"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(runDir, "meta.json"), []byte("{invalid json"), 0644))
 }

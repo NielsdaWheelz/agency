@@ -3,6 +3,8 @@ package paths
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // mapEnv is a simple map-backed Env implementation for testing.
@@ -13,6 +15,8 @@ func (m mapEnv) Get(key string) string {
 }
 
 func TestResolveDirs_DataDir(t *testing.T) {
+	t.Parallel()
+
 	home := filepath.FromSlash("/home/testuser")
 
 	tests := []struct {
@@ -66,16 +70,19 @@ func TestResolveDirs_DataDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			dirs := ResolveDirsWithOS(tt.env, home, tt.isDarwin)
-			if dirs.DataDir != tt.want {
-				t.Errorf("DataDir = %q, want %q", dirs.DataDir, tt.want)
-			}
+			assert.Equal(t, tt.want, dirs.DataDir)
 		})
 	}
 }
 
 func TestResolveDirs_ConfigDir(t *testing.T) {
+	t.Parallel()
+
 	home := filepath.FromSlash("/home/testuser")
 
 	tests := []struct {
@@ -129,16 +136,19 @@ func TestResolveDirs_ConfigDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			dirs := ResolveDirsWithOS(tt.env, home, tt.isDarwin)
-			if dirs.ConfigDir != tt.want {
-				t.Errorf("ConfigDir = %q, want %q", dirs.ConfigDir, tt.want)
-			}
+			assert.Equal(t, tt.want, dirs.ConfigDir)
 		})
 	}
 }
 
 func TestResolveDirs_CacheDir(t *testing.T) {
+	t.Parallel()
+
 	home := filepath.FromSlash("/home/testuser")
 
 	tests := []struct {
@@ -192,16 +202,19 @@ func TestResolveDirs_CacheDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			dirs := ResolveDirsWithOS(tt.env, home, tt.isDarwin)
-			if dirs.CacheDir != tt.want {
-				t.Errorf("CacheDir = %q, want %q", dirs.CacheDir, tt.want)
-			}
+			assert.Equal(t, tt.want, dirs.CacheDir)
 		})
 	}
 }
 
 func TestResolveDirs_AllDirs(t *testing.T) {
+	t.Parallel()
+
 	home := filepath.FromSlash("/home/x")
 
 	// Test that all three dirs are resolved together correctly
@@ -213,18 +226,14 @@ func TestResolveDirs_AllDirs(t *testing.T) {
 
 	dirs := ResolveDirsWithOS(env, home, false)
 
-	if dirs.DataDir != "/d" {
-		t.Errorf("DataDir = %q, want %q", dirs.DataDir, "/d")
-	}
-	if dirs.ConfigDir != "/c" {
-		t.Errorf("ConfigDir = %q, want %q", dirs.ConfigDir, "/c")
-	}
-	if dirs.CacheDir != "/ca" {
-		t.Errorf("CacheDir = %q, want %q", dirs.CacheDir, "/ca")
-	}
+	assert.Equal(t, "/d", dirs.DataDir)
+	assert.Equal(t, "/c", dirs.ConfigDir)
+	assert.Equal(t, "/ca", dirs.CacheDir)
 }
 
 func TestResolveDirs_TildeNotExpanded(t *testing.T) {
+	t.Parallel()
+
 	// Per spec: ~ inside env vars is treated as literal (not expanded)
 	home := filepath.FromSlash("/home/testuser")
 	env := mapEnv{"AGENCY_DATA_DIR": "~/data"}
@@ -232,12 +241,12 @@ func TestResolveDirs_TildeNotExpanded(t *testing.T) {
 	dirs := ResolveDirsWithOS(env, home, false)
 
 	// Should be literal ~/data, not /home/testuser/data
-	if dirs.DataDir != "~/data" {
-		t.Errorf("DataDir = %q, want %q (tilde should not be expanded)", dirs.DataDir, "~/data")
-	}
+	assert.Equal(t, "~/data", dirs.DataDir, "tilde should not be expanded")
 }
 
 func TestResolveDirs_EmptyEnvVarIgnored(t *testing.T) {
+	t.Parallel()
+
 	home := filepath.FromSlash("/home/testuser")
 	// Empty string should be treated as unset
 	env := mapEnv{"AGENCY_DATA_DIR": ""}
@@ -246,7 +255,5 @@ func TestResolveDirs_EmptyEnvVarIgnored(t *testing.T) {
 
 	// Should fall through to default, not use empty string
 	want := filepath.FromSlash("/home/testuser/.local/share/agency")
-	if dirs.DataDir != want {
-		t.Errorf("DataDir = %q, want %q (empty env var should be ignored)", dirs.DataDir, want)
-	}
+	assert.Equal(t, want, dirs.DataDir, "empty env var should be ignored")
 }

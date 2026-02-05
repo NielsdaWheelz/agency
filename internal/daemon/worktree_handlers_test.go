@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -37,23 +39,21 @@ func setupGitRepo(t *testing.T) *testGitEnv {
 	// Initialize git repo
 	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git init failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+		require.FailNow(t, "git init failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
 	}
 
 	// Create initial commit
 	testFile := filepath.Join(repoDir, "README.md")
-	if err := os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644), "failed to write test file")
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git add failed: %v, exit %d", err, result.ExitCode)
+		require.FailNow(t, "git add failed", "err=%v, exit %d", err, result.ExitCode)
 	}
 
 	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git commit failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+		require.FailNow(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
 	}
 
 	return &testGitEnv{
@@ -63,6 +63,7 @@ func setupGitRepo(t *testing.T) *testGitEnv {
 }
 
 func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		req        WorktreeCreateRequest
@@ -96,7 +97,9 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			// Create server with minimal setup
 			tmpDir := t.TempDir()
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
@@ -112,19 +115,11 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 
 			// Parse response
 			var resp WorktreeCreateResponse
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-			if w.Code != tc.wantStatus {
-				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
-			}
-			if resp.ErrorCode != tc.wantCode {
-				t.Errorf("error_code = %q, want %q", resp.ErrorCode, tc.wantCode)
-			}
-			if resp.OK {
-				t.Error("expected OK=false")
-			}
+			assert.Equal(t, tc.wantStatus, w.Code)
+			assert.Equal(t, tc.wantCode, resp.ErrorCode)
+			assert.False(t, resp.OK, "expected OK=false")
 		})
 	}
 }
@@ -156,36 +151,22 @@ func TestHandleWorktreeCreate_Success(t *testing.T) {
 
 	// Parse response
 	var resp WorktreeCreateResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	if !resp.OK {
-		t.Errorf("expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
-	}
-	if resp.WorktreeID == "" {
-		t.Error("expected worktree_id to be set")
-	}
-	if resp.TreePath == "" {
-		t.Error("expected tree_path to be set")
-	}
-	if resp.Branch == "" {
-		t.Error("expected branch to be set")
-	}
+	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.True(t, resp.OK, "expected OK=true, got error: %s - %s", resp.ErrorCode, resp.Message)
+	assert.NotEmpty(t, resp.WorktreeID, "expected worktree_id to be set")
+	assert.NotEmpty(t, resp.TreePath, "expected tree_path to be set")
+	assert.NotEmpty(t, resp.Branch, "expected branch to be set")
 
 	// Verify worktree was created
-	if _, err := os.Stat(resp.TreePath); os.IsNotExist(err) {
-		t.Errorf("tree_path does not exist: %s", resp.TreePath)
-	}
+	_, err := os.Stat(resp.TreePath)
+	assert.False(t, os.IsNotExist(err), "tree_path does not exist: %s", resp.TreePath)
 
 	// Verify INTEGRATION_MARKER exists
 	markerPath := filepath.Join(resp.TreePath, ".agency", "INTEGRATION_MARKER")
-	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
-		t.Errorf("INTEGRATION_MARKER does not exist: %s", markerPath)
-	}
+	_, err = os.Stat(markerPath)
+	assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER does not exist: %s", markerPath)
 }
 
 func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
@@ -217,9 +198,7 @@ func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
 	var resp1 WorktreeCreateResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp1)
 
-	if !resp1.OK {
-		t.Fatalf("first request failed: %s - %s", resp1.ErrorCode, resp1.Message)
-	}
+	require.True(t, resp1.OK, "first request failed: %s - %s", resp1.ErrorCode, resp1.Message)
 
 	// Second request with same idempotency key
 	body, _ = json.Marshal(req)
@@ -230,14 +209,10 @@ func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
 	var resp2 WorktreeCreateResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp2)
 
-	if !resp2.OK {
-		t.Fatalf("second request failed: %s - %s", resp2.ErrorCode, resp2.Message)
-	}
+	require.True(t, resp2.OK, "second request failed: %s - %s", resp2.ErrorCode, resp2.Message)
 
 	// Should return same worktree
-	if resp1.WorktreeID != resp2.WorktreeID {
-		t.Errorf("idempotent requests returned different worktree IDs: %s vs %s", resp1.WorktreeID, resp2.WorktreeID)
-	}
+	assert.Equal(t, resp1.WorktreeID, resp2.WorktreeID, "idempotent requests returned different worktree IDs")
 }
 
 func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
@@ -265,9 +240,7 @@ func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 
 	var resp1 WorktreeCreateResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp1)
-	if !resp1.OK {
-		t.Fatalf("first request failed: %s - %s", resp1.ErrorCode, resp1.Message)
-	}
+	require.True(t, resp1.OK, "first request failed: %s - %s", resp1.ErrorCode, resp1.Message)
 
 	// Second request with same name (different key) - should fail
 	req2 := WorktreeCreateRequest{
@@ -284,15 +257,12 @@ func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 	var resp2 WorktreeCreateResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp2)
 
-	if resp2.OK {
-		t.Error("expected second request to fail due to name collision")
-	}
-	if resp2.ErrorCode != string(errors.EWorktreeNameExists) {
-		t.Errorf("expected error code %s, got %s", errors.EWorktreeNameExists, resp2.ErrorCode)
-	}
+	assert.False(t, resp2.OK, "expected second request to fail due to name collision")
+	assert.Equal(t, string(errors.EWorktreeNameExists), resp2.ErrorCode)
 }
 
 func TestHandleWorktreeRm_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		repoID     string
@@ -308,7 +278,9 @@ func TestHandleWorktreeRm_ValidationErrors(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tmpDir := t.TempDir()
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -327,16 +299,10 @@ func TestHandleWorktreeRm_ValidationErrors(t *testing.T) {
 			s.handleWorktreeRm(w, httpReq, "test-id")
 
 			var resp WorktreeRmResponse
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-			if w.Code != tc.wantStatus {
-				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
-			}
-			if resp.ErrorCode != tc.wantCode {
-				t.Errorf("error_code = %q, want %q", resp.ErrorCode, tc.wantCode)
-			}
+			assert.Equal(t, tc.wantStatus, w.Code)
+			assert.Equal(t, tc.wantCode, resp.ErrorCode)
 		})
 	}
 }
@@ -366,14 +332,11 @@ func TestHandleWorktreeRm_Success(t *testing.T) {
 
 	var createResp WorktreeCreateResponse
 	_ = json.NewDecoder(w.Body).Decode(&createResp)
-	if !createResp.OK {
-		t.Fatalf("failed to create worktree: %s - %s", createResp.ErrorCode, createResp.Message)
-	}
+	require.True(t, createResp.OK, "failed to create worktree: %s - %s", createResp.ErrorCode, createResp.Message)
 
 	// Verify worktree exists
-	if _, err := os.Stat(createResp.TreePath); os.IsNotExist(err) {
-		t.Fatalf("worktree was not created: %s", createResp.TreePath)
-	}
+	_, err := os.Stat(createResp.TreePath)
+	require.False(t, os.IsNotExist(err), "worktree was not created: %s", createResp.TreePath)
 
 	// Now remove it (force=true because integration marker file is untracked)
 	rmReq := WorktreeRmRequest{Force: true}
@@ -384,18 +347,13 @@ func TestHandleWorktreeRm_Success(t *testing.T) {
 	s.handleWorktreeRm(w, httpReq, createResp.WorktreeID)
 
 	var rmResp WorktreeRmResponse
-	if err := json.NewDecoder(w.Body).Decode(&rmResp); err != nil {
-		t.Fatalf("failed to decode rm response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&rmResp), "failed to decode rm response")
 
-	if !rmResp.OK {
-		t.Errorf("expected OK=true, got error: %s - %s", rmResp.ErrorCode, rmResp.Message)
-	}
+	assert.True(t, rmResp.OK, "expected OK=true, got error: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
 	// Verify worktree tree was removed
-	if _, err := os.Stat(createResp.TreePath); !os.IsNotExist(err) {
-		t.Errorf("worktree tree still exists: %s", createResp.TreePath)
-	}
+	_, err = os.Stat(createResp.TreePath)
+	assert.True(t, os.IsNotExist(err), "worktree tree still exists: %s", createResp.TreePath)
 }
 
 func TestHandleWorktreeRm_Idempotent(t *testing.T) {
@@ -434,9 +392,7 @@ func TestHandleWorktreeRm_Idempotent(t *testing.T) {
 
 	var rmResp1 WorktreeRmResponse
 	_ = json.NewDecoder(w.Body).Decode(&rmResp1)
-	if !rmResp1.OK {
-		t.Fatalf("first rm failed: %s - %s", rmResp1.ErrorCode, rmResp1.Message)
-	}
+	require.True(t, rmResp1.OK, "first rm failed: %s - %s", rmResp1.ErrorCode, rmResp1.Message)
 
 	// Remove it second time - should succeed (idempotent)
 	rmReq2 := WorktreeRmRequest{Force: false} // Second can be non-force since tree is gone
@@ -448,12 +404,11 @@ func TestHandleWorktreeRm_Idempotent(t *testing.T) {
 	var rmResp2 WorktreeRmResponse
 	_ = json.NewDecoder(w.Body).Decode(&rmResp2)
 
-	if !rmResp2.OK {
-		t.Errorf("second rm should succeed (idempotent), got error: %s - %s", rmResp2.ErrorCode, rmResp2.Message)
-	}
+	assert.True(t, rmResp2.OK, "second rm should succeed (idempotent), got error: %s - %s", rmResp2.ErrorCode, rmResp2.Message)
 }
 
 func TestWorktreeIdempotencyKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		repoID string
 		key    string
@@ -465,13 +420,12 @@ func TestWorktreeIdempotencyKey(t *testing.T) {
 
 	for _, tc := range tests {
 		got := worktreeIdempotencyKey(tc.repoID, tc.key)
-		if got != tc.want {
-			t.Errorf("worktreeIdempotencyKey(%q, %q) = %q, want %q", tc.repoID, tc.key, got, tc.want)
-		}
+		assert.Equal(t, tc.want, got)
 	}
 }
 
 func TestGetActiveInvocationsForWorktree(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -497,24 +451,19 @@ func TestGetActiveInvocationsForWorktree(t *testing.T) {
 
 	// Test getting active invocations for wt-a
 	active := s.getActiveInvocationsForWorktree("wt-a")
-	if len(active) != 2 {
-		t.Errorf("expected 2 active invocations for wt-a, got %d", len(active))
-	}
+	assert.Equal(t, 2, len(active), "expected 2 active invocations for wt-a")
 
 	// Test getting active invocations for wt-b
 	active = s.getActiveInvocationsForWorktree("wt-b")
-	if len(active) != 1 {
-		t.Errorf("expected 1 active invocation for wt-b, got %d", len(active))
-	}
+	assert.Equal(t, 1, len(active), "expected 1 active invocation for wt-b")
 
 	// Test getting active invocations for non-existent worktree
 	active = s.getActiveInvocationsForWorktree("wt-nonexistent")
-	if len(active) != 0 {
-		t.Errorf("expected 0 active invocations for wt-nonexistent, got %d", len(active))
-	}
+	assert.Equal(t, 0, len(active), "expected 0 active invocations for wt-nonexistent")
 }
 
 func TestHandleWorktrees_Routing(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -552,15 +501,15 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			req := httptest.NewRequest(tc.method, tc.path, nil)
 			w := httptest.NewRecorder()
 
 			s.handleWorktrees(w, req)
 
-			if w.Code != tc.wantStatus {
-				t.Errorf("status = %d, want %d; body: %s", w.Code, tc.wantStatus, w.Body.String())
-			}
+			assert.Equal(t, tc.wantStatus, w.Code, "body: %s", w.Body.String())
 		})
 	}
 }
@@ -595,42 +544,29 @@ func TestWorktreeCreateAndRemove_Integration(t *testing.T) {
 	var createResp WorktreeCreateResponse
 	_ = json.NewDecoder(w.Body).Decode(&createResp)
 
-	if !createResp.OK {
-		t.Fatalf("create failed: %s - %s", createResp.ErrorCode, createResp.Message)
-	}
+	require.True(t, createResp.OK, "create failed: %s - %s", createResp.ErrorCode, createResp.Message)
 
 	// Verify files exist
 	treePath := createResp.TreePath
 	markerPath := filepath.Join(treePath, ".agency", "INTEGRATION_MARKER")
 	metaPath := st.IntegrationWorktreeMetaPath(createResp.RepoID, createResp.WorktreeID)
 
-	if _, err := os.Stat(treePath); os.IsNotExist(err) {
-		t.Errorf("tree path does not exist: %s", treePath)
-	}
-	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
-		t.Errorf("INTEGRATION_MARKER does not exist: %s", markerPath)
-	}
-	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-		t.Errorf("meta.json does not exist: %s", metaPath)
-	}
+	_, err := os.Stat(treePath)
+	assert.False(t, os.IsNotExist(err), "tree path does not exist: %s", treePath)
+	_, err = os.Stat(markerPath)
+	assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER does not exist: %s", markerPath)
+	_, err = os.Stat(metaPath)
+	assert.False(t, os.IsNotExist(err), "meta.json does not exist: %s", metaPath)
 
 	// Read and verify meta.json
 	meta, err := st.ReadIntegrationWorktreeMeta(createResp.RepoID, createResp.WorktreeID)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
-	if meta.Name != "integration-test" {
-		t.Errorf("meta.Name = %q, want %q", meta.Name, "integration-test")
-	}
-	if meta.State != store.WorktreeStatePresent {
-		t.Errorf("meta.State = %q, want %q", meta.State, store.WorktreeStatePresent)
-	}
+	require.NoError(t, err, "failed to read meta.json")
+	assert.Equal(t, "integration-test", meta.Name)
+	assert.Equal(t, store.WorktreeStatePresent, meta.State)
 
 	// Verify branch was created
 	branches, _ := exec.NewRealRunner().Run(ctx, "git", []string{"-C", env.RepoPath, "branch", "-a"}, exec.RunOpts{})
-	if !strings.Contains(branches.Stdout, createResp.Branch) {
-		t.Errorf("branch %q not found in git branches", createResp.Branch)
-	}
+	assert.Contains(t, branches.Stdout, createResp.Branch, "branch %q not found in git branches", createResp.Branch)
 
 	// Remove worktree (force=true because integration marker file is untracked)
 	rmReq := WorktreeRmRequest{Force: true}
@@ -643,21 +579,172 @@ func TestWorktreeCreateAndRemove_Integration(t *testing.T) {
 	var rmResp WorktreeRmResponse
 	_ = json.NewDecoder(w.Body).Decode(&rmResp)
 
-	if !rmResp.OK {
-		t.Fatalf("rm failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
-	}
+	require.True(t, rmResp.OK, "rm failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
 	// Verify tree was removed
-	if _, err := os.Stat(treePath); !os.IsNotExist(err) {
-		t.Errorf("tree path still exists: %s", treePath)
-	}
+	_, err = os.Stat(treePath)
+	assert.True(t, os.IsNotExist(err), "tree path still exists: %s", treePath)
 
 	// Verify meta.json shows archived state
 	meta, err = st.ReadIntegrationWorktreeMeta(createResp.RepoID, createResp.WorktreeID)
-	if err != nil {
-		t.Fatalf("failed to read meta.json after rm: %v", err)
+	require.NoError(t, err, "failed to read meta.json after rm")
+	assert.Equal(t, store.WorktreeStateArchived, meta.State, "meta.State after rm")
+}
+
+// TestHandleWorktreeRm_NotAnIntegrationWorktree verifies that removing a worktree
+// whose tree lacks the .agency/INTEGRATION_MARKER returns E_NOT_AN_INTEGRATION_WORKTREE.
+func TestHandleWorktreeRm_NotAnIntegrationWorktree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
 	}
-	if meta.State != store.WorktreeStateArchived {
-		t.Errorf("meta.State = %q, want %q after rm", meta.State, store.WorktreeStateArchived)
+
+	// Create a real git repo
+	env := setupGitRepo(t)
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	// Create a worktree through the handler
+	createReq := WorktreeCreateRequest{
+		RepoRoot:     env.RepoPath,
+		Name:         "no-marker-test",
+		ParentBranch: "main",
 	}
+	body, _ := json.Marshal(createReq)
+	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleWorktreeCreate(w, httpReq)
+
+	var createResp WorktreeCreateResponse
+	_ = json.NewDecoder(w.Body).Decode(&createResp)
+	require.True(t, createResp.OK, "create failed: %s - %s", createResp.ErrorCode, createResp.Message)
+
+	// Remove the INTEGRATION_MARKER to simulate a non-integration worktree
+	markerPath := filepath.Join(createResp.TreePath, ".agency", "INTEGRATION_MARKER")
+	require.NoError(t, os.Remove(markerPath), "failed to remove INTEGRATION_MARKER")
+
+	// Now attempt to rm - should fail with E_NOT_AN_INTEGRATION_WORKTREE
+	rmReq := WorktreeRmRequest{Force: false}
+	body, _ = json.Marshal(rmReq)
+	url := "/worktrees/" + createResp.WorktreeID + "/rm?repo_id=" + createResp.RepoID
+	httpReq = httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	s.handleWorktreeRm(w, httpReq, createResp.WorktreeID)
+
+	var rmResp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&rmResp), "failed to decode rm response")
+
+	assert.False(t, rmResp.OK, "expected rm to fail")
+	assert.Equal(t, string(errors.ENotAnIntegrationWorktree), rmResp.ErrorCode,
+		"expected E_NOT_AN_INTEGRATION_WORKTREE")
+}
+
+// TestHandleWorktreeRm_HasActiveInvocations verifies that removing a worktree
+// with active invocations (and without --force) returns E_WORKTREE_HAS_ACTIVE_INVOCATIONS.
+func TestHandleWorktreeRm_HasActiveInvocations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Create a real git repo
+	env := setupGitRepo(t)
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	// Create a worktree through the handler
+	createReq := WorktreeCreateRequest{
+		RepoRoot:     env.RepoPath,
+		Name:         "active-inv-test",
+		ParentBranch: "main",
+	}
+	body, _ := json.Marshal(createReq)
+	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleWorktreeCreate(w, httpReq)
+
+	var createResp WorktreeCreateResponse
+	_ = json.NewDecoder(w.Body).Decode(&createResp)
+	require.True(t, createResp.OK, "create failed: %s - %s", createResp.ErrorCode, createResp.Message)
+
+	// Simulate an active invocation targeting this worktree
+	s.mu.Lock()
+	s.processes["fake-inv-1"] = &SupervisedProcess{
+		InvocationID:          "fake-inv-1",
+		IntegrationWorktreeID: createResp.WorktreeID,
+		done:                  make(chan struct{}),
+	}
+	s.mu.Unlock()
+
+	// Attempt to rm without force - should fail with E_WORKTREE_HAS_ACTIVE_INVOCATIONS
+	rmReq := WorktreeRmRequest{Force: false}
+	body, _ = json.Marshal(rmReq)
+	url := "/worktrees/" + createResp.WorktreeID + "/rm?repo_id=" + createResp.RepoID
+	httpReq = httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	s.handleWorktreeRm(w, httpReq, createResp.WorktreeID)
+
+	var rmResp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&rmResp), "failed to decode rm response")
+
+	assert.False(t, rmResp.OK, "expected rm to fail")
+	assert.Equal(t, string(errors.EWorktreeHasActiveInvocations), rmResp.ErrorCode,
+		"expected E_WORKTREE_HAS_ACTIVE_INVOCATIONS")
+
+	// Clean up: remove the fake process so it doesn't interfere
+	s.mu.Lock()
+	delete(s.processes, "fake-inv-1")
+	s.mu.Unlock()
+}
+
+// TestHandleWorktreeRm_BrokenWorktree verifies that removing a worktree whose
+// meta.json is corrupt returns E_WORKTREE_BROKEN.
+func TestHandleWorktreeRm_BrokenWorktree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Create a real git repo
+	env := setupGitRepo(t)
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	// Create a worktree through the handler
+	createReq := WorktreeCreateRequest{
+		RepoRoot:     env.RepoPath,
+		Name:         "broken-meta-test",
+		ParentBranch: "main",
+	}
+	body, _ := json.Marshal(createReq)
+	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleWorktreeCreate(w, httpReq)
+
+	var createResp WorktreeCreateResponse
+	_ = json.NewDecoder(w.Body).Decode(&createResp)
+	require.True(t, createResp.OK, "create failed: %s - %s", createResp.ErrorCode, createResp.Message)
+
+	// Corrupt the meta.json to make the worktree "broken"
+	metaPath := st.IntegrationWorktreeMetaPath(createResp.RepoID, createResp.WorktreeID)
+	require.NoError(t, os.WriteFile(metaPath, []byte("not valid json!!!"), 0o644),
+		"failed to corrupt meta.json")
+
+	// Attempt to rm by exact worktree ID - should resolve but detect broken record
+	rmReq := WorktreeRmRequest{Force: false}
+	body, _ = json.Marshal(rmReq)
+	url := "/worktrees/" + createResp.WorktreeID + "/rm?repo_id=" + createResp.RepoID
+	httpReq = httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	s.handleWorktreeRm(w, httpReq, createResp.WorktreeID)
+
+	var rmResp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&rmResp), "failed to decode rm response")
+
+	assert.False(t, rmResp.OK, "expected rm to fail")
+	assert.Equal(t, string(errors.EWorktreeBroken), rmResp.ErrorCode,
+		"expected E_WORKTREE_BROKEN for corrupt meta.json")
 }

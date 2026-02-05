@@ -5,9 +5,11 @@ import (
 	iofs "io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -44,67 +46,43 @@ func (s *stubFS) CreateTemp(dir, pattern string) (string, io.WriteCloser, error)
 var _ fs.FS = (*stubFS)(nil)
 
 func TestLoadAgencyConfig_MissingFile(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	_, err := LoadAgencyConfig(stub, "/repo")
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-	if errors.GetCode(err) != errors.ENoAgencyJSON {
-		t.Errorf("expected E_NO_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
+	require.Error(t, err, "expected error for missing file")
+	assert.Equal(t, errors.ENoAgencyJSON, errors.GetCode(err))
 }
 
 func TestLoadAgencyConfig_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = []byte(`{"version": 1, "scripts": {`)
 	_, err := LoadAgencyConfig(stub, "/repo")
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
-	if !strings.Contains(err.Error(), "invalid json") {
-		t.Errorf("error should contain 'invalid json': %s", err.Error())
-	}
+	require.Error(t, err, "expected error for invalid JSON")
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "invalid json")
 }
 
 func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	data, err := os.ReadFile("testdata/valid_min.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub.files["/repo/agency.json"] = data
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
-	}
-	if cfg.Scripts.Setup.Path != "scripts/agency_setup.sh" {
-		t.Errorf("Scripts.Setup.Path = %q, want %q", cfg.Scripts.Setup.Path, "scripts/agency_setup.sh")
-	}
-	if cfg.Scripts.Setup.Timeout != 10*time.Minute {
-		t.Errorf("Scripts.Setup.Timeout = %v, want %v", cfg.Scripts.Setup.Timeout, 10*time.Minute)
-	}
-	if cfg.Scripts.Verify.Path != "scripts/agency_verify.sh" {
-		t.Errorf("Scripts.Verify.Path = %q, want %q", cfg.Scripts.Verify.Path, "scripts/agency_verify.sh")
-	}
-	if cfg.Scripts.Verify.Timeout != 30*time.Minute {
-		t.Errorf("Scripts.Verify.Timeout = %v, want %v", cfg.Scripts.Verify.Timeout, 30*time.Minute)
-	}
-	if cfg.Scripts.Archive.Path != "scripts/agency_archive.sh" {
-		t.Errorf("Scripts.Archive.Path = %q, want %q", cfg.Scripts.Archive.Path, "scripts/agency_archive.sh")
-	}
-	if cfg.Scripts.Archive.Timeout != 5*time.Minute {
-		t.Errorf("Scripts.Archive.Timeout = %v, want %v", cfg.Scripts.Archive.Timeout, 5*time.Minute)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, cfg.Version)
+	assert.Equal(t, "scripts/agency_setup.sh", cfg.Scripts.Setup.Path)
+	assert.Equal(t, 10*time.Minute, cfg.Scripts.Setup.Timeout)
+	assert.Equal(t, "scripts/agency_verify.sh", cfg.Scripts.Verify.Path)
+	assert.Equal(t, 30*time.Minute, cfg.Scripts.Verify.Timeout)
+	assert.Equal(t, "scripts/agency_archive.sh", cfg.Scripts.Archive.Path)
+	assert.Equal(t, 5*time.Minute, cfg.Scripts.Archive.Timeout)
 }
 
 func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		fixture string
@@ -117,24 +95,18 @@ func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			data, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
-			if err != nil {
-				t.Fatalf("failed to read fixture: %v", err)
-			}
+			require.NoError(t, err, "failed to read fixture")
 			stub := newStubFS()
 			stub.files["/repo/agency.json"] = data
 
 			_, err = LoadAgencyConfig(stub, "/repo")
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-				t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-			}
-			if !strings.Contains(err.Error(), tt.wantMsg) {
-				t.Errorf("error should contain %q: %s", tt.wantMsg, err.Error())
-			}
+			require.Error(t, err)
+			assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+			assert.Contains(t, err.Error(), tt.wantMsg)
 		})
 	}
 }
@@ -150,73 +122,54 @@ func TestValidateAgencyConfig_RequiredFields(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			data, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
-			if err != nil {
-				t.Fatalf("failed to read fixture: %v", err)
-			}
+			require.NoError(t, err, "failed to read fixture")
 			stub := newStubFS()
 			stub.files["/repo/agency.json"] = data
 
 			cfg, err := LoadAgencyConfig(stub, "/repo")
-			if err != nil {
-				t.Fatalf("load error: %v", err)
-			}
+			require.NoError(t, err, "load error")
 
 			_, err = ValidateAgencyConfig(cfg)
-			if err == nil {
-				t.Fatal("expected validation error")
-			}
-			if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-				t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-			}
-			if !strings.Contains(err.Error(), tt.wantMsg) {
-				t.Errorf("error should contain %q: %s", tt.wantMsg, err.Error())
-			}
+			require.Error(t, err, "expected validation error")
+			assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+			assert.Contains(t, err.Error(), tt.wantMsg)
 		})
 	}
 }
 
 func TestValidateAgencyConfig_WrongVersion(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("testdata/wrong_version.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
+	require.NoError(t, err, "load error")
 
 	_, err = ValidateAgencyConfig(cfg)
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "version must be 1") {
-		t.Errorf("error should contain 'version must be 1': %s", err.Error())
-	}
+	require.Error(t, err, "expected validation error")
+	assert.Contains(t, err.Error(), "version must be 1")
 }
 
 func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("testdata/unknown_keys.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
 	_, err = LoadAgencyConfig(stub, "/repo")
-	if err == nil {
-		t.Fatal("expected error for unknown keys")
-	}
-	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
+	require.Error(t, err, "expected error for unknown keys")
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
 }
 
 func TestFirstValidationError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -228,16 +181,17 @@ func TestFirstValidationError(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := FirstValidationError(tt.err)
-			if got != tt.want {
-				t.Errorf("FirstValidationError() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestFirstValidationError_Stability(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		fixture string
 		wantMsg string
@@ -247,33 +201,28 @@ func TestFirstValidationError_Stability(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		tc := tc
 		t.Run(tc.fixture, func(t *testing.T) {
+			t.Parallel()
 			data, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
-			if err != nil {
-				t.Fatalf("failed to read fixture: %v", err)
-			}
+			require.NoError(t, err, "failed to read fixture")
 			stub := newStubFS()
 			stub.files["/repo/agency.json"] = data
 
 			cfg, err := LoadAgencyConfig(stub, "/repo")
-			if err != nil {
-				t.Fatalf("load error: %v", err)
-			}
+			require.NoError(t, err, "load error")
 
 			_, err = ValidateAgencyConfig(cfg)
-			if err == nil {
-				t.Fatal("expected validation error")
-			}
+			require.Error(t, err, "expected validation error")
 
 			msg := FirstValidationError(err)
-			if msg != tc.wantMsg {
-				t.Errorf("FirstValidationError() = %q, want %q", msg, tc.wantMsg)
-			}
+			assert.Equal(t, tc.wantMsg, msg)
 		})
 	}
 }
 
 func TestContainsWhitespace(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -287,11 +236,11 @@ func TestContainsWhitespace(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			got := containsWhitespace(tt.input)
-			if got != tt.want {
-				t.Errorf("containsWhitespace(%q) = %v, want %v", tt.input, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -299,98 +248,72 @@ func TestContainsWhitespace(t *testing.T) {
 // S1-specific validation tests
 
 func TestValidateForS1_SetupOnly(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("testdata/s1_valid_setup_only.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
+	require.NoError(t, err, "load error")
 
 	_, err = ValidateForS1(cfg)
-	if err != nil {
-		t.Fatalf("S1 validation should pass with setup only: %v", err)
-	}
+	require.NoError(t, err, "S1 validation should pass with setup only")
 }
 
 func TestValidateForS1_FullConfig(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("testdata/valid_min.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
+	require.NoError(t, err, "load error")
 
 	validated, err := ValidateForS1(cfg)
-	if err != nil {
-		t.Fatalf("S1 validation should pass with full config: %v", err)
-	}
-	if validated.Scripts.Setup.Path != "scripts/agency_setup.sh" {
-		t.Errorf("Scripts.Setup.Path = %q, want %q", validated.Scripts.Setup.Path, "scripts/agency_setup.sh")
-	}
+	require.NoError(t, err, "S1 validation should pass with full config")
+	assert.Equal(t, "scripts/agency_setup.sh", validated.Scripts.Setup.Path)
 }
 
 func TestValidateForS1_MissingSetup(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("testdata/missing_script_setup.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
+	require.NoError(t, err, "load error")
 
 	_, err = ValidateForS1(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for missing setup")
-	}
-	if errors.GetCode(err) != errors.EInvalidAgencyJSON {
-		t.Errorf("expected E_INVALID_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
-	if !strings.Contains(err.Error(), "scripts.setup") {
-		t.Errorf("error should mention scripts.setup: %s", err.Error())
-	}
+	require.Error(t, err, "expected validation error for missing setup")
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "scripts.setup")
 }
 
 func TestLoadAndValidateForS1(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("testdata/s1_valid_setup_only.json")
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "failed to read fixture")
 	stub := newStubFS()
 	stub.files["/repo/agency.json"] = data
 
 	_, err = LoadAndValidateForS1(stub, "/repo")
-	if err != nil {
-		t.Fatalf("LoadAndValidateForS1 error: %v", err)
-	}
+	require.NoError(t, err, "LoadAndValidateForS1 error")
 }
 
 func TestLoadAndValidateForS1_MissingFile(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	_, err := LoadAndValidateForS1(stub, "/repo")
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-	if errors.GetCode(err) != errors.ENoAgencyJSON {
-		t.Errorf("expected E_NO_AGENCY_JSON, got %s", errors.GetCode(err))
-	}
+	require.Error(t, err, "expected error for missing file")
+	assert.Equal(t, errors.ENoAgencyJSON, errors.GetCode(err))
 }
 
 // Integration test using real filesystem
 func TestLoadAgencyConfig_RealFS(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	configContent := `{
@@ -412,23 +335,13 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 }`
 
 	err := os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(configContent), 0644)
-	if err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, err, "failed to write test file")
 
 	realFS := fs.NewRealFS()
 	cfg, err := LoadAgencyConfig(realFS, tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
-	}
-	if cfg.Scripts.Setup.Path != "scripts/setup.sh" {
-		t.Errorf("Scripts.Setup.Path = %q, want %q", cfg.Scripts.Setup.Path, "scripts/setup.sh")
-	}
-	if cfg.Scripts.Setup.Timeout != 10*time.Minute {
-		t.Errorf("Scripts.Setup.Timeout = %v, want %v", cfg.Scripts.Setup.Timeout, 10*time.Minute)
-	}
+	assert.Equal(t, 1, cfg.Version)
+	assert.Equal(t, "scripts/setup.sh", cfg.Scripts.Setup.Path)
+	assert.Equal(t, 10*time.Minute, cfg.Scripts.Setup.Timeout)
 }

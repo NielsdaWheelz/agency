@@ -71,16 +71,22 @@ func isRunIDFormat(input string) bool {
 // ResolveRunContext builds a RunResolutionContext from the current environment.
 // If repoPath is provided (from --repo flag), it normalizes and validates it.
 // If CWD is inside a repo, it captures that for name resolution preference.
-func ResolveRunContext(ctx context.Context, cr agencyexec.CommandRunner, cwd string, repoPath string) (*RunResolutionContext, error) {
-	// Get home directory for path resolution
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
+// If dataDirOverride is non-empty, it is used instead of resolving from environment.
+func ResolveRunContext(ctx context.Context, cr agencyexec.CommandRunner, cwd string, repoPath string, dataDirOverride string) (*RunResolutionContext, error) {
+	var dataDir string
+	if dataDirOverride != "" {
+		dataDir = dataDirOverride
+	} else {
+		// Get home directory for path resolution
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
 
-	// Resolve data directory
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
+		// Resolve data directory
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
 
 	rctx := &RunResolutionContext{
 		DataDir: dataDir,

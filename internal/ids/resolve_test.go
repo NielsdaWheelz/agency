@@ -3,9 +3,13 @@ package ids
 import (
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestResolveRunRef(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		input      string
@@ -150,78 +154,64 @@ func TestResolveRunRef(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := ResolveRunRef(tt.input, tt.refs)
 
 			// Check error type
 			if tt.wantErr != nil {
-				if err == nil {
-					t.Fatalf("expected error of type %T, got nil", tt.wantErr)
-				}
+				require.Error(t, err)
 
 				// Type-assert expected error types
-				switch wantType := tt.wantErr.(type) {
+				switch tt.wantErr.(type) {
 				case *ErrNotFound:
 					var gotErr *ErrNotFound
-					if !errors.As(err, &gotErr) {
-						t.Fatalf("expected *ErrNotFound, got %T: %v", err, err)
-					}
-					_ = wantType // unused, just for type checking
+					require.True(t, errors.As(err, &gotErr), "expected *ErrNotFound, got %T: %v", err, err)
 				case *ErrAmbiguous:
 					var gotErr *ErrAmbiguous
-					if !errors.As(err, &gotErr) {
-						t.Fatalf("expected *ErrAmbiguous, got %T: %v", err, err)
-					}
+					require.True(t, errors.As(err, &gotErr), "expected *ErrAmbiguous, got %T: %v", err, err)
 					// Verify candidates if specified
 					if tt.wantCands != nil {
-						if len(gotErr.Candidates) != len(tt.wantCands) {
-							t.Fatalf("candidates count mismatch: got %d, want %d", len(gotErr.Candidates), len(tt.wantCands))
-						}
+						require.Len(t, gotErr.Candidates, len(tt.wantCands))
 						for i, wantCand := range tt.wantCands {
 							gotCand := gotErr.Candidates[i]
-							if gotCand.RunID != wantCand.RunID || gotCand.RepoID != wantCand.RepoID || gotCand.Broken != wantCand.Broken {
-								t.Errorf("candidate[%d] mismatch: got %+v, want %+v", i, gotCand, wantCand)
-							}
+							assert.Equal(t, wantCand.RunID, gotCand.RunID, "candidate[%d].RunID", i)
+							assert.Equal(t, wantCand.RepoID, gotCand.RepoID, "candidate[%d].RepoID", i)
+							assert.Equal(t, wantCand.Broken, gotCand.Broken, "candidate[%d].Broken", i)
 						}
 					}
 				default:
-					t.Fatalf("unexpected expected error type: %T", tt.wantErr)
+					require.Fail(t, "unexpected expected error type: %T", tt.wantErr)
 				}
 				return
 			}
 
 			// No error expected
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Check resolved ref
-			if got.RunID != tt.wantRef.RunID {
-				t.Errorf("RunID mismatch: got %q, want %q", got.RunID, tt.wantRef.RunID)
-			}
-			if got.RepoID != tt.wantRef.RepoID {
-				t.Errorf("RepoID mismatch: got %q, want %q", got.RepoID, tt.wantRef.RepoID)
-			}
-			if tt.wantBroken && !got.Broken {
-				t.Errorf("expected Broken=true, got false")
-			}
-			if !tt.wantBroken && got.Broken != tt.wantRef.Broken {
-				t.Errorf("Broken mismatch: got %v, want %v", got.Broken, tt.wantRef.Broken)
+			assert.Equal(t, tt.wantRef.RunID, got.RunID)
+			assert.Equal(t, tt.wantRef.RepoID, got.RepoID)
+			if tt.wantBroken {
+				assert.True(t, got.Broken, "expected Broken=true")
+			} else {
+				assert.Equal(t, tt.wantRef.Broken, got.Broken)
 			}
 		})
 	}
 }
 
 func TestErrNotFoundError(t *testing.T) {
+	t.Parallel()
 	err := &ErrNotFound{Input: "test-input"}
 	got := err.Error()
 	want := `run not found: "test-input"`
-	if got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func TestErrAmbiguousError(t *testing.T) {
+	t.Parallel()
 	err := &ErrAmbiguous{
 		Input: "abc",
 		Candidates: []RunRef{
@@ -231,12 +221,11 @@ func TestErrAmbiguousError(t *testing.T) {
 	}
 	got := err.Error()
 	want := `ambiguous run id "abc" matches: abc123, abc456`
-	if got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func TestSortCandidates(t *testing.T) {
+	t.Parallel()
 	// Test deterministic ordering
 	refs := []RunRef{
 		{RepoID: "r2", RunID: "b"},
@@ -255,14 +244,13 @@ func TestSortCandidates(t *testing.T) {
 	}
 
 	for i, want := range expected {
-		if refs[i].RunID != want.RunID || refs[i].RepoID != want.RepoID {
-			t.Errorf("index %d: got {%s, %s}, want {%s, %s}",
-				i, refs[i].RepoID, refs[i].RunID, want.RepoID, want.RunID)
-		}
+		assert.Equal(t, want.RunID, refs[i].RunID, "index %d RunID", i)
+		assert.Equal(t, want.RepoID, refs[i].RepoID, "index %d RepoID", i)
 	}
 }
 
 func TestResolveRunRefWithName(t *testing.T) {
+	t.Parallel()
 	// isActive returns true for non-archived runs (simulated by Name != "archived")
 	isActive := func(ref RunRef) bool {
 		return ref.Name != "archived"
@@ -380,66 +368,51 @@ func TestResolveRunRefWithName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := ResolveRunRefWithName(tt.input, tt.refs, tt.isActive)
 
 			// Check error type
 			if tt.wantErr != nil {
-				if err == nil {
-					t.Fatalf("expected error of type %T, got nil", tt.wantErr)
-				}
+				require.Error(t, err)
 
 				switch tt.wantErr.(type) {
 				case *ErrNotFound:
 					var gotErr *ErrNotFound
-					if !errors.As(err, &gotErr) {
-						t.Fatalf("expected *ErrNotFound, got %T: %v", err, err)
-					}
+					require.True(t, errors.As(err, &gotErr), "expected *ErrNotFound, got %T: %v", err, err)
 				case *ErrAmbiguous:
 					var gotErr *ErrAmbiguous
-					if !errors.As(err, &gotErr) {
-						t.Fatalf("expected *ErrAmbiguous, got %T: %v", err, err)
-					}
+					require.True(t, errors.As(err, &gotErr), "expected *ErrAmbiguous, got %T: %v", err, err)
 					if tt.wantCands != nil {
-						if len(gotErr.Candidates) != len(tt.wantCands) {
-							t.Fatalf("candidates count mismatch: got %d, want %d", len(gotErr.Candidates), len(tt.wantCands))
-						}
+						require.Len(t, gotErr.Candidates, len(tt.wantCands))
 						for i, wantCand := range tt.wantCands {
 							gotCand := gotErr.Candidates[i]
-							if gotCand.RunID != wantCand.RunID || gotCand.RepoID != wantCand.RepoID || gotCand.Name != wantCand.Name {
-								t.Errorf("candidate[%d] mismatch: got %+v, want %+v", i, gotCand, wantCand)
-							}
+							assert.Equal(t, wantCand.RunID, gotCand.RunID, "candidate[%d].RunID", i)
+							assert.Equal(t, wantCand.RepoID, gotCand.RepoID, "candidate[%d].RepoID", i)
+							assert.Equal(t, wantCand.Name, gotCand.Name, "candidate[%d].Name", i)
 						}
 					}
 				default:
-					t.Fatalf("unexpected expected error type: %T", tt.wantErr)
+					require.Fail(t, "unexpected expected error type: %T", tt.wantErr)
 				}
 				return
 			}
 
 			// No error expected
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Check resolved ref
-			if got.RunID != tt.wantRef.RunID {
-				t.Errorf("RunID mismatch: got %q, want %q", got.RunID, tt.wantRef.RunID)
-			}
-			if got.RepoID != tt.wantRef.RepoID {
-				t.Errorf("RepoID mismatch: got %q, want %q", got.RepoID, tt.wantRef.RepoID)
-			}
-			if got.Name != tt.wantRef.Name {
-				t.Errorf("Name mismatch: got %q, want %q", got.Name, tt.wantRef.Name)
-			}
-			if got.Broken != tt.wantRef.Broken {
-				t.Errorf("Broken mismatch: got %v, want %v", got.Broken, tt.wantRef.Broken)
-			}
+			assert.Equal(t, tt.wantRef.RunID, got.RunID)
+			assert.Equal(t, tt.wantRef.RepoID, got.RepoID)
+			assert.Equal(t, tt.wantRef.Name, got.Name)
+			assert.Equal(t, tt.wantRef.Broken, got.Broken)
 		})
 	}
 }
 
 func TestCheckNameUnique(t *testing.T) {
+	t.Parallel()
 	// isArchived simulates archived status by checking Name
 	isArchived := func(ref RunRef) bool {
 		return ref.Name == "archived-run"
@@ -509,21 +482,15 @@ func TestCheckNameUnique(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := CheckNameUnique(tt.checkName, tt.refs, tt.isArchived)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				// Verify it's E_NAME_EXISTS error
-				if !errors.Is(err, err) { // just verify error exists
-					t.Fatalf("unexpected error type: %v", err)
-				}
+				require.Error(t, err)
 			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				require.NoError(t, err)
 			}
 		})
 	}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fixedTime returns a clock function that always returns the same time.
@@ -18,54 +20,47 @@ func fixedTime(t time.Time) func() time.Time {
 
 // TestRepoIndexPath verifies path construction.
 func TestRepoIndexPath(t *testing.T) {
+	t.Parallel()
 	s := NewStore(nil, "/data/agency", nil)
 	got := s.RepoIndexPath()
 	want := "/data/agency/repo_index.json"
-	if got != want {
-		t.Errorf("RepoIndexPath() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got, "RepoIndexPath()")
 }
 
 // TestRepoDir verifies repo directory path construction.
 func TestRepoDir(t *testing.T) {
+	t.Parallel()
 	s := NewStore(nil, "/data/agency", nil)
 	got := s.RepoDir("abc123")
 	want := "/data/agency/repos/abc123"
-	if got != want {
-		t.Errorf("RepoDir() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got, "RepoDir()")
 }
 
 // TestRepoRecordPath verifies repo record path construction.
 func TestRepoRecordPath(t *testing.T) {
+	t.Parallel()
 	s := NewStore(nil, "/data/agency", nil)
 	got := s.RepoRecordPath("abc123")
 	want := "/data/agency/repos/abc123/repo.json"
-	if got != want {
-		t.Errorf("RepoRecordPath() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got, "RepoRecordPath()")
 }
 
 // TestLoadRepoIndex_MissingFile verifies empty index returned for missing file.
 func TestLoadRepoIndex_MissingFile(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	s := NewStore(realFS, dataDir, nil)
 
 	idx, err := s.LoadRepoIndex()
-	if err != nil {
-		t.Fatalf("LoadRepoIndex() error = %v, want nil", err)
-	}
-	if idx.SchemaVersion != SchemaVersion {
-		t.Errorf("SchemaVersion = %q, want %q", idx.SchemaVersion, SchemaVersion)
-	}
-	if len(idx.Repos) != 0 {
-		t.Errorf("Repos = %v, want empty map", idx.Repos)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, SchemaVersion, idx.SchemaVersion)
+	assert.Empty(t, idx.Repos)
 }
 
 // TestRepoIndexRoundtrip tests save/load cycle.
 func TestRepoIndexRoundtrip(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -73,45 +68,31 @@ func TestRepoIndexRoundtrip(t *testing.T) {
 
 	// Start with empty index
 	idx, err := s.LoadRepoIndex()
-	if err != nil {
-		t.Fatalf("LoadRepoIndex() error = %v", err)
-	}
+	require.NoError(t, err)
 
 	// Upsert an entry
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123def456", "/path/to/repo")
 
 	// Save
-	if err := s.SaveRepoIndex(idx); err != nil {
-		t.Fatalf("SaveRepoIndex() error = %v", err)
-	}
+	require.NoError(t, s.SaveRepoIndex(idx))
 
 	// Load again
 	loaded, err := s.LoadRepoIndex()
-	if err != nil {
-		t.Fatalf("LoadRepoIndex() after save error = %v", err)
-	}
+	require.NoError(t, err)
 
 	// Verify
-	if loaded.SchemaVersion != SchemaVersion {
-		t.Errorf("SchemaVersion = %q, want %q", loaded.SchemaVersion, SchemaVersion)
-	}
+	assert.Equal(t, SchemaVersion, loaded.SchemaVersion)
 	entry, ok := loaded.Repos["github:owner/repo"]
-	if !ok {
-		t.Fatal("expected entry for github:owner/repo")
-	}
-	if entry.RepoID != "abc123def456" {
-		t.Errorf("RepoID = %q, want %q", entry.RepoID, "abc123def456")
-	}
-	if len(entry.Paths) != 1 || entry.Paths[0] != "/path/to/repo" {
-		t.Errorf("Paths = %v, want [/path/to/repo]", entry.Paths)
-	}
-	if entry.LastSeenAt != "2026-01-09T12:00:00Z" {
-		t.Errorf("LastSeenAt = %q, want %q", entry.LastSeenAt, "2026-01-09T12:00:00Z")
-	}
+	require.True(t, ok, "expected entry for github:owner/repo")
+	assert.Equal(t, "abc123def456", entry.RepoID)
+	require.Len(t, entry.Paths, 1)
+	assert.Equal(t, "/path/to/repo", entry.Paths[0])
+	assert.Equal(t, "2026-01-09T12:00:00Z", entry.LastSeenAt)
 }
 
 // TestUpsertRepoIndexEntry_NoDuplication verifies path deduplication.
 func TestUpsertRepoIndexEntry_NoDuplication(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -129,13 +110,12 @@ func TestUpsertRepoIndexEntry_NoDuplication(t *testing.T) {
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/one")
 
 	entry := idx.Repos["github:owner/repo"]
-	if len(entry.Paths) != 1 {
-		t.Errorf("Paths length = %d, want 1 (no duplication)", len(entry.Paths))
-	}
+	assert.Len(t, entry.Paths, 1, "no duplication")
 }
 
 // TestUpsertRepoIndexEntry_NewPath verifies new paths are added at front.
 func TestUpsertRepoIndexEntry_NewPath(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -153,19 +133,14 @@ func TestUpsertRepoIndexEntry_NewPath(t *testing.T) {
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/two")
 
 	entry := idx.Repos["github:owner/repo"]
-	if len(entry.Paths) != 2 {
-		t.Fatalf("Paths length = %d, want 2", len(entry.Paths))
-	}
-	if entry.Paths[0] != "/path/two" {
-		t.Errorf("Paths[0] = %q, want /path/two (most recent first)", entry.Paths[0])
-	}
-	if entry.Paths[1] != "/path/one" {
-		t.Errorf("Paths[1] = %q, want /path/one", entry.Paths[1])
-	}
+	require.Len(t, entry.Paths, 2)
+	assert.Equal(t, "/path/two", entry.Paths[0], "most recent first")
+	assert.Equal(t, "/path/one", entry.Paths[1])
 }
 
 // TestUpsertRepoIndexEntry_MoveExistingPathToFront verifies existing path moves to front.
 func TestUpsertRepoIndexEntry_MoveExistingPathToFront(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -184,79 +159,59 @@ func TestUpsertRepoIndexEntry_MoveExistingPathToFront(t *testing.T) {
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/one")
 
 	entry := idx.Repos["github:owner/repo"]
-	if len(entry.Paths) != 2 {
-		t.Fatalf("Paths length = %d, want 2", len(entry.Paths))
-	}
-	if entry.Paths[0] != "/path/one" {
-		t.Errorf("Paths[0] = %q, want /path/one (moved to front)", entry.Paths[0])
-	}
-	if entry.Paths[1] != "/path/two" {
-		t.Errorf("Paths[1] = %q, want /path/two", entry.Paths[1])
-	}
+	require.Len(t, entry.Paths, 2)
+	assert.Equal(t, "/path/one", entry.Paths[0], "moved to front")
+	assert.Equal(t, "/path/two", entry.Paths[1])
 }
 
 // TestLoadRepoIndex_CorruptJSON verifies E_STORE_CORRUPT for invalid JSON.
 func TestLoadRepoIndex_CorruptJSON(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	s := NewStore(realFS, dataDir, nil)
 
 	// Write corrupt JSON
 	path := s.RepoIndexPath()
-	if err := os.WriteFile(path, []byte("{invalid json"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("{invalid json"), 0644))
 
 	_, err := s.LoadRepoIndex()
-	if err == nil {
-		t.Fatal("LoadRepoIndex() error = nil, want E_STORE_CORRUPT")
-	}
-	if errors.GetCode(err) != errors.EStoreCorrupt {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.EStoreCorrupt)
-	}
+	require.Error(t, err, "want E_STORE_CORRUPT")
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
 // TestLoadRepoIndex_MissingSchemaVersion verifies E_STORE_CORRUPT for missing schema_version.
 func TestLoadRepoIndex_MissingSchemaVersion(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	s := NewStore(realFS, dataDir, nil)
 
 	// Write JSON without schema_version
 	path := s.RepoIndexPath()
-	if err := os.WriteFile(path, []byte(`{"repos":{}}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"repos":{}}`), 0644))
 
 	_, err := s.LoadRepoIndex()
-	if err == nil {
-		t.Fatal("LoadRepoIndex() error = nil, want E_STORE_CORRUPT")
-	}
-	if errors.GetCode(err) != errors.EStoreCorrupt {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.EStoreCorrupt)
-	}
+	require.Error(t, err, "want E_STORE_CORRUPT")
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
 // TestLoadRepoRecord_MissingFile verifies (zero, false, nil) for missing file.
 func TestLoadRepoRecord_MissingFile(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	s := NewStore(realFS, dataDir, nil)
 
 	rec, exists, err := s.LoadRepoRecord("nonexistent")
-	if err != nil {
-		t.Fatalf("LoadRepoRecord() error = %v, want nil", err)
-	}
-	if exists {
-		t.Error("exists = true, want false")
-	}
-	if rec.RepoID != "" {
-		t.Errorf("RepoID = %q, want empty", rec.RepoID)
-	}
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.Empty(t, rec.RepoID)
 }
 
 // TestRepoRecordRoundtrip tests save/load cycle for repo records.
 func TestRepoRecordRoundtrip(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -281,63 +236,32 @@ func TestRepoRecordRoundtrip(t *testing.T) {
 	rec := s.UpsertRepoRecord(nil, input)
 
 	// Save
-	if err := s.SaveRepoRecord(rec); err != nil {
-		t.Fatalf("SaveRepoRecord() error = %v", err)
-	}
+	require.NoError(t, s.SaveRepoRecord(rec))
 
 	// Load
 	loaded, exists, err := s.LoadRepoRecord(input.RepoID)
-	if err != nil {
-		t.Fatalf("LoadRepoRecord() error = %v", err)
-	}
-	if !exists {
-		t.Fatal("exists = false, want true")
-	}
+	require.NoError(t, err)
+	require.True(t, exists)
 
 	// Verify all fields
-	if loaded.SchemaVersion != SchemaVersion {
-		t.Errorf("SchemaVersion = %q, want %q", loaded.SchemaVersion, SchemaVersion)
-	}
-	if loaded.RepoKey != input.RepoKey {
-		t.Errorf("RepoKey = %q, want %q", loaded.RepoKey, input.RepoKey)
-	}
-	if loaded.RepoID != input.RepoID {
-		t.Errorf("RepoID = %q, want %q", loaded.RepoID, input.RepoID)
-	}
-	if loaded.RepoRootLastSeen != input.RepoRootLastSeen {
-		t.Errorf("RepoRootLastSeen = %q, want %q", loaded.RepoRootLastSeen, input.RepoRootLastSeen)
-	}
-	if loaded.AgencyJSONPath != input.AgencyJSONPath {
-		t.Errorf("AgencyJSONPath = %q, want %q", loaded.AgencyJSONPath, input.AgencyJSONPath)
-	}
-	if loaded.OriginPresent != input.OriginPresent {
-		t.Errorf("OriginPresent = %v, want %v", loaded.OriginPresent, input.OriginPresent)
-	}
-	if loaded.OriginURL != input.OriginURL {
-		t.Errorf("OriginURL = %q, want %q", loaded.OriginURL, input.OriginURL)
-	}
-	if loaded.OriginHost != input.OriginHost {
-		t.Errorf("OriginHost = %q, want %q", loaded.OriginHost, input.OriginHost)
-	}
-	if loaded.Capabilities.GitHubOrigin != input.Capabilities.GitHubOrigin {
-		t.Errorf("Capabilities.GitHubOrigin = %v, want %v", loaded.Capabilities.GitHubOrigin, input.Capabilities.GitHubOrigin)
-	}
-	if loaded.Capabilities.OriginHost != input.Capabilities.OriginHost {
-		t.Errorf("Capabilities.OriginHost = %q, want %q", loaded.Capabilities.OriginHost, input.Capabilities.OriginHost)
-	}
-	if loaded.Capabilities.GhAuthed != input.Capabilities.GhAuthed {
-		t.Errorf("Capabilities.GhAuthed = %v, want %v", loaded.Capabilities.GhAuthed, input.Capabilities.GhAuthed)
-	}
-	if loaded.CreatedAt != "2026-01-09T12:00:00Z" {
-		t.Errorf("CreatedAt = %q, want %q", loaded.CreatedAt, "2026-01-09T12:00:00Z")
-	}
-	if loaded.UpdatedAt != "2026-01-09T12:00:00Z" {
-		t.Errorf("UpdatedAt = %q, want %q", loaded.UpdatedAt, "2026-01-09T12:00:00Z")
-	}
+	assert.Equal(t, SchemaVersion, loaded.SchemaVersion)
+	assert.Equal(t, input.RepoKey, loaded.RepoKey)
+	assert.Equal(t, input.RepoID, loaded.RepoID)
+	assert.Equal(t, input.RepoRootLastSeen, loaded.RepoRootLastSeen)
+	assert.Equal(t, input.AgencyJSONPath, loaded.AgencyJSONPath)
+	assert.Equal(t, input.OriginPresent, loaded.OriginPresent)
+	assert.Equal(t, input.OriginURL, loaded.OriginURL)
+	assert.Equal(t, input.OriginHost, loaded.OriginHost)
+	assert.Equal(t, input.Capabilities.GitHubOrigin, loaded.Capabilities.GitHubOrigin)
+	assert.Equal(t, input.Capabilities.OriginHost, loaded.Capabilities.OriginHost)
+	assert.Equal(t, input.Capabilities.GhAuthed, loaded.Capabilities.GhAuthed)
+	assert.Equal(t, "2026-01-09T12:00:00Z", loaded.CreatedAt)
+	assert.Equal(t, "2026-01-09T12:00:00Z", loaded.UpdatedAt)
 }
 
 // TestUpsertRepoRecord_PreservesCreatedAt verifies CreatedAt is preserved on update.
 func TestUpsertRepoRecord_PreservesCreatedAt(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	createTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -354,81 +278,61 @@ func TestUpsertRepoRecord_PreservesCreatedAt(t *testing.T) {
 		Capabilities:  Capabilities{GitHubOrigin: true},
 	}
 	rec := s.UpsertRepoRecord(nil, input)
-	if err := s.SaveRepoRecord(rec); err != nil {
-		t.Fatalf("SaveRepoRecord() error = %v", err)
-	}
+	require.NoError(t, s.SaveRepoRecord(rec))
 
 	// Load and update with later time
 	s = NewStore(realFS, dataDir, fixedTime(updateTime))
 	loaded, exists, err := s.LoadRepoRecord("abc123")
-	if err != nil || !exists {
-		t.Fatalf("LoadRepoRecord() error = %v, exists = %v", err, exists)
-	}
+	require.NoError(t, err)
+	require.True(t, exists)
 
 	input.Capabilities.GhAuthed = true // change something
 	updated := s.UpsertRepoRecord(&loaded, input)
 
 	// Verify timestamps
-	if updated.CreatedAt != "2026-01-01T00:00:00Z" {
-		t.Errorf("CreatedAt = %q, want %q (preserved)", updated.CreatedAt, "2026-01-01T00:00:00Z")
-	}
-	if updated.UpdatedAt != "2026-01-09T12:00:00Z" {
-		t.Errorf("UpdatedAt = %q, want %q (updated)", updated.UpdatedAt, "2026-01-09T12:00:00Z")
-	}
+	assert.Equal(t, "2026-01-01T00:00:00Z", updated.CreatedAt, "preserved")
+	assert.Equal(t, "2026-01-09T12:00:00Z", updated.UpdatedAt, "updated")
 }
 
 // TestLoadRepoRecord_CorruptJSON verifies E_STORE_CORRUPT for invalid JSON.
 func TestLoadRepoRecord_CorruptJSON(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	s := NewStore(realFS, dataDir, nil)
 
 	// Create repo directory and write corrupt JSON
 	repoDir := s.RepoDir("abc123")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
 	path := s.RepoRecordPath("abc123")
-	if err := os.WriteFile(path, []byte("{invalid json"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("{invalid json"), 0644))
 
 	_, _, err := s.LoadRepoRecord("abc123")
-	if err == nil {
-		t.Fatal("LoadRepoRecord() error = nil, want E_STORE_CORRUPT")
-	}
-	if errors.GetCode(err) != errors.EStoreCorrupt {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.EStoreCorrupt)
-	}
+	require.Error(t, err, "want E_STORE_CORRUPT")
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
 // TestLoadRepoRecord_MissingSchemaVersion verifies E_STORE_CORRUPT for missing schema_version.
 func TestLoadRepoRecord_MissingSchemaVersion(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	s := NewStore(realFS, dataDir, nil)
 
 	// Create repo directory and write JSON without schema_version
 	repoDir := s.RepoDir("abc123")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
 	path := s.RepoRecordPath("abc123")
-	if err := os.WriteFile(path, []byte(`{"repo_id":"abc123"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"repo_id":"abc123"}`), 0644))
 
 	_, _, err := s.LoadRepoRecord("abc123")
-	if err == nil {
-		t.Fatal("LoadRepoRecord() error = nil, want E_STORE_CORRUPT")
-	}
-	if errors.GetCode(err) != errors.EStoreCorrupt {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.EStoreCorrupt)
-	}
+	require.Error(t, err, "want E_STORE_CORRUPT")
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
 // TestSaveRepoRecord_CreatesDirectory verifies repo directory is created.
 func TestSaveRepoRecord_CreatesDirectory(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -441,23 +345,20 @@ func TestSaveRepoRecord_CreatesDirectory(t *testing.T) {
 
 	// Directory should not exist yet
 	repoDir := s.RepoDir("newrepo123")
-	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
-		t.Error("repo directory should not exist before save")
-	}
+	_, err := os.Stat(repoDir)
+	assert.True(t, os.IsNotExist(err), "repo directory should not exist before save")
 
 	// Save should create it
-	if err := s.SaveRepoRecord(rec); err != nil {
-		t.Fatalf("SaveRepoRecord() error = %v", err)
-	}
+	require.NoError(t, s.SaveRepoRecord(rec))
 
 	// Now it should exist
-	if _, err := os.Stat(repoDir); err != nil {
-		t.Errorf("repo directory should exist after save: %v", err)
-	}
+	_, err = os.Stat(repoDir)
+	assert.NoError(t, err, "repo directory should exist after save")
 }
 
 // TestSaveRepoIndex_CreatesDirectory verifies data directory is created.
 func TestSaveRepoIndex_CreatesDirectory(t *testing.T) {
+	t.Parallel()
 	dataDir := filepath.Join(t.TempDir(), "subdir", "agency")
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -469,23 +370,20 @@ func TestSaveRepoIndex_CreatesDirectory(t *testing.T) {
 	}
 
 	// Directory should not exist yet
-	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
-		t.Error("data directory should not exist before save")
-	}
+	_, err := os.Stat(dataDir)
+	assert.True(t, os.IsNotExist(err), "data directory should not exist before save")
 
 	// Save should create it
-	if err := s.SaveRepoIndex(idx); err != nil {
-		t.Fatalf("SaveRepoIndex() error = %v", err)
-	}
+	require.NoError(t, s.SaveRepoIndex(idx))
 
 	// Now it should exist
-	if _, err := os.Stat(dataDir); err != nil {
-		t.Errorf("data directory should exist after save: %v", err)
-	}
+	_, err = os.Stat(dataDir)
+	assert.NoError(t, err, "data directory should exist after save")
 }
 
 // TestJSONFormat verifies the output JSON is properly formatted.
 func TestJSONFormat(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -497,28 +395,22 @@ func TestJSONFormat(t *testing.T) {
 		Repos:         make(map[string]RepoIndexEntry),
 	}
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/to/repo")
-	if err := s.SaveRepoIndex(idx); err != nil {
-		t.Fatalf("SaveRepoIndex() error = %v", err)
-	}
+	require.NoError(t, s.SaveRepoIndex(idx))
 
 	// Read raw JSON and verify it's indented
 	data, err := os.ReadFile(s.RepoIndexPath())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Check for indentation (should contain newlines and spaces)
-	if !json.Valid(data) {
-		t.Error("output is not valid JSON")
-	}
+	assert.True(t, json.Valid(data), "output is not valid JSON")
 	// Verify trailing newline
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		t.Error("output should end with newline")
-	}
+	require.NotEmpty(t, data)
+	assert.Equal(t, byte('\n'), data[len(data)-1], "output should end with newline")
 }
 
 // TestPathNormalization verifies paths are cleaned.
 func TestPathNormalization(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	realFS := fs.NewRealFS()
 	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
@@ -533,7 +425,5 @@ func TestPathNormalization(t *testing.T) {
 	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/to/../to/repo")
 
 	entry := idx.Repos["github:owner/repo"]
-	if entry.Paths[0] != "/path/to/repo" {
-		t.Errorf("path not normalized: got %q, want /path/to/repo", entry.Paths[0])
-	}
+	assert.Equal(t, "/path/to/repo", entry.Paths[0], "path not normalized")
 }

@@ -34,6 +34,9 @@ type LSOpts struct {
 
 	// JSON outputs machine-readable JSON.
 	JSON bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // LS executes the agency ls command.
@@ -41,12 +44,17 @@ type LSOpts struct {
 // This is a read-only command: no state files are mutated.
 func LS(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts LSOpts, stdout, stderr io.Writer) error {
 	// Resolve data directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
 
 	// Determine scope: in-repo vs not-in-repo
 	var repoID string
@@ -78,13 +86,14 @@ func LS(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string
 
 	// Scan runs based on scope
 	var records []store.RunRecord
+	var scanErr error
 	if useAllRepos {
-		records, err = store.ScanAllRuns(dataDir)
+		records, scanErr = store.ScanAllRuns(dataDir)
 	} else {
-		records, err = store.ScanRunsForRepo(dataDir, repoID)
+		records, scanErr = store.ScanRunsForRepo(dataDir, repoID)
 	}
-	if err != nil {
-		return err
+	if scanErr != nil {
+		return scanErr
 	}
 
 	// Get tmux session set (single call)

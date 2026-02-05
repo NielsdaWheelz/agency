@@ -25,6 +25,9 @@ type InitOpts struct {
 	RepoPath    string
 	NoGitignore bool
 	Force       bool
+
+	// ConfigDirOverride, if set, is used instead of resolving from environment.
+	ConfigDirOverride string
 }
 
 // InitResult holds the result of the init command for output formatting.
@@ -64,6 +67,9 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	if opts.ConfigDirOverride != "" {
+		dirs.ConfigDir = opts.ConfigDirOverride
+	}
 	userConfigPath := config.UserConfigPath(dirs.ConfigDir)
 	userConfigState := "exists"
 

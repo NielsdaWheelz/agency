@@ -6,10 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAppendEvent(t *testing.T) {
+	t.Parallel()
 	t.Run("creates file lazily", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		path := filepath.Join(dir, "events.jsonl")
 
@@ -23,41 +28,30 @@ func TestAppendEvent(t *testing.T) {
 		}
 
 		err := AppendEvent(path, event)
-		if err != nil {
-			t.Fatalf("AppendEvent() error = %v", err)
-		}
+		require.NoError(t, err, "AppendEvent()")
 
 		// Verify file exists
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Fatal("expected events.jsonl to be created")
-		}
+		_, err = os.Stat(path)
+		require.False(t, os.IsNotExist(err), "expected events.jsonl to be created")
 
 		// Verify content
 		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("failed to read file: %v", err)
-		}
+		require.NoError(t, err, "failed to read file")
 
 		// Should be a single line ending with newline
-		if !strings.HasSuffix(string(content), "\n") {
-			t.Error("expected line to end with newline")
-		}
+		assert.True(t, strings.HasSuffix(string(content), "\n"), "expected line to end with newline")
 
 		// Parse and verify JSON
 		var parsed Event
-		if err := json.Unmarshal(content, &parsed); err != nil {
-			t.Fatalf("failed to parse JSON: %v", err)
-		}
+		err = json.Unmarshal(content, &parsed)
+		require.NoError(t, err, "failed to parse JSON")
 
-		if parsed.SchemaVersion != "1.0" {
-			t.Errorf("SchemaVersion = %q, want %q", parsed.SchemaVersion, "1.0")
-		}
-		if parsed.Event != "cmd_start" {
-			t.Errorf("Event = %q, want %q", parsed.Event, "cmd_start")
-		}
+		assert.Equal(t, "1.0", parsed.SchemaVersion)
+		assert.Equal(t, "cmd_start", parsed.Event)
 	})
 
 	t.Run("appends multiple events", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		path := filepath.Join(dir, "events.jsonl")
 
@@ -80,44 +74,31 @@ func TestAppendEvent(t *testing.T) {
 		}
 
 		err := AppendEvent(path, event1)
-		if err != nil {
-			t.Fatalf("AppendEvent(event1) error = %v", err)
-		}
+		require.NoError(t, err, "AppendEvent(event1)")
 
 		err = AppendEvent(path, event2)
-		if err != nil {
-			t.Fatalf("AppendEvent(event2) error = %v", err)
-		}
+		require.NoError(t, err, "AppendEvent(event2)")
 
 		// Verify content
 		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("failed to read file: %v", err)
-		}
+		require.NoError(t, err, "failed to read file")
 
 		lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-		if len(lines) != 2 {
-			t.Fatalf("expected 2 lines, got %d", len(lines))
-		}
+		require.Len(t, lines, 2)
 
 		// Parse both lines
 		var e1, e2 Event
-		if err := json.Unmarshal([]byte(lines[0]), &e1); err != nil {
-			t.Fatalf("failed to parse line 1: %v", err)
-		}
-		if err := json.Unmarshal([]byte(lines[1]), &e2); err != nil {
-			t.Fatalf("failed to parse line 2: %v", err)
-		}
+		err = json.Unmarshal([]byte(lines[0]), &e1)
+		require.NoError(t, err, "failed to parse line 1")
+		err = json.Unmarshal([]byte(lines[1]), &e2)
+		require.NoError(t, err, "failed to parse line 2")
 
-		if e1.Event != "cmd_start" {
-			t.Errorf("event1.Event = %q, want %q", e1.Event, "cmd_start")
-		}
-		if e2.Event != "cmd_end" {
-			t.Errorf("event2.Event = %q, want %q", e2.Event, "cmd_end")
-		}
+		assert.Equal(t, "cmd_start", e1.Event)
+		assert.Equal(t, "cmd_end", e2.Event)
 	})
 
 	t.Run("creates parent directories", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		path := filepath.Join(dir, "nested", "dir", "events.jsonl")
 
@@ -130,89 +111,70 @@ func TestAppendEvent(t *testing.T) {
 		}
 
 		err := AppendEvent(path, event)
-		if err != nil {
-			t.Fatalf("AppendEvent() error = %v", err)
-		}
+		require.NoError(t, err, "AppendEvent()")
 
 		// Verify file exists
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Fatal("expected events.jsonl to be created with parent dirs")
-		}
+		_, err = os.Stat(path)
+		require.False(t, os.IsNotExist(err), "expected events.jsonl to be created with parent dirs")
 	})
 }
 
 func TestCmdStartData(t *testing.T) {
+	t.Parallel()
 	data := CmdStartData("show", []string{"abc123", "--capture"})
 
-	if data["cmd"] != "show" {
-		t.Errorf("cmd = %v, want %q", data["cmd"], "show")
-	}
+	assert.Equal(t, "show", data["cmd"])
 
 	args, ok := data["args"].([]string)
-	if !ok {
-		t.Fatalf("args is not []string: %T", data["args"])
-	}
-	if len(args) != 2 || args[0] != "abc123" || args[1] != "--capture" {
-		t.Errorf("args = %v, want [abc123, --capture]", args)
-	}
+	require.True(t, ok, "args is not []string: %T", data["args"])
+	assert.Equal(t, []string{"abc123", "--capture"}, args)
 }
 
 func TestCmdEndData(t *testing.T) {
+	t.Parallel()
 	t.Run("without error code", func(t *testing.T) {
+		t.Parallel()
 		data := CmdEndData("show", 0, 123, nil)
 
-		if data["cmd"] != "show" {
-			t.Errorf("cmd = %v, want %q", data["cmd"], "show")
-		}
-		if data["exit_code"] != 0 {
-			t.Errorf("exit_code = %v, want %d", data["exit_code"], 0)
-		}
-		if data["duration_ms"] != int64(123) {
-			t.Errorf("duration_ms = %v, want %d", data["duration_ms"], 123)
-		}
-		if _, ok := data["error_code"]; ok {
-			t.Error("error_code should not be present")
-		}
+		assert.Equal(t, "show", data["cmd"])
+		assert.Equal(t, 0, data["exit_code"])
+		assert.Equal(t, int64(123), data["duration_ms"])
+		_, ok := data["error_code"]
+		assert.False(t, ok, "error_code should not be present")
 	})
 
 	t.Run("with error code", func(t *testing.T) {
+		t.Parallel()
 		errCode := "E_RUN_NOT_FOUND"
 		data := CmdEndData("show", 1, 50, &errCode)
 
-		if data["error_code"] != "E_RUN_NOT_FOUND" {
-			t.Errorf("error_code = %v, want %q", data["error_code"], "E_RUN_NOT_FOUND")
-		}
+		assert.Equal(t, "E_RUN_NOT_FOUND", data["error_code"])
 	})
 }
 
 func TestCaptureResultData(t *testing.T) {
+	t.Parallel()
 	t.Run("capture ok", func(t *testing.T) {
+		t.Parallel()
 		data := CaptureResultData(true, "", "")
 
-		if data["capture_ok"] != true {
-			t.Errorf("capture_ok = %v, want %v", data["capture_ok"], true)
-		}
-		if _, ok := data["capture_stage"]; ok {
-			t.Error("capture_stage should not be present on success")
-		}
+		assert.Equal(t, true, data["capture_ok"])
+		_, ok := data["capture_stage"]
+		assert.False(t, ok, "capture_stage should not be present on success")
 	})
 
 	t.Run("capture failed", func(t *testing.T) {
+		t.Parallel()
 		data := CaptureResultData(false, "has_session", "tmux session does not exist")
 
-		if data["capture_ok"] != false {
-			t.Errorf("capture_ok = %v, want %v", data["capture_ok"], false)
-		}
-		if data["capture_stage"] != "has_session" {
-			t.Errorf("capture_stage = %v, want %q", data["capture_stage"], "has_session")
-		}
-		if data["capture_error"] != "tmux session does not exist" {
-			t.Errorf("capture_error = %v, want %q", data["capture_error"], "tmux session does not exist")
-		}
+		assert.Equal(t, false, data["capture_ok"])
+		assert.Equal(t, "has_session", data["capture_stage"])
+		assert.Equal(t, "tmux session does not exist", data["capture_error"])
 	})
 }
 
 func TestEventJSON(t *testing.T) {
+	t.Parallel()
 	event := Event{
 		SchemaVersion: "1.0",
 		Timestamp:     "2026-01-10T12:00:00Z",
@@ -223,25 +185,19 @@ func TestEventJSON(t *testing.T) {
 	}
 
 	data, err := json.Marshal(event)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
+	require.NoError(t, err, "failed to marshal")
 
 	// Verify compact JSON (no indentation)
-	if strings.Contains(string(data), "\n") {
-		t.Error("JSON should be compact (no newlines)")
-	}
+	assert.False(t, strings.Contains(string(data), "\n"), "JSON should be compact (no newlines)")
 
 	// Verify required fields present
 	var parsed map[string]any
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
+	err = json.Unmarshal(data, &parsed)
+	require.NoError(t, err, "failed to unmarshal")
 
 	requiredFields := []string{"schema_version", "timestamp", "repo_id", "run_id", "event"}
 	for _, field := range requiredFields {
-		if _, ok := parsed[field]; !ok {
-			t.Errorf("missing required field: %s", field)
-		}
+		_, ok := parsed[field]
+		assert.True(t, ok, "missing required field: %s", field)
 	}
 }

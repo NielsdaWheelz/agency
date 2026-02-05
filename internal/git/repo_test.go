@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
@@ -67,6 +70,7 @@ func (s *stubRunner) LookPath(file string) (string, error) {
 }
 
 func TestGetRepoRoot_Success(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -80,27 +84,18 @@ func TestGetRepoRoot_Success(t *testing.T) {
 
 	root, err := GetRepoRoot(ctx, cr, cwd)
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if root.Path != expectedRoot {
-		t.Errorf("Path = %q, want %q", root.Path, expectedRoot)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, expectedRoot, root.Path)
 
 	// Verify correct command was called
-	if len(cr.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(cr.calls))
-	}
+	require.Len(t, cr.calls, 1)
 	call := cr.calls[0]
-	if call.Name != "git" {
-		t.Errorf("Name = %q, want %q", call.Name, "git")
-	}
-	if call.Dir != cwd {
-		t.Errorf("Dir = %q, want %q", call.Dir, cwd)
-	}
+	assert.Equal(t, "git", call.Name)
+	assert.Equal(t, cwd, call.Dir)
 }
 
 func TestGetRepoRoot_NotInRepo(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -113,15 +108,12 @@ func TestGetRepoRoot_NotInRepo(t *testing.T) {
 
 	_, err := GetRepoRoot(ctx, cr, cwd)
 
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if errors.GetCode(err) != errors.ENoRepo {
-		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.ENoRepo)
-	}
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
 func TestGetRepoRoot_EmptyOutput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -134,15 +126,12 @@ func TestGetRepoRoot_EmptyOutput(t *testing.T) {
 
 	_, err := GetRepoRoot(ctx, cr, cwd)
 
-	if err == nil {
-		t.Fatal("expected error for empty output")
-	}
-	if errors.GetCode(err) != errors.ENoRepo {
-		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.ENoRepo)
-	}
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
 func TestGetRepoRoot_MultiLineOutput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -155,29 +144,23 @@ func TestGetRepoRoot_MultiLineOutput(t *testing.T) {
 
 	_, err := GetRepoRoot(ctx, cr, cwd)
 
-	if err == nil {
-		t.Fatal("expected error for multi-line output")
-	}
-	if errors.GetCode(err) != errors.ENoRepo {
-		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.ENoRepo)
-	}
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
 func TestGetRepoRoot_EmptyCwd(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
 	_, err := GetRepoRoot(ctx, cr, "")
 
-	if err == nil {
-		t.Fatal("expected error for empty cwd")
-	}
-	if errors.GetCode(err) != errors.ENoRepo {
-		t.Errorf("code = %q, want %q", errors.GetCode(err), errors.ENoRepo)
-	}
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
 func TestGetRepoRoot_RelativePathNormalized(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -191,18 +174,15 @@ func TestGetRepoRoot_RelativePathNormalized(t *testing.T) {
 
 	root, err := GetRepoRoot(ctx, cr, cwd)
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should be normalized to absolute path
 	expected := filepath.Clean("/some")
-	if root.Path != expected {
-		t.Errorf("Path = %q, want %q", root.Path, expected)
-	}
+	assert.Equal(t, expected, root.Path)
 }
 
 func TestGetOriginInfo_Present(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -215,18 +195,13 @@ func TestGetOriginInfo_Present(t *testing.T) {
 
 	info := GetOriginInfo(ctx, cr, repoRoot)
 
-	if !info.Present {
-		t.Error("expected Present = true")
-	}
-	if info.URL != "git@github.com:owner/repo.git" {
-		t.Errorf("URL = %q, want %q", info.URL, "git@github.com:owner/repo.git")
-	}
-	if info.Host != "github.com" {
-		t.Errorf("Host = %q, want %q", info.Host, "github.com")
-	}
+	assert.True(t, info.Present)
+	assert.Equal(t, "git@github.com:owner/repo.git", info.URL)
+	assert.Equal(t, "github.com", info.Host)
 }
 
 func TestGetOriginInfo_Missing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -239,18 +214,13 @@ func TestGetOriginInfo_Missing(t *testing.T) {
 
 	info := GetOriginInfo(ctx, cr, repoRoot)
 
-	if info.Present {
-		t.Error("expected Present = false")
-	}
-	if info.URL != "" {
-		t.Errorf("URL = %q, want empty", info.URL)
-	}
-	if info.Host != "" {
-		t.Errorf("Host = %q, want empty", info.Host)
-	}
+	assert.False(t, info.Present)
+	assert.Empty(t, info.URL)
+	assert.Empty(t, info.Host)
 }
 
 func TestGetOriginInfo_EmptyURL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 
@@ -263,12 +233,11 @@ func TestGetOriginInfo_EmptyURL(t *testing.T) {
 
 	info := GetOriginInfo(ctx, cr, repoRoot)
 
-	if info.Present {
-		t.Error("expected Present = false for empty URL")
-	}
+	assert.False(t, info.Present)
 }
 
 func TestParseOriginHost(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		raw  string
@@ -364,11 +333,11 @@ func TestParseOriginHost(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := ParseOriginHost(tt.raw)
-			if got != tt.want {
-				t.Errorf("ParseOriginHost(%q) = %q, want %q", tt.raw, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -376,6 +345,7 @@ func TestParseOriginHost(t *testing.T) {
 // Tests for HasCommits
 
 func TestHasCommits_HasCommits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -386,15 +356,12 @@ func TestHasCommits_HasCommits(t *testing.T) {
 	})
 
 	has, err := HasCommits(ctx, cr, repoRoot)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !has {
-		t.Error("expected HasCommits = true")
-	}
+	require.NoError(t, err)
+	assert.True(t, has)
 }
 
 func TestHasCommits_NoCommits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -405,17 +372,14 @@ func TestHasCommits_NoCommits(t *testing.T) {
 	})
 
 	has, err := HasCommits(ctx, cr, repoRoot)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if has {
-		t.Error("expected HasCommits = false for empty repo")
-	}
+	require.NoError(t, err)
+	assert.False(t, has, "expected HasCommits = false for empty repo")
 }
 
 // Tests for IsClean
 
 func TestIsClean_Clean(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -426,15 +390,12 @@ func TestIsClean_Clean(t *testing.T) {
 	})
 
 	clean, err := IsClean(ctx, cr, repoRoot)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !clean {
-		t.Error("expected IsClean = true")
-	}
+	require.NoError(t, err)
+	assert.True(t, clean)
 }
 
 func TestIsClean_Dirty(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -445,15 +406,12 @@ func TestIsClean_Dirty(t *testing.T) {
 	})
 
 	clean, err := IsClean(ctx, cr, repoRoot)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if clean {
-		t.Error("expected IsClean = false for dirty tree")
-	}
+	require.NoError(t, err)
+	assert.False(t, clean, "expected IsClean = false for dirty tree")
 }
 
 func TestIsClean_DirtyWithUntracked(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -464,17 +422,14 @@ func TestIsClean_DirtyWithUntracked(t *testing.T) {
 	})
 
 	clean, err := IsClean(ctx, cr, repoRoot)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if clean {
-		t.Error("expected IsClean = false for untracked files")
-	}
+	require.NoError(t, err)
+	assert.False(t, clean, "expected IsClean = false for untracked files")
 }
 
 // Tests for BranchExists
 
 func TestBranchExists_Exists(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -486,15 +441,12 @@ func TestBranchExists_Exists(t *testing.T) {
 	})
 
 	exists, err := BranchExists(ctx, cr, repoRoot, branch)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !exists {
-		t.Error("expected BranchExists = true")
-	}
+	require.NoError(t, err)
+	assert.True(t, exists)
 }
 
 func TestBranchExists_NotExists(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -506,17 +458,14 @@ func TestBranchExists_NotExists(t *testing.T) {
 	})
 
 	exists, err := BranchExists(ctx, cr, repoRoot, branch)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if exists {
-		t.Error("expected BranchExists = false for nonexistent branch")
-	}
+	require.NoError(t, err)
+	assert.False(t, exists, "expected BranchExists = false for nonexistent branch")
 }
 
 // Tests for GetOriginURL
 
 func TestGetOriginURL_Present(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -527,13 +476,11 @@ func TestGetOriginURL_Present(t *testing.T) {
 	})
 
 	url := GetOriginURL(ctx, cr, repoRoot)
-	expected := "git@github.com:owner/repo.git"
-	if url != expected {
-		t.Errorf("GetOriginURL = %q, want %q", url, expected)
-	}
+	assert.Equal(t, "git@github.com:owner/repo.git", url)
 }
 
 func TestGetOriginURL_Missing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cr := newStubRunner()
 	repoRoot := "/some/project"
@@ -544,7 +491,5 @@ func TestGetOriginURL_Missing(t *testing.T) {
 	})
 
 	url := GetOriginURL(ctx, cr, repoRoot)
-	if url != "" {
-		t.Errorf("GetOriginURL = %q, want empty for missing origin", url)
-	}
+	assert.Empty(t, url)
 }

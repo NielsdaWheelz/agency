@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -27,35 +30,26 @@ func (s stubRunner) LookPath(file string) (string, error) {
 }
 
 func TestLoadUserConfig_MissingFile(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	cfg, found, err := LoadUserConfig(stub, "/cfg")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if found {
-		t.Fatal("expected found=false for missing config")
-	}
-	if cfg.Defaults.Runner != "claude" {
-		t.Errorf("Defaults.Runner = %q, want %q", cfg.Defaults.Runner, "claude")
-	}
-	if cfg.Defaults.Editor != "code" {
-		t.Errorf("Defaults.Editor = %q, want %q", cfg.Defaults.Editor, "code")
-	}
+	require.NoError(t, err)
+	assert.False(t, found, "expected found=false for missing config")
+	assert.Equal(t, "claude", cfg.Defaults.Runner)
+	assert.Equal(t, "code", cfg.Defaults.Editor)
 }
 
 func TestLoadUserConfig_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{"version": 1, "defaults": {`)
 	_, _, err := LoadUserConfig(stub, "/cfg")
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-	if errors.GetCode(err) != errors.EInvalidUserConfig {
-		t.Errorf("expected E_INVALID_USER_CONFIG, got %s", errors.GetCode(err))
-	}
+	require.Error(t, err, "expected error for invalid JSON")
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 }
 
 func TestLoadUserConfig_UnknownKeys(t *testing.T) {
+	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
   "version": 1,
@@ -63,34 +57,26 @@ func TestLoadUserConfig_UnknownKeys(t *testing.T) {
   "extra": "nope"
 }`)
 	_, _, err := LoadUserConfig(stub, "/cfg")
-	if err == nil {
-		t.Fatal("expected error for unknown keys")
-	}
-	if errors.GetCode(err) != errors.EInvalidUserConfig {
-		t.Errorf("expected E_INVALID_USER_CONFIG, got %s", errors.GetCode(err))
-	}
+	require.Error(t, err, "expected error for unknown keys")
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 }
 
 func TestValidateUserConfig_RequiredFields(t *testing.T) {
+	t.Parallel()
 	cfg := UserConfig{Version: 1}
 	_, err := ValidateUserConfig(cfg)
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if errors.GetCode(err) != errors.EInvalidUserConfig {
-		t.Errorf("expected E_INVALID_USER_CONFIG, got %s", errors.GetCode(err))
-	}
+	require.Error(t, err, "expected validation error")
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 }
 
 func TestResolveRunnerCmd_Path(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "bin", "runner")
-	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
-		t.Fatalf("failed to create dir: %v", err)
-	}
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
+	err := os.MkdirAll(filepath.Dir(binPath), 0o755)
+	require.NoError(t, err, "failed to create dir")
+	err = os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755)
+	require.NoError(t, err, "failed to write file")
 
 	cfg := UserConfig{
 		Version: 1,
@@ -104,23 +90,18 @@ func TestResolveRunnerCmd_Path(t *testing.T) {
 	}
 
 	cmd, err := ResolveRunnerCmd(stubRunner{}, fs.NewRealFS(), tmpDir, cfg, "custom")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cmd != binPath {
-		t.Errorf("cmd = %q, want %q", cmd, binPath)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, binPath, cmd)
 }
 
 func TestResolveEditorCmd_Path(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "bin", "editor")
-	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
-		t.Fatalf("failed to create dir: %v", err)
-	}
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
+	err := os.MkdirAll(filepath.Dir(binPath), 0o755)
+	require.NoError(t, err, "failed to create dir")
+	err = os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755)
+	require.NoError(t, err, "failed to write file")
 
 	cfg := UserConfig{
 		Version: 1,
@@ -134,10 +115,6 @@ func TestResolveEditorCmd_Path(t *testing.T) {
 	}
 
 	cmd, err := ResolveEditorCmd(stubRunner{}, fs.NewRealFS(), tmpDir, cfg, "custom")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cmd != binPath {
-		t.Errorf("cmd = %q, want %q", cmd, binPath)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, binPath, cmd)
 }

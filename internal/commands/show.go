@@ -42,6 +42,9 @@ type ShowOpts struct {
 
 	// Args is the raw args slice for event logging.
 	Args []string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // captureResult holds the result of a transcript capture attempt.
@@ -62,12 +65,17 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	// Resolve data directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
 
 	// Resolve run by name or ID globally
 	_, record, err := resolveRunGlobal(opts.RunID, dataDir)

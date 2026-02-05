@@ -2,12 +2,18 @@ package exec
 
 import (
 	"context"
-	"strings"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunScript_ExitCode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		args       []string
@@ -19,112 +25,95 @@ func TestRunScript_ExitCode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			result, err := RunScript(ctx, "sh", tt.args, ScriptOpts{})
-			if err != nil {
-				t.Fatalf("RunScript returned error: %v", err)
-			}
-			if result.ExitCode != tt.expectCode {
-				t.Errorf("exit code = %d, want %d", result.ExitCode, tt.expectCode)
-			}
+			require.NoError(t, err, "RunScript returned error")
+			assert.Equal(t, tt.expectCode, result.ExitCode)
 		})
 	}
 }
 
 func TestRunScript_StdoutStderr(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	result, err := RunScript(ctx, "sh", []string{"-c", "echo stdout; echo stderr >&2"}, ScriptOpts{})
-	if err != nil {
-		t.Fatalf("RunScript returned error: %v", err)
-	}
+	require.NoError(t, err, "RunScript returned error")
 
-	if !strings.Contains(result.Stdout, "stdout") {
-		t.Errorf("stdout = %q, want to contain 'stdout'", result.Stdout)
-	}
-	if !strings.Contains(result.Stderr, "stderr") {
-		t.Errorf("stderr = %q, want to contain 'stderr'", result.Stderr)
-	}
+	assert.Contains(t, result.Stdout, "stdout")
+	assert.Contains(t, result.Stderr, "stderr")
 }
 
 func TestRunScript_TimeoutExit124(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	result, err := RunScript(ctx, "sh", []string{"-c", "sleep 10"}, ScriptOpts{
 		Timeout: 50 * time.Millisecond,
 	})
 
-	if err != nil {
-		t.Errorf("RunScript with timeout should return nil error, got: %v", err)
-	}
-	if result.ExitCode != ExitTimeout {
-		t.Errorf("timeout exit code = %d, want %d", result.ExitCode, ExitTimeout)
-	}
+	assert.NoError(t, err, "RunScript with timeout should return nil error")
+	assert.Equal(t, ExitTimeout, result.ExitCode)
 }
 
 func TestRunScript_CanceledExit125(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Start a slow command and cancel quickly
+	startedFile := filepath.Join(t.TempDir(), "started")
+
+	// Start a slow command and cancel once it has started
 	done := make(chan struct{})
 	var result CmdResult
 	var err error
 
 	go func() {
-		result, err = RunScript(ctx, "sh", []string{"-c", "sleep 10"}, ScriptOpts{})
+		result, err = RunScript(ctx, "sh", []string{"-c", fmt.Sprintf("touch %s; sleep 10", startedFile)}, ScriptOpts{})
 		close(done)
 	}()
 
-	// Give the command time to start, then cancel
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the command to actually start, then cancel
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(startedFile)
+		return statErr == nil
+	}, 5*time.Second, 10*time.Millisecond, "command did not start")
 	cancel()
 
 	<-done
 
-	if err != context.Canceled {
-		t.Errorf("RunScript with cancel should return context.Canceled, got: %v", err)
-	}
-	if result.ExitCode != ExitCanceled {
-		t.Errorf("cancel exit code = %d, want %d", result.ExitCode, ExitCanceled)
-	}
+	assert.Equal(t, context.Canceled, err, "RunScript with cancel should return context.Canceled")
+	assert.Equal(t, ExitCanceled, result.ExitCode)
 }
 
 func TestRunScript_StartFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	result, err := RunScript(ctx, "no_such_command_abc123", nil, ScriptOpts{})
 
-	if err == nil {
-		t.Errorf("RunScript with non-existent command should return error")
-	}
-	if result.ExitCode != ExitStartFail {
-		t.Errorf("start failure exit code = %d, want %d", result.ExitCode, ExitStartFail)
-	}
+	require.Error(t, err, "RunScript with non-existent command should return error")
+	assert.Equal(t, ExitStartFail, result.ExitCode)
 }
 
 func TestRunScript_Dir(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	result, err := RunScript(ctx, "sh", []string{"-c", "pwd"}, ScriptOpts{
 		Dir: "/tmp",
 	})
-	if err != nil {
-		t.Fatalf("RunScript returned error: %v", err)
-	}
+	require.NoError(t, err, "RunScript returned error")
 
 	// On macOS, /tmp is a symlink to /private/tmp
-	if !strings.Contains(result.Stdout, "tmp") {
-		t.Errorf("with Dir=/tmp, pwd output = %q, want to contain 'tmp'", result.Stdout)
-	}
+	assert.Contains(t, result.Stdout, "tmp")
 }
 
 func TestRunScript_Env(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	result, err := RunScript(ctx, "sh", []string{"-c", "echo $TEST_VAR"}, ScriptOpts{
 		Env: map[string]string{"TEST_VAR": "hello_world"},
 	})
-	if err != nil {
-		t.Fatalf("RunScript returned error: %v", err)
-	}
+	require.NoError(t, err, "RunScript returned error")
 
-	if !strings.Contains(result.Stdout, "hello_world") {
-		t.Errorf("with Env, output = %q, want to contain 'hello_world'", result.Stdout)
-	}
+	assert.Contains(t, result.Stdout, "hello_world")
 }

@@ -64,6 +64,12 @@ func (osEnv) Get(key string) string {
 type DoctorOpts struct {
 	// RepoPath is the optional --repo flag to target a specific repo.
 	RepoPath string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+
+	// ConfigDirOverride, if set, is used instead of resolving from environment.
+	ConfigDirOverride string
 }
 
 // Doctor implements the `agency doctor` command.
@@ -92,6 +98,12 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	if opts.DataDirOverride != "" {
+		dirs.DataDir = opts.DataDirOverride
+	}
+	if opts.ConfigDirOverride != "" {
+		dirs.ConfigDir = opts.ConfigDirOverride
+	}
 
 	// 3. Load and validate user config
 	userCfg, found, err := config.LoadUserConfig(fsys, dirs.ConfigDir)

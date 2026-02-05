@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // stubNow returns a function that returns a fixed time for deterministic tests.
@@ -20,6 +23,7 @@ func stubPIDAlive(alive bool) func(int) bool {
 }
 
 func TestRepoLock_WritesLockFile(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
@@ -31,48 +35,32 @@ func TestRepoLock_WritesLockFile(t *testing.T) {
 	}
 
 	unlock, err := l.Lock("test-repo-id", "push")
-	if err != nil {
-		t.Fatalf("Lock() failed: %v", err)
-	}
+	require.NoError(t, err, "Lock() failed")
 	t.Cleanup(func() {
-		if err := unlock(); err != nil {
-			t.Errorf("unlock failed: %v", err)
-		}
+		assert.NoError(t, unlock(), "unlock failed")
 	})
 
 	// Verify lock file exists
 	lockPath := filepath.Join(dataDir, "repos", "test-repo-id", ".lock")
 	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatalf("failed to read lock file: %v", err)
-	}
+	require.NoError(t, err, "failed to read lock file")
 
 	var info LockInfo
-	if err := json.Unmarshal(data, &info); err != nil {
-		t.Fatalf("failed to parse lock file: %v", err)
-	}
+	err = json.Unmarshal(data, &info)
+	require.NoError(t, err, "failed to parse lock file")
 
-	if info.PID != os.Getpid() {
-		t.Errorf("PID = %d, want %d", info.PID, os.Getpid())
-	}
-	if !info.CreatedAt.Equal(now) {
-		t.Errorf("CreatedAt = %v, want %v", info.CreatedAt, now)
-	}
-	if info.Cmd != "push" {
-		t.Errorf("Cmd = %q, want %q", info.Cmd, "push")
-	}
+	assert.Equal(t, os.Getpid(), info.PID)
+	assert.True(t, info.CreatedAt.Equal(now))
+	assert.Equal(t, "push", info.Cmd)
 
 	// Verify permissions are 0600
 	stat, err := os.Stat(lockPath)
-	if err != nil {
-		t.Fatalf("failed to stat lock file: %v", err)
-	}
-	if stat.Mode().Perm() != 0600 {
-		t.Errorf("lock file permissions = %o, want 0600", stat.Mode().Perm())
-	}
+	require.NoError(t, err, "failed to stat lock file")
+	assert.Equal(t, os.FileMode(0600), stat.Mode().Perm())
 }
 
 func TestRepoLock_ErrLockedOnContention(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
@@ -85,45 +73,31 @@ func TestRepoLock_ErrLockedOnContention(t *testing.T) {
 
 	// Acquire lock with locker A
 	unlockA, err := l.Lock("test-repo", "cmd-a")
-	if err != nil {
-		t.Fatalf("Lock A failed: %v", err)
-	}
+	require.NoError(t, err, "Lock A failed")
 	t.Cleanup(func() {
-		if err := unlockA(); err != nil {
-			t.Errorf("unlockA failed: %v", err)
-		}
+		assert.NoError(t, unlockA(), "unlockA failed")
 	})
 
 	// Attempt lock with locker B (same repo)
 	_, err = l.Lock("test-repo", "cmd-b")
-	if err == nil {
-		t.Fatal("Lock B should have failed")
-	}
+	require.Error(t, err, "Lock B should have failed")
 
 	errLocked, ok := err.(*ErrLocked)
-	if !ok {
-		t.Fatalf("expected *ErrLocked, got %T", err)
-	}
-	if errLocked.RepoID != "test-repo" {
-		t.Errorf("RepoID = %q, want %q", errLocked.RepoID, "test-repo")
-	}
-	if errLocked.Info == nil {
-		t.Error("Info should not be nil")
-	}
-	if errLocked.Info != nil && errLocked.Info.Cmd != "cmd-a" {
-		t.Errorf("Info.Cmd = %q, want %q", errLocked.Info.Cmd, "cmd-a")
-	}
+	require.True(t, ok, "expected *ErrLocked, got %T", err)
+	assert.Equal(t, "test-repo", errLocked.RepoID)
+	require.NotNil(t, errLocked.Info)
+	assert.Equal(t, "cmd-a", errLocked.Info.Cmd)
 }
 
 func TestRepoLock_StaleByDeadPIDSteals(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
 	// Write a lock file manually with a "dead" PID
 	repoDir := filepath.Join(dataDir, "repos", "stale-repo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("failed to create repo dir: %v", err)
-	}
+	err := os.MkdirAll(repoDir, 0755)
+	require.NoError(t, err, "failed to create repo dir")
 	lockPath := filepath.Join(repoDir, ".lock")
 	info := LockInfo{
 		PID:       999999, // unlikely to be alive
@@ -131,9 +105,8 @@ func TestRepoLock_StaleByDeadPIDSteals(t *testing.T) {
 		Cmd:       "old-cmd",
 	}
 	data, _ := json.Marshal(info)
-	if err := os.WriteFile(lockPath, data, 0600); err != nil {
-		t.Fatalf("failed to write lock file: %v", err)
-	}
+	err = os.WriteFile(lockPath, data, 0600)
+	require.NoError(t, err, "failed to write lock file")
 
 	// Locker uses IsPIDAlive stub returning false
 	l := RepoLock{
@@ -145,30 +118,22 @@ func TestRepoLock_StaleByDeadPIDSteals(t *testing.T) {
 
 	// Lock acquisition should succeed
 	unlock, err := l.Lock("stale-repo", "new-cmd")
-	if err != nil {
-		t.Fatalf("Lock() failed (should steal stale lock): %v", err)
-	}
+	require.NoError(t, err, "Lock() failed (should steal stale lock)")
 	t.Cleanup(func() {
-		if err := unlock(); err != nil {
-			t.Errorf("unlock failed: %v", err)
-		}
+		assert.NoError(t, unlock(), "unlock failed")
 	})
 
 	// Verify new lock was written
 	data, err = os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatalf("failed to read lock file: %v", err)
-	}
+	require.NoError(t, err, "failed to read lock file")
 	var newInfo LockInfo
-	if err := json.Unmarshal(data, &newInfo); err != nil {
-		t.Fatalf("failed to parse lock file: %v", err)
-	}
-	if newInfo.Cmd != "new-cmd" {
-		t.Errorf("Cmd = %q, want %q", newInfo.Cmd, "new-cmd")
-	}
+	err = json.Unmarshal(data, &newInfo)
+	require.NoError(t, err, "failed to parse lock file")
+	assert.Equal(t, "new-cmd", newInfo.Cmd)
 }
 
 func TestRepoLock_PIDOnlyStaleness_AgeDoesNotSteal(t *testing.T) {
+	t.Parallel()
 	// Per S5 spec: stale detection is pid-only. Age alone never steals the lock.
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
@@ -176,9 +141,8 @@ func TestRepoLock_PIDOnlyStaleness_AgeDoesNotSteal(t *testing.T) {
 
 	// Write a lock file with old timestamp but "alive" pid
 	repoDir := filepath.Join(dataDir, "repos", "old-repo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("failed to create repo dir: %v", err)
-	}
+	err := os.MkdirAll(repoDir, 0755)
+	require.NoError(t, err, "failed to create repo dir")
 	lockPath := filepath.Join(repoDir, ".lock")
 	oldTime := now.Add(-(staleAfter + time.Second)) // 1 second past stale threshold
 	info := LockInfo{
@@ -187,9 +151,8 @@ func TestRepoLock_PIDOnlyStaleness_AgeDoesNotSteal(t *testing.T) {
 		Cmd:       "old-cmd",
 	}
 	data, _ := json.Marshal(info)
-	if err := os.WriteFile(lockPath, data, 0600); err != nil {
-		t.Fatalf("failed to write lock file: %v", err)
-	}
+	err = os.WriteFile(lockPath, data, 0600)
+	require.NoError(t, err, "failed to write lock file")
 
 	l := RepoLock{
 		DataDir:    dataDir,
@@ -199,41 +162,34 @@ func TestRepoLock_PIDOnlyStaleness_AgeDoesNotSteal(t *testing.T) {
 	}
 
 	// Lock acquisition should FAIL because pid-only staleness means age doesn't matter
-	_, err := l.Lock("old-repo", "new-cmd")
-	if err == nil {
-		t.Fatal("Lock() should have failed (pid is alive, age alone should not steal lock)")
-	}
+	_, err = l.Lock("old-repo", "new-cmd")
+	require.Error(t, err, "Lock() should have failed (pid is alive, age alone should not steal lock)")
 
 	errLocked, ok := err.(*ErrLocked)
-	if !ok {
-		t.Fatalf("expected *ErrLocked, got %T: %v", err, err)
-	}
-	if errLocked.Info == nil || errLocked.Info.Cmd != "old-cmd" {
-		t.Errorf("expected lock info with Cmd='old-cmd', got %+v", errLocked.Info)
-	}
+	require.True(t, ok, "expected *ErrLocked, got %T: %v", err, err)
+	require.NotNil(t, errLocked.Info)
+	assert.Equal(t, "old-cmd", errLocked.Info.Cmd)
 }
 
 func TestRepoLock_UnreadableLockFile_MtimeFallback(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 	staleAfter := 2 * time.Hour
 
 	repoDir := filepath.Join(dataDir, "repos", "garbage-repo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("failed to create repo dir: %v", err)
-	}
+	err := os.MkdirAll(repoDir, 0755)
+	require.NoError(t, err, "failed to create repo dir")
 	lockPath := filepath.Join(repoDir, ".lock")
 
 	t.Run("recent garbage file is treated as locked", func(t *testing.T) {
 		// Write garbage bytes
-		if err := os.WriteFile(lockPath, []byte("garbage data"), 0600); err != nil {
-			t.Fatalf("failed to write lock file: %v", err)
-		}
+		err := os.WriteFile(lockPath, []byte("garbage data"), 0600)
+		require.NoError(t, err, "failed to write lock file")
 		// Touch with recent mtime
 		recentTime := now.Add(-time.Minute)
-		if err := os.Chtimes(lockPath, recentTime, recentTime); err != nil {
-			t.Fatalf("failed to set mtime: %v", err)
-		}
+		err = os.Chtimes(lockPath, recentTime, recentTime)
+		require.NoError(t, err, "failed to set mtime")
 
 		l := RepoLock{
 			DataDir:    dataDir,
@@ -242,25 +198,20 @@ func TestRepoLock_UnreadableLockFile_MtimeFallback(t *testing.T) {
 			IsPIDAlive: stubPIDAlive(true),
 		}
 
-		_, err := l.Lock("garbage-repo", "cmd")
-		if err == nil {
-			t.Fatal("Lock() should have failed")
-		}
-		if _, ok := err.(*ErrLocked); !ok {
-			t.Fatalf("expected *ErrLocked, got %T: %v", err, err)
-		}
+		_, err = l.Lock("garbage-repo", "cmd")
+		require.Error(t, err, "Lock() should have failed")
+		_, ok := err.(*ErrLocked)
+		require.True(t, ok, "expected *ErrLocked, got %T: %v", err, err)
 	})
 
 	t.Run("old garbage file is treated as stale", func(t *testing.T) {
 		// Write garbage bytes
-		if err := os.WriteFile(lockPath, []byte("garbage data"), 0600); err != nil {
-			t.Fatalf("failed to write lock file: %v", err)
-		}
+		err := os.WriteFile(lockPath, []byte("garbage data"), 0600)
+		require.NoError(t, err, "failed to write lock file")
 		// Touch with old mtime
 		oldTime := now.Add(-(staleAfter + time.Second))
-		if err := os.Chtimes(lockPath, oldTime, oldTime); err != nil {
-			t.Fatalf("failed to set mtime: %v", err)
-		}
+		err = os.Chtimes(lockPath, oldTime, oldTime)
+		require.NoError(t, err, "failed to set mtime")
 
 		l := RepoLock{
 			DataDir:    dataDir,
@@ -270,18 +221,15 @@ func TestRepoLock_UnreadableLockFile_MtimeFallback(t *testing.T) {
 		}
 
 		unlock, err := l.Lock("garbage-repo", "new-cmd")
-		if err != nil {
-			t.Fatalf("Lock() failed (should steal stale garbage lock): %v", err)
-		}
+		require.NoError(t, err, "Lock() failed (should steal stale garbage lock)")
 		t.Cleanup(func() {
-			if err := unlock(); err != nil {
-				t.Errorf("unlock failed: %v", err)
-			}
+			assert.NoError(t, unlock(), "unlock failed")
 		})
 	})
 }
 
 func TestRepoLock_UnlockIdempotent(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
@@ -293,28 +241,24 @@ func TestRepoLock_UnlockIdempotent(t *testing.T) {
 	}
 
 	unlock, err := l.Lock("idempotent-repo", "cmd")
-	if err != nil {
-		t.Fatalf("Lock() failed: %v", err)
-	}
+	require.NoError(t, err, "Lock() failed")
 
 	// First unlock
-	if err := unlock(); err != nil {
-		t.Fatalf("first unlock failed: %v", err)
-	}
+	err = unlock()
+	require.NoError(t, err, "first unlock failed")
 
 	// Second unlock (should be idempotent)
-	if err := unlock(); err != nil {
-		t.Fatalf("second unlock failed: %v", err)
-	}
+	err = unlock()
+	require.NoError(t, err, "second unlock failed")
 
 	// Verify lock file is gone
 	lockPath := filepath.Join(dataDir, "repos", "idempotent-repo", ".lock")
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Error("lock file should not exist after unlock")
-	}
+	_, err = os.Stat(lockPath)
+	assert.True(t, os.IsNotExist(err), "lock file should not exist after unlock")
 }
 
 func TestRepoLock_ParentDirCreation(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
@@ -327,27 +271,22 @@ func TestRepoLock_ParentDirCreation(t *testing.T) {
 
 	// Ensure repos/<repo_id>/ does not exist
 	repoDir := filepath.Join(dataDir, "repos", "new-repo")
-	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
-		t.Fatalf("repo dir should not exist yet")
-	}
+	_, err := os.Stat(repoDir)
+	require.True(t, os.IsNotExist(err), "repo dir should not exist yet")
 
 	unlock, err := l.Lock("new-repo", "cmd")
-	if err != nil {
-		t.Fatalf("Lock() failed: %v", err)
-	}
+	require.NoError(t, err, "Lock() failed")
 	t.Cleanup(func() {
-		if err := unlock(); err != nil {
-			t.Errorf("unlock failed: %v", err)
-		}
+		assert.NoError(t, unlock(), "unlock failed")
 	})
 
 	// Verify directory was created
-	if _, err := os.Stat(repoDir); err != nil {
-		t.Errorf("repo dir should exist after lock: %v", err)
-	}
+	_, err = os.Stat(repoDir)
+	assert.NoError(t, err, "repo dir should exist after lock")
 }
 
 func TestRepoLock_ConcurrencySanity(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
@@ -360,13 +299,9 @@ func TestRepoLock_ConcurrencySanity(t *testing.T) {
 
 	// Acquire lock with locker A
 	unlockA, err := l.Lock("concurrent-repo", "cmd-a")
-	if err != nil {
-		t.Fatalf("Lock A failed: %v", err)
-	}
+	require.NoError(t, err, "Lock A failed")
 	t.Cleanup(func() {
-		if err := unlockA(); err != nil {
-			t.Errorf("unlockA failed: %v", err)
-		}
+		assert.NoError(t, unlockA(), "unlockA failed")
 	})
 
 	// In goroutine, attempt lock B and expect ErrLocked quickly
@@ -383,19 +318,18 @@ func TestRepoLock_ConcurrencySanity(t *testing.T) {
 	// Wait with timeout
 	select {
 	case err := <-errChan:
-		if err == nil {
-			t.Error("Lock B should have failed")
-		} else if _, ok := err.(*ErrLocked); !ok {
-			t.Errorf("expected *ErrLocked, got %T: %v", err, err)
-		}
+		require.Error(t, err, "Lock B should have failed")
+		_, ok := err.(*ErrLocked)
+		assert.True(t, ok, "expected *ErrLocked, got %T: %v", err, err)
 	case <-time.After(time.Second):
-		t.Error("Lock B should have returned quickly, not blocked")
+		assert.Fail(t, "Lock B should have returned quickly, not blocked")
 	}
 
 	wg.Wait()
 }
 
 func TestRepoLock_DifferentReposIndependent(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	now := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
 
@@ -408,46 +342,33 @@ func TestRepoLock_DifferentReposIndependent(t *testing.T) {
 
 	// Lock repo A
 	unlockA, err := l.Lock("repo-a", "cmd")
-	if err != nil {
-		t.Fatalf("Lock repo-a failed: %v", err)
-	}
+	require.NoError(t, err, "Lock repo-a failed")
 	t.Cleanup(func() {
-		if err := unlockA(); err != nil {
-			t.Errorf("unlockA failed: %v", err)
-		}
+		assert.NoError(t, unlockA(), "unlockA failed")
 	})
 
 	// Lock repo B should succeed (different repo)
 	unlockB, err := l.Lock("repo-b", "cmd")
-	if err != nil {
-		t.Fatalf("Lock repo-b failed: %v", err)
-	}
+	require.NoError(t, err, "Lock repo-b failed")
 	t.Cleanup(func() {
-		if err := unlockB(); err != nil {
-			t.Errorf("unlockB failed: %v", err)
-		}
+		assert.NoError(t, unlockB(), "unlockB failed")
 	})
 }
 
 func TestNewRepoLock_DefaultValues(t *testing.T) {
+	t.Parallel()
 	l := NewRepoLock("/some/data/dir")
 
-	if l.DataDir != "/some/data/dir" {
-		t.Errorf("DataDir = %q, want %q", l.DataDir, "/some/data/dir")
-	}
-	if l.StaleAfter != 2*time.Hour {
-		t.Errorf("StaleAfter = %v, want %v", l.StaleAfter, 2*time.Hour)
-	}
-	if l.Now == nil {
-		t.Error("Now should not be nil")
-	}
-	if l.IsPIDAlive == nil {
-		t.Error("IsPIDAlive should not be nil")
-	}
+	assert.Equal(t, "/some/data/dir", l.DataDir)
+	assert.Equal(t, 2*time.Hour, l.StaleAfter)
+	assert.NotNil(t, l.Now)
+	assert.NotNil(t, l.IsPIDAlive)
 }
 
 func TestErrLocked_Error(t *testing.T) {
+	t.Parallel()
 	t.Run("with info", func(t *testing.T) {
+		t.Parallel()
 		err := &ErrLocked{
 			RepoID: "test-repo",
 			Info: &LockInfo{
@@ -458,28 +379,23 @@ func TestErrLocked_Error(t *testing.T) {
 			Path: "/data/repos/test-repo/.lock",
 		}
 		msg := err.Error()
-		if msg == "" {
-			t.Error("error message should not be empty")
-		}
+		assert.NotEmpty(t, msg)
 		// Should contain key information
-		if !containsAll(msg, "test-repo", "12345", "/data/repos/test-repo/.lock") {
-			t.Errorf("error message missing expected info: %s", msg)
-		}
+		assert.True(t, containsAll(msg, "test-repo", "12345", "/data/repos/test-repo/.lock"),
+			"error message missing expected info: %s", msg)
 	})
 
 	t.Run("without info", func(t *testing.T) {
+		t.Parallel()
 		err := &ErrLocked{
 			RepoID: "test-repo",
 			Info:   nil,
 			Path:   "/data/repos/test-repo/.lock",
 		}
 		msg := err.Error()
-		if msg == "" {
-			t.Error("error message should not be empty")
-		}
-		if !containsAll(msg, "test-repo", "/data/repos/test-repo/.lock") {
-			t.Errorf("error message missing expected info: %s", msg)
-		}
+		assert.NotEmpty(t, msg)
+		assert.True(t, containsAll(msg, "test-repo", "/data/repos/test-repo/.lock"),
+			"error message missing expected info: %s", msg)
 	})
 }
 

@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
@@ -171,13 +172,15 @@ type ErrorResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// SupervisedProcess holds runtime state for a supervised headless process.
+// SupervisedProcess holds runtime state for a supervised process (headless or headed).
 type SupervisedProcess struct {
 	InvocationID          string
 	RepoID                string
 	IntegrationWorktreeID string // PR-06: track which worktree this invocation targets
-	PID                   int
-	PGID                  int
+	Mode                  string // PR-10: "headless" or "headed"
+	PID                   int    // Headless only
+	PGID                  int    // Headless only
+	TmuxSession           string // PR-10: Headed only - tmux session name
 	RawLogFile            string
 	StderrFile            string
 	StreamLogFile         string // PR-07: path to stream.jsonl for normalized events
@@ -205,6 +208,14 @@ type SupervisedProcess struct {
 
 	// done channel is closed when the process exits.
 	done chan struct{}
+
+	// doneOnce ensures done channel is only closed once.
+	doneOnce sync.Once
+}
+
+// CloseDone safely closes the done channel, ensuring it is only closed once.
+func (p *SupervisedProcess) CloseDone() {
+	p.doneOnce.Do(func() { close(p.done) })
 }
 
 // CheckpointEngine is the interface for the checkpoint engine.
@@ -361,4 +372,68 @@ type DiscardResponse struct {
 	ErrorCode string `json:"error_code,omitempty"`
 	Message   string `json:"message,omitempty"`
 	Hint      string `json:"hint,omitempty"`
+}
+
+// ----- PR-10 Headed Invocation Types -----
+
+// ControlPlaneStartHeadedRequest is the request body for POST /invocations/start_headed (PR-10).
+// This endpoint creates and starts a headed (tmux) invocation end-to-end.
+type ControlPlaneStartHeadedRequest struct {
+	// RepoRoot is the absolute path to the repository root.
+	RepoRoot string `json:"repo_root"`
+
+	// WorktreeRef is the integration worktree reference (name, id, or prefix).
+	WorktreeRef string `json:"worktree_ref"`
+
+	// Runner is the runner type (claude, codex).
+	Runner string `json:"runner"`
+
+	// InvocationName is an optional human-readable label.
+	InvocationName string `json:"invocation_name,omitempty"`
+
+	// RunnerArgs are optional pass-through args appended after the base command.
+	RunnerArgs []string `json:"runner_args,omitempty"`
+
+	// Env are optional environment variable overrides.
+	Env map[string]string `json:"env,omitempty"`
+
+	// ClientRequestID is required for idempotency (UUID format).
+	ClientRequestID string `json:"client_request_id"`
+
+	// NoIncludeUntracked excludes untracked files from checkpoint snapshots.
+	// Default is false (include untracked files).
+	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
+}
+
+// ControlPlaneStartHeadedResponse is the response body for POST /invocations/start_headed (PR-10).
+type ControlPlaneStartHeadedResponse struct {
+	OK                      bool   `json:"ok"`
+	InvocationID            string `json:"invocation_id,omitempty"`
+	SandboxPath             string `json:"sandbox_path,omitempty"`
+	RepoID                  string `json:"repo_id,omitempty"`
+	IntegrationWorktreeID   string `json:"integration_worktree_id,omitempty"`
+	IntegrationWorktreeName string `json:"integration_worktree_name,omitempty"`
+	TmuxSession             string `json:"tmux_session,omitempty"`
+	DaemonInstanceID        string `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning          bool   `json:"already_running,omitempty"`
+	RequestID               string `json:"request_id,omitempty"`
+
+	// Standard response fields
+	APIVersion      int    `json:"api_version"`
+	BuildVersion    string `json:"build_version,omitempty"`
+	GitSHA          string `json:"git_sha,omitempty"`
+	ClientRequestID string `json:"client_request_id,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// HeadedIdempotencyEntry tracks a recent headed invocation request for idempotency.
+type HeadedIdempotencyEntry struct {
+	InvocationID string
+	TmuxSession  string
+	SandboxPath  string
+	CreatedAt    int64 // Unix timestamp
 }

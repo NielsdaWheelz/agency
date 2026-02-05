@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -19,6 +22,7 @@ import (
 )
 
 func TestControlPlaneStart_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		req      ControlPlaneStartRequest
@@ -135,7 +139,9 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tmpDir := t.TempDir()
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
@@ -147,21 +153,16 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 			s.handleControlPlaneStartHeadless(w, req)
 
 			var resp ControlPlaneStartResponse
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-			if resp.OK {
-				t.Error("expected OK=false")
-			}
-			if resp.ErrorCode != tc.wantCode {
-				t.Errorf("error_code = %q, want %q", resp.ErrorCode, tc.wantCode)
-			}
+			assert.False(t, resp.OK, "expected OK=false")
+			assert.Equal(t, tc.wantCode, resp.ErrorCode)
 		})
 	}
 }
 
 func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -170,17 +171,13 @@ func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
 	// in production. On macOS, /var is a symlink to /private/var.
 	tmpDir := t.TempDir()
 	tmpDir, err := filepath.EvalSymlinks(tmpDir)
-	if err != nil {
-		t.Fatalf("eval symlinks: %v", err)
-	}
+	require.NoError(t, err, "eval symlinks")
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
 	// Create a path that looks like it's inside an agency-managed worktree.
 	fakeWorktreePath := filepath.Join(tmpDir, "repos", "some-repo", "integration_worktrees", "wt-1", "tree")
-	if err := os.MkdirAll(fakeWorktreePath, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(fakeWorktreePath, 0o755), "mkdir")
 
 	req := ControlPlaneStartRequest{
 		ClientRequestID: "test-uuid",
@@ -196,16 +193,10 @@ func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
 	s.handleControlPlaneStartHeadless(w, httpReq)
 
 	var resp ControlPlaneStartResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.OK {
-		t.Error("expected OK=false for unsafe repo root")
-	}
-	if resp.ErrorCode != string(errors.EUnsafeRepoRoot) {
-		t.Errorf("error_code = %q, want %q", resp.ErrorCode, errors.EUnsafeRepoRoot)
-	}
+	assert.False(t, resp.OK, "expected OK=false for unsafe repo root")
+	assert.Equal(t, string(errors.EUnsafeRepoRoot), resp.ErrorCode)
 }
 
 func TestControlPlaneStart_WorktreeNotFound(t *testing.T) {
@@ -234,17 +225,11 @@ func TestControlPlaneStart_WorktreeNotFound(t *testing.T) {
 	s.handleControlPlaneStartHeadless(w, httpReq)
 
 	var resp ControlPlaneStartResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.OK {
-		t.Error("expected OK=false for nonexistent worktree")
-	}
+	assert.False(t, resp.OK, "expected OK=false for nonexistent worktree")
 	// Could be E_WORKTREE_NOT_FOUND or E_INTERNAL depending on whether repo is registered.
-	if resp.ErrorCode == "" {
-		t.Error("expected an error code")
-	}
+	assert.NotEmpty(t, resp.ErrorCode, "expected an error code")
 }
 
 func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
@@ -257,16 +242,12 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 	env := setupGitRepo(t)
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir")
 
 	// Write config pointing to nonexistent runner binary.
 	// Must include "defaults" for LoadUserConfig validation to pass.
 	cfg := `{"version":1,"defaults":{"runner":"claude","editor":"code"},"runners":{"claude":"/nonexistent/path/to/runner"}}`
-	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "write config")
 
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
@@ -284,11 +265,9 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 
 	var createResp WorktreeCreateResponse
 	_ = json.NewDecoder(createW.Body).Decode(&createResp)
-	if !createResp.OK {
-		t.Fatalf("create worktree failed: %s - %s", createResp.ErrorCode, createResp.Message)
-	}
+	require.True(t, createResp.OK, "create worktree failed: %s - %s", createResp.ErrorCode, createResp.Message)
 
-	// Now try to start an invocation — should fail because runner binary doesn't exist.
+	// Now try to start an invocation -- should fail because runner binary doesn't exist.
 	req := ControlPlaneStartRequest{
 		ClientRequestID: "test-uuid",
 		RepoRoot:        env.RepoPath,
@@ -303,11 +282,7 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 	s.handleControlPlaneStartHeadless(w, httpReq)
 
 	var resp ControlPlaneStartResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.OK {
-		t.Error("expected OK=false for nonexistent runner")
-	}
+	assert.False(t, resp.OK, "expected OK=false for nonexistent runner")
 }

@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
@@ -16,6 +19,7 @@ func fixedClock() time.Time {
 }
 
 func TestClaudeAdapter_ParseLine(t *testing.T) {
+	t.Parallel()
 	adapter := &ClaudeAdapter{}
 
 	tests := []struct {
@@ -75,37 +79,34 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result, err := adapter.ParseLine([]byte(tt.input))
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseLine() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
 			if tt.wantErr {
+				require.Error(t, err)
 				return
 			}
+			require.NoError(t, err)
 
-			if len(result.Events) == 0 && tt.wantKind != "" {
-				t.Errorf("ParseLine() returned no events, wanted kind %v", tt.wantKind)
-				return
+			if tt.wantKind != "" {
+				require.NotEmpty(t, result.Events, "ParseLine() returned no events, wanted kind %v", tt.wantKind)
 			}
 
-			if len(result.Events) > 0 && result.Events[0].Kind != tt.wantKind {
-				t.Errorf("ParseLine() kind = %v, want %v", result.Events[0].Kind, tt.wantKind)
+			if len(result.Events) > 0 {
+				assert.Equal(t, tt.wantKind, result.Events[0].Kind)
 			}
 
 			if tt.wantStatus != nil {
-				if result.SemanticStatus == nil {
-					t.Errorf("ParseLine() semantic status is nil, want %v", *tt.wantStatus)
-				} else if *result.SemanticStatus != *tt.wantStatus {
-					t.Errorf("ParseLine() semantic status = %v, want %v", *result.SemanticStatus, *tt.wantStatus)
-				}
+				require.NotNil(t, result.SemanticStatus, "ParseLine() semantic status is nil, want %v", *tt.wantStatus)
+				assert.Equal(t, *tt.wantStatus, *result.SemanticStatus)
 			}
 		})
 	}
 }
 
 func TestCodexAdapter_ParseLine(t *testing.T) {
+	t.Parallel()
 	adapter := &CodexAdapter{}
 
 	tests := []struct {
@@ -160,214 +161,166 @@ func TestCodexAdapter_ParseLine(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result, err := adapter.ParseLine([]byte(tt.input))
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseLine() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
 			if tt.wantErr {
+				require.Error(t, err)
 				return
 			}
+			require.NoError(t, err)
 
-			if len(result.Events) == 0 && tt.wantKind != "" {
-				t.Errorf("ParseLine() returned no events, wanted kind %v", tt.wantKind)
-				return
+			if tt.wantKind != "" {
+				require.NotEmpty(t, result.Events, "ParseLine() returned no events, wanted kind %v", tt.wantKind)
 			}
 
-			if len(result.Events) > 0 && result.Events[0].Kind != tt.wantKind {
-				t.Errorf("ParseLine() kind = %v, want %v", result.Events[0].Kind, tt.wantKind)
+			if len(result.Events) > 0 {
+				assert.Equal(t, tt.wantKind, result.Events[0].Kind)
 			}
 
 			if tt.wantStatus != nil {
-				if result.SemanticStatus == nil {
-					t.Errorf("ParseLine() semantic status is nil, want %v", *tt.wantStatus)
-				} else if *result.SemanticStatus != *tt.wantStatus {
-					t.Errorf("ParseLine() semantic status = %v, want %v", *result.SemanticStatus, *tt.wantStatus)
-				}
+				require.NotNil(t, result.SemanticStatus, "ParseLine() semantic status is nil, want %v", *tt.wantStatus)
+				assert.Equal(t, *tt.wantStatus, *result.SemanticStatus)
 			}
 		})
 	}
 }
 
 func TestParser_StreamAndParse_ClaudeFixture(t *testing.T) {
+	t.Parallel()
 	// Read fixture
 	fixturePath := filepath.Join("testdata", "claude_stream.jsonl")
 	fixtureData, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("Failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "Failed to read fixture")
 
 	// Create parser
 	parser := NewParser("test-inv-1", "claude", fixedClock)
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp raw file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp raw file")
 	defer func() { _ = os.Remove(rawFile.Name()) }()
 	defer func() { _ = rawFile.Close() }()
 
 	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp stream file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp stream file")
 	defer func() { _ = os.Remove(streamFile.Name()) }()
 	defer func() { _ = streamFile.Close() }()
 
 	// Parse
 	reader := bytes.NewReader(fixtureData)
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
-	if err != nil {
-		t.Fatalf("StreamAndParse failed: %v", err)
-	}
+	require.NoError(t, err, "StreamAndParse failed")
 
 	// Verify raw.jsonl contains verbatim data
 	_, _ = rawFile.Seek(0, 0)
 	rawData, _ := os.ReadFile(rawFile.Name())
-	if !bytes.Equal(rawData, fixtureData) {
-		t.Errorf("raw.jsonl content doesn't match fixture")
-	}
+	assert.Equal(t, fixtureData, rawData, "raw.jsonl content doesn't match fixture")
 
 	// Verify stream.jsonl has normalized events
 	_, _ = streamFile.Seek(0, 0)
 	streamData, _ := os.ReadFile(streamFile.Name())
-	if len(streamData) == 0 {
-		t.Error("stream.jsonl is empty")
-	}
+	assert.NotEmpty(t, streamData, "stream.jsonl is empty")
 
 	// Count lines in stream.jsonl (should have multiple events)
 	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
-	if len(lines) < 5 {
-		t.Errorf("Expected at least 5 normalized events, got %d", len(lines))
-	}
+	assert.GreaterOrEqual(t, len(lines), 5, "Expected at least 5 normalized events")
 
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()
-	if finalStatus == nil {
-		t.Error("Final semantic status is nil")
-	} else if *finalStatus != runnerstatus.StatusReadyForReview {
-		t.Errorf("Final semantic status = %v, want ready_for_review", *finalStatus)
-	}
+	require.NotNil(t, finalStatus, "Final semantic status is nil")
+	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
 }
 
 func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
+	t.Parallel()
 	// Read fixture
 	fixturePath := filepath.Join("testdata", "codex_stream.jsonl")
 	fixtureData, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("Failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "Failed to read fixture")
 
 	// Create parser
 	parser := NewParser("test-inv-2", "codex", fixedClock)
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp raw file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp raw file")
 	defer func() { _ = os.Remove(rawFile.Name()) }()
 	defer func() { _ = rawFile.Close() }()
 
 	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp stream file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp stream file")
 	defer func() { _ = os.Remove(streamFile.Name()) }()
 	defer func() { _ = streamFile.Close() }()
 
 	// Parse
 	reader := bytes.NewReader(fixtureData)
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
-	if err != nil {
-		t.Fatalf("StreamAndParse failed: %v", err)
-	}
+	require.NoError(t, err, "StreamAndParse failed")
 
 	// Verify raw.jsonl contains verbatim data
 	_, _ = rawFile.Seek(0, 0)
 	rawData, _ := os.ReadFile(rawFile.Name())
-	if !bytes.Equal(rawData, fixtureData) {
-		t.Errorf("raw.jsonl content doesn't match fixture")
-	}
+	assert.Equal(t, fixtureData, rawData, "raw.jsonl content doesn't match fixture")
 
 	// Verify stream.jsonl has normalized events
 	_, _ = streamFile.Seek(0, 0)
 	streamData, _ := os.ReadFile(streamFile.Name())
-	if len(streamData) == 0 {
-		t.Error("stream.jsonl is empty")
-	}
+	assert.NotEmpty(t, streamData, "stream.jsonl is empty")
 
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()
-	if finalStatus == nil {
-		t.Error("Final semantic status is nil")
-	} else if *finalStatus != runnerstatus.StatusReadyForReview {
-		t.Errorf("Final semantic status = %v, want ready_for_review", *finalStatus)
-	}
+	require.NotNil(t, finalStatus, "Final semantic status is nil")
+	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
 }
 
 func TestParser_StreamAndParse_MalformedMidStream(t *testing.T) {
+	t.Parallel()
 	// Read fixture
 	fixturePath := filepath.Join("testdata", "malformed_mid_stream.jsonl")
 	fixtureData, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("Failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "Failed to read fixture")
 
 	// Create parser
 	parser := NewParser("test-inv-3", "claude", fixedClock)
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp raw file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp raw file")
 	defer func() { _ = os.Remove(rawFile.Name()) }()
 	defer func() { _ = rawFile.Close() }()
 
 	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp stream file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp stream file")
 	defer func() { _ = os.Remove(streamFile.Name()) }()
 	defer func() { _ = streamFile.Close() }()
 
 	// Parse (should not fail even with malformed line)
 	reader := bytes.NewReader(fixtureData)
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
-	if err != nil {
-		t.Fatalf("StreamAndParse failed: %v", err)
-	}
+	require.NoError(t, err, "StreamAndParse failed")
 
 	// Verify raw.jsonl contains verbatim data (including malformed line)
 	_, _ = rawFile.Seek(0, 0)
 	rawData, _ := os.ReadFile(rawFile.Name())
-	if !bytes.Equal(rawData, fixtureData) {
-		t.Errorf("raw.jsonl content doesn't match fixture")
-	}
+	assert.Equal(t, fixtureData, rawData, "raw.jsonl content doesn't match fixture")
 
 	// Verify stream.jsonl has parse_error event
 	_, _ = streamFile.Seek(0, 0)
 	streamData, _ := os.ReadFile(streamFile.Name())
-	if !strings.Contains(string(streamData), `"kind":"parse_error"`) {
-		t.Error("stream.jsonl should contain parse_error event")
-	}
+	assert.Contains(t, string(streamData), `"kind":"parse_error"`, "stream.jsonl should contain parse_error event")
 
 	// Verify parsing continued after error (should still have final event)
-	if !strings.Contains(string(streamData), `"kind":"final"`) {
-		t.Error("stream.jsonl should contain final event after malformed line")
-	}
+	assert.Contains(t, string(streamData), `"kind":"final"`, "stream.jsonl should contain final event after malformed line")
 }
 
 func TestParser_StreamAndParse_NoTrailingNewline(t *testing.T) {
+	t.Parallel()
 	// Read fixture
 	fixturePath := filepath.Join("testdata", "no_trailing_newline.jsonl")
 	fixtureData, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("Failed to read fixture: %v", err)
-	}
+	require.NoError(t, err, "Failed to read fixture")
 
 	// Verify fixture doesn't end with newline
 	if fixtureData[len(fixtureData)-1] == '\n' {
@@ -379,50 +332,38 @@ func TestParser_StreamAndParse_NoTrailingNewline(t *testing.T) {
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp raw file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp raw file")
 	defer func() { _ = os.Remove(rawFile.Name()) }()
 	defer func() { _ = rawFile.Close() }()
 
 	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp stream file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp stream file")
 	defer func() { _ = os.Remove(streamFile.Name()) }()
 	defer func() { _ = streamFile.Close() }()
 
 	// Parse
 	reader := bytes.NewReader(fixtureData)
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
-	if err != nil {
-		t.Fatalf("StreamAndParse failed: %v", err)
-	}
+	require.NoError(t, err, "StreamAndParse failed")
 
 	// Verify raw.jsonl contains all data (including final line without newline)
 	_, _ = rawFile.Seek(0, 0)
 	rawData, _ := os.ReadFile(rawFile.Name())
-	if !bytes.Equal(rawData, fixtureData) {
-		t.Errorf("raw.jsonl content doesn't match fixture")
-	}
+	assert.Equal(t, fixtureData, rawData, "raw.jsonl content doesn't match fixture")
 
 	// Verify final line was parsed (should have final event)
 	_, _ = streamFile.Seek(0, 0)
 	streamData, _ := os.ReadFile(streamFile.Name())
-	if !strings.Contains(string(streamData), `"kind":"final"`) {
-		t.Error("stream.jsonl should contain final event from line without trailing newline")
-	}
+	assert.Contains(t, string(streamData), `"kind":"final"`, "stream.jsonl should contain final event from line without trailing newline")
 
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()
-	if finalStatus == nil {
-		t.Error("Final semantic status is nil")
-	} else if *finalStatus != runnerstatus.StatusReadyForReview {
-		t.Errorf("Final semantic status = %v, want ready_for_review", *finalStatus)
-	}
+	require.NotNil(t, finalStatus, "Final semantic status is nil")
+	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
 }
 
 func TestParser_SeqMonotonic(t *testing.T) {
+	t.Parallel()
 	// Create a simple fixture inline
 	input := `{"type":"system","subtype":"init","cwd":"/sandbox"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]}}
@@ -447,23 +388,20 @@ func TestParser_SeqMonotonic(t *testing.T) {
 	streamData, _ := os.ReadFile(streamFile.Name())
 	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
 
-	if len(lines) < 3 {
-		t.Fatalf("Expected at least 3 events, got %d", len(lines))
-	}
+	require.GreaterOrEqual(t, len(lines), 3, "Expected at least 3 events")
 
 	// Verify seq is monotonically increasing starting at 1
 	for i, line := range lines {
 		expectedSeq := i + 1
 		if !strings.Contains(line, `"seq":`+string(rune('0'+expectedSeq))) {
 			// More robust check needed for multi-digit seq
-			if !strings.Contains(line, `"seq":`) {
-				t.Errorf("Line %d doesn't contain seq field", i)
-			}
+			assert.Contains(t, line, `"seq":`, "Line %d doesn't contain seq field", i)
 		}
 	}
 }
 
 func TestGetAdapter(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		runner  string
 		wantNil bool
@@ -475,10 +413,14 @@ func TestGetAdapter(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.runner, func(t *testing.T) {
+			t.Parallel()
 			adapter := GetAdapter(tt.runner)
-			if (adapter == nil) != tt.wantNil {
-				t.Errorf("GetAdapter(%q) = %v, want nil=%v", tt.runner, adapter, tt.wantNil)
+			if tt.wantNil {
+				assert.Nil(t, adapter)
+			} else {
+				assert.NotNil(t, adapter)
 			}
 		})
 	}

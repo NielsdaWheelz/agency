@@ -14,10 +14,13 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIsReportEffectivelyEmpty tests the report gating logic.
 func TestIsReportEffectivelyEmpty(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		content     string
@@ -76,32 +79,31 @@ func TestIsReportEffectivelyEmpty(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			tmpDir := t.TempDir()
 			reportPath := filepath.Join(tmpDir, "report.md")
 
 			fsys := fs.NewRealFS()
 
 			if tt.fileExists {
-				if err := os.WriteFile(reportPath, []byte(tt.content), 0644); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(reportPath, []byte(tt.content), 0644))
 			}
 
 			gotEmpty, err := isReportEffectivelyEmpty(fsys, reportPath)
-			if err != nil && tt.fileExists {
-				t.Fatalf("unexpected error: %v", err)
+			if tt.fileExists {
+				require.NoError(t, err)
 			}
 
-			if gotEmpty != tt.wantEmpty {
-				t.Errorf("%s: got empty=%v, want empty=%v", tt.description, gotEmpty, tt.wantEmpty)
-			}
+			assert.Equal(t, tt.wantEmpty, gotEmpty, tt.description)
 		})
 	}
 }
 
 // TestPushOriginGating tests origin validation logic.
 func TestPushOriginGating(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		originURL  string
@@ -153,19 +155,17 @@ func TestPushOriginGating(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Import the git package's ParseOriginHost function
 			// We test the gating logic indirectly through the parsed host
 			host := parseTestOriginHost(tt.originURL)
 
-			if host != tt.wantHost {
-				t.Errorf("parseOriginHost(%q) = %q, want %q", tt.originURL, host, tt.wantHost)
-			}
+			assert.Equal(t, tt.wantHost, host)
 
 			isGitHub := host == "github.com"
-			if isGitHub != tt.shouldPass {
-				t.Errorf("origin %q: isGitHub=%v, shouldPass=%v", tt.originURL, isGitHub, tt.shouldPass)
-			}
+			assert.Equal(t, tt.shouldPass, isGitHub, "origin %q", tt.originURL)
 		})
 	}
 }
@@ -212,6 +212,7 @@ func parseTestOriginHost(raw string) string {
 
 // TestNonInteractiveEnv verifies the environment overlay for non-interactive execution.
 func TestNonInteractiveEnv(t *testing.T) {
+	t.Parallel()
 	env := nonInteractiveEnv()
 
 	// Required keys per spec
@@ -223,62 +224,45 @@ func TestNonInteractiveEnv(t *testing.T) {
 
 	for key, wantValue := range required {
 		gotValue, ok := env[key]
-		if !ok {
-			t.Errorf("nonInteractiveEnv() missing required key %q", key)
-			continue
-		}
-		if gotValue != wantValue {
-			t.Errorf("nonInteractiveEnv()[%q] = %q, want %q", key, gotValue, wantValue)
-		}
+		require.True(t, ok, "nonInteractiveEnv() missing required key %q", key)
+		assert.Equal(t, wantValue, gotValue, "nonInteractiveEnv()[%q]", key)
 	}
 }
 
 // TestComputeReportHash verifies report hash computation.
 func TestComputeReportHash(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	reportPath := filepath.Join(tmpDir, "report.md")
 	fsys := fs.NewRealFS()
 
 	// Test with non-existent file
 	hash := computeReportHash(fsys, reportPath)
-	if hash != "" {
-		t.Errorf("computeReportHash(non-existent) = %q, want empty", hash)
-	}
+	assert.Equal(t, "", hash, "computeReportHash(non-existent) should be empty")
 
 	// Test with known content
 	content := "# Test Report\n\nThis is a test."
-	if err := os.WriteFile(reportPath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(reportPath, []byte(content), 0644))
 
 	hash = computeReportHash(fsys, reportPath)
-	if hash == "" {
-		t.Error("computeReportHash(existing) = empty, want non-empty hash")
-	}
+	assert.NotEmpty(t, hash, "computeReportHash(existing) should be non-empty")
 
 	// Hash should be 64 hex chars (sha256)
-	if len(hash) != 64 {
-		t.Errorf("computeReportHash() len = %d, want 64", len(hash))
-	}
+	assert.Len(t, hash, 64)
 
 	// Same content should produce same hash
 	hash2 := computeReportHash(fsys, reportPath)
-	if hash != hash2 {
-		t.Errorf("computeReportHash() not deterministic: %q != %q", hash, hash2)
-	}
+	assert.Equal(t, hash, hash2, "computeReportHash() should be deterministic")
 
 	// Different content should produce different hash
-	if err := os.WriteFile(reportPath, []byte("different content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(reportPath, []byte("different content"), 0644))
 	hash3 := computeReportHash(fsys, reportPath)
-	if hash == hash3 {
-		t.Error("computeReportHash() should produce different hash for different content")
-	}
+	assert.NotEqual(t, hash, hash3, "computeReportHash() should produce different hash for different content")
 }
 
 // TestPushErrorCodes verifies all push-related error codes exist.
 func TestPushErrorCodes(t *testing.T) {
+	t.Parallel()
 	// Compile-time verification that all error codes exist
 	codes := []errors.Code{
 		errors.ENoOrigin,
@@ -295,36 +279,29 @@ func TestPushErrorCodes(t *testing.T) {
 	}
 
 	for _, code := range codes {
-		if code == "" {
-			t.Error("error code is empty")
-		}
-		// Verify format starts with E_
-		if !strings.HasPrefix(string(code), "E_") {
-			t.Errorf("error code %q should start with E_", code)
-		}
+		assert.NotEmpty(t, code, "error code is empty")
+		assert.True(t, strings.HasPrefix(string(code), "E_"), "error code %q should start with E_", code)
 	}
 }
 
 // TestResolveRunForPush_NotFound verifies E_RUN_NOT_FOUND for missing runs.
 func TestResolveRunForPush_NotFound(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, tmpDir, time.Now)
 
 	// Try to resolve a non-existent run
 	_, _, _, err := resolveRunForPush(context.Background(), nil, fsys, tmpDir, st, "nonexistent-run")
-	if err == nil {
-		t.Fatal("expected error for non-existent run")
-	}
+	require.Error(t, err, "expected error for non-existent run")
 
 	code := errors.GetCode(err)
-	if code != errors.ERunNotFound {
-		t.Errorf("error code = %q, want %q", code, errors.ERunNotFound)
-	}
+	assert.Equal(t, errors.ERunNotFound, code)
 }
 
 // TestPushEventNames verifies event names used by push.
 func TestPushEventNames(t *testing.T) {
+	t.Parallel()
 	// Document the event names used by push
 	eventNames := []string{
 		"push_started",
@@ -336,33 +313,25 @@ func TestPushEventNames(t *testing.T) {
 	}
 
 	for _, name := range eventNames {
-		if name == "" {
-			t.Error("event name should not be empty")
-		}
+		assert.NotEmpty(t, name, "event name should not be empty")
 		// All event names should be lowercase with underscores
-		if strings.ToLower(name) != name {
-			t.Errorf("event name %q should be lowercase", name)
-		}
+		assert.Equal(t, strings.ToLower(name), name, "event name %q should be lowercase", name)
 	}
 }
 
 // TestPushOptsDefaults verifies PushOpts defaults.
 func TestPushOptsDefaults(t *testing.T) {
+	t.Parallel()
 	opts := PushOpts{}
 
-	if opts.RunID != "" {
-		t.Errorf("PushOpts.RunID default should be empty, got %q", opts.RunID)
-	}
-	if opts.Force != false {
-		t.Error("PushOpts.Force default should be false")
-	}
-	if opts.AllowDirty != false {
-		t.Error("PushOpts.AllowDirty default should be false")
-	}
+	assert.Empty(t, opts.RunID, "PushOpts.RunID default should be empty")
+	assert.False(t, opts.Force, "PushOpts.Force default should be false")
+	assert.False(t, opts.AllowDirty, "PushOpts.AllowDirty default should be false")
 }
 
 // TestPushForceDoesNotBypassEmptyDiff documents that --force does NOT bypass E_EMPTY_DIFF.
 func TestPushForceDoesNotBypassEmptyDiff(t *testing.T) {
+	t.Parallel()
 	// This is a documentation test - the actual behavior is tested in integration tests.
 	// Per spec: --force allows proceeding with missing/empty report but does NOT bypass E_EMPTY_DIFF.
 	t.Log("--force flag allows:")
@@ -374,11 +343,10 @@ func TestPushForceDoesNotBypassEmptyDiff(t *testing.T) {
 
 // TestWorktreeMissingError verifies E_WORKTREE_MISSING error code exists.
 func TestWorktreeMissingError(t *testing.T) {
+	t.Parallel()
 	// Verify the error code exists and has correct format
 	code := errors.EWorktreeMissing
-	if code != "E_WORKTREE_MISSING" {
-		t.Errorf("EWorktreeMissing = %q, want %q", code, "E_WORKTREE_MISSING")
-	}
+	assert.Equal(t, errors.Code("E_WORKTREE_MISSING"), code)
 
 	// Verify we can create an error with this code
 	err := errors.NewWithDetails(
@@ -387,9 +355,7 @@ func TestWorktreeMissingError(t *testing.T) {
 		map[string]string{"worktree_path": "/path/to/worktree"},
 	)
 
-	if errors.GetCode(err) != errors.EWorktreeMissing {
-		t.Errorf("GetCode(err) = %q, want %q", errors.GetCode(err), errors.EWorktreeMissing)
-	}
+	assert.Equal(t, errors.EWorktreeMissing, errors.GetCode(err))
 }
 
 // ============================================================================
@@ -398,6 +364,7 @@ func TestWorktreeMissingError(t *testing.T) {
 
 // TestPRErrorCodes verifies all PR-related error codes exist.
 func TestPRErrorCodes(t *testing.T) {
+	t.Parallel()
 	codes := []errors.Code{
 		errors.EGHPRCreateFailed,
 		errors.EGHPREditFailed,
@@ -406,12 +373,8 @@ func TestPRErrorCodes(t *testing.T) {
 	}
 
 	for _, code := range codes {
-		if code == "" {
-			t.Error("error code is empty")
-		}
-		if !strings.HasPrefix(string(code), "E_") {
-			t.Errorf("error code %q should start with E_", code)
-		}
+		assert.NotEmpty(t, code, "error code is empty")
+		assert.True(t, strings.HasPrefix(string(code), "E_"), "error code %q should start with E_", code)
 	}
 }
 
@@ -426,41 +389,34 @@ func (m *mockSleeper) Sleep(d time.Duration) {
 
 // TestSleeperInterface verifies the Sleeper interface is implemented.
 func TestSleeperInterface(t *testing.T) {
+	t.Parallel()
 	// Test mock sleeper
 	ms := &mockSleeper{}
 	ms.Sleep(100 * time.Millisecond)
 	ms.Sleep(500 * time.Millisecond)
 
-	if len(ms.sleeps) != 2 {
-		t.Errorf("mockSleeper.sleeps len = %d, want 2", len(ms.sleeps))
-	}
-	if ms.sleeps[0] != 100*time.Millisecond {
-		t.Errorf("mockSleeper.sleeps[0] = %v, want 100ms", ms.sleeps[0])
-	}
-	if ms.sleeps[1] != 500*time.Millisecond {
-		t.Errorf("mockSleeper.sleeps[1] = %v, want 500ms", ms.sleeps[1])
-	}
+	require.Len(t, ms.sleeps, 2)
+	assert.Equal(t, 100*time.Millisecond, ms.sleeps[0])
+	assert.Equal(t, 500*time.Millisecond, ms.sleeps[1])
 }
 
 // TestPushEventNamesForPR verifies PR-related event names used by push.
 func TestPushEventNamesForPR(t *testing.T) {
+	t.Parallel()
 	eventNames := []string{
 		"pr_created",
 		"pr_body_synced",
 	}
 
 	for _, name := range eventNames {
-		if name == "" {
-			t.Error("event name should not be empty")
-		}
-		if strings.ToLower(name) != name {
-			t.Errorf("event name %q should be lowercase", name)
-		}
+		assert.NotEmpty(t, name, "event name should not be empty")
+		assert.Equal(t, strings.ToLower(name), name, "event name %q should be lowercase", name)
 	}
 }
 
 // TestGhPRViewStruct verifies ghPRView JSON parsing.
 func TestGhPRViewStruct(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		json    string
@@ -498,30 +454,22 @@ func TestGhPRViewStruct(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var pr ghPRView
 			err := jsonUnmarshalForTest([]byte(tt.json), &pr)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
-			if pr.Number != tt.wantNum {
-				t.Errorf("Number = %d, want %d", pr.Number, tt.wantNum)
-			}
-			if pr.URL != tt.wantURL {
-				t.Errorf("URL = %q, want %q", pr.URL, tt.wantURL)
-			}
-			if pr.State != tt.wantSt {
-				t.Errorf("State = %q, want %q", pr.State, tt.wantSt)
-			}
+			assert.Equal(t, tt.wantNum, pr.Number)
+			assert.Equal(t, tt.wantURL, pr.URL)
+			assert.Equal(t, tt.wantSt, pr.State)
 		})
 	}
 }
@@ -566,6 +514,7 @@ func jsonUnmarshalForTest(data []byte, v any) error {
 
 // TestPRTitleGeneration verifies PR title construction logic.
 func TestPRTitleGeneration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		metaTitle string
@@ -587,45 +536,44 @@ func TestPRTitleGeneration(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			title := "[agency] " + tt.metaTitle
 			if tt.metaTitle == "" {
 				title = "[agency] " + tt.branch
 			}
 
-			if title != tt.wantTitle {
-				t.Errorf("title = %q, want %q", title, tt.wantTitle)
-			}
+			assert.Equal(t, tt.wantTitle, title)
 		})
 	}
 }
 
 // TestPRFallbackSummary documents fallback summary expectations.
 func TestPRFallbackSummary(t *testing.T) {
+	t.Parallel()
 	t.Log("Fallback body summary uses first commit subject when available")
 	t.Log("Fallback body summary uses 'auto-generated summary' when commits unavailable")
 }
 
 // TestPRRetryDelays verifies the retry delay pattern.
 func TestPRRetryDelays(t *testing.T) {
+	t.Parallel()
 	// Per spec: try 3 times with delays of 0, 500ms, 1500ms
 	expectedDelays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
 
 	delays := []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond}
 
-	if len(delays) != len(expectedDelays) {
-		t.Errorf("delays len = %d, want %d", len(delays), len(expectedDelays))
-	}
+	require.Len(t, delays, len(expectedDelays))
 
 	for i, d := range delays {
-		if d != expectedDelays[i] {
-			t.Errorf("delays[%d] = %v, want %v", i, d, expectedDelays[i])
-		}
+		assert.Equal(t, expectedDelays[i], d, "delays[%d]", i)
 	}
 }
 
 // TestPRStateValidation verifies PR state checking logic.
 func TestPRStateValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		state   string
 		isValid bool
@@ -638,17 +586,18 @@ func TestPRStateValidation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.state, func(t *testing.T) {
+			t.Parallel()
 			isOpen := tt.state == "OPEN"
-			if isOpen != tt.isValid {
-				t.Errorf("state %q: isOpen=%v, want %v", tt.state, isOpen, tt.isValid)
-			}
+			assert.Equal(t, tt.isValid, isOpen, "state %q", tt.state)
 		})
 	}
 }
 
 // TestReportHashSkipsEdit documents that unchanged hash skips edit.
 func TestReportHashSkipsEdit(t *testing.T) {
+	t.Parallel()
 	// Document the behavior
 	t.Log("When meta.last_report_hash equals computed body hash:")
 	t.Log("  - gh pr edit is NOT called")
@@ -662,6 +611,7 @@ func TestReportHashSkipsEdit(t *testing.T) {
 
 // TestPushOutputFormat_ErrorMessages verifies error message templates match spec.
 func TestPushOutputFormat_ErrorMessages(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		code        errors.Code
 		wantMessage string
@@ -681,24 +631,23 @@ func TestPushOutputFormat_ErrorMessages(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
 			err := errors.New(tt.code, tt.wantMessage)
 			ae, ok := errors.AsAgencyError(err)
-			if !ok {
-				t.Fatal("expected AgencyError")
-			}
+			require.True(t, ok, "expected AgencyError")
 
 			// Verify error format matches spec: <ERROR_CODE>: <message>
 			expectedFormat := fmt.Sprintf("%s: %s", tt.code, tt.wantMessage)
-			if ae.Error() != expectedFormat {
-				t.Errorf("error format = %q, want %q", ae.Error(), expectedFormat)
-			}
+			assert.Equal(t, expectedFormat, ae.Error())
 		})
 	}
 }
 
 // TestPushOutputFormat_WarningMessages verifies warning strings match spec.
 func TestPushOutputFormat_WarningMessages(t *testing.T) {
+	t.Parallel()
 	// These are the exact warning strings required by the spec
 	warnings := []string{
 		"warning: worktree has uncommitted changes; proceeding due to --allow-dirty",
@@ -709,53 +658,42 @@ func TestPushOutputFormat_WarningMessages(t *testing.T) {
 	}
 
 	for _, w := range warnings {
-		if !strings.HasPrefix(w, "warning: ") {
-			t.Errorf("warning %q does not start with 'warning: '", w)
-		}
+		assert.True(t, strings.HasPrefix(w, "warning: "), "warning %q does not start with 'warning: '", w)
 	}
 }
 
 // TestPushOutputFormat_SuccessLine verifies success output format.
 func TestPushOutputFormat_SuccessLine(t *testing.T) {
+	t.Parallel()
 	// Per spec: success prints exactly one stdout line: pr: <url>
 	url := "https://github.com/owner/repo/pull/123"
 	expected := fmt.Sprintf("pr: %s\n", url)
 
 	// This is the format that push.go now produces
-	if !strings.HasPrefix(expected, "pr: ") {
-		t.Error("success output should start with 'pr: '")
-	}
-	if strings.Contains(expected, "created") || strings.Contains(expected, "updated") {
-		t.Error("success output should NOT contain 'created' or 'updated'")
-	}
+	assert.True(t, strings.HasPrefix(expected, "pr: "), "success output should start with 'pr: '")
+	assert.NotContains(t, expected, "created", "success output should NOT contain 'created'")
+	assert.NotContains(t, expected, "updated", "success output should NOT contain 'updated'")
 }
 
 func TestParsePRURL(t *testing.T) {
+	t.Parallel()
 	stderr := `a pull request for branch "agency/test" into branch "main" already exists:
 https://github.com/owner/repo/pull/80`
 
 	url, number, ok := parsePRURL(stderr)
-	if !ok {
-		t.Fatal("expected URL to be parsed")
-	}
-	if url != "https://github.com/owner/repo/pull/80" {
-		t.Errorf("url = %q, want %q", url, "https://github.com/owner/repo/pull/80")
-	}
-	if number != 80 {
-		t.Errorf("number = %d, want 80", number)
-	}
+	require.True(t, ok, "expected URL to be parsed")
+	assert.Equal(t, "https://github.com/owner/repo/pull/80", url)
+	assert.Equal(t, 80, number)
 }
 
 func TestIsPRAlreadyExistsError(t *testing.T) {
-	if !isPRAlreadyExistsError("a pull request for branch already exists") {
-		t.Error("expected already exists error to match")
-	}
-	if isPRAlreadyExistsError("gh pr create failed: permission denied") {
-		t.Error("expected non-matching error to be false")
-	}
+	t.Parallel()
+	assert.True(t, isPRAlreadyExistsError("a pull request for branch already exists"), "expected already exists error to match")
+	assert.False(t, isPRAlreadyExistsError("gh pr create failed: permission denied"), "expected non-matching error to be false")
 }
 
 func TestViewPRByBranchUsesOwnerRepo(t *testing.T) {
+	t.Parallel()
 	cr := &pushTestCommandRunner{
 		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
 			if name != "gh" {
@@ -782,12 +720,8 @@ func TestViewPRByBranchUsesOwnerRepo(t *testing.T) {
 		NameWithOwner: "owner/repo",
 		Owner:         "owner",
 	})
-	if err != nil {
-		t.Fatalf("viewPRByBranch() error = %v", err)
-	}
-	if pr.Number != 1 {
-		t.Errorf("pr.Number = %d, want 1", pr.Number)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, pr.Number)
 }
 
 func TestViewPRWithRetry_BackoffAndEvents(t *testing.T) {
@@ -826,28 +760,17 @@ func TestViewPRWithRetry_BackoffAndEvents(t *testing.T) {
 		NameWithOwner: "owner/repo",
 		Owner:         "owner",
 	}, "repo123", "run123", eventsPath, sleeper)
-	if err != nil {
-		t.Fatalf("viewPRWithRetry() error = %v", err)
-	}
-	if pr.Number != 2 {
-		t.Errorf("pr.Number = %d, want 2", pr.Number)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 2, pr.Number)
 
-	if len(sleeper.sleeps) != 2 {
-		t.Fatalf("sleeps = %d, want 2", len(sleeper.sleeps))
-	}
-	if sleeper.sleeps[0] != time.Second || sleeper.sleeps[1] != 2*time.Second {
-		t.Errorf("sleeps = %v, want [1s 2s]", sleeper.sleeps)
-	}
+	require.Len(t, sleeper.sleeps, 2)
+	assert.Equal(t, time.Second, sleeper.sleeps[0])
+	assert.Equal(t, 2*time.Second, sleeper.sleeps[1])
 
 	data, err := os.ReadFile(eventsPath)
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
+	require.NoError(t, err, "read events")
 	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
-	if len(lines) != 3 {
-		t.Fatalf("event lines = %d, want 3", len(lines))
-	}
+	require.Len(t, lines, 3)
 }
 
 type pushTestCommandRunner struct {
@@ -876,11 +799,10 @@ func (f *fakePushSleeper) Sleep(d time.Duration) {
 
 // TestReportCompletenessErrorCode verifies E_REPORT_INCOMPLETE error code exists.
 func TestReportCompletenessErrorCode(t *testing.T) {
+	t.Parallel()
 	// Verify the error code exists and has correct format
 	code := errors.EReportIncomplete
-	if code != "E_REPORT_INCOMPLETE" {
-		t.Errorf("EReportIncomplete = %q, want %q", code, "E_REPORT_INCOMPLETE")
-	}
+	assert.Equal(t, errors.Code("E_REPORT_INCOMPLETE"), code)
 
 	// Verify we can create an error with this code
 	err := errors.NewWithDetails(
@@ -889,13 +811,12 @@ func TestReportCompletenessErrorCode(t *testing.T) {
 		map[string]string{"missing_sections": "summary, how to test"},
 	)
 
-	if errors.GetCode(err) != errors.EReportIncomplete {
-		t.Errorf("GetCode(err) = %q, want %q", errors.GetCode(err), errors.EReportIncomplete)
-	}
+	assert.Equal(t, errors.EReportIncomplete, errors.GetCode(err))
 }
 
 // TestPushReportGating_MissingFile documents warning behavior for missing report.
 func TestPushReportGating_MissingFile(t *testing.T) {
+	t.Parallel()
 	t.Log("Push behavior for missing report file:")
 	t.Log("  - Emits warning")
 	t.Log("  - Uses auto-generated PR body")
@@ -904,6 +825,7 @@ func TestPushReportGating_MissingFile(t *testing.T) {
 
 // TestPushReportGating_IncompleteReport documents warning behavior for incomplete report.
 func TestPushReportGating_IncompleteReport(t *testing.T) {
+	t.Parallel()
 	t.Log("Push behavior for incomplete report:")
 	t.Log("  - Emits warning with missing sections")
 	t.Log("  - Uses auto-generated PR body")
@@ -912,12 +834,14 @@ func TestPushReportGating_IncompleteReport(t *testing.T) {
 
 // TestPushReportGating_ForceBypass documents --force behavior.
 func TestPushReportGating_ForceBypass(t *testing.T) {
+	t.Parallel()
 	t.Log("--force behavior:")
 	t.Log("  - No report gating remains (flag is no-op for report checks)")
 }
 
 // TestPushReportGating_CompleteReport documents report behavior.
 func TestPushReportGating_CompleteReport(t *testing.T) {
+	t.Parallel()
 	t.Log("Complete report behavior:")
 	t.Log("  - Report body is used directly")
 	t.Log("  - No report warnings printed")
@@ -925,24 +849,20 @@ func TestPushReportGating_CompleteReport(t *testing.T) {
 
 // TestPushErrorOutput_ReportIncomplete verifies error output format.
 func TestPushErrorOutput_ReportIncomplete(t *testing.T) {
+	t.Parallel()
 	t.Log("Report completeness no longer blocks push; warnings are printed instead")
 }
 
 // TestPushReportGating_DistinguishMissingVsIncomplete verifies distinct behavior.
 func TestPushReportGating_DistinguishMissingVsIncomplete(t *testing.T) {
+	t.Parallel()
 	// S7 spec4 introduced a distinction:
 	// - Missing file: E_REPORT_INVALID (existing code)
 	// - Incomplete content: E_REPORT_INCOMPLETE (new code)
 
 	// Verify they are distinct error codes
-	if errors.EReportInvalid == errors.EReportIncomplete {
-		t.Error("E_REPORT_INVALID and E_REPORT_INCOMPLETE should be distinct")
-	}
+	assert.NotEqual(t, errors.EReportInvalid, errors.EReportIncomplete, "E_REPORT_INVALID and E_REPORT_INCOMPLETE should be distinct")
 
-	if errors.EReportInvalid != "E_REPORT_INVALID" {
-		t.Errorf("E_REPORT_INVALID = %q", errors.EReportInvalid)
-	}
-	if errors.EReportIncomplete != "E_REPORT_INCOMPLETE" {
-		t.Errorf("E_REPORT_INCOMPLETE = %q", errors.EReportIncomplete)
-	}
+	assert.Equal(t, errors.Code("E_REPORT_INVALID"), errors.EReportInvalid)
+	assert.Equal(t, errors.Code("E_REPORT_INCOMPLETE"), errors.EReportIncomplete)
 }

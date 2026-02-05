@@ -33,6 +33,14 @@ type Service struct {
 	cr      exec.CommandRunner
 	fsys    fs.FS
 	nowFunc func() time.Time
+
+	// DataDirOverride, if set, is used instead of resolving AGENCY_DATA_DIR from env.
+	// This enables tests to use t.TempDir() without t.Setenv.
+	DataDirOverride string
+
+	// ConfigDirOverride, if set, is used instead of resolving AGENCY_CONFIG_DIR from env.
+	// This enables tests to use t.TempDir() without t.Setenv.
+	ConfigDirOverride string
 }
 
 type osEnv struct{}
@@ -98,7 +106,8 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 	// Only run full CheckRepoSafe with parent validation if parent is provided
 	if parentBranch != "__deferred__" {
 		result, err := repo.CheckRepoSafe(ctx, s.cr, s.fsys, cwd, repo.CheckRepoSafeOpts{
-			ParentBranch: parentBranch,
+			ParentBranch:    parentBranch,
+			DataDirOverride: s.DataDirOverride,
 		})
 		if err != nil {
 			return err
@@ -117,7 +126,7 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 
 	// Parent not provided - do basic repo checks without parent validation
 	// The parent branch check will be done after config loads
-	result, err := checkRepoSafeWithoutParent(ctx, s.cr, s.fsys, cwd)
+	result, err := checkRepoSafeWithoutParent(ctx, s.cr, s.fsys, cwd, s.DataDirOverride)
 	if err != nil {
 		return err
 	}
@@ -134,7 +143,7 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 
 // checkRepoSafeWithoutParent performs repo safety checks without parent branch validation.
 // Parent branch will be validated later after config is loaded.
-func checkRepoSafeWithoutParent(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string) (*repo.RepoContext, error) {
+func checkRepoSafeWithoutParent(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string) (*repo.RepoContext, error) {
 	// This is a simplified version that doesn't check parent branch.
 	// We'll use a dummy branch name that we know exists (HEAD) just to satisfy the API,
 	// but actually the gates.go will check parent branch existence.
@@ -152,7 +161,7 @@ func checkRepoSafeWithoutParent(ctx context.Context, cr exec.CommandRunner, fsys
 
 	// We need to load repo info even without parent branch validation.
 	// Let's inline the repo checks without the parent branch check.
-	return checkRepoContextOnly(ctx, cr, fsys, cwd)
+	return checkRepoContextOnly(ctx, cr, fsys, cwd, dataDirOverride)
 }
 
 // checkNameUnique verifies the run name is not already used by an active run.
@@ -191,7 +200,7 @@ func (s *Service) checkNameUnique(st *pipeline.PipelineState) error {
 
 // checkRepoContextOnly resolves repo context without running all gates.
 // This is used when parent branch will be validated later.
-func checkRepoContextOnly(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string) (*repo.RepoContext, error) {
+func checkRepoContextOnly(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string) (*repo.RepoContext, error) {
 	// Import the packages we need and run the checks inline
 	// Since this is getting complex, let me just call the actual CheckRepoSafe
 	// with a branch we know exists - the current HEAD.
@@ -216,7 +225,8 @@ func checkRepoContextOnly(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 	// Now call the full CheckRepoSafe with the current branch
 	// This validates everything except the *actual* parent branch the user wants
 	return repo.CheckRepoSafe(ctx, cr, fsys, repoRoot.Path, repo.CheckRepoSafeOpts{
-		ParentBranch: currentBranch,
+		ParentBranch:    currentBranch,
+		DataDirOverride: dataDirOverride,
 	})
 }
 
@@ -228,13 +238,19 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 		return err
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	var configDir string
+	if s.ConfigDirOverride != "" {
+		configDir = s.ConfigDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		configDir = dirs.ConfigDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	userCfg, _, err := config.LoadUserConfig(s.fsys, dirs.ConfigDir)
+	userCfg, _, err := config.LoadUserConfig(s.fsys, configDir)
 	if err != nil {
 		return err
 	}
@@ -246,7 +262,7 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 	}
 
 	// Resolve runner command using shared helper
-	resolvedRunnerCmd, err := config.ResolveRunnerCmd(s.cr, s.fsys, dirs.ConfigDir, userCfg, runnerName)
+	resolvedRunnerCmd, err := config.ResolveRunnerCmd(s.cr, s.fsys, configDir, userCfg, runnerName)
 	if err != nil {
 		return err
 	}

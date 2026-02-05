@@ -15,6 +15,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -143,12 +145,8 @@ func newTestEngine(t *testing.T, sr *stubRunner, config Config) (*Engine, string
 
 	// Create a .git/index file in sandbox so temp index copy works
 	gitDir := filepath.Join(sandboxPath, ".git")
-	if err := os.MkdirAll(gitDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(gitDir, "index"), []byte("fake-index"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(gitDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "index"), []byte("fake-index"), 0o644))
 
 	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
 	e := NewEngine(
@@ -174,7 +172,7 @@ func readEvents(t *testing.T, eventsPath string) []Event {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -182,9 +180,7 @@ func readEvents(t *testing.T, eventsPath string) []Event {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		var ev Event
-		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
-			t.Fatalf("failed to parse event: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &ev), "failed to parse event")
 		events = append(events, ev)
 	}
 	return events
@@ -195,6 +191,7 @@ func readEvents(t *testing.T, eventsPath string) []Event {
 // ---------------------------------------------------------------------------
 
 func TestMatchesDenylist(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		filename string
@@ -229,16 +226,17 @@ func TestMatchesDenylist(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := matchesDenylist(tt.filename)
-			if got != tt.want {
-				t.Errorf("matchesDenylist(%q) = %v, want %v", tt.filename, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "matchesDenylist(%q)", tt.filename)
 		})
 	}
 }
 
 func TestCheckpointsFile_NextID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		checkpoints []Checkpoint
@@ -268,20 +266,21 @@ func TestCheckpointsFile_NextID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			f := &CheckpointsFile{
 				SchemaVersion: SchemaVersion,
 				Checkpoints:   tt.checkpoints,
 			}
 			got := f.NextID()
-			if got != tt.want {
-				t.Errorf("NextID() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestCheckpointsFile_FindByID(t *testing.T) {
+	t.Parallel()
 	f := &CheckpointsFile{
 		SchemaVersion: SchemaVersion,
 		Checkpoints: []Checkpoint{
@@ -307,21 +306,17 @@ func TestCheckpointsFile_FindByID(t *testing.T) {
 		t.Run("", func(t *testing.T) {
 			got := f.FindByID(tt.id)
 			if tt.shouldExist {
-				if got == nil {
-					t.Errorf("FindByID(%d) returned nil, want checkpoint", tt.id)
-				} else if got.SnapshotCommit != tt.wantCommit {
-					t.Errorf("FindByID(%d).SnapshotCommit = %q, want %q", tt.id, got.SnapshotCommit, tt.wantCommit)
-				}
+				require.NotNil(t, got, "FindByID(%d) returned nil, want checkpoint", tt.id)
+				assert.Equal(t, tt.wantCommit, got.SnapshotCommit, "FindByID(%d).SnapshotCommit", tt.id)
 			} else {
-				if got != nil {
-					t.Errorf("FindByID(%d) = %v, want nil", tt.id, got)
-				}
+				assert.Nil(t, got, "FindByID(%d)", tt.id)
 			}
 		})
 	}
 }
 
 func TestEngine_shouldIgnorePath(t *testing.T) {
+	t.Parallel()
 	e := &Engine{
 		sandboxPath: "/sandbox/tree",
 	}
@@ -340,44 +335,35 @@ func TestEngine_shouldIgnorePath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(filepath.Base(tt.path), func(t *testing.T) {
+			t.Parallel()
 			got := e.shouldIgnorePath(tt.path)
-			if got != tt.want {
-				t.Errorf("shouldIgnorePath(%q) = %v, want %v", tt.path, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "shouldIgnorePath(%q)", tt.path)
 		})
 	}
 }
 
 func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 
-	if !cfg.IncludeUntracked {
-		t.Error("DefaultConfig().IncludeUntracked should be true")
-	}
-	if cfg.DebounceInterval != 3e9 {
-		t.Errorf("DefaultConfig().DebounceInterval = %v, want 3s", cfg.DebounceInterval)
-	}
-	if cfg.RateLimit != 10e9 {
-		t.Errorf("DefaultConfig().RateLimit = %v, want 10s", cfg.RateLimit)
-	}
-	if cfg.PollInterval != 30e9 {
-		t.Errorf("DefaultConfig().PollInterval = %v, want 30s", cfg.PollInterval)
-	}
+	assert.True(t, cfg.IncludeUntracked, "DefaultConfig().IncludeUntracked should be true")
+	assert.Equal(t, time.Duration(3e9), cfg.DebounceInterval, "DefaultConfig().DebounceInterval")
+	assert.Equal(t, time.Duration(10e9), cfg.RateLimit, "DefaultConfig().RateLimit")
+	assert.Equal(t, time.Duration(30e9), cfg.PollInterval, "DefaultConfig().PollInterval")
 }
 
 func TestNewCheckpointsFile(t *testing.T) {
+	t.Parallel()
 	f := NewCheckpointsFile()
 
-	if f.SchemaVersion != SchemaVersion {
-		t.Errorf("NewCheckpointsFile().SchemaVersion = %q, want %q", f.SchemaVersion, SchemaVersion)
-	}
-	if len(f.Checkpoints) != 0 {
-		t.Errorf("NewCheckpointsFile().Checkpoints has %d elements, want 0", len(f.Checkpoints))
-	}
+	assert.Equal(t, SchemaVersion, f.SchemaVersion)
+	assert.Len(t, f.Checkpoints, 0)
 }
 
 func TestDenylistPatterns(t *testing.T) {
+	t.Parallel()
 	expected := []string{
 		".env",
 		".env.*",
@@ -387,15 +373,7 @@ func TestDenylistPatterns(t *testing.T) {
 		"secrets.json",
 	}
 
-	if len(DenylistPatterns) != len(expected) {
-		t.Errorf("DenylistPatterns has %d entries, want %d", len(DenylistPatterns), len(expected))
-	}
-
-	for i, p := range expected {
-		if DenylistPatterns[i] != p {
-			t.Errorf("DenylistPatterns[%d] = %q, want %q", i, DenylistPatterns[i], p)
-		}
-	}
+	assert.Equal(t, expected, DenylistPatterns)
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +382,7 @@ func TestDenylistPatterns(t *testing.T) {
 
 // 1.1 TestEngine_isDirty
 func TestEngine_isDirty(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		stdout           string
@@ -454,7 +433,9 @@ func TestEngine_isDirty(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sr := newStubRunner()
 			cfg := DefaultConfig()
 			cfg.IncludeUntracked = tt.includeUntracked
@@ -472,19 +453,19 @@ func TestEngine_isDirty(t *testing.T) {
 			}
 
 			dirty, err := e.isDirty(context.Background())
-			if (err != nil) != tt.wantErr {
-				t.Errorf("isDirty() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(t, err)
 				return
 			}
-			if dirty != tt.wantDirty {
-				t.Errorf("isDirty() = %v, want %v", dirty, tt.wantDirty)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantDirty, dirty)
 		})
 	}
 }
 
 // 1.2 TestEngine_checkDenylist
 func TestEngine_checkDenylist(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		stdout   string
@@ -546,7 +527,9 @@ func TestEngine_checkDenylist(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sr := newStubRunner()
 			cfg := DefaultConfig()
 			cfg.IncludeUntracked = true
@@ -564,25 +547,19 @@ func TestEngine_checkDenylist(t *testing.T) {
 			}
 
 			got, err := e.checkDenylist(context.Background())
-			if (err != nil) != tt.wantErr {
-				t.Errorf("checkDenylist() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(t, err)
 				return
 			}
-			if len(got) != len(tt.want) {
-				t.Errorf("checkDenylist() returned %d files, want %d: got %v", len(got), len(tt.want), got)
-				return
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("checkDenylist()[%d] = %q, want %q", i, got[i], tt.want[i])
-				}
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 // 1.3 TestEngine_computeDiffstat
 func TestEngine_computeDiffstat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		stdout   string
@@ -628,7 +605,9 @@ func TestEngine_computeDiffstat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sr := newStubRunner()
 			cfg := DefaultConfig()
 			e, _ := newTestEngine(t, sr, cfg)
@@ -644,9 +623,7 @@ func TestEngine_computeDiffstat(t *testing.T) {
 			}
 
 			got := e.computeDiffstat(context.Background(), "abc123", "def456")
-			if got != tt.want {
-				t.Errorf("computeDiffstat() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -699,6 +676,7 @@ func stubFullCheckpointSequence(sr *stubRunner, sandboxPath string, includeUntra
 
 // 1.4 TestEngine_createCheckpointInternal_Success
 func TestEngine_createCheckpointInternal_Success(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
@@ -707,43 +685,23 @@ func TestEngine_createCheckpointInternal_Success(t *testing.T) {
 	stubFullCheckpointSequence(sr, e.sandboxPath, true)
 
 	err := e.createCheckpointInternal(context.Background())
-	if err != nil {
-		t.Fatalf("createCheckpointInternal() returned error: %v", err)
-	}
+	require.NoError(t, err, "createCheckpointInternal()")
 
 	// Verify checkpoints.json
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatalf("loadCheckpoints() error: %v", err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Fatalf("expected 1 checkpoint, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err, "loadCheckpoints()")
+	require.Len(t, cpFile.Checkpoints, 1)
 	cp := cpFile.Checkpoints[0]
-	if cp.ID != 1 {
-		t.Errorf("checkpoint ID = %d, want 1", cp.ID)
-	}
-	if cp.SnapshotCommit != "ffffffffffffffff" {
-		t.Errorf("snapshot_commit = %q, want %q", cp.SnapshotCommit, "ffffffffffffffff")
-	}
-	if cp.SandboxHeadSHA != "aabbccdd00112233" {
-		t.Errorf("sandbox_head_sha = %q, want %q", cp.SandboxHeadSHA, "aabbccdd00112233")
-	}
-	if !cp.IncludesUntracked {
-		t.Error("expected IncludesUntracked=true")
-	}
-	if cp.Diffstat != "+2 -3 in 1 files" {
-		t.Errorf("diffstat = %q, want %q", cp.Diffstat, "+2 -3 in 1 files")
-	}
+	assert.Equal(t, 1, cp.ID)
+	assert.Equal(t, "ffffffffffffffff", cp.SnapshotCommit)
+	assert.Equal(t, "aabbccdd00112233", cp.SandboxHeadSHA)
+	assert.True(t, cp.IncludesUntracked, "expected IncludesUntracked=true")
+	assert.Equal(t, "+2 -3 in 1 files", cp.Diffstat)
 
 	// Verify events.jsonl
 	events := readEvents(t, e.eventsPath)
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	if events[0].Kind != EventKindCheckpointCreated {
-		t.Errorf("event kind = %q, want %q", events[0].Kind, EventKindCheckpointCreated)
-	}
+	require.Len(t, events, 1)
+	assert.Equal(t, EventKindCheckpointCreated, events[0].Kind)
 
 	// Verify git commands were called in order
 	calls := sr.callKeys()
@@ -754,24 +712,18 @@ func TestEngine_createCheckpointInternal_Success(t *testing.T) {
 		fmt.Sprintf("git -C %s rev-parse --git-dir", e.sandboxPath),
 	}
 	for i, expected := range expectedCalls {
-		if i >= len(calls) {
-			t.Errorf("expected call %d: %s, but only got %d calls", i, expected, len(calls))
-			continue
-		}
-		if calls[i] != expected {
-			t.Errorf("call[%d] = %q, want %q", i, calls[i], expected)
-		}
+		require.Greater(t, len(calls), i, "expected call %d: %s, but only got %d calls", i, expected, len(calls))
+		assert.Equal(t, expected, calls[i], "call[%d]", i)
 	}
 
 	// Verify checkpoints.json file exists on disk
 	cpPath := filepath.Join(checkpointsDir, "checkpoints.json")
-	if _, err := os.Stat(cpPath); os.IsNotExist(err) {
-		t.Error("checkpoints.json not written to disk")
-	}
+	assert.FileExists(t, cpPath, "checkpoints.json not written to disk")
 }
 
 // 1.5 TestEngine_createCheckpointInternal_DenylistDegradation
 func TestEngine_createCheckpointInternal_DenylistDegradation(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
@@ -814,21 +766,13 @@ func TestEngine_createCheckpointInternal_DenylistDegradation(t *testing.T) {
 		exec.CmdResult{Stdout: " main.go | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"})
 
 	err := e.createCheckpointInternal(context.Background())
-	if err != nil {
-		t.Fatalf("createCheckpointInternal() returned error: %v", err)
-	}
+	require.NoError(t, err, "createCheckpointInternal()")
 
 	// Verify checkpoint has IncludesUntracked=false
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Fatalf("expected 1 checkpoint, got %d", len(cpFile.Checkpoints))
-	}
-	if cpFile.Checkpoints[0].IncludesUntracked {
-		t.Error("expected IncludesUntracked=false after denylist degradation")
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+	assert.False(t, cpFile.Checkpoints[0].IncludesUntracked, "expected IncludesUntracked=false after denylist degradation")
 
 	// Verify git add -u was used (not git add -A)
 	calls := sr.callKeys()
@@ -837,32 +781,25 @@ func TestEngine_createCheckpointInternal_DenylistDegradation(t *testing.T) {
 		if strings.Contains(c, "add -u") {
 			foundAddU = true
 		}
-		if strings.Contains(c, "add -A") {
-			t.Error("git add -A should not be called after denylist degradation")
-		}
+		assert.NotContains(t, c, "add -A", "git add -A should not be called after denylist degradation")
 	}
-	if !foundAddU {
-		t.Error("expected git add -u to be called")
-	}
+	assert.True(t, foundAddU, "expected git add -u to be called")
 
 	// Verify events: should have denylist_triggered + checkpoint_created
 	events := readEvents(t, e.eventsPath)
-	if len(events) < 2 {
-		t.Fatalf("expected at least 2 events, got %d", len(events))
-	}
+	require.GreaterOrEqual(t, len(events), 2)
 	foundDenylist := false
 	for _, ev := range events {
 		if ev.Kind == EventKindCheckpointDenylistTriggered {
 			foundDenylist = true
 		}
 	}
-	if !foundDenylist {
-		t.Error("expected denylist_triggered event")
-	}
+	assert.True(t, foundDenylist, "expected denylist_triggered event")
 }
 
 // 1.6 TestEngine_createCheckpointInternal_NotDirty
 func TestEngine_createCheckpointInternal_NotDirty(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	e, _ := newTestEngine(t, sr, cfg)
@@ -872,34 +809,25 @@ func TestEngine_createCheckpointInternal_NotDirty(t *testing.T) {
 		exec.CmdResult{Stdout: ""})
 
 	err := e.createCheckpointInternal(context.Background())
-	if err != nil {
-		t.Fatalf("createCheckpointInternal() returned error: %v", err)
-	}
+	require.NoError(t, err, "createCheckpointInternal()")
 
 	// Verify no checkpoints created
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 0 {
-		t.Errorf("expected 0 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 0)
 
 	// Verify no events
 	events := readEvents(t, e.eventsPath)
-	if len(events) != 0 {
-		t.Errorf("expected 0 events, got %d", len(events))
-	}
+	assert.Len(t, events, 0)
 
 	// Verify only status was called (no further git commands)
 	calls := sr.getCalls()
-	if len(calls) != 1 {
-		t.Errorf("expected 1 git call (status), got %d: %v", len(calls), sr.callKeys())
-	}
+	assert.Len(t, calls, 1, "expected 1 git call (status)")
 }
 
 // 1.7 TestEngine_CreateCheckpoint_RateLimited
 func TestEngine_CreateCheckpoint_RateLimited(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
@@ -914,12 +842,8 @@ func TestEngine_CreateCheckpoint_RateLimited(t *testing.T) {
 
 	// Create .git/index
 	gitDir := filepath.Join(sandboxPath, ".git")
-	if err := os.MkdirAll(gitDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(gitDir, "index"), []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(gitDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "index"), []byte("fake"), 0o644))
 
 	e := NewEngine(
 		"test-inv-001", "test-repo",
@@ -956,50 +880,37 @@ func TestEngine_CreateCheckpoint_RateLimited(t *testing.T) {
 
 	// T=0: First checkpoint should succeed
 	stubForID(1)
-	if err := e.CreateCheckpoint(ctx); err != nil {
-		t.Fatalf("T=0 checkpoint failed: %v", err)
-	}
+	require.NoError(t, e.CreateCheckpoint(ctx), "T=0 checkpoint failed")
 
 	// T=5s: Rate limited, should be a no-op
 	clock.Advance(5 * time.Second)
 	// Stub status in case it's called (it shouldn't be due to rate limit)
 	sr.stub(fmt.Sprintf("git -C %s status --porcelain", sandboxPath),
 		exec.CmdResult{Stdout: " M main.go\n"})
-	if err := e.CreateCheckpoint(ctx); err != nil {
-		t.Fatalf("T=5s checkpoint failed: %v", err)
-	}
+	require.NoError(t, e.CreateCheckpoint(ctx), "T=5s checkpoint failed")
 
 	// T=11s: Past rate limit, should succeed
 	clock.Advance(6 * time.Second)
 	stubForID(2)
-	if err := e.CreateCheckpoint(ctx); err != nil {
-		t.Fatalf("T=11s checkpoint failed: %v", err)
-	}
+	require.NoError(t, e.CreateCheckpoint(ctx), "T=11s checkpoint failed")
 
 	// Verify exactly 2 checkpoints were created
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 2 {
-		t.Errorf("expected 2 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 2)
 }
 
 // 1.8 TestEngine_loadSaveCheckpoints_Roundtrip
 func TestEngine_loadSaveCheckpoints_Roundtrip(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	e, _ := newTestEngine(t, sr, cfg)
 
 	// Load on non-existent file should return empty
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 0 {
-		t.Errorf("expected empty checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 0)
 
 	// Save 3 checkpoints
 	cpFile.Checkpoints = []Checkpoint{
@@ -1007,33 +918,22 @@ func TestEngine_loadSaveCheckpoints_Roundtrip(t *testing.T) {
 		{ID: 2, SnapshotRef: "refs/agency/snapshots/test/2", SnapshotCommit: "bbb", SandboxHeadSHA: "base2", CreatedAt: "2026-01-15T12:01:00Z", IncludesUntracked: false, Diffstat: "+2 -1 in 2 files"},
 		{ID: 3, SnapshotRef: "refs/agency/snapshots/test/3", SnapshotCommit: "ccc", SandboxHeadSHA: "base3", CreatedAt: "2026-01-15T12:02:00Z", IncludesUntracked: true, Diffstat: "+5 -3 in 3 files"},
 	}
-	if err := e.saveCheckpoints(cpFile); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, e.saveCheckpoints(cpFile))
 
 	// Load back and verify
 	loaded, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(loaded.Checkpoints) != 3 {
-		t.Fatalf("expected 3 checkpoints, got %d", len(loaded.Checkpoints))
-	}
-	if loaded.SchemaVersion != SchemaVersion {
-		t.Errorf("schema_version = %q, want %q", loaded.SchemaVersion, SchemaVersion)
-	}
+	require.NoError(t, err)
+	require.Len(t, loaded.Checkpoints, 3)
+	assert.Equal(t, SchemaVersion, loaded.SchemaVersion)
 	for i, cp := range loaded.Checkpoints {
-		if cp.ID != cpFile.Checkpoints[i].ID {
-			t.Errorf("checkpoint[%d].ID = %d, want %d", i, cp.ID, cpFile.Checkpoints[i].ID)
-		}
-		if cp.SnapshotCommit != cpFile.Checkpoints[i].SnapshotCommit {
-			t.Errorf("checkpoint[%d].SnapshotCommit = %q, want %q", i, cp.SnapshotCommit, cpFile.Checkpoints[i].SnapshotCommit)
-		}
+		assert.Equal(t, cpFile.Checkpoints[i].ID, cp.ID, "checkpoint[%d].ID", i)
+		assert.Equal(t, cpFile.Checkpoints[i].SnapshotCommit, cp.SnapshotCommit, "checkpoint[%d].SnapshotCommit", i)
 	}
 }
 
 // 1.9 TestEngine_pruneCheckpoints
 func TestEngine_pruneCheckpoints(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	e, _ := newTestEngine(t, sr, cfg)
@@ -1056,14 +956,10 @@ func TestEngine_pruneCheckpoints(t *testing.T) {
 	e.pruneCheckpoints(context.Background(), cpFile)
 
 	// Should have 200 remaining
-	if len(cpFile.Checkpoints) != MaxCheckpoints {
-		t.Errorf("expected %d checkpoints after prune, got %d", MaxCheckpoints, len(cpFile.Checkpoints))
-	}
+	assert.Len(t, cpFile.Checkpoints, MaxCheckpoints)
 
 	// Oldest should now be ID=6
-	if cpFile.Checkpoints[0].ID != 6 {
-		t.Errorf("oldest checkpoint ID = %d, want 6", cpFile.Checkpoints[0].ID)
-	}
+	assert.Equal(t, 6, cpFile.Checkpoints[0].ID)
 
 	// Verify 5 update-ref -d calls
 	calls := sr.getCalls()
@@ -1074,13 +970,12 @@ func TestEngine_pruneCheckpoints(t *testing.T) {
 			deleteCount++
 		}
 	}
-	if deleteCount != 5 {
-		t.Errorf("expected 5 update-ref -d calls, got %d", deleteCount)
-	}
+	assert.Equal(t, 5, deleteCount, "expected 5 update-ref -d calls")
 }
 
 // 1.10 TestEngine_createCheckpointInternal_GitFailures
 func TestEngine_createCheckpointInternal_GitFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		failAt      string // which command should fail
@@ -1104,7 +999,9 @@ func TestEngine_createCheckpointInternal_GitFailures(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sr := newStubRunner()
 			cfg := DefaultConfig()
 			cfg.IncludeUntracked = true
@@ -1145,27 +1042,20 @@ func TestEngine_createCheckpointInternal_GitFailures(t *testing.T) {
 			}
 
 			err := e.createCheckpointInternal(context.Background())
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !strings.Contains(err.Error(), tt.wantErrText) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErrText)
-			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErrText)
 
 			// Verify no checkpoint was saved
 			cpFile, loadErr := e.loadCheckpoints()
-			if loadErr != nil {
-				t.Fatal(loadErr)
-			}
-			if len(cpFile.Checkpoints) != 0 {
-				t.Errorf("expected 0 checkpoints after failure, got %d", len(cpFile.Checkpoints))
-			}
+			require.NoError(t, loadErr)
+			assert.Len(t, cpFile.Checkpoints, 0, "expected 0 checkpoints after failure")
 		})
 	}
 }
 
 // 1.11 TestApplier_Apply_Success
 func TestApplier_Apply_Success(t *testing.T) {
+	t.Parallel()
 	sandboxPath := t.TempDir()
 	checkpointsDir := t.TempDir()
 	eventsDir := t.TempDir()
@@ -1181,9 +1071,7 @@ func TestApplier_Apply_Success(t *testing.T) {
 		},
 	}
 	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
-	if err := os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
 
 	sr := newStubRunner()
 	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
@@ -1204,16 +1092,10 @@ func TestApplier_Apply_Success(t *testing.T) {
 		exec.CmdResult{})
 
 	cp, err := applier.Apply(context.Background(), 3)
-	if err != nil {
-		t.Fatalf("Apply() returned error: %v", err)
-	}
+	require.NoError(t, err, "Apply()")
 
-	if cp.ID != 3 {
-		t.Errorf("applied checkpoint ID = %d, want 3", cp.ID)
-	}
-	if cp.SnapshotCommit != "ccc333" {
-		t.Errorf("snapshot_commit = %q, want %q", cp.SnapshotCommit, "ccc333")
-	}
+	assert.Equal(t, 3, cp.ID)
+	assert.Equal(t, "ccc333", cp.SnapshotCommit)
 
 	// Verify git commands called in correct order
 	calls := sr.callKeys()
@@ -1223,27 +1105,20 @@ func TestApplier_Apply_Success(t *testing.T) {
 		fmt.Sprintf("git -C %s clean -fd", sandboxPath),
 		fmt.Sprintf("git -C %s checkout ccc333 -- .", sandboxPath),
 	}
-	if len(calls) != len(expected) {
-		t.Fatalf("expected %d calls, got %d: %v", len(expected), len(calls), calls)
-	}
+	require.Len(t, calls, len(expected))
 	for i := range expected {
-		if calls[i] != expected[i] {
-			t.Errorf("call[%d] = %q, want %q", i, calls[i], expected[i])
-		}
+		assert.Equal(t, expected[i], calls[i], "call[%d]", i)
 	}
 
 	// Verify checkpoint_applied event
 	events := readEvents(t, eventsPath)
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	if events[0].Kind != EventKindCheckpointApplied {
-		t.Errorf("event kind = %q, want %q", events[0].Kind, EventKindCheckpointApplied)
-	}
+	require.Len(t, events, 1)
+	assert.Equal(t, EventKindCheckpointApplied, events[0].Kind)
 }
 
 // 1.12 TestApplier_Apply_NotFound
 func TestApplier_Apply_NotFound(t *testing.T) {
+	t.Parallel()
 	sandboxPath := t.TempDir()
 	checkpointsDir := t.TempDir()
 	eventsDir := t.TempDir()
@@ -1258,25 +1133,20 @@ func TestApplier_Apply_NotFound(t *testing.T) {
 		},
 	}
 	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
-	if err := os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
 
 	sr := newStubRunner()
 	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
 	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
 
 	_, err := applier.Apply(context.Background(), 5)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if errors.GetCode(err) != errors.ECheckpointNotFound {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.ECheckpointNotFound)
-	}
+	require.Error(t, err)
+	assert.Equal(t, errors.ECheckpointNotFound, errors.GetCode(err))
 }
 
 // 1.13 TestApplier_Apply_SnapshotMissing
 func TestApplier_Apply_SnapshotMissing(t *testing.T) {
+	t.Parallel()
 	sandboxPath := t.TempDir()
 	checkpointsDir := t.TempDir()
 	eventsDir := t.TempDir()
@@ -1289,9 +1159,7 @@ func TestApplier_Apply_SnapshotMissing(t *testing.T) {
 		},
 	}
 	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
-	if err := os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
 
 	sr := newStubRunner()
 	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
@@ -1302,16 +1170,13 @@ func TestApplier_Apply_SnapshotMissing(t *testing.T) {
 		exec.CmdResult{ExitCode: 128, Stderr: "fatal: not a valid object"})
 
 	_, err := applier.Apply(context.Background(), 1)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if errors.GetCode(err) != errors.ECheckpointNotFound {
-		t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.ECheckpointNotFound)
-	}
+	require.Error(t, err)
+	assert.Equal(t, errors.ECheckpointNotFound, errors.GetCode(err))
 }
 
 // 1.14 TestApplier_Apply_GitFailures
 func TestApplier_Apply_GitFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		failAt string // reset, clean, or checkout
@@ -1322,7 +1187,9 @@ func TestApplier_Apply_GitFailures(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sandboxPath := t.TempDir()
 			checkpointsDir := t.TempDir()
 			eventsDir := t.TempDir()
@@ -1335,9 +1202,7 @@ func TestApplier_Apply_GitFailures(t *testing.T) {
 				},
 			}
 			cpData, _ := json.MarshalIndent(cpFile, "", "  ")
-			if err := os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
 
 			sr := newStubRunner()
 			clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
@@ -1366,18 +1231,15 @@ func TestApplier_Apply_GitFailures(t *testing.T) {
 			}
 
 			_, err := applier.Apply(context.Background(), 1)
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if errors.GetCode(err) != errors.ERollbackFailed {
-				t.Errorf("error code = %q, want %q", errors.GetCode(err), errors.ERollbackFailed)
-			}
+			require.Error(t, err)
+			assert.Equal(t, errors.ERollbackFailed, errors.GetCode(err))
 		})
 	}
 }
 
 // 1.15 TestEngine_EventEmission
 func TestEngine_EventEmission(t *testing.T) {
+	t.Parallel()
 	t.Run("success event", func(t *testing.T) {
 		sr := newStubRunner()
 		cfg := DefaultConfig()
@@ -1386,38 +1248,22 @@ func TestEngine_EventEmission(t *testing.T) {
 
 		stubFullCheckpointSequence(sr, e.sandboxPath, true)
 
-		if err := e.createCheckpointInternal(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, e.createCheckpointInternal(context.Background()))
 
 		events := readEvents(t, e.eventsPath)
-		if len(events) != 1 {
-			t.Fatalf("expected 1 event, got %d", len(events))
-		}
+		require.Len(t, events, 1)
 
 		ev := events[0]
-		if ev.SchemaVersion != "1.0" {
-			t.Errorf("schema_version = %q, want %q", ev.SchemaVersion, "1.0")
-		}
-		if ev.Seq != 1 {
-			t.Errorf("seq = %d, want 1", ev.Seq)
-		}
-		if ev.InvocationID != "test-inv-001" {
-			t.Errorf("invocation_id = %q, want %q", ev.InvocationID, "test-inv-001")
-		}
-		if ev.Kind != EventKindCheckpointCreated {
-			t.Errorf("kind = %q, want %q", ev.Kind, EventKindCheckpointCreated)
-		}
-		if ev.Timestamp == "" {
-			t.Error("timestamp should not be empty")
-		}
-		if ev.Data == nil {
-			t.Error("data should not be nil")
-		}
+		assert.Equal(t, "1.0", ev.SchemaVersion)
+		assert.Equal(t, uint64(1), ev.Seq)
+		assert.Equal(t, "test-inv-001", ev.InvocationID)
+		assert.Equal(t, EventKindCheckpointCreated, ev.Kind)
+		assert.NotEmpty(t, ev.Timestamp, "timestamp should not be empty")
+		require.NotNil(t, ev.Data, "data should not be nil")
 		// Check data fields
-		if cpID, ok := ev.Data["checkpoint_id"]; !ok || cpID != float64(1) {
-			t.Errorf("data.checkpoint_id = %v, want 1", cpID)
-		}
+		cpID, ok := ev.Data["checkpoint_id"]
+		assert.True(t, ok, "data should contain checkpoint_id")
+		assert.Equal(t, float64(1), cpID)
 	})
 
 	t.Run("failure event", func(t *testing.T) {
@@ -1437,9 +1283,7 @@ func TestEngine_EventEmission(t *testing.T) {
 			exec.CmdResult{ExitCode: 128, Stderr: "fatal: not a git repo"})
 
 		err := e.createCheckpointInternal(context.Background())
-		if err == nil {
-			t.Fatal("expected error")
-		}
+		require.Error(t, err)
 
 		// Manually emit failure event (as the caller would)
 		e.emitCheckpointFailed(err.Error())
@@ -1449,14 +1293,12 @@ func TestEngine_EventEmission(t *testing.T) {
 		for _, ev := range events {
 			if ev.Kind == EventKindCheckpointFailed {
 				foundFailed = true
-				if reason, ok := ev.Data["reason"]; !ok || reason == "" {
-					t.Errorf("checkpoint_failed event should have reason, got %v", ev.Data)
-				}
+				reason, ok := ev.Data["reason"]
+				assert.True(t, ok, "checkpoint_failed event should have reason key")
+				assert.NotEmpty(t, reason, "checkpoint_failed event reason should not be empty")
 			}
 		}
-		if !foundFailed {
-			t.Error("expected checkpoint_failed event")
-		}
+		assert.True(t, foundFailed, "expected checkpoint_failed event")
 	})
 }
 
@@ -1466,6 +1308,7 @@ func TestEngine_EventEmission(t *testing.T) {
 
 // 2.1 TestEngine_createCheckpointInternal_SkipsDuplicate
 func TestEngine_createCheckpointInternal_SkipsDuplicate(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
@@ -1474,21 +1317,13 @@ func TestEngine_createCheckpointInternal_SkipsDuplicate(t *testing.T) {
 	// First checkpoint: full sequence
 	stubFullCheckpointSequence(sr, e.sandboxPath, true)
 
-	if err := e.createCheckpointInternal(context.Background()); err != nil {
-		t.Fatalf("first checkpoint failed: %v", err)
-	}
+	require.NoError(t, e.createCheckpointInternal(context.Background()), "first checkpoint failed")
 
 	// Verify 1 checkpoint with TreeSHA populated
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Fatalf("expected 1 checkpoint, got %d", len(cpFile.Checkpoints))
-	}
-	if cpFile.Checkpoints[0].TreeSHA != "eeeeeeeeeeee" {
-		t.Errorf("TreeSHA = %q, want %q", cpFile.Checkpoints[0].TreeSHA, "eeeeeeeeeeee")
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+	assert.Equal(t, "eeeeeeeeeeee", cpFile.Checkpoints[0].TreeSHA)
 
 	// Second checkpoint: same tree hash → should be skipped
 	// Stub just the commands up to write-tree (duplicate detection happens before commit-tree)
@@ -1505,18 +1340,12 @@ func TestEngine_createCheckpointInternal_SkipsDuplicate(t *testing.T) {
 	sr.stub(fmt.Sprintf("git -C %s write-tree", e.sandboxPath),
 		exec.CmdResult{Stdout: "eeeeeeeeeeee\n"}) // Same tree!
 
-	if err := e.createCheckpointInternal(context.Background()); err != nil {
-		t.Fatalf("second checkpoint call failed: %v", err)
-	}
+	require.NoError(t, e.createCheckpointInternal(context.Background()), "second checkpoint call failed")
 
 	// Still only 1 checkpoint
 	cpFile, err = e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Errorf("expected 1 checkpoint (duplicate skipped), got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 1, "expected 1 checkpoint (duplicate skipped)")
 
 	// Verify commit-tree was NOT called for the second attempt
 	calls := sr.callKeys()
@@ -1526,13 +1355,12 @@ func TestEngine_createCheckpointInternal_SkipsDuplicate(t *testing.T) {
 			commitTreeCount++
 		}
 	}
-	if commitTreeCount != 1 {
-		t.Errorf("expected 1 commit-tree call (not 2), got %d", commitTreeCount)
-	}
+	assert.Equal(t, 1, commitTreeCount, "expected 1 commit-tree call (not 2)")
 }
 
 // 2.2 TestEngine_createCheckpointInternal_NewTreeCreatesCheckpoint
 func TestEngine_createCheckpointInternal_NewTreeCreatesCheckpoint(t *testing.T) {
+	t.Parallel()
 	sr := newStubRunner()
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
@@ -1541,9 +1369,7 @@ func TestEngine_createCheckpointInternal_NewTreeCreatesCheckpoint(t *testing.T) 
 	// First checkpoint
 	stubFullCheckpointSequence(sr, e.sandboxPath, true)
 
-	if err := e.createCheckpointInternal(context.Background()); err != nil {
-		t.Fatalf("first checkpoint failed: %v", err)
-	}
+	require.NoError(t, e.createCheckpointInternal(context.Background()), "first checkpoint failed")
 
 	// Second checkpoint: different tree hash → should create new checkpoint
 	sr.stub(fmt.Sprintf("git -C %s status --porcelain", e.sandboxPath),
@@ -1565,27 +1391,18 @@ func TestEngine_createCheckpointInternal_NewTreeCreatesCheckpoint(t *testing.T) 
 	sr.stub(fmt.Sprintf("git -C %s diff --stat --stat-width=80 aabbccdd00112233..newcommitsha", e.sandboxPath),
 		exec.CmdResult{Stdout: ""})
 
-	if err := e.createCheckpointInternal(context.Background()); err != nil {
-		t.Fatalf("second checkpoint failed: %v", err)
-	}
+	require.NoError(t, e.createCheckpointInternal(context.Background()), "second checkpoint failed")
 
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 2 {
-		t.Fatalf("expected 2 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
-	if cpFile.Checkpoints[0].TreeSHA == cpFile.Checkpoints[1].TreeSHA {
-		t.Error("expected distinct TreeSHA values")
-	}
-	if cpFile.Checkpoints[1].TreeSHA != "dddddddddddd" {
-		t.Errorf("second TreeSHA = %q, want %q", cpFile.Checkpoints[1].TreeSHA, "dddddddddddd")
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 2)
+	assert.NotEqual(t, cpFile.Checkpoints[0].TreeSHA, cpFile.Checkpoints[1].TreeSHA, "expected distinct TreeSHA values")
+	assert.Equal(t, "dddddddddddd", cpFile.Checkpoints[1].TreeSHA)
 }
 
 // 2.3 TestApplier_Apply_ReturnsTypedErrors
 func TestApplier_Apply_ReturnsTypedErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		setup    func(sr *stubRunner, sandboxPath, checkpointsDir string)
@@ -1644,7 +1461,9 @@ func TestApplier_Apply_ReturnsTypedErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sandboxPath := t.TempDir()
 			checkpointsDir := t.TempDir()
 			eventsDir := t.TempDir()
@@ -1656,12 +1475,8 @@ func TestApplier_Apply_ReturnsTypedErrors(t *testing.T) {
 
 			applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
 			_, err := applier.Apply(context.Background(), tt.cpID)
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if errors.GetCode(err) != tt.wantCode {
-				t.Errorf("error code = %q, want %q (err: %v)", errors.GetCode(err), tt.wantCode, err)
-			}
+			require.Error(t, err)
+			assert.Equal(t, tt.wantCode, errors.GetCode(err))
 		})
 	}
 }

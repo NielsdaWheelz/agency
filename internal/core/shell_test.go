@@ -1,8 +1,14 @@
 package core
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestShellEscapePosix_Table(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		input  string
@@ -21,31 +27,34 @@ func TestShellEscapePosix_Table(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := ShellEscapePosix(tt.input)
-			if got != tt.expect {
-				t.Errorf("ShellEscapePosix(%q) = %q, want %q", tt.input, got, tt.expect)
-			}
+			assert.Equal(t, tt.expect, got)
 		})
 	}
 }
 
 func TestShellEscapePosix_EmptyString(t *testing.T) {
+	t.Parallel()
+
 	got := ShellEscapePosix("")
-	if got != "''" {
-		t.Errorf("ShellEscapePosix(\"\") = %q, want \"''\"", got)
-	}
+	assert.Equal(t, "''", got)
 }
 
 func TestShellEscapePosix_Newline(t *testing.T) {
+	t.Parallel()
+
 	got := ShellEscapePosix("a\nb")
 	expect := "'a\nb'"
-	if got != expect {
-		t.Errorf("ShellEscapePosix(%q) = %q, want %q", "a\nb", got, expect)
-	}
+	assert.Equal(t, expect, got)
 }
 
 func TestBuildRunnerShellScript(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		worktree  string
@@ -79,12 +88,12 @@ func TestBuildRunnerShellScript(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := BuildRunnerShellScript(tt.worktree, tt.runnerCmd)
-			if got != tt.expect {
-				t.Errorf("BuildRunnerShellScript(%q, %q) = %q, want %q",
-					tt.worktree, tt.runnerCmd, got, tt.expect)
-			}
+			assert.Equal(t, tt.expect, got)
 		})
 	}
 }

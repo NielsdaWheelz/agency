@@ -20,6 +20,10 @@ import (
 type CheckRepoSafeOpts struct {
 	// ParentBranch is the local branch name to branch from, e.g. "main".
 	ParentBranch string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	// This enables tests to use t.TempDir() without t.Setenv("AGENCY_DATA_DIR", ...).
+	DataDirOverride string
 }
 
 // RepoContext holds the resolved repository context after safety checks pass.
@@ -77,14 +81,20 @@ func CheckRepoSafe(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originURL)
 
 	// 4. Resolve data directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
 	// 5. Write/update repo.json
-	if err := updateRepoJSON(fsys, dirs.DataDir, repoRoot.Path, repoIdentity, originURL); err != nil {
+	if err := updateRepoJSON(fsys, dataDir, repoRoot.Path, repoIdentity, originURL); err != nil {
 		return nil, err
 	}
 
@@ -126,7 +136,7 @@ func CheckRepoSafe(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		RepoID:    repoIdentity.RepoID,
 		RepoKey:   repoIdentity.RepoKey,
 		OriginURL: originURL,
-		DataDir:   dirs.DataDir,
+		DataDir:   dataDir,
 	}, nil
 }
 

@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -20,6 +23,7 @@ import (
 // on daemon startup detects stale "running" invocations with dead PIDs
 // and marks them as failed/orphaned.
 func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -45,15 +49,11 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 		},
 	}
 	indexBytes, _ := json.Marshal(repoIndex)
-	if err := os.WriteFile(st.RepoIndexPath(), indexBytes, 0o644); err != nil {
-		t.Fatalf("write repo index: %v", err)
-	}
+	require.NoError(t, os.WriteFile(st.RepoIndexPath(), indexBytes, 0o644), "write repo index")
 
 	// Create invocation directory and meta.json with status=running.
 	invDir := st.InvocationDir(repoID, invocationID)
-	if err := os.MkdirAll(invDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(invDir, 0o700), "mkdir")
 
 	meta := &store.InvocationMeta{
 		SchemaVersion:    "1.0",
@@ -65,15 +65,11 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 		DaemonInstanceID: "old-daemon-instance",
 		StartedAt:        time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
 	}
-	if err := st.WriteInvocationMeta(repoID, invocationID, meta); err != nil {
-		t.Fatalf("write meta: %v", err)
-	}
+	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta), "write meta")
 
 	// Boot a daemon — recovery scan should detect the dead PID.
 	configDir := filepath.Join(dataDir, "config")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("mkdir config: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
 	// Override PIDChecker to report PID 99999 as dead.
 	srv.PIDChecker = func(pid int) bool { return false }
@@ -81,16 +77,12 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 	// Unix sockets on macOS have a ~104 byte path limit.
 	// Use a short temp dir for the socket to avoid exceeding it.
 	sockDir, err := os.MkdirTemp("", "dsock")
-	if err != nil {
-		t.Fatalf("mkdir sockdir: %v", err)
-	}
+	require.NoError(t, err, "mkdir sockdir")
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
 	socketPath := filepath.Join(sockDir, "d.sock")
 	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	require.NoError(t, err, "listen")
 
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- srv.Serve(listener) }()
@@ -98,9 +90,7 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 	client := daemonclient.NewClient(socketPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := client.WaitForReady(ctx, 5*time.Second); err != nil {
-		t.Fatalf("daemon not ready: %v", err)
-	}
+	require.NoError(t, client.WaitForReady(ctx, 5*time.Second), "daemon not ready")
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -111,23 +101,16 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 
 	// Verify recovery scan updated the meta.
 	recovered, err := st.ReadInvocationMeta(repoID, invocationID)
-	if err != nil {
-		t.Fatalf("read meta: %v", err)
-	}
-	if recovered.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", recovered.Status, store.InvocationStatusFailed)
-	}
-	if !recovered.Flags.Orphaned {
-		t.Error("expected orphaned=true")
-	}
-	if !recovered.Flags.NeedsAttention {
-		t.Error("expected needs_attention=true")
-	}
+	require.NoError(t, err, "read meta")
+	assert.Equal(t, store.InvocationStatusFailed, recovered.Status)
+	assert.True(t, recovered.Flags.Orphaned, "expected orphaned=true")
+	assert.True(t, recovered.Flags.NeedsAttention, "expected needs_attention=true")
 }
 
 // TestDaemonRecoveryStaleStarting verifies that the recovery scan detects
 // invocations stuck in "starting" status for >60s with no PID.
 func TestDaemonRecoveryStaleStarting(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -150,15 +133,11 @@ func TestDaemonRecoveryStaleStarting(t *testing.T) {
 		},
 	}
 	indexBytes, _ := json.Marshal(repoIndex)
-	if err := os.WriteFile(st.RepoIndexPath(), indexBytes, 0o644); err != nil {
-		t.Fatalf("write repo index: %v", err)
-	}
+	require.NoError(t, os.WriteFile(st.RepoIndexPath(), indexBytes, 0o644), "write repo index")
 
 	// Create invocation with status=starting, no PID, started 1 hour ago.
 	invDir := st.InvocationDir(repoID, invocationID)
-	if err := os.MkdirAll(invDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(invDir, 0o700), "mkdir")
 
 	meta := &store.InvocationMeta{
 		SchemaVersion: "1.0",
@@ -168,29 +147,21 @@ func TestDaemonRecoveryStaleStarting(t *testing.T) {
 		StartedAt:     time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
 		// No PID set.
 	}
-	if err := st.WriteInvocationMeta(repoID, invocationID, meta); err != nil {
-		t.Fatalf("write meta: %v", err)
-	}
+	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta), "write meta")
 
 	// Boot daemon.
 	configDir := filepath.Join(dataDir, "config")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("mkdir config: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
 
 	// Unix sockets on macOS have a ~104 byte path limit.
 	sockDir, err := os.MkdirTemp("", "dsock")
-	if err != nil {
-		t.Fatalf("mkdir sockdir: %v", err)
-	}
+	require.NoError(t, err, "mkdir sockdir")
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
 	socketPath := filepath.Join(sockDir, "d.sock")
 	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	require.NoError(t, err, "listen")
 
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- srv.Serve(listener) }()
@@ -198,9 +169,7 @@ func TestDaemonRecoveryStaleStarting(t *testing.T) {
 	client := daemonclient.NewClient(socketPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := client.WaitForReady(ctx, 5*time.Second); err != nil {
-		t.Fatalf("daemon not ready: %v", err)
-	}
+	require.NoError(t, client.WaitForReady(ctx, 5*time.Second), "daemon not ready")
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -211,18 +180,10 @@ func TestDaemonRecoveryStaleStarting(t *testing.T) {
 
 	// Verify recovery scan marked it as failed.
 	recovered, err := st.ReadInvocationMeta(repoID, invocationID)
-	if err != nil {
-		t.Fatalf("read meta: %v", err)
-	}
-	if recovered.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", recovered.Status, store.InvocationStatusFailed)
-	}
-	if recovered.FailureReason != "start_incomplete" {
-		t.Errorf("failure_reason = %q, want %q", recovered.FailureReason, "start_incomplete")
-	}
-	if !recovered.Flags.NeedsAttention {
-		t.Error("expected needs_attention=true")
-	}
+	require.NoError(t, err, "read meta")
+	assert.Equal(t, store.InvocationStatusFailed, recovered.Status)
+	assert.Equal(t, "start_incomplete", recovered.FailureReason)
+	assert.True(t, recovered.Flags.NeedsAttention, "expected needs_attention=true")
 }
 
 // TestDaemonRunnerUnexpectedExit verifies that when a runner process crashes,
@@ -241,19 +202,11 @@ func TestDaemonRunnerUnexpectedExit(t *testing.T) {
 
 	// Wait for meta to reach terminal state.
 	meta := waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
-	if meta.Status != store.InvocationStatusFailed {
-		t.Errorf("status = %q, want %q", meta.Status, store.InvocationStatusFailed)
-	}
-	if meta.FailureReason != "runner_exit_nonzero" {
-		t.Errorf("failure_reason = %q, want %q", meta.FailureReason, "runner_exit_nonzero")
-	}
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "runner_exit_nonzero", meta.FailureReason)
 
 	// Verify process is no longer tracked — health should show no active invocations.
 	health, err := env.Client.Health(ctx)
-	if err != nil {
-		t.Fatalf("health: %v", err)
-	}
-	if !health.OK {
-		t.Error("health should still be OK after runner exit")
-	}
+	require.NoError(t, err, "health")
+	assert.True(t, health.OK, "health should still be OK after runner exit")
 }

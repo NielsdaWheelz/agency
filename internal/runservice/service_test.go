@@ -14,11 +14,13 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTempRepo creates a temp repo with agency.json and one commit.
-// Returns repo root and data dir. Cleanup is handled automatically by t.TempDir().
-func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
+// Returns repo root, data dir, and config dir. Cleanup is handled automatically by t.TempDir().
+func setupTempRepo(t *testing.T) (repoRoot, dataDir, configDir string) {
 	t.Helper()
 	testutil.HermeticGitEnv(t)
 
@@ -27,9 +29,7 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 	dataDir = t.TempDir()
 
 	// Initialize git repo
-	if err := runGit(repoRoot, "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
+	require.NoError(t, runGit(repoRoot, "init"), "git init failed")
 
 	// Create agency.json
 	agencyJSON := `{
@@ -49,12 +49,9 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
     }
   }
 }`
-	if err := os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0644); err != nil {
-		t.Fatalf("failed to write agency.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0644), "failed to write agency.json")
 
-	configDir := t.TempDir()
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	configDir = t.TempDir()
 	userConfig := `{
   "version": 1,
   "defaults": {
@@ -68,33 +65,21 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
     "code": "code"
   }
 }`
-	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userConfig), 0644); err != nil {
-		t.Fatalf("failed to write config.json: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userConfig), 0644), "failed to write config.json")
 
 	// Create scripts directory and setup script
 	scriptsDir := filepath.Join(repoRoot, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := "#!/bin/bash\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Create and commit files
 	readme := filepath.Join(repoRoot, "README.md")
-	if err := os.WriteFile(readme, []byte("# Test\n"), 0644); err != nil {
-		t.Fatalf("failed to write README.md: %v", err)
-	}
+	require.NoError(t, os.WriteFile(readme, []byte("# Test\n"), 0644), "failed to write README.md")
 
-	if err := runGit(repoRoot, "add", "-A"); err != nil {
-		t.Fatalf("git add failed: %v", err)
-	}
-	if err := runGit(repoRoot, "commit", "-m", "initial commit"); err != nil {
-		t.Fatalf("git commit failed: %v", err)
-	}
+	require.NoError(t, runGit(repoRoot, "add", "-A"), "git add failed")
+	require.NoError(t, runGit(repoRoot, "commit", "-m", "initial commit"), "git commit failed")
 
 	// Rename branch to main if it's not already
 	branch := getCurrentBranch(t, repoRoot)
@@ -102,7 +87,7 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir string) {
 		_ = runGit(repoRoot, "branch", "-m", branch, "main") // Best-effort rename
 	}
 
-	return repoRoot, dataDir
+	return repoRoot, dataDir, configDir
 }
 
 func runGit(dir string, args ...string) error {
@@ -124,36 +109,23 @@ func getCurrentBranch(t *testing.T, dir string) string {
 	cmd := exec.Command("git", "branch", "--show-current")
 	cmd.Dir = dir
 	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git branch --show-current failed: %v", err)
-	}
+	require.NoError(t, err, "git branch --show-current failed")
 	return strings.TrimSpace(string(output))
 }
 
 func TestService_CreateWorktree(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -175,65 +147,44 @@ func TestService_CreateWorktree(t *testing.T) {
 
 	// Now test CreateWorktree
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	// Verify state was populated
-	if st.Branch == "" {
-		t.Error("Branch should be set")
-	}
-	if !strings.HasPrefix(st.Branch, "agency/") {
-		t.Errorf("Branch should start with 'agency/', got %q", st.Branch)
-	}
+	assert.NotEmpty(t, st.Branch, "Branch should be set")
+	assert.True(t, strings.HasPrefix(st.Branch, "agency/"), "Branch should start with 'agency/'")
 
-	if st.WorktreePath == "" {
-		t.Error("WorktreePath should be set")
-	}
-	if _, err := os.Stat(st.WorktreePath); os.IsNotExist(err) {
-		t.Error("WorktreePath should exist")
-	}
+	assert.NotEmpty(t, st.WorktreePath, "WorktreePath should be set")
+	_, err = os.Stat(st.WorktreePath)
+	assert.False(t, os.IsNotExist(err), "WorktreePath should exist")
 
 	// Verify .agency/ directories
 	agencyDir := filepath.Join(st.WorktreePath, ".agency")
-	if _, err := os.Stat(agencyDir); os.IsNotExist(err) {
-		t.Error(".agency/ should exist")
-	}
+	_, err = os.Stat(agencyDir)
+	assert.False(t, os.IsNotExist(err), ".agency/ should exist")
 
 	// Verify report.md
 	reportPath := filepath.Join(agencyDir, "report.md")
-	if _, err := os.Stat(reportPath); os.IsNotExist(err) {
-		t.Error("report.md should exist")
-	}
+	_, err = os.Stat(reportPath)
+	assert.False(t, os.IsNotExist(err), "report.md should exist")
 }
 
 func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Make repo dirty
 	dirty := filepath.Join(repoRoot, "dirty.txt")
-	if err := os.WriteFile(dirty, []byte("dirty\n"), 0644); err != nil {
-		t.Fatalf("failed to create dirty file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(dirty, []byte("dirty\n"), 0644), "failed to create dirty file")
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	svc := New()
+	svc.DataDirOverride = dataDir
 	ctx := context.Background()
 
 	st := &pipeline.PipelineState{
@@ -241,28 +192,20 @@ func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
 	}
 
 	err = svc.CheckRepoSafe(ctx, st)
-	if err == nil {
-		t.Fatal("expected error for dirty repo")
-	}
+	require.Error(t, err, "expected error for dirty repo")
 
 	code := errors.GetCode(err)
-	if code != errors.EParentDirty {
-		t.Errorf("error code = %q, want %q", code, errors.EParentDirty)
-	}
+	assert.Equal(t, errors.EParentDirty, code)
 }
 
 func TestService_LoadAgencyConfig(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, configDir := setupTempRepo(t)
 
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err)
-	}
+	require.NoError(t, err, "failed to resolve symlinks")
 
 	svc := NewWithDeps(agencyexec.NewRealRunner(), fs.NewRealFS())
+	svc.ConfigDirOverride = configDir
 	ctx := context.Background()
 
 	st := &pipeline.PipelineState{
@@ -271,46 +214,27 @@ func TestService_LoadAgencyConfig(t *testing.T) {
 	}
 
 	err = svc.LoadAgencyConfig(ctx, st)
-	if err != nil {
-		t.Fatalf("LoadAgencyConfig failed: %v", err)
-	}
+	require.NoError(t, err, "LoadAgencyConfig failed")
 
 	// Verify state was populated
-	if filepath.Base(st.ResolvedRunnerCmd) != "sh" {
-		t.Errorf("ResolvedRunnerCmd = %q, want base %q", st.ResolvedRunnerCmd, "sh")
-	}
-	if st.SetupScript != "scripts/agency_setup.sh" {
-		t.Errorf("SetupScript = %q, want %q", st.SetupScript, "scripts/agency_setup.sh")
-	}
-	if st.ParentBranch != "main" {
-		t.Errorf("ParentBranch = %q, want %q", st.ParentBranch, "main")
-	}
+	assert.Equal(t, "sh", filepath.Base(st.ResolvedRunnerCmd))
+	assert.Equal(t, "scripts/agency_setup.sh", st.SetupScript)
+	assert.Equal(t, "main", st.ParentBranch)
 }
 
 func TestService_WriteMeta_Success(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -330,73 +254,46 @@ func TestService_WriteMeta_Success(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	// Populate remaining fields needed for WriteMeta
 	st.ResolvedRunnerCmd = "claude"
 
 	// Now test WriteMeta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Verify run directory was created
 	runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-	if _, err := os.Stat(runDir); os.IsNotExist(err) {
-		t.Error("run directory should exist")
-	}
+	_, err = os.Stat(runDir)
+	assert.False(t, os.IsNotExist(err), "run directory should exist")
 
 	// Verify logs directory was created
 	logsDir := filepath.Join(runDir, "logs")
-	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
-		t.Error("logs directory should exist")
-	}
+	_, err = os.Stat(logsDir)
+	assert.False(t, os.IsNotExist(err), "logs directory should exist")
 
 	// Verify meta.json was created
 	metaPath := filepath.Join(runDir, "meta.json")
-	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-		t.Error("meta.json should exist")
-	}
+	_, err = os.Stat(metaPath)
+	assert.False(t, os.IsNotExist(err), "meta.json should exist")
 
 	// Read and verify meta.json content
 	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read meta.json")
 
 	// Basic content checks
 	content := string(data)
-	if !strings.Contains(content, `"schema_version": "1.0"`) {
-		t.Error("meta.json should contain schema_version 1.0")
-	}
-	if !strings.Contains(content, `"run_id": "20260110120000-test"`) {
-		t.Error("meta.json should contain correct run_id")
-	}
-	if !strings.Contains(content, `"repo_id": "abcd1234ef567890"`) {
-		t.Error("meta.json should contain correct repo_id")
-	}
-	if !strings.Contains(content, `"name": "test-run"`) {
-		t.Error("meta.json should contain correct name")
-	}
-	if !strings.Contains(content, `"runner": "claude"`) {
-		t.Error("meta.json should contain correct runner")
-	}
-	if !strings.Contains(content, `"runner_cmd": "claude"`) {
-		t.Error("meta.json should contain correct runner_cmd")
-	}
-	if !strings.Contains(content, `"parent_branch": "main"`) {
-		t.Error("meta.json should contain correct parent_branch")
-	}
-	if !strings.Contains(content, `"created_at"`) {
-		t.Error("meta.json should contain created_at")
-	}
+	assert.Contains(t, content, `"schema_version": "1.0"`, "meta.json should contain schema_version 1.0")
+	assert.Contains(t, content, `"run_id": "20260110120000-test"`, "meta.json should contain correct run_id")
+	assert.Contains(t, content, `"repo_id": "abcd1234ef567890"`, "meta.json should contain correct repo_id")
+	assert.Contains(t, content, `"name": "test-run"`, "meta.json should contain correct name")
+	assert.Contains(t, content, `"runner": "claude"`, "meta.json should contain correct runner")
+	assert.Contains(t, content, `"runner_cmd": "claude"`, "meta.json should contain correct runner_cmd")
+	assert.Contains(t, content, `"parent_branch": "main"`, "meta.json should contain correct parent_branch")
+	assert.Contains(t, content, `"created_at"`, "meta.json should contain created_at")
 	// tmux_session_name should NOT be present
-	if strings.Contains(content, `"tmux_session_name"`) {
-		t.Error("meta.json should not contain tmux_session_name")
-	}
+	assert.NotContains(t, content, `"tmux_session_name"`, "meta.json should not contain tmux_session_name")
 }
 
 func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
@@ -415,40 +312,25 @@ func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
 	}
 
 	err := svc.WriteMeta(ctx, st)
-	if err == nil {
-		t.Fatal("expected error for missing worktree")
-	}
+	require.Error(t, err, "expected error for missing worktree")
 
 	code := errors.GetCode(err)
-	if code != errors.EInternal {
-		t.Errorf("error code = %q, want %q", code, errors.EInternal)
-	}
+	assert.Equal(t, errors.EInternal, code)
 }
 
 func TestService_WriteMeta_RunDirCollision(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -468,54 +350,35 @@ func TestService_WriteMeta_RunDirCollision(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "claude"
 
 	// First WriteMeta should succeed
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("first WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "first WriteMeta failed")
 
 	// Second WriteMeta should fail with E_RUN_DIR_EXISTS
 	err = svc.WriteMeta(ctx, st)
-	if err == nil {
-		t.Fatal("expected error for run dir collision")
-	}
+	require.Error(t, err, "expected error for run dir collision")
 
 	code := errors.GetCode(err)
-	if code != errors.ERunDirExists {
-		t.Errorf("error code = %q, want %q", code, errors.ERunDirExists)
-	}
+	assert.Equal(t, errors.ERunDirExists, code)
 }
 
 func TestService_RunSetup_Success(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -535,9 +398,7 @@ func TestService_RunSetup_Success(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
@@ -545,15 +406,11 @@ func TestService_RunSetup_Success(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script in worktree that writes a sentinel file
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := `#!/bin/bash
 set -euo pipefail
@@ -561,75 +418,48 @@ echo "setup running"
 touch "$AGENCY_DOTAGENCY_DIR/tmp/sentinel"
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup
 	err = svc.RunSetup(ctx, st)
-	if err != nil {
-		t.Fatalf("RunSetup failed: %v", err)
-	}
+	require.NoError(t, err, "RunSetup failed")
 
 	// Verify sentinel file was created
 	sentinelPath := filepath.Join(st.WorktreePath, ".agency", "tmp", "sentinel")
-	if _, err := os.Stat(sentinelPath); os.IsNotExist(err) {
-		t.Error("sentinel file should exist after setup")
-	}
+	_, err = os.Stat(sentinelPath)
+	assert.False(t, os.IsNotExist(err), "sentinel file should exist after setup")
 
 	// Verify log file exists
 	logPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "logs", "setup.log")
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		t.Error("setup.log should exist")
-	}
+	_, err = os.Stat(logPath)
+	assert.False(t, os.IsNotExist(err), "setup.log should exist")
 
 	// Read and verify log contains expected content
 	logContent, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("failed to read setup.log: %v", err)
-	}
-	if !strings.Contains(string(logContent), "setup running") {
-		t.Error("setup.log should contain script output")
-	}
+	require.NoError(t, err, "failed to read setup.log")
+	assert.Contains(t, string(logContent), "setup running", "setup.log should contain script output")
 
 	// Verify meta was updated
 	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
 	metaContent, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
-	if !strings.Contains(string(metaContent), `"exit_code": 0`) {
-		t.Error("meta.json should contain exit_code 0")
-	}
-	if !strings.Contains(string(metaContent), `"command"`) {
-		t.Error("meta.json should contain command field")
-	}
+	require.NoError(t, err, "failed to read meta.json")
+	assert.Contains(t, string(metaContent), `"exit_code": 0`, "meta.json should contain exit_code 0")
+	assert.Contains(t, string(metaContent), `"command"`, "meta.json should contain command field")
 }
 
 func TestService_RunSetup_ScriptFailed(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -649,9 +479,7 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
@@ -659,73 +487,46 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script that fails with exit code 7
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := `#!/bin/bash
 echo "setup failing"
 exit 7
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup - should fail
 	err = svc.RunSetup(ctx, st)
-	if err == nil {
-		t.Fatal("expected error for failed setup")
-	}
+	require.Error(t, err, "expected error for failed setup")
 
 	code := errors.GetCode(err)
-	if code != errors.EScriptFailed {
-		t.Errorf("error code = %q, want %q", code, errors.EScriptFailed)
-	}
+	assert.Equal(t, errors.EScriptFailed, code)
 
 	// Verify meta was updated with failure
 	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
 	metaContent, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
-	if !strings.Contains(string(metaContent), `"setup_failed": true`) {
-		t.Error("meta.json should contain setup_failed: true")
-	}
-	if !strings.Contains(string(metaContent), `"exit_code": 7`) {
-		t.Error("meta.json should contain exit_code 7")
-	}
+	require.NoError(t, err, "failed to read meta.json")
+	assert.Contains(t, string(metaContent), `"setup_failed": true`, "meta.json should contain setup_failed: true")
+	assert.Contains(t, string(metaContent), `"exit_code": 7`, "meta.json should contain exit_code 7")
 }
 
 func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -745,9 +546,7 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
@@ -755,76 +554,47 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script that exits 0 but writes ok=false to setup.json
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := `#!/bin/bash
 echo '{"schema_version": "1.0", "ok": false, "summary": "test failure"}' > "$AGENCY_OUTPUT_DIR/setup.json"
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup - should fail due to setup.json ok=false
 	err = svc.RunSetup(ctx, st)
-	if err == nil {
-		t.Fatal("expected error for setup.json ok=false")
-	}
+	require.Error(t, err, "expected error for setup.json ok=false")
 
 	code := errors.GetCode(err)
-	if code != errors.EScriptFailed {
-		t.Errorf("error code = %q, want %q", code, errors.EScriptFailed)
-	}
+	assert.Equal(t, errors.EScriptFailed, code)
 
 	// Verify meta was updated with failure and structured output
 	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
 	metaContent, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
-	if !strings.Contains(string(metaContent), `"setup_failed": true`) {
-		t.Error("meta.json should contain setup_failed: true")
-	}
-	if !strings.Contains(string(metaContent), `"output_ok": false`) {
-		t.Error("meta.json should contain output_ok: false")
-	}
-	if !strings.Contains(string(metaContent), `"output_summary": "test failure"`) {
-		t.Error("meta.json should contain output_summary")
-	}
+	require.NoError(t, err, "failed to read meta.json")
+	assert.Contains(t, string(metaContent), `"setup_failed": true`, "meta.json should contain setup_failed: true")
+	assert.Contains(t, string(metaContent), `"output_ok": false`, "meta.json should contain output_ok: false")
+	assert.Contains(t, string(metaContent), `"output_summary": "test failure"`, "meta.json should contain output_summary")
 }
 
 func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -844,9 +614,7 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "claude"
 	st.SetupScript = "scripts/agency_setup.sh"
@@ -854,66 +622,43 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script that exits 0 but writes invalid JSON
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := `#!/bin/bash
 echo 'not valid json {{{' > "$AGENCY_OUTPUT_DIR/setup.json"
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup - should succeed (malformed JSON is ignored)
 	err = svc.RunSetup(ctx, st)
-	if err != nil {
-		t.Fatalf("RunSetup failed unexpectedly: %v", err)
-	}
+	require.NoError(t, err, "RunSetup failed unexpectedly")
 
 	// Verify meta was updated without structured output fields
 	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
 	metaContent, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
+	require.NoError(t, err, "failed to read meta.json")
 	// Should not contain output_ok since JSON was malformed
-	if strings.Contains(string(metaContent), `"output_ok"`) {
-		t.Error("meta.json should not contain output_ok for malformed JSON")
-	}
+	assert.NotContains(t, string(metaContent), `"output_ok"`, "meta.json should not contain output_ok for malformed JSON")
 }
 
 func TestService_StartTmux_Success(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -933,9 +678,7 @@ func TestService_StartTmux_Success(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	// Use 'sh' as the runner command (just opens a shell, which is safe for testing)
 	st.ResolvedRunnerCmd = "sh"
@@ -944,32 +687,22 @@ func TestService_StartTmux_Success(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script that succeeds
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := "#!/bin/bash\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup
 	err = svc.RunSetup(ctx, st)
-	if err != nil {
-		t.Fatalf("RunSetup failed: %v", err)
-	}
+	require.NoError(t, err, "RunSetup failed")
 
 	// Now test StartTmux
 	err = svc.StartTmux(ctx, st)
-	if err != nil {
-		t.Fatalf("StartTmux failed: %v", err)
-	}
+	require.NoError(t, err, "StartTmux failed")
 
 	// Clean up tmux session (best-effort cleanup)
 	sessionName := "agency_" + runID
@@ -978,38 +711,23 @@ func TestService_StartTmux_Success(t *testing.T) {
 	// Verify meta was updated with tmux_session_name
 	metaPath := filepath.Join(dataDir, "repos", repoID, "runs", runID, "meta.json")
 	metaContent, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read meta.json: %v", err)
-	}
-	if !strings.Contains(string(metaContent), `"tmux_session_name": "agency_`+runID+`"`) {
-		t.Error("meta.json should contain tmux_session_name")
-	}
+	require.NoError(t, err, "failed to read meta.json")
+	assert.Contains(t, string(metaContent), `"tmux_session_name": "agency_`+runID+`"`, "meta.json should contain tmux_session_name")
 }
 
 func TestService_StartTmux_SetupFailed(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -1029,9 +747,7 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "sh"
 	st.SetupScript = "scripts/agency_setup.sh"
@@ -1039,63 +755,40 @@ func TestService_StartTmux_SetupFailed(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script that FAILS
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := "#!/bin/bash\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup (should fail)
 	err = svc.RunSetup(ctx, st)
-	if err == nil {
-		t.Fatal("expected RunSetup to fail")
-	}
+	require.Error(t, err, "expected RunSetup to fail")
 
 	// Now test StartTmux - should fail because setup failed
 	err = svc.StartTmux(ctx, st)
-	if err == nil {
-		t.Fatal("expected StartTmux to fail when setup failed")
-	}
+	require.Error(t, err, "expected StartTmux to fail when setup failed")
 
 	code := errors.GetCode(err)
-	if code != errors.ETmuxFailed {
-		t.Errorf("error code = %q, want %q", code, errors.ETmuxFailed)
-	}
+	assert.Equal(t, errors.ETmuxFailed, code)
 }
 
 func TestService_StartTmux_SessionExists(t *testing.T) {
-	repoRoot, dataDir := setupTempRepo(t)
-
-	// Set AGENCY_DATA_DIR (t.Setenv auto-restores after test)
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	repoRoot, dataDir, _ := setupTempRepo(t)
 
 	// Change to repo directory with proper cleanup
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to chdir to repo: %v", err)
-	}
+	require.NoError(t, err, "failed to get working directory")
+	require.NoError(t, os.Chdir(repoRoot), "failed to chdir to repo")
 	t.Cleanup(func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore working directory: %v", err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore working directory")
 	})
 
 	resolvedRepoRoot, err2 := filepath.EvalSymlinks(repoRoot)
-	if err2 != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err2)
-	}
+	require.NoError(t, err2, "failed to resolve symlinks")
 
 	svc := New()
 	ctx := context.Background()
@@ -1125,9 +818,7 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 	}
 
 	err = svc.CreateWorktree(ctx, st)
-	if err != nil {
-		t.Fatalf("CreateWorktree failed: %v", err)
-	}
+	require.NoError(t, err, "CreateWorktree failed")
 
 	st.ResolvedRunnerCmd = "sh"
 	st.SetupScript = "scripts/agency_setup.sh"
@@ -1135,35 +826,23 @@ func TestService_StartTmux_SessionExists(t *testing.T) {
 
 	// Write meta
 	err = svc.WriteMeta(ctx, st)
-	if err != nil {
-		t.Fatalf("WriteMeta failed: %v", err)
-	}
+	require.NoError(t, err, "WriteMeta failed")
 
 	// Create setup script that succeeds
 	scriptsDir := filepath.Join(st.WorktreePath, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-		t.Fatalf("failed to create scripts dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
 
 	setupScript := "#!/bin/bash\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755); err != nil {
-		t.Fatalf("failed to write setup script: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_setup.sh"), []byte(setupScript), 0755), "failed to write setup script")
 
 	// Run setup
 	err = svc.RunSetup(ctx, st)
-	if err != nil {
-		t.Fatalf("RunSetup failed: %v", err)
-	}
+	require.NoError(t, err, "RunSetup failed")
 
 	// Now test StartTmux - should fail because session already exists
 	err = svc.StartTmux(ctx, st)
-	if err == nil {
-		t.Fatal("expected StartTmux to fail with session collision")
-	}
+	require.Error(t, err, "expected StartTmux to fail with session collision")
 
 	code := errors.GetCode(err)
-	if code != errors.ETmuxSessionExists {
-		t.Errorf("error code = %q, want %q", code, errors.ETmuxSessionExists)
-	}
+	assert.Equal(t, errors.ETmuxSessionExists, code)
 }

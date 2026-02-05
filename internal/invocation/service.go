@@ -62,6 +62,9 @@ type CreateOpts struct {
 
 	// InvocationName is an optional human-readable label.
 	InvocationName string
+
+	// NoIncludeUntracked excludes untracked files from checkpoint snapshots.
+	NoIncludeUntracked bool
 }
 
 // CreateResult holds the result of a successful invocation creation.
@@ -300,6 +303,10 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		opts.Mode,
 		s.Now(),
 	)
+
+	if opts.NoIncludeUntracked {
+		meta.CheckpointIncludeUntracked = false
+	}
 
 	if err := s.Store.WriteInvocationMeta(opts.RepoID, invocationID, meta); err != nil {
 		cleanup()

@@ -11,10 +11,13 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestMetaAttentionUpdateRules tests the needs_attention flag update rules.
 func TestMetaAttentionUpdateRules(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                  string
 		initialNeedsAttention bool
@@ -82,7 +85,9 @@ func TestMetaAttentionUpdateRules(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Create initial meta with flags
 			meta := &store.RunMeta{
 				SchemaVersion: "1.0",
@@ -110,12 +115,8 @@ func TestMetaAttentionUpdateRules(t *testing.T) {
 				gotReason = meta.Flags.NeedsAttentionReason
 			}
 
-			if gotNeedsAttention != tt.wantNeedsAttention {
-				t.Errorf("NeedsAttention = %v, want %v", gotNeedsAttention, tt.wantNeedsAttention)
-			}
-			if gotReason != tt.wantReason {
-				t.Errorf("NeedsAttentionReason = %q, want %q", gotReason, tt.wantReason)
-			}
+			assert.Equal(t, tt.wantNeedsAttention, gotNeedsAttention)
+			assert.Equal(t, tt.wantReason, gotReason)
 		})
 	}
 }
@@ -145,16 +146,16 @@ func applyVerifyResultToMeta(meta *store.RunMeta, record *store.VerifyRecord) {
 
 // TestWorkspacePredicate tests the workspace existence check.
 func TestWorkspacePredicate(t *testing.T) {
+	t.Parallel()
 	t.Run("worktree missing on disk returns E_WORKSPACE_ARCHIVED", func(t *testing.T) {
+		t.Parallel()
 		dataDir := t.TempDir()
 		repoID := "test-repo-id"
 		runID := "20250110-abcd"
 
 		// Create run directory and meta.json
 		runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-		if err := os.MkdirAll(runDir, 0755); err != nil {
-			t.Fatalf("failed to create run dir: %v", err)
-		}
+		require.NoError(t, os.MkdirAll(runDir, 0755), "failed to create run dir")
 
 		// Write meta pointing to non-existent worktree
 		meta := store.RunMeta{
@@ -169,40 +170,31 @@ func TestWorkspacePredicate(t *testing.T) {
 			CreatedAt:     time.Now().Format(time.RFC3339),
 		}
 		metaData, _ := json.Marshal(meta)
-		if err := os.WriteFile(filepath.Join(runDir, "meta.json"), metaData, 0644); err != nil {
-			t.Fatalf("failed to write meta.json: %v", err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(runDir, "meta.json"), metaData, 0644), "failed to write meta.json")
 
 		// Create service and try to verify
 		svc := NewService(dataDir, fs.NewRealFS())
 		_, err := svc.VerifyRun(context.Background(), runID, 30*time.Minute)
 
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		require.Error(t, err)
 
 		code := errors.GetCode(err)
-		if code != errors.EWorkspaceArchived {
-			t.Errorf("error code = %s, want %s", code, errors.EWorkspaceArchived)
-		}
+		assert.Equal(t, errors.EWorkspaceArchived, code)
 	})
 
 	t.Run("archived run returns E_WORKSPACE_ARCHIVED", func(t *testing.T) {
+		t.Parallel()
 		dataDir := t.TempDir()
 		repoID := "test-repo-id"
 		runID := "20250110-efgh"
 
 		// Create run directory and meta.json
 		runDir := filepath.Join(dataDir, "repos", repoID, "runs", runID)
-		if err := os.MkdirAll(runDir, 0755); err != nil {
-			t.Fatalf("failed to create run dir: %v", err)
-		}
+		require.NoError(t, os.MkdirAll(runDir, 0755), "failed to create run dir")
 
 		// Create worktree directory
 		worktreePath := filepath.Join(dataDir, "repos", repoID, "worktrees", runID)
-		if err := os.MkdirAll(worktreePath, 0755); err != nil {
-			t.Fatalf("failed to create worktree: %v", err)
-		}
+		require.NoError(t, os.MkdirAll(worktreePath, 0755), "failed to create worktree")
 
 		// Write meta with archive.archived_at set
 		meta := store.RunMeta{
@@ -220,28 +212,24 @@ func TestWorkspacePredicate(t *testing.T) {
 			},
 		}
 		metaData, _ := json.Marshal(meta)
-		if err := os.WriteFile(filepath.Join(runDir, "meta.json"), metaData, 0644); err != nil {
-			t.Fatalf("failed to write meta.json: %v", err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(runDir, "meta.json"), metaData, 0644), "failed to write meta.json")
 
 		// Create service and try to verify
 		svc := NewService(dataDir, fs.NewRealFS())
 		_, err := svc.VerifyRun(context.Background(), runID, 30*time.Minute)
 
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		require.Error(t, err)
 
 		code := errors.GetCode(err)
-		if code != errors.EWorkspaceArchived {
-			t.Errorf("error code = %s, want %s", code, errors.EWorkspaceArchived)
-		}
+		assert.Equal(t, errors.EWorkspaceArchived, code)
 	})
 }
 
 // TestVerifyRecordErrorAugmentation tests the error augmentation logic.
 func TestVerifyRecordErrorAugmentation(t *testing.T) {
+	t.Parallel()
 	t.Run("augments empty error", func(t *testing.T) {
+		t.Parallel()
 		tmpDir := t.TempDir()
 		recordPath := filepath.Join(tmpDir, "verify_record.json")
 
@@ -253,35 +241,26 @@ func TestVerifyRecordErrorAugmentation(t *testing.T) {
 			OK:            true,
 		}
 		data, _ := json.Marshal(record)
-		if err := os.WriteFile(recordPath, data, 0644); err != nil {
-			t.Fatalf("failed to write record: %v", err)
-		}
+		require.NoError(t, os.WriteFile(recordPath, data, 0644), "failed to write record")
 
 		// Augment
 		augmentRecordError(recordPath, []string{"event1 failed", "event2 failed"})
 
 		// Read back
 		data, err := os.ReadFile(recordPath)
-		if err != nil {
-			t.Fatalf("failed to read record: %v", err)
-		}
+		require.NoError(t, err, "failed to read record")
 
 		var result store.VerifyRecord
-		if err := json.Unmarshal(data, &result); err != nil {
-			t.Fatalf("failed to parse record: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(data, &result), "failed to parse record")
 
-		if result.Error == nil {
-			t.Fatal("expected error to be set")
-		}
+		require.NotNil(t, result.Error, "expected error to be set")
 
 		want := "events append failed: event1 failed; event2 failed"
-		if *result.Error != want {
-			t.Errorf("error = %q, want %q", *result.Error, want)
-		}
+		assert.Equal(t, want, *result.Error)
 	})
 
 	t.Run("preserves existing error", func(t *testing.T) {
+		t.Parallel()
 		tmpDir := t.TempDir()
 		recordPath := filepath.Join(tmpDir, "verify_record.json")
 
@@ -295,48 +274,35 @@ func TestVerifyRecordErrorAugmentation(t *testing.T) {
 			Error:         &existingErr,
 		}
 		data, _ := json.Marshal(record)
-		if err := os.WriteFile(recordPath, data, 0644); err != nil {
-			t.Fatalf("failed to write record: %v", err)
-		}
+		require.NoError(t, os.WriteFile(recordPath, data, 0644), "failed to write record")
 
 		// Augment
 		augmentRecordError(recordPath, []string{"event failed"})
 
 		// Read back
 		data, err := os.ReadFile(recordPath)
-		if err != nil {
-			t.Fatalf("failed to read record: %v", err)
-		}
+		require.NoError(t, err, "failed to read record")
 
 		var result store.VerifyRecord
-		if err := json.Unmarshal(data, &result); err != nil {
-			t.Fatalf("failed to parse record: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(data, &result), "failed to parse record")
 
-		if result.Error == nil {
-			t.Fatal("expected error to be set")
-		}
+		require.NotNil(t, result.Error, "expected error to be set")
 
 		want := "some internal error; events append failed: event failed"
-		if *result.Error != want {
-			t.Errorf("error = %q, want %q", *result.Error, want)
-		}
+		assert.Equal(t, want, *result.Error)
 	})
 }
 
 // TestRunNotFound tests that non-existent runs return E_RUN_NOT_FOUND.
 func TestRunNotFound(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 
 	svc := NewService(dataDir, fs.NewRealFS())
 	_, err := svc.VerifyRun(context.Background(), "nonexistent-run", 30*time.Minute)
 
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 
 	code := errors.GetCode(err)
-	if code != errors.ERunNotFound {
-		t.Errorf("error code = %s, want %s", code, errors.ERunNotFound)
-	}
+	assert.Equal(t, errors.ERunNotFound, code)
 }

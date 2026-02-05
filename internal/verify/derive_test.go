@@ -1,6 +1,10 @@
 package verify
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 // intPtr returns a pointer to an int for use in tests.
 func intPtr(i int) *int {
@@ -8,6 +12,8 @@ func intPtr(i int) *int {
 }
 
 func TestDeriveOK_Precedence(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		timedOut  bool
@@ -112,17 +118,19 @@ func TestDeriveOK_Precedence(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := DeriveOK(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
-			if got != tt.want {
-				t.Errorf("DeriveOK(%v, %v, %v, %v) = %v, want %v",
-					tt.timedOut, tt.cancelled, tt.exitCode, tt.vj, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestDeriveSummary(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		timedOut  bool
@@ -217,12 +225,12 @@ func TestDeriveSummary(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := DeriveSummary(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
-			if got != tt.want {
-				t.Errorf("DeriveSummary(%v, %v, %v, %v) = %q, want %q",
-					tt.timedOut, tt.cancelled, tt.exitCode, tt.vj, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

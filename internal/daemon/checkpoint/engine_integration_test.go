@@ -11,6 +11,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,24 +29,19 @@ func setupRealGitRepo(t *testing.T) string {
 	ctx := context.Background()
 
 	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git init failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
+	require.NoError(t, err, "git init exec error")
+	require.Equal(t, 0, result.ExitCode, "git init failed: stderr: %s", result.Stderr)
 
 	testFile := filepath.Join(repoDir, "README.md")
-	if err := os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644), "failed to write test file")
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git add failed: %v, exit %d", err, result.ExitCode)
-	}
+	require.NoError(t, err, "git add exec error")
+	require.Equal(t, 0, result.ExitCode, "git add failed")
 
 	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git commit failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
+	require.NoError(t, err, "git commit exec error")
+	require.Equal(t, 0, result.ExitCode, "git commit failed: stderr: %s", result.Stderr)
 
 	return repoDir
 }
@@ -87,54 +84,36 @@ func TestEngine_createCheckpointInternal_RealGit(t *testing.T) {
 	e, _ := newRealEngine(t, repoDir)
 
 	// Modify a tracked file
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Modified\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Modified\n"), 0o644))
 
 	err := e.createCheckpointInternal(context.Background())
-	if err != nil {
-		t.Fatalf("createCheckpointInternal() error: %v", err)
-	}
+	require.NoError(t, err, "createCheckpointInternal()")
 
 	// Verify checkpoints.json has 1 checkpoint
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Fatalf("expected 1 checkpoint, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
 	cp := cpFile.Checkpoints[0]
 
 	// Verify snapshot ref exists
 	cr := exec.NewRealRunner()
 	result, err := cr.Run(context.Background(), "git", []string{"-C", repoDir, "show-ref", cp.SnapshotRef}, exec.RunOpts{})
-	if err != nil || result.ExitCode != 0 {
-		t.Errorf("snapshot ref %s not found: exit %d, stderr: %s", cp.SnapshotRef, result.ExitCode, result.Stderr)
-	}
+	require.NoError(t, err, "show-ref exec error")
+	assert.Equal(t, 0, result.ExitCode, "snapshot ref %s not found: stderr: %s", cp.SnapshotRef, result.Stderr)
 
 	// Verify snapshot commit is valid
 	result, err = cr.Run(context.Background(), "git", []string{"-C", repoDir, "cat-file", "-t", cp.SnapshotCommit}, exec.RunOpts{})
-	if err != nil || result.ExitCode != 0 {
-		t.Errorf("cat-file failed for %s", cp.SnapshotCommit)
-	}
-	if strings.TrimSpace(result.Stdout) != "commit" {
-		t.Errorf("snapshot object type = %q, want 'commit'", strings.TrimSpace(result.Stdout))
-	}
+	require.NoError(t, err, "cat-file exec error")
+	assert.Equal(t, 0, result.ExitCode, "cat-file failed for %s", cp.SnapshotCommit)
+	assert.Equal(t, "commit", strings.TrimSpace(result.Stdout))
 
 	// Verify diffstat is non-empty
-	if cp.Diffstat == "" {
-		t.Error("expected non-empty diffstat")
-	}
+	assert.NotEmpty(t, cp.Diffstat, "expected non-empty diffstat")
 
 	// Verify events.jsonl has checkpoint_created event
 	events := readEvents(t, e.eventsPath)
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	if events[0].Kind != EventKindCheckpointCreated {
-		t.Errorf("event kind = %q, want %q", events[0].Kind, EventKindCheckpointCreated)
-	}
+	require.Len(t, events, 1)
+	assert.Equal(t, EventKindCheckpointCreated, events[0].Kind)
 }
 
 // 4.2 TestApplier_Apply_RealGit
@@ -149,12 +128,8 @@ func TestApplier_Apply_RealGit(t *testing.T) {
 	ctx := context.Background()
 
 	// State 1: modify file
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.createCheckpointInternal(ctx); err != nil {
-		t.Fatalf("checkpoint 1 failed: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State 1\n"), 0o644))
+	require.NoError(t, e.createCheckpointInternal(ctx), "checkpoint 1 failed")
 
 	// State 2: modify file again
 	// Need to advance the clock past rate limit
@@ -162,20 +137,12 @@ func TestApplier_Apply_RealGit(t *testing.T) {
 	e.lastCheckpoint = time.Time{} // reset rate limit
 	e.mu.Unlock()
 
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State 2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.createCheckpointInternal(ctx); err != nil {
-		t.Fatalf("checkpoint 2 failed: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State 2\n"), 0o644))
+	require.NoError(t, e.createCheckpointInternal(ctx), "checkpoint 2 failed")
 
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 2 {
-		t.Fatalf("expected 2 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 2)
 
 	// Apply checkpoint 1
 	eventsDir := t.TempDir()
@@ -183,33 +150,21 @@ func TestApplier_Apply_RealGit(t *testing.T) {
 	applier := NewApplier("test-inv-integration", repoDir, checkpointsDir, eventsPath, cr, fs.NewRealFS(), time.Now)
 
 	_, err = applier.Apply(ctx, 1)
-	if err != nil {
-		t.Fatalf("Apply(1) error: %v", err)
-	}
+	require.NoError(t, err, "Apply(1)")
 
 	// Verify file matches state 1
 	data, err := os.ReadFile(filepath.Join(repoDir, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "# State 1\n" {
-		t.Errorf("after apply(1), README.md = %q, want %q", string(data), "# State 1\n")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "# State 1\n", string(data), "after apply(1)")
 
 	// Apply checkpoint 2
 	_, err = applier.Apply(ctx, 2)
-	if err != nil {
-		t.Fatalf("Apply(2) error: %v", err)
-	}
+	require.NoError(t, err, "Apply(2)")
 
 	// Verify file matches state 2
 	data, err = os.ReadFile(filepath.Join(repoDir, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "# State 2\n" {
-		t.Errorf("after apply(2), README.md = %q, want %q", string(data), "# State 2\n")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "# State 2\n", string(data), "after apply(2)")
 }
 
 // 4.3 TestApplier_Apply_CleansUntrackedFiles
@@ -223,37 +178,27 @@ func TestApplier_Apply_CleansUntrackedFiles(t *testing.T) {
 	ctx := context.Background()
 
 	// Modify something so checkpoint isn't empty
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Changed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.createCheckpointInternal(ctx); err != nil {
-		t.Fatalf("checkpoint failed: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Changed\n"), 0o644))
+	require.NoError(t, e.createCheckpointInternal(ctx), "checkpoint failed")
 
 	// Add untracked file after checkpoint
 	untrackedPath := filepath.Join(repoDir, "untracked-new-file.txt")
-	if err := os.WriteFile(untrackedPath, []byte("untracked content\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(untrackedPath, []byte("untracked content\n"), 0o644))
 	// Verify it exists
-	if _, err := os.Stat(untrackedPath); os.IsNotExist(err) {
-		t.Fatal("untracked file should exist before apply")
-	}
+	_, err := os.Stat(untrackedPath)
+	require.False(t, os.IsNotExist(err), "untracked file should exist before apply")
 
 	// Apply checkpoint
 	eventsDir := t.TempDir()
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
 	applier := NewApplier("test-inv-integration", repoDir, checkpointsDir, eventsPath, exec.NewRealRunner(), fs.NewRealFS(), time.Now)
 
-	_, err := applier.Apply(ctx, 1)
-	if err != nil {
-		t.Fatalf("Apply() error: %v", err)
-	}
+	_, err = applier.Apply(ctx, 1)
+	require.NoError(t, err, "Apply()")
 
 	// Verify untracked file was removed
-	if _, err := os.Stat(untrackedPath); !os.IsNotExist(err) {
-		t.Error("untracked file should have been removed by apply")
-	}
+	_, err = os.Stat(untrackedPath)
+	assert.True(t, os.IsNotExist(err), "untracked file should have been removed by apply")
 }
 
 // 4.4 TestEngine_isDirty_RealGit
@@ -269,60 +214,34 @@ func TestEngine_isDirty_RealGit(t *testing.T) {
 
 	// Clean state
 	dirty, err := e.isDirty(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dirty {
-		t.Error("expected clean workspace")
-	}
+	require.NoError(t, err)
+	assert.False(t, dirty, "expected clean workspace")
 
 	// Modify tracked file
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("modified\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("modified\n"), 0o644))
 	dirty, err = e.isDirty(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !dirty {
-		t.Error("expected dirty workspace after modify")
-	}
+	require.NoError(t, err)
+	assert.True(t, dirty, "expected dirty workspace after modify")
 
 	// Stage the change
-	if _, err := cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
 	dirty, err = e.isDirty(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !dirty {
-		t.Error("expected dirty workspace after stage")
-	}
+	require.NoError(t, err)
+	assert.True(t, dirty, "expected dirty workspace after stage")
 
 	// Commit
-	if _, err := cr.Run(ctx, "git", []string{"commit", "-m", "change"}, exec.RunOpts{Dir: repoDir}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = cr.Run(ctx, "git", []string{"commit", "-m", "change"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
 	dirty, err = e.isDirty(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dirty {
-		t.Error("expected clean workspace after commit")
-	}
+	require.NoError(t, err)
+	assert.False(t, dirty, "expected clean workspace after commit")
 
 	// Add untracked file (engine config has IncludeUntracked=true)
-	if err := os.WriteFile(filepath.Join(repoDir, "newfile.txt"), []byte("new\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "newfile.txt"), []byte("new\n"), 0o644))
 	dirty, err = e.isDirty(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !dirty {
-		t.Error("expected dirty workspace with untracked file")
-	}
+	require.NoError(t, err)
+	assert.True(t, dirty, "expected dirty workspace with untracked file")
 }
 
 // 4.5 TestEngine_DenylistIntegration_RealGit
@@ -335,31 +254,19 @@ func TestEngine_DenylistIntegration_RealGit(t *testing.T) {
 	e, _ := newRealEngine(t, repoDir)
 
 	// Create .env file (denylisted)
-	if err := os.WriteFile(filepath.Join(repoDir, ".env"), []byte("SECRET=value\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".env"), []byte("SECRET=value\n"), 0o644))
 
 	// Also modify a tracked file so there's something to snapshot
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Modified\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Modified\n"), 0o644))
 
 	err := e.createCheckpointInternal(context.Background())
-	if err != nil {
-		t.Fatalf("createCheckpointInternal() error: %v", err)
-	}
+	require.NoError(t, err, "createCheckpointInternal()")
 
 	// Verify checkpoint was created with IncludesUntracked=false (degraded)
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Fatalf("expected 1 checkpoint, got %d", len(cpFile.Checkpoints))
-	}
-	if cpFile.Checkpoints[0].IncludesUntracked {
-		t.Error("expected IncludesUntracked=false due to .env denylist")
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+	assert.False(t, cpFile.Checkpoints[0].IncludesUntracked, "expected IncludesUntracked=false due to .env denylist")
 
 	// Verify denylist event was emitted
 	events := readEvents(t, e.eventsPath)
@@ -369,9 +276,7 @@ func TestEngine_DenylistIntegration_RealGit(t *testing.T) {
 			foundDenylist = true
 		}
 	}
-	if !foundDenylist {
-		t.Error("expected denylist_triggered event")
-	}
+	assert.True(t, foundDenylist, "expected denylist_triggered event")
 }
 
 // 4.6 TestEngine_MultipleCheckpoints_RealGit
@@ -392,36 +297,23 @@ func TestEngine_MultipleCheckpoints_RealGit(t *testing.T) {
 
 		// Modify file to create unique state
 		content := strings.Repeat("x", i*10) + "\n"
-		if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := e.createCheckpointInternal(ctx); err != nil {
-			t.Fatalf("checkpoint %d failed: %v", i, err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(content), 0o644))
+		require.NoError(t, e.createCheckpointInternal(ctx), "checkpoint %d failed", i)
 	}
 
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 3 {
-		t.Fatalf("expected 3 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 3)
 
 	// Verify monotonic IDs
 	for i, cp := range cpFile.Checkpoints {
-		if cp.ID != i+1 {
-			t.Errorf("checkpoint[%d].ID = %d, want %d", i, cp.ID, i+1)
-		}
+		assert.Equal(t, i+1, cp.ID, "checkpoint[%d].ID", i)
 	}
 
 	// Verify distinct commits
 	commits := make(map[string]bool)
 	for _, cp := range cpFile.Checkpoints {
-		if commits[cp.SnapshotCommit] {
-			t.Errorf("duplicate commit SHA: %s", cp.SnapshotCommit)
-		}
+		assert.False(t, commits[cp.SnapshotCommit], "duplicate commit SHA: %s", cp.SnapshotCommit)
 		commits[cp.SnapshotCommit] = true
 	}
 
@@ -429,9 +321,8 @@ func TestEngine_MultipleCheckpoints_RealGit(t *testing.T) {
 	cr := exec.NewRealRunner()
 	for _, cp := range cpFile.Checkpoints {
 		result, err := cr.Run(ctx, "git", []string{"-C", repoDir, "show-ref", cp.SnapshotRef}, exec.RunOpts{})
-		if err != nil || result.ExitCode != 0 {
-			t.Errorf("ref %s not found", cp.SnapshotRef)
-		}
+		require.NoError(t, err, "show-ref exec error for %s", cp.SnapshotRef)
+		assert.Equal(t, 0, result.ExitCode, "ref %s not found", cp.SnapshotRef)
 	}
 }
 
@@ -446,12 +337,8 @@ func TestEngine_SkipsDuplicate_RealGit(t *testing.T) {
 	ctx := context.Background()
 
 	// Modify a file and create checkpoint
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Changed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.createCheckpointInternal(ctx); err != nil {
-		t.Fatalf("first checkpoint failed: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Changed\n"), 0o644))
+	require.NoError(t, e.createCheckpointInternal(ctx), "first checkpoint failed")
 
 	// Reset rate limit
 	e.mu.Lock()
@@ -459,20 +346,12 @@ func TestEngine_SkipsDuplicate_RealGit(t *testing.T) {
 	e.mu.Unlock()
 
 	// Create checkpoint again without any new changes → should be skipped
-	if err := e.createCheckpointInternal(ctx); err != nil {
-		t.Fatalf("second checkpoint call failed: %v", err)
-	}
+	require.NoError(t, e.createCheckpointInternal(ctx), "second checkpoint call failed")
 
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Errorf("expected 1 checkpoint (duplicate skipped), got %d", len(cpFile.Checkpoints))
-	}
-	if cpFile.Checkpoints[0].TreeSHA == "" {
-		t.Error("expected TreeSHA to be populated")
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 1, "expected 1 checkpoint (duplicate skipped)")
+	assert.NotEmpty(t, cpFile.Checkpoints[0].TreeSHA, "expected TreeSHA to be populated")
 }
 
 // 4.8 TestEngine_FinalCheckpoint_SkipsDuplicateOnShutdown
@@ -486,37 +365,23 @@ func TestEngine_FinalCheckpoint_SkipsDuplicateOnShutdown(t *testing.T) {
 	ctx := context.Background()
 
 	// Modify file and create first checkpoint
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State A\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.createCheckpointInternal(ctx); err != nil {
-		t.Fatalf("first checkpoint failed: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State A\n"), 0o644))
+	require.NoError(t, e.createCheckpointInternal(ctx), "first checkpoint failed")
 
 	// Call doFinalCheckpoint with no new changes → should skip (duplicate tree)
 	e.doFinalCheckpoint(ctx)
 
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 1 {
-		t.Errorf("expected 1 checkpoint after no-change final, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 1, "expected 1 checkpoint after no-change final")
 
 	// Now modify file again, call doFinalCheckpoint → should create new checkpoint
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State B\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# State B\n"), 0o644))
 	e.doFinalCheckpoint(ctx)
 
 	cpFile, err = e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 2 {
-		t.Errorf("expected 2 checkpoints after modified final, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 2, "expected 2 checkpoints after modified final")
 }
 
 // 4.9 TestEngine_pruneCheckpoints_RealGit
@@ -556,21 +421,13 @@ func TestEngine_pruneCheckpoints_RealGit(t *testing.T) {
 		e.mu.Unlock()
 
 		content := strings.Repeat("y", i*5) + "\n"
-		if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := e.createCheckpointInternal(ctx); err != nil {
-			t.Fatalf("checkpoint %d failed: %v", i, err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(content), 0o644))
+		require.NoError(t, e.createCheckpointInternal(ctx), "checkpoint %d failed", i)
 	}
 
 	cpFile, err := e.loadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cpFile.Checkpoints) != 5 {
-		t.Fatalf("expected 5 checkpoints, got %d", len(cpFile.Checkpoints))
-	}
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 5)
 
 	// Record the first 2 refs
 	ref1 := cpFile.Checkpoints[0].SnapshotRef
@@ -588,19 +445,14 @@ func TestEngine_pruneCheckpoints_RealGit(t *testing.T) {
 
 	// Verify pruned refs are gone
 	result, _ := cr.Run(ctx, "git", []string{"-C", repoDir, "show-ref", ref1}, exec.RunOpts{})
-	if result.ExitCode == 0 {
-		t.Errorf("ref %s should have been deleted", ref1)
-	}
+	assert.NotEqual(t, 0, result.ExitCode, "ref %s should have been deleted", ref1)
 	result, _ = cr.Run(ctx, "git", []string{"-C", repoDir, "show-ref", ref2}, exec.RunOpts{})
-	if result.ExitCode == 0 {
-		t.Errorf("ref %s should have been deleted", ref2)
-	}
+	assert.NotEqual(t, 0, result.ExitCode, "ref %s should have been deleted", ref2)
 
 	// Verify remaining refs still exist
 	for _, cp := range cpFile.Checkpoints {
 		result, err := cr.Run(ctx, "git", []string{"-C", repoDir, "show-ref", cp.SnapshotRef}, exec.RunOpts{})
-		if err != nil || result.ExitCode != 0 {
-			t.Errorf("ref %s should still exist", cp.SnapshotRef)
-		}
+		require.NoError(t, err, "show-ref exec error for %s", cp.SnapshotRef)
+		assert.Equal(t, 0, result.ExitCode, "ref %s should still exist", cp.SnapshotRef)
 	}
 }

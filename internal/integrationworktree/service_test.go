@@ -2,15 +2,20 @@ package integrationworktree
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCreateAndRemove tests the full lifecycle of creating and removing a worktree.
@@ -34,28 +39,24 @@ func TestCreateAndRemove(t *testing.T) {
 	dataDir := filepath.Join(tmpDir, "data")
 
 	// Initialize git repo with explicit initial branch name
-	if err := os.Mkdir(repoDir, 0o755); err != nil {
-		t.Fatalf("failed to create repo dir: %v", err)
-	}
+	require.NoError(t, os.Mkdir(repoDir, 0o755), "failed to create repo dir")
 
 	result, err = cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git init failed: %v, exit %d", err, result.ExitCode)
+		require.Fail(t, "git init failed", "err=%v, exit %d", err, result.ExitCode)
 	}
 
 	// Create initial commit
 	readme := filepath.Join(repoDir, "README.md")
-	if err := os.WriteFile(readme, []byte("# Test\n"), 0o644); err != nil {
-		t.Fatalf("failed to write readme: %v", err)
-	}
+	require.NoError(t, os.WriteFile(readme, []byte("# Test\n"), 0o644), "failed to write readme")
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git add failed: %v, exit %d", err, result.ExitCode)
+		require.Fail(t, "git add failed", "err=%v, exit %d", err, result.ExitCode)
 	}
 	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("git commit failed: %v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
+		require.Fail(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
 	}
 
 	// Create service
@@ -77,42 +78,29 @@ func TestCreateAndRemove(t *testing.T) {
 			ParentBranch: "main",
 		})
 
-		if err != nil {
-			t.Fatalf("Create() error = %v", err)
-		}
+		require.NoError(t, err)
 
 		// Verify result
-		if result.WorktreeID == "" {
-			t.Error("WorktreeID is empty")
-		}
-		if result.Branch == "" {
-			t.Error("Branch is empty")
-		}
-		if result.TreePath == "" {
-			t.Error("TreePath is empty")
-		}
+		assert.NotEmpty(t, result.WorktreeID, "WorktreeID is empty")
+		assert.NotEmpty(t, result.Branch, "Branch is empty")
+		assert.NotEmpty(t, result.TreePath, "TreePath is empty")
 
 		// Verify tree directory exists
-		if _, err := os.Stat(result.TreePath); os.IsNotExist(err) {
-			t.Error("tree directory not created")
-		}
+		_, err = os.Stat(result.TreePath)
+		assert.False(t, os.IsNotExist(err), "tree directory not created")
 
 		// Verify INTEGRATION_MARKER exists
 		markerPath := filepath.Join(result.TreePath, ".agency", IntegrationMarkerFileName)
-		if _, err := os.Stat(markerPath); os.IsNotExist(err) {
-			t.Error("INTEGRATION_MARKER not created")
-		}
+		_, err = os.Stat(markerPath)
+		assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER not created")
 
 		// Verify meta.json exists
 		metaPath := st.IntegrationWorktreeMetaPath(repoID, result.WorktreeID)
-		if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-			t.Error("meta.json not created")
-		}
+		_, err = os.Stat(metaPath)
+		assert.False(t, os.IsNotExist(err), "meta.json not created")
 
 		// Verify HasIntegrationMarker
-		if !HasIntegrationMarker(result.TreePath) {
-			t.Error("HasIntegrationMarker returned false")
-		}
+		assert.True(t, HasIntegrationMarker(result.TreePath), "HasIntegrationMarker returned false")
 
 		// Store the worktree ID for later tests
 		createdWorktreeID = result.WorktreeID
@@ -124,12 +112,8 @@ func TestCreateAndRemove(t *testing.T) {
 			t.Skip("Create test failed, skipping")
 		}
 		record, err := svc.Resolve(repoID, "test-feature", false)
-		if err != nil {
-			t.Fatalf("Resolve() error = %v", err)
-		}
-		if record.Name != "test-feature" {
-			t.Errorf("Name = %v, want test-feature", record.Name)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, "test-feature", record.Name)
 	})
 
 	// Test name uniqueness
@@ -143,9 +127,7 @@ func TestCreateAndRemove(t *testing.T) {
 			RepoID:       repoID,
 			ParentBranch: "main",
 		})
-		if err == nil {
-			t.Error("expected error for duplicate name")
-		}
+		require.Error(t, err, "expected error for duplicate name")
 	})
 
 	// Test Remove
@@ -154,55 +136,242 @@ func TestCreateAndRemove(t *testing.T) {
 			t.Skip("Create test failed, skipping")
 		}
 		record, err := svc.Resolve(repoID, "test-feature", false)
-		if err != nil {
-			t.Fatalf("Resolve() error = %v", err)
-		}
+		require.NoError(t, err)
 		treePath := record.Meta.TreePath
 
 		err = svc.Remove(ctx, repoID, record.WorktreeID, RemoveOpts{
 			RepoRoot: repoDir,
 			Force:    true,
 		})
-		if err != nil {
-			t.Fatalf("Remove() error = %v", err)
-		}
+		require.NoError(t, err)
 
 		// Verify tree directory is gone
-		if _, err := os.Stat(treePath); !os.IsNotExist(err) {
-			t.Error("tree directory still exists after remove")
-		}
+		_, err = os.Stat(treePath)
+		assert.True(t, os.IsNotExist(err), "tree directory still exists after remove")
 
 		// Verify meta.json still exists with archived state
 		meta, err := st.ReadIntegrationWorktreeMeta(repoID, record.WorktreeID)
-		if err != nil {
-			t.Fatalf("ReadIntegrationWorktreeMeta() error = %v", err)
-		}
-		if meta.State != store.WorktreeStateArchived {
-			t.Errorf("State = %v, want archived", meta.State)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, store.WorktreeStateArchived, meta.State)
 	})
 }
 
 func TestHasIntegrationMarker(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	// Test without marker
-	if HasIntegrationMarker(tmpDir) {
-		t.Error("should return false for dir without marker")
-	}
+	assert.False(t, HasIntegrationMarker(tmpDir), "should return false for dir without marker")
 
 	// Create marker
 	agencyDir := filepath.Join(tmpDir, ".agency")
-	if err := os.Mkdir(agencyDir, 0o755); err != nil {
-		t.Fatalf("failed to create .agency dir: %v", err)
-	}
+	require.NoError(t, os.Mkdir(agencyDir, 0o755), "failed to create .agency dir")
 	markerPath := filepath.Join(agencyDir, IntegrationMarkerFileName)
-	if err := os.WriteFile(markerPath, []byte("marker"), 0o644); err != nil {
-		t.Fatalf("failed to write marker: %v", err)
-	}
+	require.NoError(t, os.WriteFile(markerPath, []byte("marker"), 0o644), "failed to write marker")
 
 	// Test with marker
-	if !HasIntegrationMarker(tmpDir) {
-		t.Error("should return true for dir with marker")
+	assert.True(t, HasIntegrationMarker(tmpDir), "should return true for dir with marker")
+}
+
+// TestRemove_GitFails verifies that Remove returns E_WORKTREE_REMOVE_FAILED
+// when the git worktree remove command fails with a non-zero exit code.
+func TestRemove_GitFails(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+	repoID := "abc123"
+	wtID := "20260201120000-f1a2"
+
+	// Create worktree record directory and write valid meta.json
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	meta := store.NewIntegrationWorktreeMeta(
+		wtID, "rm-fail-test", repoID,
+		"agency/rm-fail-test-f1a2", "main",
+		treePath, now,
+	)
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+
+	// Set up fake runner that returns failure for git worktree remove
+	cr := testutil.NewFakeCommandRunner()
+	repoRoot := "/fake/repo"
+	gitKey := fmt.Sprintf("git -C %s worktree remove %s", repoRoot, treePath)
+	cr.Responses[gitKey] = testutil.FakeResponse{
+		Stderr:   "fatal: some git error",
+		ExitCode: 128,
 	}
+
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+	ctx := context.Background()
+
+	err = svc.Remove(ctx, repoID, wtID, RemoveOpts{
+		RepoRoot: repoRoot,
+		Force:    false,
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeRemoveFailed, errors.GetCode(err),
+		"expected E_WORKTREE_REMOVE_FAILED when git worktree remove exits non-zero")
+}
+
+// TestRemove_GitRunError verifies that Remove returns E_WORKTREE_REMOVE_FAILED
+// when the git worktree remove command itself fails to execute (e.g., binary not found).
+func TestRemove_GitRunError(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+	repoID := "abc123"
+	wtID := "20260201120000-f1a2"
+
+	// Create worktree record directory and write valid meta.json
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	meta := store.NewIntegrationWorktreeMeta(
+		wtID, "rm-runerr-test", repoID,
+		"agency/rm-runerr-test-f1a2", "main",
+		treePath, now,
+	)
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+
+	// Set up fake runner that returns an error (not a non-zero exit, but a real error)
+	cr := testutil.NewFakeCommandRunner()
+	repoRoot := "/fake/repo"
+	gitKey := fmt.Sprintf("git -C %s worktree remove %s", repoRoot, treePath)
+	cr.Responses[gitKey] = testutil.FakeResponse{
+		Err: fmt.Errorf("exec: git not found"),
+	}
+
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+	ctx := context.Background()
+
+	err = svc.Remove(ctx, repoID, wtID, RemoveOpts{
+		RepoRoot: repoRoot,
+		Force:    false,
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeRemoveFailed, errors.GetCode(err),
+		"expected E_WORKTREE_REMOVE_FAILED when git command runner returns error")
+}
+
+// TestRemove_AlreadyArchived verifies that Remove returns E_WORKTREE_NOT_FOUND
+// when the worktree is already archived.
+func TestRemove_AlreadyArchived(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+	repoID := "abc123"
+	wtID := "20260201120000-arch"
+
+	// Create worktree record directory and write meta.json with archived state
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	meta := store.NewIntegrationWorktreeMeta(
+		wtID, "archived-test", repoID,
+		"agency/archived-test-arch", "main",
+		treePath, now,
+	)
+	meta.State = store.WorktreeStateArchived
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+
+	cr := testutil.NewFakeCommandRunner()
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+	ctx := context.Background()
+
+	err = svc.Remove(ctx, repoID, wtID, RemoveOpts{
+		RepoRoot: "/fake/repo",
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err),
+		"expected E_WORKTREE_NOT_FOUND for already-archived worktree")
+}
+
+// TestResolve_WorktreeNotFound verifies that Resolve returns E_WORKTREE_NOT_FOUND
+// when no worktree matches the input.
+func TestResolve_WorktreeNotFound(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+	cr := testutil.NewFakeCommandRunner()
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+
+	_, err := svc.Resolve("nonexistent-repo", "no-such-worktree", false)
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err),
+		"expected E_WORKTREE_NOT_FOUND for non-existent worktree")
+}
+
+// TestResolve_AmbiguousWorktreeID verifies that Resolve returns E_WORKTREE_ID_AMBIGUOUS
+// when a prefix matches multiple worktrees.
+func TestResolve_AmbiguousWorktreeID(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+	repoID := "abc123"
+
+	// Create two worktrees with the same prefix pattern
+	for _, wtID := range []string{"20260201120000-a1b2", "20260201120000-a1c3"} {
+		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+		require.NoError(t, err)
+
+		treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+		meta := store.NewIntegrationWorktreeMeta(
+			wtID, "feature-"+wtID[len(wtID)-4:], repoID,
+			"agency/feature-"+wtID, "main",
+			treePath, now,
+		)
+		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+	}
+
+	cr := testutil.NewFakeCommandRunner()
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+
+	// Use a prefix that matches both worktrees
+	_, err := svc.Resolve(repoID, "20260201120000-a1", false)
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeIDAmbiguous, errors.GetCode(err),
+		"expected E_WORKTREE_ID_AMBIGUOUS when prefix matches multiple worktrees")
+	assert.True(t, strings.Contains(err.Error(), "ambiguous"),
+		"error message should contain 'ambiguous'")
+}
+
+// TestLoad_MissingMarkerFile verifies that HasIntegrationMarker returns false
+// when the .agency/INTEGRATION_MARKER file is missing from a directory.
+// This is the condition that triggers E_NOT_AN_INTEGRATION_WORKTREE in the daemon.
+func TestLoad_MissingMarkerFile(t *testing.T) {
+	t.Parallel()
+
+	// Test with empty directory (no .agency/ at all)
+	emptyDir := t.TempDir()
+	assert.False(t, HasIntegrationMarker(emptyDir),
+		"should return false for directory without .agency/")
+
+	// Test with .agency/ directory but no INTEGRATION_MARKER
+	dirWithAgency := t.TempDir()
+	agencyDir := filepath.Join(dirWithAgency, ".agency")
+	require.NoError(t, os.Mkdir(agencyDir, 0o755))
+	assert.False(t, HasIntegrationMarker(dirWithAgency),
+		"should return false for directory with .agency/ but no INTEGRATION_MARKER")
+
+	// Test with nonexistent directory
+	assert.False(t, HasIntegrationMarker("/nonexistent/path"),
+		"should return false for non-existent path")
 }
