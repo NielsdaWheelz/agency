@@ -518,3 +518,441 @@ func (c *Client) Discard(ctx context.Context, repoID, invocationID string) (*dae
 
 	return &result, nil
 }
+
+// ----- PR-12 Read API Client Methods -----
+
+// ListWorktreesOpts holds options for listing worktrees.
+type ListWorktreesOpts struct {
+	RepoID string // optional, filter by repo
+	State  string // present, archived, all (default: present)
+	Limit  int    // default 100, max 500
+	Cursor string // opaque pagination cursor
+}
+
+// ListWorktreesResult wraps the list worktrees response.
+type ListWorktreesResult struct {
+	Worktrees  []daemon.WorktreeDTO
+	NextCursor string
+	RequestID  string
+}
+
+// ListWorktrees lists integration worktrees via the daemon.
+func (c *Client) ListWorktrees(ctx context.Context, opts ListWorktreesOpts) (*ListWorktreesResult, error) {
+	url := "http://daemon/worktrees?"
+	if opts.RepoID != "" {
+		url += "repo_id=" + opts.RepoID + "&"
+	}
+	if opts.State != "" {
+		url += "state=" + opts.State + "&"
+	}
+	if opts.Limit > 0 {
+		url += fmt.Sprintf("limit=%d&", opts.Limit)
+	}
+	if opts.Cursor != "" {
+		url += "cursor=" + opts.Cursor + "&"
+	}
+	url = url[:len(url)-1] // trim trailing & or ?
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.ListWorktreesData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &ListWorktreesResult{
+		Worktrees:  data.Worktrees,
+		NextCursor: data.NextCursor,
+		RequestID:  apiResp.RequestID,
+	}, nil
+}
+
+// GetWorktreeResult wraps the get worktree response.
+type GetWorktreeResult struct {
+	Worktree  daemon.WorktreeDTO
+	RequestID string
+}
+
+// GetWorktree gets a single worktree by reference via the daemon.
+func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*GetWorktreeResult, error) {
+	url := fmt.Sprintf("http://daemon/worktrees/%s", ref)
+	if repoID != "" {
+		url += "?repo_id=" + repoID
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var worktree daemon.WorktreeDTO
+	if err := json.Unmarshal(dataBytes, &worktree); err != nil {
+		return nil, err
+	}
+
+	return &GetWorktreeResult{
+		Worktree:  worktree,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// ListInvocationsOpts holds options for listing invocations.
+type ListInvocationsOpts struct {
+	RepoID      string // optional, filter by repo
+	WorktreeRef string // optional, filter by worktree ref
+	State       string // active, finished, all (default: all)
+	Mode        string // headed, headless, all (default: all)
+	Limit       int    // default 100, max 500
+	Cursor      string // opaque pagination cursor
+}
+
+// ListInvocationsResult wraps the list invocations response.
+type ListInvocationsResult struct {
+	Invocations []daemon.InvocationDTO
+	NextCursor  string
+	RequestID   string
+}
+
+// ListInvocations lists invocations via the daemon.
+func (c *Client) ListInvocations(ctx context.Context, opts ListInvocationsOpts) (*ListInvocationsResult, error) {
+	url := "http://daemon/invocations?"
+	if opts.RepoID != "" {
+		url += "repo_id=" + opts.RepoID + "&"
+	}
+	if opts.WorktreeRef != "" {
+		url += "worktree_ref=" + opts.WorktreeRef + "&"
+	}
+	if opts.State != "" {
+		url += "state=" + opts.State + "&"
+	}
+	if opts.Mode != "" {
+		url += "mode=" + opts.Mode + "&"
+	}
+	if opts.Limit > 0 {
+		url += fmt.Sprintf("limit=%d&", opts.Limit)
+	}
+	if opts.Cursor != "" {
+		url += "cursor=" + opts.Cursor + "&"
+	}
+	url = url[:len(url)-1] // trim trailing & or ?
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.ListInvocationsData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &ListInvocationsResult{
+		Invocations: data.Invocations,
+		NextCursor:  data.NextCursor,
+		RequestID:   apiResp.RequestID,
+	}, nil
+}
+
+// GetInvocationResult wraps the get invocation response.
+type GetInvocationResult struct {
+	Invocation daemon.InvocationDTO
+	RequestID  string
+}
+
+// GetInvocation gets a single invocation by reference via the daemon.
+func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (*GetInvocationResult, error) {
+	url := fmt.Sprintf("http://daemon/invocations/%s", ref)
+	if repoID != "" {
+		url += "?repo_id=" + repoID
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var invocation daemon.InvocationDTO
+	if err := json.Unmarshal(dataBytes, &invocation); err != nil {
+		return nil, err
+	}
+
+	return &GetInvocationResult{
+		Invocation: invocation,
+		RequestID:  apiResp.RequestID,
+	}, nil
+}
+
+// GetInvocationDiffOpts holds options for getting invocation diff.
+type GetInvocationDiffOpts struct {
+	IncludePatch       bool // default true
+	MaxPatchBytes      int  // default 2MB, max 5MB
+	IncludeUncommitted bool // default true
+}
+
+// GetInvocationDiffResult wraps the invocation diff response.
+type GetInvocationDiffResult struct {
+	Diff      daemon.InvocationDiffData
+	RequestID string
+}
+
+// GetInvocationDiff gets the diff for an invocation via the daemon.
+func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID string, opts GetInvocationDiffOpts) (*GetInvocationDiffResult, error) {
+	url := fmt.Sprintf("http://daemon/invocations/%s/diff?", ref)
+	if repoID != "" {
+		url += "repo_id=" + repoID + "&"
+	}
+	if !opts.IncludePatch {
+		url += "include_patch=false&"
+	}
+	if opts.MaxPatchBytes > 0 {
+		url += fmt.Sprintf("max_patch_bytes=%d&", opts.MaxPatchBytes)
+	}
+	if !opts.IncludeUncommitted {
+		url += "include_uncommitted=false&"
+	}
+	url = url[:len(url)-1] // trim trailing & or ?
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var diff daemon.InvocationDiffData
+	if err := json.Unmarshal(dataBytes, &diff); err != nil {
+		return nil, err
+	}
+
+	return &GetInvocationDiffResult{
+		Diff:      diff,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// GetInvocationLogsOpts holds options for getting invocation logs.
+type GetInvocationLogsOpts struct {
+	Kind      string // raw, stderr, stream (default: raw)
+	TailBytes int    // default 64KB, max 1MB
+}
+
+// GetInvocationLogsResult wraps the invocation logs response.
+type GetInvocationLogsResult struct {
+	Logs      daemon.InvocationLogsData
+	RequestID string
+}
+
+// GetInvocationLogs gets logs for an invocation via the daemon.
+func (c *Client) GetInvocationLogs(ctx context.Context, ref string, repoID string, opts GetInvocationLogsOpts) (*GetInvocationLogsResult, error) {
+	url := fmt.Sprintf("http://daemon/invocations/%s/logs?", ref)
+	if repoID != "" {
+		url += "repo_id=" + repoID + "&"
+	}
+	if opts.Kind != "" {
+		url += "kind=" + opts.Kind + "&"
+	}
+	if opts.TailBytes > 0 {
+		url += fmt.Sprintf("tail_bytes=%d&", opts.TailBytes)
+	}
+	url = url[:len(url)-1] // trim trailing & or ?
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var logs daemon.InvocationLogsData
+	if err := json.Unmarshal(dataBytes, &logs); err != nil {
+		return nil, err
+	}
+
+	return &GetInvocationLogsResult{
+		Logs:      logs,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// ListCheckpointsOpts holds options for listing checkpoints.
+type ListCheckpointsOpts struct {
+	Limit  int    // default 100, max 500
+	Cursor string // opaque pagination cursor
+}
+
+// ListCheckpointsResult wraps the list checkpoints response.
+type ListCheckpointsResult struct {
+	Checkpoints []daemon.CheckpointDTO
+	NextCursor  string
+	RequestID   string
+}
+
+// ListCheckpoints lists checkpoints for an invocation via the daemon.
+func (c *Client) ListCheckpoints(ctx context.Context, invocationRef string, repoID string, opts ListCheckpointsOpts) (*ListCheckpointsResult, error) {
+	url := fmt.Sprintf("http://daemon/invocations/%s/checkpoints?", invocationRef)
+	if repoID != "" {
+		url += "repo_id=" + repoID + "&"
+	}
+	if opts.Limit > 0 {
+		url += fmt.Sprintf("limit=%d&", opts.Limit)
+	}
+	if opts.Cursor != "" {
+		url += "cursor=" + opts.Cursor + "&"
+	}
+	url = url[:len(url)-1] // trim trailing & or ?
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	// Decode data field
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.ListCheckpointsData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &ListCheckpointsResult{
+		Checkpoints: data.Checkpoints,
+		NextCursor:  data.NextCursor,
+		RequestID:   apiResp.RequestID,
+	}, nil
+}

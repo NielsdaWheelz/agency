@@ -1,0 +1,1430 @@
+package daemon
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
+	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
+)
+
+// ---------------------------------------------------------------------------
+// readTestEnv: shared test environment for read handler tests
+// ---------------------------------------------------------------------------
+
+type readTestEnv struct {
+	Server *Server
+	Store  *store.Store
+	RepoID string
+}
+
+// setupReadTestEnv creates a minimal server with seeded data for read handler tests.
+// Seeds:
+//
+//	1 repo in repo_index.json
+//	2 worktrees: wt-1 "alpha" (present), wt-2 "beta" (archived)
+//	3 invocations:
+//	  inv-1: running, headless, worktree=wt-1, started 10min ago
+//	  inv-2: finished, headed, worktree=wt-1, started 5min ago, landed
+//	  inv-3: failed, headless, worktree=wt-2, started 1min ago
+//
+// Clock: fixed at 2026-02-05T12:00:00Z
+func setupReadTestEnv(t *testing.T) *readTestEnv {
+	t.Helper()
+
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	repoID := "test-repo-read"
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+
+	// Fixed clock
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	srv.Clock = func() time.Time { return now }
+
+	// Create repo index
+	idx := store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {
+				RepoID:     repoID,
+				Paths:      []string{"/tmp/repo"},
+				LastSeenAt: "2026-02-05T12:00:00Z",
+			},
+		},
+	}
+	require.NoError(t, st.SaveRepoIndex(idx))
+
+	// Create worktree wt-1 "alpha" (present)
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, "wt-1")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, "wt-1", &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0",
+		WorktreeID:    "wt-1",
+		Name:          "alpha",
+		RepoID:        repoID,
+		Branch:        "agency/alpha",
+		ParentBranch:  "main",
+		TreePath:      "/tmp/worktrees/alpha",
+		CreatedAt:     "2026-02-05T10:00:00Z",
+		LastUsedAt:    "2026-02-05T11:50:00Z",
+		State:         store.WorktreeStatePresent,
+	}))
+
+	// Create worktree wt-2 "beta" (archived)
+	_, err = st.EnsureIntegrationWorktreeDir(repoID, "wt-2")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, "wt-2", &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0",
+		WorktreeID:    "wt-2",
+		Name:          "beta",
+		RepoID:        repoID,
+		Branch:        "agency/beta",
+		ParentBranch:  "main",
+		TreePath:      "/tmp/worktrees/beta",
+		CreatedAt:     "2026-02-05T09:00:00Z",
+		LastUsedAt:    "2026-02-05T11:00:00Z",
+		State:         store.WorktreeStateArchived,
+	}))
+
+	// Create invocation inv-1: running, headless, wt-1, started 10min ago
+	semanticWorking := runnerstatus.StatusWorking
+	_, err = st.EnsureInvocationDir(repoID, "inv-1")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-1", &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          "inv-1",
+		IntegrationWorktreeID: "wt-1",
+		SandboxPath:           "/tmp/sandbox/inv-1",
+		SandboxBranch:         "agency/sandbox-inv-1",
+		BaseCommit:            "abc123",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             now.Add(-10 * time.Minute).Format(time.RFC3339),
+		Status:                store.InvocationStatusRunning,
+		SemanticStatus:        &semanticWorking,
+	}))
+
+	// Create invocation inv-2: finished, headed, wt-1, started 5min ago, landed
+	_, err = st.EnsureInvocationDir(repoID, "inv-2")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-2", &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          "inv-2",
+		InvocationName:        "feature-work",
+		IntegrationWorktreeID: "wt-1",
+		SandboxPath:           "/tmp/sandbox/inv-2",
+		SandboxBranch:         "agency/sandbox-inv-2",
+		BaseCommit:            "def456",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeaded,
+		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
+		FinishedAt:            now.Add(-2 * time.Minute).Format(time.RFC3339),
+		Status:                store.InvocationStatusFinished,
+		ExitReason:            "exited",
+		LandingStatus:         store.LandingStatusLanded,
+	}))
+
+	// Create invocation inv-3: failed, headless, wt-2, started 1min ago
+	_, err = st.EnsureInvocationDir(repoID, "inv-3")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-3", &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          "inv-3",
+		IntegrationWorktreeID: "wt-2",
+		SandboxPath:           "/tmp/sandbox/inv-3",
+		SandboxBranch:         "agency/sandbox-inv-3",
+		BaseCommit:            "ghi789",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             now.Add(-1 * time.Minute).Format(time.RFC3339),
+		Status:                store.InvocationStatusFailed,
+		ExitReason:            "unknown",
+		FailureReason:         "runner_exit_nonzero",
+	}))
+
+	return &readTestEnv{
+		Server: srv,
+		Store:  st,
+		RepoID: repoID,
+	}
+}
+
+// doWorktreeRequest makes a request to the worktrees handler.
+func (env *readTestEnv) doWorktreeRequest(t *testing.T, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	w := httptest.NewRecorder()
+	env.Server.handleWorktrees(w, req)
+	return w
+}
+
+// doWorktreeRequestWithHeaders makes a request to the worktrees handler with custom headers.
+func (env *readTestEnv) doWorktreeRequestWithHeaders(t *testing.T, method, path string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	env.Server.handleWorktrees(w, req)
+	return w
+}
+
+// doInvocationRequest makes a request to the invocations handler.
+func (env *readTestEnv) doInvocationRequest(t *testing.T, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	w := httptest.NewRecorder()
+	env.Server.handleInvocations(w, req)
+	return w
+}
+
+// decodeAPIResponse decodes the API response envelope from a recorder.
+func decodeAPIResponse(t *testing.T, w *httptest.ResponseRecorder) APIResponse {
+	t.Helper()
+	var resp APIResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode API response: %s", w.Body.String())
+	return resp
+}
+
+// decodeData extracts and decodes the Data field from an APIResponse into target.
+func decodeData(t *testing.T, resp APIResponse, target interface{}) {
+	t.Helper()
+	dataBytes, err := json.Marshal(resp.Data)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(dataBytes, target))
+}
+
+// ---------------------------------------------------------------------------
+// TIER 1: Core read handler tests (Tests 5-19)
+// ---------------------------------------------------------------------------
+
+func TestHandleListWorktrees_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+	assert.NotZero(t, resp.APIVersion)
+	assert.NotEmpty(t, resp.RequestID)
+
+	var data ListWorktreesData
+	decodeData(t, resp, &data)
+
+	// Default state filter is "present" → only wt-1 "alpha"
+	assert.Len(t, data.Worktrees, 1)
+	assert.Equal(t, "wt-1", data.Worktrees[0].WorktreeID)
+	assert.Equal(t, "alpha", data.Worktrees[0].Name)
+}
+
+func TestHandleListWorktrees_StateFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state         string
+		expectedCount int
+	}{
+		{"present", 1},
+		{"archived", 1},
+		{"all", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+			w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID+"&state="+tt.state)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			var data ListWorktreesData
+			decodeData(t, resp, &data)
+
+			assert.Len(t, data.Worktrees, tt.expectedCount)
+		})
+	}
+}
+
+func TestHandleListWorktrees_EmptyResult(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id=nonexistent-repo")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListWorktreesData
+	decodeData(t, resp, &data)
+
+	// Should be empty array, not null
+	assert.NotNil(t, data.Worktrees)
+	assert.Len(t, data.Worktrees, 0)
+}
+
+func TestHandleGetWorktree_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto WorktreeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "wt-1", dto.WorktreeID)
+	assert.Equal(t, "alpha", dto.Name)
+	assert.Equal(t, "present", dto.State)
+}
+
+func TestHandleGetWorktree_ByName(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto WorktreeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "wt-1", dto.WorktreeID)
+}
+
+func TestHandleGetWorktree_NotFound(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/nonexistent?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_WORKTREE_NOT_FOUND", resp.ErrorCode)
+}
+
+func TestHandleListInvocations_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	// All 3 invocations (default state=all)
+	assert.Len(t, data.Invocations, 3)
+
+	// Sorted by started_at desc: inv-3 (1min ago), inv-2 (5min ago), inv-1 (10min ago)
+	assert.Equal(t, "inv-3", data.Invocations[0].InvocationID)
+	assert.Equal(t, "inv-2", data.Invocations[1].InvocationID)
+	assert.Equal(t, "inv-1", data.Invocations[2].InvocationID)
+
+	// Each should have display_status populated
+	for _, inv := range data.Invocations {
+		assert.NotEmpty(t, inv.DisplayStatus, "display_status should be populated for %s", inv.InvocationID)
+	}
+}
+
+func TestHandleListInvocations_StateFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state         string
+		expectedCount int
+		expectedIDs   []string
+	}{
+		{"active", 1, []string{"inv-1"}},
+		{"finished", 2, []string{"inv-3", "inv-2"}},
+		{"all", 3, []string{"inv-3", "inv-2", "inv-1"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&state="+tt.state)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			var data ListInvocationsData
+			decodeData(t, resp, &data)
+
+			assert.Len(t, data.Invocations, tt.expectedCount)
+			var gotIDs []string
+			for _, inv := range data.Invocations {
+				gotIDs = append(gotIDs, inv.InvocationID)
+			}
+			assert.Equal(t, tt.expectedIDs, gotIDs)
+		})
+	}
+}
+
+func TestHandleListInvocations_ModeFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode          string
+		expectedCount int
+	}{
+		{"headless", 2},
+		{"headed", 1},
+		{"all", 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&mode="+tt.mode)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			var data ListInvocationsData
+			decodeData(t, resp, &data)
+
+			assert.Len(t, data.Invocations, tt.expectedCount)
+		})
+	}
+}
+
+func TestHandleGetInvocation_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto InvocationDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "inv-1", dto.InvocationID)
+	assert.Equal(t, "running", dto.Status)
+	assert.Equal(t, "working", dto.DisplayStatus)
+}
+
+func TestHandleGetInvocation_NotFound(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/nonexistent?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVOCATION_NOT_FOUND", resp.ErrorCode)
+}
+
+func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed checkpoints.json in the sandbox dir for inv-1
+	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+
+	cpFile := &checkpoint.CheckpointsFile{
+		SchemaVersion: "1.0",
+		Checkpoints: []checkpoint.Checkpoint{
+			{ID: 1, CreatedAt: "2026-02-05T11:51:00Z", Diffstat: "+10 -5", SnapshotCommit: "aaa111", IncludesUntracked: true},
+			{ID: 2, CreatedAt: "2026-02-05T11:52:00Z", Diffstat: "+20 -10", SnapshotCommit: "bbb222", IncludesUntracked: true},
+			{ID: 3, CreatedAt: "2026-02-05T11:53:00Z", Diffstat: "+30 -15", SnapshotCommit: "ccc333", IncludesUntracked: false},
+		},
+	}
+	cpData, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListCheckpointsData
+	decodeData(t, resp, &data)
+
+	// 3 checkpoints, ordered by ID desc (latest first)
+	require.Len(t, data.Checkpoints, 3)
+	assert.Equal(t, 3, data.Checkpoints[0].ID)
+	assert.Equal(t, 2, data.Checkpoints[1].ID)
+	assert.Equal(t, 1, data.Checkpoints[2].ID)
+}
+
+func TestHandleGetInvocationCheckpoints_Empty(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// inv-2 has no checkpoints.json
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/checkpoints?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListCheckpointsData
+	decodeData(t, resp, &data)
+
+	assert.NotNil(t, data.Checkpoints)
+	assert.Len(t, data.Checkpoints, 0)
+}
+
+func TestResponseEnvelope_RequestID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("custom_request_id", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doWorktreeRequestWithHeaders(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID,
+			map[string]string{"X-Request-ID": "custom-id"})
+
+		resp := decodeAPIResponse(t, w)
+		assert.Equal(t, "custom-id", resp.RequestID)
+	})
+
+	t.Run("generated_request_id", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID)
+
+		resp := decodeAPIResponse(t, w)
+		assert.NotEmpty(t, resp.RequestID)
+		// UUID format: 8-4-4-4-12
+		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, resp.RequestID)
+	})
+}
+
+func TestResponseEnvelope_ErrorFormat(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/nonexistent?repo_id="+env.RepoID)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.NotZero(t, resp.APIVersion)
+	assert.NotEmpty(t, resp.ErrorCode)
+	assert.NotEmpty(t, resp.Message)
+	assert.NotEmpty(t, resp.RequestID)
+}
+
+// ---------------------------------------------------------------------------
+// TIER 2: Filter helpers (Tests 20-22)
+// ---------------------------------------------------------------------------
+
+func TestMatchesWorktreeState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state    store.WorktreeState
+		filter   string
+		expected bool
+	}{
+		{store.WorktreeStatePresent, "present", true},
+		{store.WorktreeStatePresent, "archived", false},
+		{store.WorktreeStatePresent, "all", true},
+		{store.WorktreeStateArchived, "present", false},
+		{store.WorktreeStateArchived, "archived", true},
+		{store.WorktreeStateArchived, "all", true},
+		{store.WorktreeStatePresent, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.state)+"_"+tt.filter, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, matchesWorktreeState(tt.state, tt.filter))
+		})
+	}
+}
+
+func TestMatchesInvocationState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		status   store.InvocationStatus
+		landing  store.LandingStatus
+		filter   string
+		expected bool
+	}{
+		{"starting_active", store.InvocationStatusStarting, "", "active", true},
+		{"running_active", store.InvocationStatusRunning, "", "active", true},
+		{"finished_no_landing_active", store.InvocationStatusFinished, "", "active", true},
+		{"finished_landed_active", store.InvocationStatusFinished, store.LandingStatusLanded, "active", false},
+		{"finished_discarded_active", store.InvocationStatusFinished, store.LandingStatusDiscarded, "active", false},
+		{"finished_finished", store.InvocationStatusFinished, "", "finished", true},
+		{"failed_finished", store.InvocationStatusFailed, "", "finished", true},
+		{"running_finished", store.InvocationStatusRunning, "", "finished", false},
+		{"running_all", store.InvocationStatusRunning, "", "all", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, matchesInvocationState(tt.status, tt.landing, tt.filter))
+		})
+	}
+}
+
+func TestMatchesInvocationMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode     store.RunnerMode
+		filter   string
+		expected bool
+	}{
+		{store.RunnerModeHeaded, "headed", true},
+		{store.RunnerModeHeaded, "headless", false},
+		{store.RunnerModeHeaded, "all", true},
+		{store.RunnerModeHeaded, "", true},
+		{store.RunnerModeHeadless, "headless", true},
+		{store.RunnerModeHeadless, "headed", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mode)+"_"+tt.filter, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, matchesInvocationMode(tt.mode, tt.filter))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TIER 2: Pagination tests (Tests 23-25)
+// ---------------------------------------------------------------------------
+
+func TestPaginateWorktrees(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_list", func(t *testing.T) {
+		t.Parallel()
+		result, cursor := paginateWorktrees(nil, "", 10)
+		assert.Len(t, result, 0)
+		assert.Empty(t, cursor)
+	})
+
+	t.Run("within_limit", func(t *testing.T) {
+		t.Parallel()
+		items := []WorktreeDTO{
+			{WorktreeID: "wt-1", LastUsedAt: "2026-02-05T11:00:00Z"},
+			{WorktreeID: "wt-2", LastUsedAt: "2026-02-05T10:00:00Z"},
+			{WorktreeID: "wt-3", LastUsedAt: "2026-02-05T09:00:00Z"},
+		}
+		result, cursor := paginateWorktrees(items, "", 10)
+		assert.Len(t, result, 3)
+		assert.Empty(t, cursor)
+	})
+
+	t.Run("exceeds_limit", func(t *testing.T) {
+		t.Parallel()
+		items := make([]WorktreeDTO, 5)
+		for i := range items {
+			items[i] = WorktreeDTO{
+				WorktreeID: "wt-" + string(rune('a'+i)),
+				LastUsedAt: time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			}
+		}
+		result, cursor := paginateWorktrees(items, "", 2)
+		assert.Len(t, result, 2)
+		assert.NotEmpty(t, cursor)
+	})
+
+	t.Run("cursor_continuation", func(t *testing.T) {
+		t.Parallel()
+		items := make([]WorktreeDTO, 5)
+		for i := range items {
+			items[i] = WorktreeDTO{
+				WorktreeID: "wt-" + string(rune('a'+i)),
+				LastUsedAt: time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			}
+		}
+		// Page 1: [wt-a, wt-b]
+		result1, cursor1 := paginateWorktrees(items, "", 2)
+		assert.Len(t, result1, 2)
+		assert.Equal(t, "wt-a", result1[0].WorktreeID)
+		assert.Equal(t, "wt-b", result1[1].WorktreeID)
+		assert.NotEmpty(t, cursor1)
+
+		// Page 2: exclusive cursor → [wt-c, wt-d]
+		result2, cursor2 := paginateWorktrees(items, cursor1, 2)
+		assert.Len(t, result2, 2)
+		assert.Equal(t, "wt-c", result2[0].WorktreeID)
+		assert.Equal(t, "wt-d", result2[1].WorktreeID)
+		assert.NotEmpty(t, cursor2)
+
+		// Page 3: [wt-e]
+		result3, cursor3 := paginateWorktrees(items, cursor2, 2)
+		assert.Len(t, result3, 1)
+		assert.Equal(t, "wt-e", result3[0].WorktreeID)
+		assert.Empty(t, cursor3)
+	})
+}
+
+func TestPaginateInvocations(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_list", func(t *testing.T) {
+		t.Parallel()
+		result, cursor := paginateInvocations(nil, "", 10)
+		assert.Len(t, result, 0)
+		assert.Empty(t, cursor)
+	})
+
+	t.Run("within_limit", func(t *testing.T) {
+		t.Parallel()
+		items := []InvocationDTO{
+			{InvocationID: "inv-1", StartedAt: "2026-02-05T11:00:00Z"},
+			{InvocationID: "inv-2", StartedAt: "2026-02-05T10:00:00Z"},
+		}
+		result, cursor := paginateInvocations(items, "", 10)
+		assert.Len(t, result, 2)
+		assert.Empty(t, cursor)
+	})
+
+	t.Run("exceeds_limit_with_cursor", func(t *testing.T) {
+		t.Parallel()
+		items := make([]InvocationDTO, 5)
+		for i := range items {
+			items[i] = InvocationDTO{
+				InvocationID: "inv-" + string(rune('a'+i)),
+				StartedAt:    time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			}
+		}
+		result1, cursor1 := paginateInvocations(items, "", 2)
+		assert.Len(t, result1, 2)
+		assert.NotEmpty(t, cursor1)
+
+		result2, _ := paginateInvocations(items, cursor1, 2)
+		assert.Len(t, result2, 2)
+	})
+}
+
+func TestPaginateCheckpoints(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_list", func(t *testing.T) {
+		t.Parallel()
+		result, cursor := paginateCheckpoints(nil, "", 10)
+		assert.Len(t, result, 0)
+		assert.Empty(t, cursor)
+	})
+
+	t.Run("within_limit", func(t *testing.T) {
+		t.Parallel()
+		items := []CheckpointDTO{
+			{ID: 5}, {ID: 4}, {ID: 3},
+		}
+		result, cursor := paginateCheckpoints(items, "", 10)
+		assert.Len(t, result, 3)
+		assert.Empty(t, cursor)
+	})
+
+	t.Run("exceeds_limit_with_cursor", func(t *testing.T) {
+		t.Parallel()
+		items := []CheckpointDTO{
+			{ID: 5}, {ID: 4}, {ID: 3}, {ID: 2}, {ID: 1},
+		}
+		// Page 1: [5, 4]
+		result1, cursor1 := paginateCheckpoints(items, "", 2)
+		assert.Len(t, result1, 2)
+		assert.Equal(t, 5, result1[0].ID)
+		assert.Equal(t, 4, result1[1].ID)
+		assert.NotEmpty(t, cursor1)
+
+		// Page 2: exclusive cursor → [3, 2]
+		result2, cursor2 := paginateCheckpoints(items, cursor1, 2)
+		assert.Len(t, result2, 2)
+		assert.Equal(t, 3, result2[0].ID)
+		assert.Equal(t, 2, result2[1].ID)
+		assert.NotEmpty(t, cursor2)
+
+		// Page 3: [1]
+		result3, cursor3 := paginateCheckpoints(items, cursor2, 2)
+		assert.Len(t, result3, 1)
+		assert.Equal(t, 1, result3[0].ID)
+		assert.Empty(t, cursor3)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TIER 2: Log reading tests (Tests 26-29)
+// ---------------------------------------------------------------------------
+
+func TestReadLogFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("full_file", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		logPath := filepath.Join(tmpDir, "test.log")
+		content := "line1\nline2\nline3\n"
+		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
+
+		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
+		require.NoError(t, err)
+
+		assert.Equal(t, content, data.Content)
+		assert.False(t, data.Truncated)
+		assert.False(t, data.StartsMidline)
+		assert.False(t, data.EndsMidline)
+		assert.Equal(t, int64(len(content)), data.TotalBytes)
+	})
+
+	t.Run("truncated_file", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		logPath := filepath.Join(tmpDir, "test.log")
+		content := "A long line that exceeds our tiny tail bytes limit.\nAnother line.\n"
+		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
+
+		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 20})
+		require.NoError(t, err)
+
+		assert.True(t, data.Truncated)
+		assert.True(t, data.StartsMidline)
+		assert.Equal(t, int64(len(content)), data.TotalBytes)
+		assert.Equal(t, 20, data.ReturnedBytes)
+	})
+
+	t.Run("ends_midline", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		logPath := filepath.Join(tmpDir, "test.log")
+		content := "no trailing newline"
+		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
+
+		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
+		require.NoError(t, err)
+
+		assert.True(t, data.EndsMidline)
+	})
+
+	t.Run("ends_newline", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		logPath := filepath.Join(tmpDir, "test.log")
+		content := "with trailing newline\n"
+		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
+
+		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
+		require.NoError(t, err)
+
+		assert.False(t, data.EndsMidline)
+	})
+}
+
+func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed a raw log file for inv-1
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	logContent := `{"event":"start"}\n{"event":"output","data":"hello"}\n`
+	require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/logs?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data InvocationLogsData
+	decodeData(t, resp, &data)
+
+	assert.Equal(t, "raw", data.Kind)
+	assert.Equal(t, logContent, data.Content)
+	assert.Equal(t, int64(len(logContent)), data.TotalBytes)
+}
+
+func TestHandleGetInvocationLogs_MissingFile(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// inv-2 has no log files
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/logs?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data InvocationLogsData
+	decodeData(t, resp, &data)
+
+	assert.Equal(t, "", data.Content)
+	assert.Equal(t, int64(0), data.TotalBytes)
+}
+
+func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		kind       string
+		fileSuffix string
+	}{
+		{"raw", "raw.jsonl"},
+		{"stderr", "stderr.log"},
+		{"stream", "stream.jsonl"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+
+			// Create the log file
+			logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+			require.NoError(t, os.MkdirAll(logsDir, 0o700))
+			content := "content for " + tt.kind + "\n"
+			require.NoError(t, os.WriteFile(filepath.Join(logsDir, tt.fileSuffix), []byte(content), 0o644))
+
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind="+tt.kind)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			var data InvocationLogsData
+			decodeData(t, resp, &data)
+
+			assert.Equal(t, tt.kind, data.Kind)
+			assert.Equal(t, content, data.Content)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TIER 2: extractDiffstat test (Test 30)
+// ---------------------------------------------------------------------------
+
+func TestExtractDiffstat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "summary_line_only",
+			input:    " 3 files changed, 42 insertions(+), 15 deletions(-)",
+			expected: "3 files changed, 42 insertions(+), 15 deletions(-)",
+		},
+		{
+			name:     "multi_line_stat",
+			input:    "foo.go | 10 +++---\n bar.go | 5 ++\n 2 files changed",
+			expected: "2 files changed",
+		},
+		{
+			name:     "empty",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, extractDiffstat(tt.input))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TIER 2: Parameter parsing tests (Tests 32-35)
+// ---------------------------------------------------------------------------
+
+func TestParseListWorktreesParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/worktrees", nil)
+		params := parseListWorktreesParams(req)
+		assert.Equal(t, "present", params.State)
+		assert.Equal(t, 100, params.Limit)
+		assert.Empty(t, params.RepoID)
+		assert.Empty(t, params.Cursor)
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/worktrees?repo_id=r1&state=all&limit=50&cursor=abc", nil)
+		params := parseListWorktreesParams(req)
+		assert.Equal(t, "r1", params.RepoID)
+		assert.Equal(t, "all", params.State)
+		assert.Equal(t, 50, params.Limit)
+		assert.Equal(t, "abc", params.Cursor)
+	})
+}
+
+func TestParseListInvocationsParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations", nil)
+		params := parseListInvocationsParams(req)
+		assert.Equal(t, "all", params.State)
+		assert.Equal(t, "all", params.Mode)
+		assert.Equal(t, 100, params.Limit)
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations?state=active&mode=headless&limit=25&worktree_ref=alpha", nil)
+		params := parseListInvocationsParams(req)
+		assert.Equal(t, "active", params.State)
+		assert.Equal(t, "headless", params.Mode)
+		assert.Equal(t, 25, params.Limit)
+		assert.Equal(t, "alpha", params.WorktreeRef)
+	})
+}
+
+func TestParseGetDiffParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff", nil)
+		params := parseGetDiffParams(req)
+		assert.True(t, params.IncludePatch)
+		assert.Equal(t, 2097152, params.MaxPatchBytes)
+		assert.True(t, params.IncludeUncommitted)
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?include_patch=false&max_patch_bytes=1000&include_uncommitted=0", nil)
+		params := parseGetDiffParams(req)
+		assert.False(t, params.IncludePatch)
+		assert.Equal(t, 1000, params.MaxPatchBytes)
+		assert.False(t, params.IncludeUncommitted)
+	})
+}
+
+func TestParseGetLogsParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs", nil)
+		params := parseGetLogsParams(req)
+		assert.Equal(t, "raw", params.Kind)
+		assert.Equal(t, 65536, params.TailBytes)
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&tail_bytes=1024", nil)
+		params := parseGetLogsParams(req)
+		assert.Equal(t, "stderr", params.Kind)
+		assert.Equal(t, 1024, params.TailBytes)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TIER 2: Diff integration test (Test 31)
+// ---------------------------------------------------------------------------
+
+func TestHandleGetInvocationDiff(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	// Cannot use t.Parallel() because HermeticGitEnv uses t.Setenv.
+	testutil.HermeticGitEnv(t)
+
+	cr := exec.NewRealRunner()
+	ctx := t.Context()
+
+	// 1. Create a real git repo with an initial commit
+	repoDir := t.TempDir()
+	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git init failed")
+
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "base.txt"), []byte("base content\n"), 0o644))
+	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode)
+	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "initial commit"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode)
+
+	// Get the initial commit SHA (this will be our base_commit)
+	result, err = cr.Run(ctx, "git", []string{"rev-parse", "HEAD"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	baseCommit := strings.TrimSpace(result.Stdout)
+
+	// 2. Make additional commits on top
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("new feature\n"), 0o644))
+	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "add feature"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode)
+
+	// 3. Set up daemon + store with invocation pointing to this repo
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	repoID := "test-repo-diff"
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, cr, fs.NewRealFS(), configDir)
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	srv.Clock = func() time.Time { return now }
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {RepoID: repoID, Paths: []string{repoDir}, LastSeenAt: "2026-02-05T12:00:00Z"},
+		},
+	}))
+
+	invID := "inv-diff-1"
+	_, err = st.EnsureInvocationDir(repoID, invID)
+	require.NoError(t, err)
+	require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          invID,
+		IntegrationWorktreeID: "wt-1",
+		SandboxPath:           repoDir,
+		SandboxBranch:         "main",
+		BaseCommit:            baseCommit,
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
+		Status:                store.InvocationStatusRunning,
+	}))
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: repoID}
+
+	// 4. Call the diff handler
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/"+invID+"/diff?repo_id="+repoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data InvocationDiffData
+	decodeData(t, resp, &data)
+
+	// 5. Verify diff data
+	assert.True(t, data.HasCommits, "expected has_commits=true")
+	assert.Equal(t, baseCommit, data.BaseCommit)
+	assert.NotEmpty(t, data.SandboxBranchTip)
+	assert.NotEqual(t, baseCommit, data.SandboxBranchTip, "tip should differ from base")
+
+	require.NotNil(t, data.CommittedRange)
+	assert.NotEmpty(t, data.CommittedRange.Commits, "expected at least one commit in committed_range")
+	assert.Equal(t, baseCommit, data.CommittedRange.From)
+	assert.Equal(t, data.SandboxBranchTip, data.CommittedRange.To)
+
+	// Verify first commit has valid SHA and summary
+	assert.NotEmpty(t, data.CommittedRange.Commits[0].SHA)
+	assert.Equal(t, "add feature", data.CommittedRange.Commits[0].Summary)
+}
+
+// ---------------------------------------------------------------------------
+// TIER 3: Worktree ref filter (Test 37)
+// ---------------------------------------------------------------------------
+
+func TestHandleListInvocations_WorktreeRefFilter(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Filter by worktree_ref=alpha → only inv-1 and inv-2 (both in wt-1 "alpha")
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_ref=alpha")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	// inv-1 and inv-2 are in wt-1 ("alpha"), inv-3 is in wt-2 ("beta")
+	assert.Len(t, data.Invocations, 2)
+	var gotIDs []string
+	for _, inv := range data.Invocations {
+		gotIDs = append(gotIDs, inv.InvocationID)
+	}
+	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
+}
+
+// ---------------------------------------------------------------------------
+// TIER 3: Handler pagination (Tests 38-40)
+// ---------------------------------------------------------------------------
+
+func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed 5 checkpoints
+	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+
+	cpFile := &checkpoint.CheckpointsFile{
+		SchemaVersion: "1.0",
+		Checkpoints: []checkpoint.Checkpoint{
+			{ID: 1, CreatedAt: "2026-02-05T11:51:00Z", SnapshotCommit: "aaa", IncludesUntracked: true},
+			{ID: 2, CreatedAt: "2026-02-05T11:52:00Z", SnapshotCommit: "bbb", IncludesUntracked: true},
+			{ID: 3, CreatedAt: "2026-02-05T11:53:00Z", SnapshotCommit: "ccc", IncludesUntracked: true},
+			{ID: 4, CreatedAt: "2026-02-05T11:54:00Z", SnapshotCommit: "ddd", IncludesUntracked: true},
+			{ID: 5, CreatedAt: "2026-02-05T11:55:00Z", SnapshotCommit: "eee", IncludesUntracked: true},
+		},
+	}
+	cpData, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+
+	// First page: limit=2
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=2")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data1 ListCheckpointsData
+	decodeData(t, resp, &data1)
+
+	assert.Len(t, data1.Checkpoints, 2)
+	assert.Equal(t, 5, data1.Checkpoints[0].ID)
+	assert.Equal(t, 4, data1.Checkpoints[1].ID)
+	assert.NotEmpty(t, data1.NextCursor)
+
+	// Second page: exclusive cursor → [3, 2]
+	w2 := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=2&cursor="+data1.NextCursor)
+	assert.Equal(t, http.StatusOK, w2.Code)
+
+	resp2 := decodeAPIResponse(t, w2)
+	var data2 ListCheckpointsData
+	decodeData(t, resp2, &data2)
+
+	assert.Len(t, data2.Checkpoints, 2)
+	assert.Equal(t, 3, data2.Checkpoints[0].ID)
+	assert.Equal(t, 2, data2.Checkpoints[1].ID)
+}
+
+func TestHandleListWorktrees_Pagination(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	repoID := "test-repo-wt-page"
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
+		},
+	}))
+
+	// Seed 5 worktrees
+	for i := range 5 {
+		wtID := "wt-" + string(rune('a'+i))
+		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+		require.NoError(t, err)
+		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, &store.IntegrationWorktreeMeta{
+			SchemaVersion: "1.0",
+			WorktreeID:    wtID,
+			Name:          "name-" + string(rune('a'+i)),
+			RepoID:        repoID,
+			Branch:        "agency/" + wtID,
+			ParentBranch:  "main",
+			TreePath:      "/tmp/wt/" + wtID,
+			CreatedAt:     "2026-02-05T10:00:00Z",
+			LastUsedAt:    time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			State:         store.WorktreeStatePresent,
+		}))
+	}
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: repoID}
+
+	// First page
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+repoID+"&limit=2")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListWorktreesData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Worktrees, 2)
+	assert.NotEmpty(t, data.NextCursor)
+
+	// Second page
+	w2 := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+repoID+"&limit=2&cursor="+data.NextCursor)
+	assert.Equal(t, http.StatusOK, w2.Code)
+
+	resp2 := decodeAPIResponse(t, w2)
+	var data2 ListWorktreesData
+	decodeData(t, resp2, &data2)
+
+	assert.Len(t, data2.Worktrees, 2)
+}
+
+func TestHandleListInvocations_Pagination(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	repoID := "test-repo-inv-page"
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	srv.Clock = func() time.Time { return now }
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
+		},
+	}))
+
+	// Seed 5 invocations
+	for i := range 5 {
+		invID := "inv-" + string(rune('a'+i))
+		_, err := st.EnsureInvocationDir(repoID, invID)
+		require.NoError(t, err)
+		require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
+			SchemaVersion:         "1.0",
+			InvocationID:          invID,
+			IntegrationWorktreeID: "wt-1",
+			SandboxPath:           "/tmp/sandbox/" + invID,
+			SandboxBranch:         "agency/sandbox-" + invID,
+			BaseCommit:            "abc",
+			Runner:                "claude",
+			Mode:                  store.RunnerModeHeadless,
+			StartedAt:             now.Add(-time.Duration(i) * time.Minute).Format(time.RFC3339),
+			Status:                store.InvocationStatusRunning,
+		}))
+	}
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: repoID}
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+repoID+"&limit=2")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Invocations, 2)
+	assert.NotEmpty(t, data.NextCursor)
+
+	// Second page
+	w2 := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+repoID+"&limit=2&cursor="+data.NextCursor)
+	resp2 := decodeAPIResponse(t, w2)
+	var data2 ListInvocationsData
+	decodeData(t, resp2, &data2)
+
+	assert.Len(t, data2.Invocations, 2)
+}
+
+// ---------------------------------------------------------------------------
+// TIER 3: Routing tests (Tests 41-42)
+// ---------------------------------------------------------------------------
+
+func TestInvocationsRouting_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"POST_to_list_invocations", http.MethodPost, "/invocations/"},
+		{"POST_to_get_invocation", http.MethodPost, "/invocations/inv-1"},
+		{"POST_to_diff", http.MethodPost, "/invocations/inv-1/diff"},
+		{"POST_to_logs", http.MethodPost, "/invocations/inv-1/logs"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := env.doInvocationRequest(t, tt.method, tt.path+"?repo_id="+env.RepoID)
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		})
+	}
+}
+
+func TestCheckpointsRouting(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	t.Run("GET_list_checkpoints", func(t *testing.T) {
+		t.Parallel()
+		w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("GET_checkpoints_unknown_sub_action", func(t *testing.T) {
+		t.Parallel()
+		w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints/unknown?repo_id="+env.RepoID)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}

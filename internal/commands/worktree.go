@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -135,6 +136,7 @@ type WorktreeLSOpts struct {
 }
 
 // WorktreeLS lists integration worktrees.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeLSOpts, stdout, stderr io.Writer) error {
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -163,85 +165,60 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		repoID = repoIdentity.RepoID
 	}
 
-	// Scan worktrees
-	records, err := store.ScanIntegrationWorktreesForRepo(dirs.DataDir, repoID)
+	// Ensure daemon is running
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to scan integration worktrees", err)
+		return err
 	}
 
-	// Filter by state unless --all
-	var filtered []store.IntegrationWorktreeRecord
-	for _, r := range records {
-		if r.Broken {
-			if opts.All {
-				filtered = append(filtered, r)
-			}
-			continue
-		}
-		if r.Meta.State == store.WorktreeStateArchived && !opts.All {
-			continue
-		}
-		filtered = append(filtered, r)
+	// PR-12: Call daemon ListWorktrees endpoint
+	state := "present"
+	if opts.All {
+		state = "all"
+	}
+
+	result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+		RepoID: repoID,
+		State:  state,
+	})
+	if err != nil {
+		return err
 	}
 
 	// Output
 	if opts.JSON {
-		return writeWorktreeLSJSON(stdout, filtered)
+		return writeWorktreeLSJSONFromDTO(stdout, result.Worktrees)
 	}
 
-	return writeWorktreeLSHuman(stdout, filtered)
+	return writeWorktreeLSHumanFromDTO(stdout, result.Worktrees)
 }
 
-func writeWorktreeLSJSON(w io.Writer, records []store.IntegrationWorktreeRecord) error {
-	type jsonRecord struct {
-		WorktreeID   string `json:"worktree_id"`
-		Name         string `json:"name,omitempty"`
-		Branch       string `json:"branch,omitempty"`
-		ParentBranch string `json:"parent_branch,omitempty"`
-		TreePath     string `json:"tree_path,omitempty"`
-		State        string `json:"state,omitempty"`
-		CreatedAt    string `json:"created_at,omitempty"`
-		Broken       bool   `json:"broken,omitempty"`
-	}
-
-	out := make([]jsonRecord, len(records))
-	for i, r := range records {
-		jr := jsonRecord{
-			WorktreeID: r.WorktreeID,
-			Broken:     r.Broken,
-		}
-		if r.Meta != nil {
-			jr.Name = r.Meta.Name
-			jr.Branch = r.Meta.Branch
-			jr.ParentBranch = r.Meta.ParentBranch
-			jr.TreePath = r.Meta.TreePath
-			jr.State = string(r.Meta.State)
-			jr.CreatedAt = r.Meta.CreatedAt
-		}
-		out[i] = jr
-	}
-
+// writeWorktreeLSJSONFromDTO outputs worktree list as JSON from daemon DTOs.
+// PR-12: CLI renders daemon-provided data - no local derivation.
+func writeWorktreeLSJSONFromDTO(w io.Writer, worktrees []daemon.WorktreeDTO) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return enc.Encode(worktrees)
 }
 
-func writeWorktreeLSHuman(w io.Writer, records []store.IntegrationWorktreeRecord) error {
-	if len(records) == 0 {
+// writeWorktreeLSHumanFromDTO outputs worktree list in human-readable format from daemon DTOs.
+// PR-12: CLI renders daemon-provided data.
+func writeWorktreeLSHumanFromDTO(w io.Writer, worktrees []daemon.WorktreeDTO) error {
+	if len(worktrees) == 0 {
 		_, _ = fmt.Fprintln(w, "No integration worktrees found.")
 		return nil
 	}
 
-	for _, r := range records {
-		if r.Broken {
-			_, _ = fmt.Fprintf(w, "%s  [broken]\n", r.WorktreeID)
-			continue
-		}
+	for _, wt := range worktrees {
 		state := ""
-		if r.Meta.State == store.WorktreeStateArchived {
+		if wt.State == "archived" {
 			state = " [archived]"
 		}
-		_, _ = fmt.Fprintf(w, "%s  %s  %s%s\n", r.WorktreeID, r.Meta.Name, r.Meta.Branch, state)
+		_, _ = fmt.Fprintf(w, "%s  %s  %s%s\n", wt.WorktreeID, wt.Name, wt.Branch, state)
 	}
 
 	return nil
@@ -254,6 +231,7 @@ type WorktreeShowOpts struct {
 }
 
 // WorktreeShow shows details of an integration worktree.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeShowOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -269,73 +247,49 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// Resolve worktree
+	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := svc.Resolve(repoIdentity.RepoID, opts.WorktreeRef, true)
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
 		return err
 	}
 
-	if record.Broken {
-		return errors.NewWithDetails(
-			errors.EWorktreeBroken,
-			"worktree exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"worktree_id":  record.WorktreeID,
-				"worktree_dir": record.WorktreeDir,
-				"hint":         "inspect or remove the directory manually",
-			},
-		)
+	// PR-12: Call daemon GetWorktree endpoint
+	result, err := client.GetWorktree(ctx, opts.WorktreeRef, repoIdentity.RepoID)
+	if err != nil {
+		return err
 	}
 
 	// Output
 	if opts.JSON {
-		return writeWorktreeShowJSON(stdout, record)
+		return writeWorktreeShowJSONFromDTO(stdout, &result.Worktree)
 	}
 
-	return writeWorktreeShowHuman(stdout, record)
+	return writeWorktreeShowHumanFromDTO(stdout, &result.Worktree)
 }
 
-func writeWorktreeShowJSON(w io.Writer, r *store.IntegrationWorktreeRecord) error {
-	type jsonRecord struct {
-		WorktreeID   string `json:"worktree_id"`
-		Name         string `json:"name"`
-		RepoID       string `json:"repo_id"`
-		Branch       string `json:"branch"`
-		ParentBranch string `json:"parent_branch"`
-		TreePath     string `json:"tree_path"`
-		State        string `json:"state"`
-		CreatedAt    string `json:"created_at"`
-		WorktreeDir  string `json:"worktree_dir"`
-	}
-
-	out := jsonRecord{
-		WorktreeID:   r.WorktreeID,
-		Name:         r.Meta.Name,
-		RepoID:       r.Meta.RepoID,
-		Branch:       r.Meta.Branch,
-		ParentBranch: r.Meta.ParentBranch,
-		TreePath:     r.Meta.TreePath,
-		State:        string(r.Meta.State),
-		CreatedAt:    r.Meta.CreatedAt,
-		WorktreeDir:  r.WorktreeDir,
-	}
-
+// writeWorktreeShowJSONFromDTO outputs worktree details as JSON from daemon DTO.
+// PR-12: CLI renders daemon-provided data.
+func writeWorktreeShowJSONFromDTO(w io.Writer, wt *daemon.WorktreeDTO) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return enc.Encode(wt)
 }
 
-func writeWorktreeShowHuman(w io.Writer, r *store.IntegrationWorktreeRecord) error {
-	_, _ = fmt.Fprintf(w, "worktree_id:   %s\n", r.WorktreeID)
-	_, _ = fmt.Fprintf(w, "name:          %s\n", r.Meta.Name)
-	_, _ = fmt.Fprintf(w, "branch:        %s\n", r.Meta.Branch)
-	_, _ = fmt.Fprintf(w, "parent_branch: %s\n", r.Meta.ParentBranch)
-	_, _ = fmt.Fprintf(w, "state:         %s\n", r.Meta.State)
-	_, _ = fmt.Fprintf(w, "created_at:    %s\n", r.Meta.CreatedAt)
-	_, _ = fmt.Fprintf(w, "tree_path:     %s\n", r.Meta.TreePath)
+// writeWorktreeShowHumanFromDTO outputs worktree details in human-readable format from daemon DTO.
+// PR-12: CLI renders daemon-provided data.
+func writeWorktreeShowHumanFromDTO(w io.Writer, wt *daemon.WorktreeDTO) error {
+	_, _ = fmt.Fprintf(w, "worktree_id:   %s\n", wt.WorktreeID)
+	_, _ = fmt.Fprintf(w, "name:          %s\n", wt.Name)
+	_, _ = fmt.Fprintf(w, "repo_id:       %s\n", wt.RepoID)
+	_, _ = fmt.Fprintf(w, "branch:        %s\n", wt.Branch)
+	_, _ = fmt.Fprintf(w, "parent_branch: %s\n", wt.ParentBranch)
+	_, _ = fmt.Fprintf(w, "state:         %s\n", wt.State)
+	_, _ = fmt.Fprintf(w, "created_at:    %s\n", wt.CreatedAt)
+	_, _ = fmt.Fprintf(w, "tree_path:     %s\n", wt.TreePath)
 	return nil
 }
 
@@ -345,6 +299,7 @@ type WorktreePathOpts struct {
 }
 
 // WorktreePath outputs the path to an integration worktree.
+// PR-12: Routes through daemon read API - CLI never reads store directly.
 func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePathOpts, stdout, stderr io.Writer) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -360,25 +315,24 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// Resolve worktree
+	// Ensure daemon is running
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
 
-	record, err := svc.Resolve(repoIdentity.RepoID, opts.WorktreeRef, false)
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
 		return err
 	}
 
-	if record.Broken || record.Meta == nil {
-		return errors.NewWithDetails(
-			errors.EWorktreeBroken,
-			"worktree exists but meta.json is unreadable or invalid",
-			map[string]string{"worktree_id": record.WorktreeID},
-		)
+	// PR-12: Call daemon GetWorktree endpoint
+	result, err := client.GetWorktree(ctx, opts.WorktreeRef, repoIdentity.RepoID)
+	if err != nil {
+		return err
 	}
 
 	// Output just the path
-	_, _ = fmt.Fprintln(stdout, record.Meta.TreePath)
+	_, _ = fmt.Fprintln(stdout, result.Worktree.TreePath)
 	return nil
 }
 

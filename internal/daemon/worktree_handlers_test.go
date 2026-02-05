@@ -493,10 +493,16 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "base path without action should 404",
+			name:       "base path with GET should list worktrees (PR-12)",
 			method:     http.MethodGet,
 			path:       "/worktrees/",
-			wantStatus: http.StatusNotFound,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "base path with POST should 405",
+			method:     http.MethodPost,
+			path:       "/worktrees/",
+			wantStatus: http.StatusMethodNotAllowed,
 		},
 	}
 
