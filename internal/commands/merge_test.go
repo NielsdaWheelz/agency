@@ -917,7 +917,6 @@ func TestGetOriginURLForMerge(t *testing.T) {
 // TestMergeErrorCode_ENoPR verifies that resolvePRForMerge returns ENoPR
 // when no PR exists for the branch.
 func TestMergeErrorCode_ENoPR(t *testing.T) {
-	t.Parallel()
 	tmpDir := t.TempDir()
 	eventsPath := filepath.Join(tmpDir, "events.jsonl")
 
@@ -1240,7 +1239,6 @@ func TestMergeErrorCode_EDirtyWorktree_ViaGetDirtyStatus(t *testing.T) {
 // TestMergeErrorCode_ENoPR_ByStoredPRNumber verifies ENoPR when stored PR number
 // lookup fails and head branch lookup also finds no PR.
 func TestMergeErrorCode_ENoPR_ByStoredPRNumber(t *testing.T) {
-	t.Parallel()
 	tmpDir := t.TempDir()
 	eventsPath := filepath.Join(tmpDir, "events.jsonl")
 
