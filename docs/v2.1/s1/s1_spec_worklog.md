@@ -36,10 +36,10 @@ Status: frozen
 
 ### Cluster status
 
-- Cluster 1 drafted in `s1-platform-hardening-gates_spec.md`.
-- Cluster 2 drafted in `s1-platform-hardening-gates_spec.md`.
-- Cluster 3 drafted in `s1-platform-hardening-gates_spec.md`.
-- Cluster 4 drafted in `s1-platform-hardening-gates_spec.md`.
+- Cluster 1 drafted in `s1_spec.md`.
+- Cluster 2 drafted in `s1_spec.md`.
+- Cluster 3 drafted in `s1_spec.md`.
+- Cluster 4 drafted in `s1_spec.md`.
 - Hardening passes completed:
   - completeness pass vs S1 acceptance wording.
   - consistency pass (model/state/api/error alignment).
