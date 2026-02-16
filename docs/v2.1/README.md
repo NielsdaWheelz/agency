@@ -26,6 +26,12 @@ for direction, parity scope, release gates, and slice sequencing.
 - `slice-roadmap.md` - ordered v2.1 slices and dependency DAG.
 - `issue-map.md` - mapping from slices to issue stubs for execution tracking.
 
+## Active slice artifacts
+
+- `s1/s1_spec.md` - L2 contract for Slice S1.
+- `s1/s1_spec_worklog.md` - evidence log for Slice S1 L2 drafting.
+- `s1/s1_spec_decisions.md` - decision ledger for Slice S1 L2 drafting.
+
 ## Legacy doc status
 
 - `../v2.1-build-plan.md` is retained as a compatibility pointer.
