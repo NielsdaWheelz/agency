@@ -186,6 +186,15 @@ const (
 	// Slice 8 logs API error codes (PR-B)
 	ELogNotFound     Code = "E_LOG_NOT_FOUND"    // log file does not exist or kind unavailable
 	EInvalidArgument Code = "E_INVALID_ARGUMENT" // invalid parameter (offset, limit, interval, etc.)
+
+	// v2.1 Slice S1 gate corpus error codes (PR-01)
+	EGateSetInvalid               Code = "E_GATE_SET_INVALID"                // gate set source cannot be parsed or resolved
+	EGateItemNotFound             Code = "E_GATE_ITEM_NOT_FOUND"             // referenced issue path does not exist
+	EGateItemInvalid              Code = "E_GATE_ITEM_INVALID"               // issue stub shape is invalid for gate evaluation
+	EGateItemAcceptanceIncomplete Code = "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE" // issue acceptance checklist is not fully complete
+	EGateItemTestsIncomplete      Code = "E_GATE_ITEM_TESTS_INCOMPLETE"      // required automated test evidence is missing or failing
+	EGateItemEvidenceMissing      Code = "E_GATE_ITEM_EVIDENCE_MISSING"      // closure attempted without non-empty evidence_refs
+	EGateItemClosureBlockMissing  Code = "E_GATE_ITEM_CLOSURE_BLOCK_MISSING" // required closure evidence block is absent
 )
 
 // AgencyError is the standard error type for agency errors.
