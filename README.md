@@ -64,6 +64,7 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 - **[CLI reference](docs/cli.md)** — every command and flag
 - **[configuration](docs/configuration.md)** — agency.json, environment variables, shell completion
 - **[architecture](docs/architecture.md)** — daemon internals, stream parsing, data model
+- **[v2.1 docs](docs/v2.1/README.md)** — consolidated product scope, parity matrix, release gates, roadmap
 - **[contributing](docs/contributing.md)** — build, test, lint, project structure
 
 ## license
