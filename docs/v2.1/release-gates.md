@@ -32,13 +32,24 @@ Product parity work does not override these gates.
 16. `docs/issues/checkpoint-p1-02-checkpoint-apply-emits-seq1-unconditionally.md`
 17. `docs/issues/core-p1-tighten-file-permissions.md`
 18. `docs/issues/exec-p1-deterministic-env-merge.md`
+19. `docs/issues/spec-p1-07-runner-capability-target-set-claude-code-codex-amp-opencode-cursor-cli-droid.md`
+20. `docs/issues/spec-p1-08-daemon-read-write-authority-for-v2-agent-and-worktree-surfaces.md`
+21. `docs/issues/spec-p1-09-detached-chat-transcript-and-session-reentry-contract.md`
+22. `docs/issues/spec-p1-10-fleet-management-for-many-worktrees-and-invocations.md`
+23. `docs/issues/checkpoint-p1-10-interactive-history-selector-for-checkpoint-revert.md`
+24. `docs/issues/spec-p1-11-invocation-scoped-review-pr-merge-command-contracts.md`
 
 ## Gate C: parity baseline acceptance
 
-1. Headless invocation supports detached log visibility and follow-up prompt flow.
-2. Restart-from-checkpoint flow exists as a single invocation command path.
-3. Invocation-centric PR/review/merge command family exists with stable `--json`.
-4. Runner capability model replaces hardcoded `claude|codex` gates.
+1. Headless invocation supports detached transcript visibility (prompts/messages/tool-use/logs) and follow-up prompt flow.
+2. Users can enter/detach/re-enter invocation context repeatedly without resetting invocation continuity.
+3. Restart-from-checkpoint flow exists as a single invocation command path.
+4. Invocation-centric PR/review/merge command family exists with stable `--json`.
+5. Runner capability model replaces hardcoded `claude|codex` gates.
+6. Runner targets `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, and `droid` are supported via one capability-driven invocation model.
+7. Checkpoint restore supports both explicit checkpoint selection and interactive history-based selection with arrow-key terminal navigation.
+8. Daemon APIs are the read/write source of truth for v2 `agent` + `worktree` command surfaces.
+9. Fleet workflows support efficient list/filter/status/selection over many worktrees/invocations.
 
 ## Gate D: contract and test compliance
 

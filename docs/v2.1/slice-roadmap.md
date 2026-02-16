@@ -46,22 +46,22 @@ S7 Checks-First Watch Seed (Stretch)
 - **Acceptance**: all gates listed in `release-gates.md` section A and B are closed with tests.
 
 ### Slice S2: Daemon Read Convergence + Sandbox Navigation
-- **Goal**: finish daemon-first read architecture and detached navigation basics.
-- **Outcome**: v2 reads no longer depend on local store scans in CLI command handlers.
+- **Goal**: finish daemon-first read architecture and detached/fleet navigation basics.
+- **Outcome**: v2 reads no longer depend on local store scans in CLI command handlers, and users can navigate many worktrees/invocations efficiently.
 - **Dependencies**: S1.
-- **Acceptance**: invocation navigation commands support direct path/shell/open flows with daemon-backed resolution.
+- **Acceptance**: v2 `agent`/`worktree` reads resolve through daemon APIs (except bootstrap/health fallback), and navigation/list/filter flows support direct path/shell/open/select usage.
 
 ### Slice S3: Chat Control Plane + Restart-From-Checkpoint
 - **Goal**: enable detached conversational continuation for headless invocations.
-- **Outcome**: users can read transcript, send follow-up prompts, and restart from checkpoint in one flow.
+- **Outcome**: users can read full transcript (prompts/messages/tool-use/logs), send follow-up prompts, enter/detach/re-enter sessions, restart from checkpoint in one flow, and restore from an interactive history selector.
 - **Dependencies**: S2.
-- **Acceptance**: functional parity baseline for detached headless continuity is met.
+- **Acceptance**: detached headless continuity supports follow-up prompting, repeated detach/re-entry, explicit checkpoint restore, and arrow-key history-based restore.
 
 ### Slice S4: Runner Capability Model + Agent Mutation JSON
 - **Goal**: remove hard-coded runner assumptions and normalize automation outputs.
-- **Outcome**: runner support is capability-driven, and mutation commands expose stable JSON responses.
+- **Outcome**: runner support is capability-driven for `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, and `droid`, and mutation commands expose stable JSON responses.
 - **Dependencies**: S3.
-- **Acceptance**: no `claude|codex` allowlist gate in start/control-plane paths; fallback behavior is explicit.
+- **Acceptance**: no hardcoded runner allowlist in start/control-plane paths; fallback behavior is explicit for unsupported semantic adapters.
 
 ### Slice S5: Invocation-Centric Review + PR + Merge
 - **Goal**: move review/PR/merge operations under invocation scope.

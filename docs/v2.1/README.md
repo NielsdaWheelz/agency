@@ -16,7 +16,7 @@ for direction, parity scope, release gates, and slice sequencing.
 1. No GUI in v2.1.
 2. No full-screen TUI in v2.1 (checks-first seed can be CLI/minimal terminal).
 3. Preserve sandbox-first safety invariants.
-4. Daemon remains the mutation authority for invocation/worktree lifecycle.
+4. Daemon remains the read/write authority for invocation/worktree lifecycle.
 
 ## Canonical docs
 
