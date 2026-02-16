@@ -306,6 +306,65 @@ func TestPR09ErrorFormat(t *testing.T) {
 	}
 }
 
+// TestS1PR01ErrorCodesExist verifies v2.1 S1 PR-01 gate corpus error codes are defined and stable.
+func TestS1PR01ErrorCodesExist(t *testing.T) {
+	t.Parallel()
+
+	codes := []Code{
+		EGateSetInvalid,
+		EGateItemNotFound,
+		EGateItemInvalid,
+		EGateItemAcceptanceIncomplete,
+		EGateItemTestsIncomplete,
+		EGateItemEvidenceMissing,
+		EGateItemClosureBlockMissing,
+	}
+
+	expectedStrings := map[Code]string{
+		EGateSetInvalid:               "E_GATE_SET_INVALID",
+		EGateItemNotFound:             "E_GATE_ITEM_NOT_FOUND",
+		EGateItemInvalid:              "E_GATE_ITEM_INVALID",
+		EGateItemAcceptanceIncomplete: "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE",
+		EGateItemTestsIncomplete:      "E_GATE_ITEM_TESTS_INCOMPLETE",
+		EGateItemEvidenceMissing:      "E_GATE_ITEM_EVIDENCE_MISSING",
+		EGateItemClosureBlockMissing:  "E_GATE_ITEM_CLOSURE_BLOCK_MISSING",
+	}
+
+	for _, code := range codes {
+		expected := expectedStrings[code]
+		assert.Equal(t, expected, string(code))
+	}
+}
+
+// TestS1PR01ErrorFormat verifies S1 PR-01 error codes format correctly.
+func TestS1PR01ErrorFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code Code
+		msg  string
+		want string
+	}{
+		{EGateSetInvalid, "cannot parse gate source", "E_GATE_SET_INVALID: cannot parse gate source"},
+		{EGateItemNotFound, "issue path missing", "E_GATE_ITEM_NOT_FOUND: issue path missing"},
+		{EGateItemInvalid, "malformed stub", "E_GATE_ITEM_INVALID: malformed stub"},
+		{EGateItemAcceptanceIncomplete, "2 unchecked", "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE: 2 unchecked"},
+		{EGateItemTestsIncomplete, "no suite pass", "E_GATE_ITEM_TESTS_INCOMPLETE: no suite pass"},
+		{EGateItemEvidenceMissing, "no refs", "E_GATE_ITEM_EVIDENCE_MISSING: no refs"},
+		{EGateItemClosureBlockMissing, "no block", "E_GATE_ITEM_CLOSURE_BLOCK_MISSING: no block"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
+
+			err := New(tt.code, tt.msg)
+			assert.Equal(t, tt.want, err.Error())
+		})
+	}
+}
+
 // TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
 func TestSlice3ErrorFormat(t *testing.T) {
 	t.Parallel()

@@ -35,9 +35,9 @@ for direction, parity scope, release gates, and slice sequencing.
 - `s1/s1_roadmap_ownership.md` - ownership ledger for Slice S1 L3 decomposition.
 - `s1/s1_roadmap_worklog.md` - evidence log for Slice S1 L3 drafting.
 - `s1/s1_roadmap_decisions.md` - decision ledger for Slice S1 L3 drafting.
-- `s1/s1_pr01.md` - L4 contract for Slice S1 PR-01.
-- `s1/s1_pr01_worklog.md` - evidence log for Slice S1 PR-01 L4 drafting.
-- `s1/s1_pr01_decisions.md` - decision ledger for Slice S1 PR-01 L4 drafting.
+- `s1/s1_prs/s1_pr01.md` - L4 contract for Slice S1 PR-01.
+- `s1/s1_prs/s1_pr01_worklog.md` - evidence log for Slice S1 PR-01 L4 drafting.
+- `s1/s1_prs/s1_pr01_decisions.md` - decision ledger for Slice S1 PR-01 L4 drafting.
 
 ## Legacy doc status
 
