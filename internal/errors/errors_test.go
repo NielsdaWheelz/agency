@@ -365,6 +365,56 @@ func TestS1PR01ErrorFormat(t *testing.T) {
 	}
 }
 
+// TestS1PR02ErrorCodesExist verifies v2.1 S1 PR-02 gate item lifecycle error codes are defined and stable.
+func TestS1PR02ErrorCodesExist(t *testing.T) {
+	t.Parallel()
+
+	codes := []Code{
+		EGateTransitionInvalid,
+		EGateApprovalRequired,
+		EGateReopenReasonRequired,
+		EGateE2ERequired,
+	}
+
+	expectedStrings := map[Code]string{
+		EGateTransitionInvalid:    "E_GATE_TRANSITION_INVALID",
+		EGateApprovalRequired:     "E_GATE_APPROVAL_REQUIRED",
+		EGateReopenReasonRequired: "E_GATE_REOPEN_REASON_REQUIRED",
+		EGateE2ERequired:          "E_GATE_E2E_REQUIRED",
+	}
+
+	for _, code := range codes {
+		expected := expectedStrings[code]
+		assert.Equal(t, expected, string(code))
+	}
+}
+
+// TestS1PR02ErrorFormat verifies S1 PR-02 error codes format correctly.
+func TestS1PR02ErrorFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code Code
+		msg  string
+		want string
+	}{
+		{EGateTransitionInvalid, "illegal transition", "E_GATE_TRANSITION_INVALID: illegal transition"},
+		{EGateApprovalRequired, "maintainer required", "E_GATE_APPROVAL_REQUIRED: maintainer required"},
+		{EGateReopenReasonRequired, "missing reason", "E_GATE_REOPEN_REASON_REQUIRED: missing reason"},
+		{EGateE2ERequired, "missing e2e evidence", "E_GATE_E2E_REQUIRED: missing e2e evidence"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
+
+			err := New(tt.code, tt.msg)
+			assert.Equal(t, tt.want, err.Error())
+		})
+	}
+}
+
 // TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
 func TestSlice3ErrorFormat(t *testing.T) {
 	t.Parallel()

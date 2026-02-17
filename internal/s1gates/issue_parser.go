@@ -43,9 +43,18 @@ func ParseIssue(content string, issuePath string) (*GateItemRef, *ClosureEvidenc
 	}
 
 	labels := parseLabels(lines)
-	state := parseStateLine(lines)
+	state, err := parseStateLine(lines)
+	if err != nil {
+		return nil, nil, err
+	}
 	priority := derivePriority(labels, titleTags)
+	if priority == "" {
+		return nil, nil, agencyerrors.New(agencyerrors.EGateItemInvalid, "missing priority: could not resolve p0 or p1 from labels or title tags")
+	}
 	itemType := deriveType(labels)
+	if itemType == "" {
+		return nil, nil, agencyerrors.New(agencyerrors.EGateItemInvalid, "missing type: no valid type:* label found")
+	}
 	requiresGHE2E := hasLabel(labels, "requires:gh-e2e")
 
 	// Parse sections.
@@ -125,17 +134,21 @@ func parseLabels(lines []string) []string {
 }
 
 // parseStateLine extracts the state from the optional state: metadata line.
-func parseStateLine(lines []string) string {
+// Returns E_GATE_ITEM_INVALID if an explicit state: line has an unrecognized value.
+// Returns StateOpen when no state: metadata is present.
+func parseStateLine(lines []string) (string, error) {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if m := stateRe.FindStringSubmatch(trimmed); m != nil {
 			s := strings.TrimSpace(strings.ToLower(m[1]))
 			if ValidStates[s] {
-				return s
+				return s, nil
 			}
+			return "", agencyerrors.New(agencyerrors.EGateItemInvalid,
+				fmt.Sprintf("invalid explicit state: %s", s))
 		}
 	}
-	return StateOpen
+	return StateOpen, nil
 }
 
 // derivePriority extracts priority from labels first, then title tags as fallback.
@@ -275,8 +288,16 @@ func parseClosureEvidenceBlock(sectionContent string, issuePath string) (*Closur
 	}
 	ce.IssuePath = issuePath
 
-	// Validate test evidence entries.
+	// Validate test evidence entries: enum validity then semantic rules.
 	for i, te := range ce.TargetedTestRefs {
+		if !ValidScopes[te.Scope] {
+			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
+				fmt.Sprintf("targeted_test_refs[%d]: invalid scope: %s", i, te.Scope))
+		}
+		if !ValidResults[te.Result] {
+			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
+				fmt.Sprintf("targeted_test_refs[%d]: invalid result: %s", i, te.Result))
+		}
 		if te.Result == ResultPass && te.RecordedAt == "" {
 			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
 				fmt.Sprintf("targeted_test_refs[%d]: pass evidence requires recorded_at", i))
@@ -284,6 +305,14 @@ func parseClosureEvidenceBlock(sectionContent string, issuePath string) (*Closur
 	}
 
 	for i, te := range ce.SuiteTestRefs {
+		if !ValidScopes[te.Scope] {
+			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
+				fmt.Sprintf("suite_test_refs[%d]: invalid scope: %s", i, te.Scope))
+		}
+		if !ValidResults[te.Result] {
+			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
+				fmt.Sprintf("suite_test_refs[%d]: invalid result: %s", i, te.Result))
+		}
 		if !AllowedSuiteCommands[te.Command] {
 			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
 				fmt.Sprintf("suite_test_refs[%d]: command not in allowed suite list: %s", i, te.Command))
