@@ -1,7 +1,7 @@
 # S1 Platform Hardening Gates Spec - Worklog
 
-Last updated: 2026-02-16
-Status: frozen
+Last updated: 2026-02-17
+Status: draft
 
 ## Cluster 1: Gate closure semantics and evidence requirements
 
@@ -33,6 +33,9 @@ Status: frozen
 | 2026-02-16 | `docs/sdlc/L2-slice-spec.md:134` | Unresolved questions/defaults section must be empty before freeze. | Supports explicit L2 freeze-block invariant. |
 | 2026-02-16 | `docs/sdlc/README.md:109` | Unresolved questions are allowed only with temporary defaults, owner, and deadline. | Supports unresolved-default row requirements. |
 | 2026-02-16 | `docs/issues/README.md:4` | Issue stubs define baseline metadata + acceptance sections. | Motivates explicit closure-evidence extension for gate evaluation. |
+| 2026-02-17 | `docs/v2.1/s1/s1_prs/s1_pr04.md:63` | PR-04 target-shape drafting required explicit per-change-type target fields and `replace` pair semantics. | Drove L2 clarification for `replace` target representation and invariants. |
+| 2026-02-17 | `docs/v2.1/s1/s1_spec.md:313` | Change-validate error surface uses `E_GATE_SET_DRIFT` for synchronization failures. | Drove explicit L2 normalization that unverifiable sync also maps to drift semantics. |
+| 2026-02-17 | `docs/v2.1/s1/s1_prs/s1_pr04.md:90` | PR-04 synchronization policy requires canonical `release-gates.md` vs `issue-map.md` verification at validation time. | Drove L2 invariant refinement toward enforceable synchronization-validation contract language. |
 
 ### Cluster status
 

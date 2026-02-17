@@ -41,9 +41,14 @@ for direction, parity scope, release gates, and slice sequencing.
 - `s1/s1_prs/s1_pr02.md` - L4 contract for Slice S1 PR-02.
 - `s1/s1_prs/s1_pr02_worklog.md` - evidence log for Slice S1 PR-02 L4 drafting.
 - `s1/s1_prs/s1_pr02_decisions.md` - decision ledger for Slice S1 PR-02 L4 drafting.
+- `s1/s1_prs/s1_pr02_report.md` - implementation report for Slice S1 PR-02.
 - `s1/s1_prs/s1_pr03.md` - L4 contract for Slice S1 PR-03.
 - `s1/s1_prs/s1_pr03_worklog.md` - evidence log for Slice S1 PR-03 L4 drafting.
 - `s1/s1_prs/s1_pr03_decisions.md` - decision ledger for Slice S1 PR-03 L4 drafting.
+- `s1/s1_prs/s1_pr03_report.md` - implementation report for Slice S1 PR-03.
+- `s1/s1_prs/s1_pr04.md` - L4 contract for Slice S1 PR-04.
+- `s1/s1_prs/s1_pr04_worklog.md` - evidence log for Slice S1 PR-04 L4 drafting.
+- `s1/s1_prs/s1_pr04_decisions.md` - decision ledger for Slice S1 PR-04 L4 drafting.
 
 ## Legacy doc status
 

@@ -1,7 +1,7 @@
 # Slice S1 - Platform Hardening Gates Spec
 
 Last updated: 2026-02-17
-Status: frozen
+Status: draft
 Upstream slice: `docs/v2.1/slice-roadmap.md` (Slice S1)
 
 ## 1. Goal & Scope
@@ -97,11 +97,16 @@ Required issue-stub representation for closed gate items:
 |---|---|---|
 | `gate_id` | enum | `A` or `B` |
 | `change_type` | enum | `add`, `remove`, `replace`, `reorder` |
-| `issue_path` | string | required for `add`, `remove`, `replace` |
-| `issue_paths` | []string | required for `reorder`, length `>= 2` |
+| `issue_path` | string | required for `add`, `remove` |
+| `issue_paths` | []string | required for `replace`, `reorder` |
 | `reason` | string | required, non-empty |
 | `approved_by` | string | required for `remove` and `replace` |
 | `synced_issue_map` | bool | must be true for valid change |
+
+`change_type=replace` constraints:
+- `issue_paths` must have exactly 2 entries.
+- `issue_paths[0]` is the existing targeted-gate member being replaced.
+- `issue_paths[1]` is the replacement issue path.
 
 `change_type=reorder` constraint:
 - reorder is valid without `approved_by` only when gate membership is unchanged.
@@ -291,7 +296,7 @@ below are normative regardless of implementation surface.
 {
   "gate_id": "B",
   "change_type": "remove",
-  "issue_path": "docs/issues/example.md",
+  "issue_path": "docs/issues/events-p1-remove-ad-hoc-event-writers.md",
   "reason": "Superseded by split issues",
   "approved_by": "@owner",
   "synced_issue_map": true
@@ -308,9 +313,9 @@ below are normative regardless of implementation surface.
 
 **errors**:
 - `E_GATE_CHANGE_REASON_REQUIRED` (400): `reason` missing/empty.
-- `E_GATE_CHANGE_TARGET_REQUIRED` (400): change target (`issue_path` or `issue_paths`) is missing.
+- `E_GATE_CHANGE_TARGET_REQUIRED` (400): change target fields are missing or invalid for the requested `change_type`.
 - `E_GATE_CHANGE_APPROVAL_REQUIRED` (409): removal/replacement missing explicit approval.
-- `E_GATE_SET_DRIFT` (409): change leaves `release-gates.md` and `issue-map.md` unsynchronized.
+- `E_GATE_SET_DRIFT` (409): change leaves `release-gates.md` and `issue-map.md` unsynchronized or synchronization cannot be validated from canonical sources.
 
 ### POST /spec/v2.1/s1/gate-item/transition
 
@@ -357,9 +362,9 @@ below are normative regardless of implementation surface.
 | `E_GATE_ITEM_EVIDENCE_MISSING` | 409 | closure attempted without non-empty `evidence_refs` |
 | `E_GATE_ITEM_CLOSURE_BLOCK_MISSING` | 409 | required closure evidence block is absent |
 | `E_GATE_SET_INVALID` | 400 | gate set cannot be parsed/resolved from source docs |
-| `E_GATE_SET_DRIFT` | 409 | `release-gates.md` and `issue-map.md` are inconsistent |
+| `E_GATE_SET_DRIFT` | 409 | `release-gates.md` and `issue-map.md` are inconsistent or synchronization cannot be validated |
 | `E_GATE_CHANGE_REASON_REQUIRED` | 400 | gate-set change omits non-empty reason |
-| `E_GATE_CHANGE_TARGET_REQUIRED` | 400 | gate-set change omits required target fields |
+| `E_GATE_CHANGE_TARGET_REQUIRED` | 400 | gate-set change has missing or invalid target fields for `change_type` |
 | `E_GATE_CHANGE_APPROVAL_REQUIRED` | 409 | remove/replace gate-set change lacks explicit approver |
 | `E_GATE_TRANSITION_INVALID` | 409 | requested gate item state transition is illegal |
 | `E_GATE_APPROVAL_REQUIRED` | 409 | transition caller role does not satisfy policy |
@@ -382,8 +387,9 @@ below are normative regardless of implementation surface.
    and one suite-level pass record (`go test ./...` equivalent).
 7. Any closed Gate A/B issue must include a closure evidence block with
    implementation references and test evidence.
-8. Any GateSet change must update `release-gates.md` and `issue-map.md` in the
-   same change set; partial updates are invalid.
+8. Any GateSet change validation must reject when `release-gates.md` and
+   `issue-map.md` are unsynchronized or synchronization cannot be validated from
+   canonical sources.
 9. Every gate-item state transition must include actor role; `reason` field must
    be present for all transitions and non-empty for reopen transitions.
 10. Any reopen transition (`closed -> in_progress`) must include regression evidence.
@@ -393,6 +399,8 @@ below are normative regardless of implementation surface.
 14. `requires_gh_e2e=true` items require passing GH e2e evidence before closure.
 15. `type=design` items can close without runtime changes only when enforcement
     evidence demonstrates contract compliance.
+16. `change_type=replace` requires `issue_paths` with exactly two entries where
+    entry 0 is the current targeted-gate member and entry 1 is the replacement.
 
 ---
 
