@@ -1,6 +1,6 @@
 # Slice S1 - Platform Hardening Gates Spec
 
-Last updated: 2026-02-16
+Last updated: 2026-02-17
 Status: frozen
 Upstream slice: `docs/v2.1/slice-roadmap.md` (Slice S1)
 
@@ -114,7 +114,7 @@ Required issue-stub representation for closed gate items:
 | `from_state` | enum | `open`, `in_progress`, `ready_for_verification`, `closed` |
 | `to_state` | enum | `open`, `in_progress`, `ready_for_verification`, `closed` |
 | `actor_role` | enum | `maintainer`, `reviewer`, `contributor` |
-| `reason` | string | required for reopen (`closed -> in_progress`) |
+| `reason` | string | field must be present; non-empty required for reopen (`closed -> in_progress`) |
 | `evidence_refs` | []string | required when `to_state=closed` |
 
 ### GateStatus
@@ -384,7 +384,8 @@ below are normative regardless of implementation surface.
    implementation references and test evidence.
 8. Any GateSet change must update `release-gates.md` and `issue-map.md` in the
    same change set; partial updates are invalid.
-9. Every gate-item state transition must include actor role and transition reason.
+9. Every gate-item state transition must include actor role; `reason` field must
+   be present for all transitions and non-empty for reopen transitions.
 10. Any reopen transition (`closed -> in_progress`) must include regression evidence.
 11. Slice S1 L2 is not freeze-eligible while Section 9 has unresolved rows.
 12. Gate B item closure requires reviewer or maintainer role.

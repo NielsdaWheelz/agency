@@ -1,6 +1,6 @@
 # v2.1 Product Docs
 
-Last updated: 2026-02-16
+Last updated: 2026-02-17
 Status: active
 Owners: `@nnandal` + `Codex`
 Source of truth: this directory
@@ -38,6 +38,9 @@ for direction, parity scope, release gates, and slice sequencing.
 - `s1/s1_prs/s1_pr01.md` - L4 contract for Slice S1 PR-01.
 - `s1/s1_prs/s1_pr01_worklog.md` - evidence log for Slice S1 PR-01 L4 drafting.
 - `s1/s1_prs/s1_pr01_decisions.md` - decision ledger for Slice S1 PR-01 L4 drafting.
+- `s1/s1_prs/s1_pr02.md` - L4 contract for Slice S1 PR-02.
+- `s1/s1_prs/s1_pr02_worklog.md` - evidence log for Slice S1 PR-02 L4 drafting.
+- `s1/s1_prs/s1_pr02_decisions.md` - decision ledger for Slice S1 PR-02 L4 drafting.
 
 ## Legacy doc status
 
