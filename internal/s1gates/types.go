@@ -29,6 +29,13 @@ const (
 	StateClosed               = "closed"
 )
 
+// Actor roles for gate-item transitions.
+const (
+	RoleMaintainer  = "maintainer"
+	RoleReviewer    = "reviewer"
+	RoleContributor = "contributor"
+)
+
 // Test evidence scopes.
 const (
 	ScopeTargeted = "targeted"
@@ -101,6 +108,24 @@ var ValidResults = map[string]bool{
 	ResultFail: true,
 }
 
+// ValidActorRoles is the set of legal actor roles for transitions.
+var ValidActorRoles = map[string]bool{
+	RoleMaintainer:  true,
+	RoleReviewer:    true,
+	RoleContributor: true,
+}
+
+// EnforcementScopes defines scopes that count as contract enforcement evidence
+// for type=design gate items.
+var EnforcementScopes = map[string]bool{
+	ScopeTargeted: true,
+	ScopeSuite:    true,
+	ScopeE2EOptIn: true,
+	ScopeLint:     true,
+	ScopeFormat:   true,
+	ScopeVet:      true,
+}
+
 // FileExistsFn reports whether a file path exists.
 type FileExistsFn func(path string) bool
 
@@ -154,3 +179,22 @@ type GateItemEvaluation struct {
 	EvidenceRefs           []string          `json:"evidence_refs"`
 	BlockingCode           agencyerrors.Code `json:"blocking_code,omitempty"`
 }
+
+// GateTransition represents a gate-item state transition request.
+type GateTransition struct {
+	IssuePath    string   `json:"issue_path"`
+	FromState    string   `json:"from_state"`
+	ToState      string   `json:"to_state"`
+	ActorRole    string   `json:"actor_role"`
+	Reason       string   `json:"reason"`
+	EvidenceRefs []string `json:"evidence_refs"`
+}
+
+// GateTransitionResult represents the outcome of a successful gate-item transition.
+type GateTransitionResult struct {
+	IssuePath string `json:"issue_path"`
+	State     string `json:"state"`
+}
+
+// CanonicalGateSourcePath is the repo-relative path to the release-gates source.
+const CanonicalGateSourcePath = "docs/v2.1/release-gates.md"

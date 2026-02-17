@@ -195,6 +195,12 @@ const (
 	EGateItemTestsIncomplete      Code = "E_GATE_ITEM_TESTS_INCOMPLETE"      // required automated test evidence is missing or failing
 	EGateItemEvidenceMissing      Code = "E_GATE_ITEM_EVIDENCE_MISSING"      // closure attempted without non-empty evidence_refs
 	EGateItemClosureBlockMissing  Code = "E_GATE_ITEM_CLOSURE_BLOCK_MISSING" // required closure evidence block is absent
+
+	// v2.1 Slice S1 gate item lifecycle error codes (PR-02)
+	EGateTransitionInvalid    Code = "E_GATE_TRANSITION_INVALID"     // requested gate item state transition is illegal
+	EGateApprovalRequired     Code = "E_GATE_APPROVAL_REQUIRED"      // transition caller role does not satisfy policy
+	EGateReopenReasonRequired Code = "E_GATE_REOPEN_REASON_REQUIRED" // reopen transition is missing reason or evidence
+	EGateE2ERequired          Code = "E_GATE_E2E_REQUIRED"           // closure requires GH e2e evidence for this gate item
 )
 
 // AgencyError is the standard error type for agency errors.
