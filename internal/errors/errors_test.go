@@ -415,6 +415,50 @@ func TestS1PR02ErrorFormat(t *testing.T) {
 	}
 }
 
+// TestS1PR03ErrorCodesExist verifies v2.1 S1 PR-03 gate readiness error codes are defined and stable.
+func TestS1PR03ErrorCodesExist(t *testing.T) {
+	t.Parallel()
+
+	codes := []Code{
+		EGateSetDrift,
+		EGateBlocked,
+	}
+
+	expectedStrings := map[Code]string{
+		EGateSetDrift: "E_GATE_SET_DRIFT",
+		EGateBlocked:  "E_GATE_BLOCKED",
+	}
+
+	for _, code := range codes {
+		expected := expectedStrings[code]
+		assert.Equal(t, expected, string(code))
+	}
+}
+
+// TestS1PR03ErrorFormat verifies S1 PR-03 error codes format correctly.
+func TestS1PR03ErrorFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code Code
+		msg  string
+		want string
+	}{
+		{EGateSetDrift, "gate source and issue-map diverge", "E_GATE_SET_DRIFT: gate source and issue-map diverge"},
+		{EGateBlocked, "slice not ready", "E_GATE_BLOCKED: slice not ready"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
+
+			err := New(tt.code, tt.msg)
+			assert.Equal(t, tt.want, err.Error())
+		})
+	}
+}
+
 // TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
 func TestSlice3ErrorFormat(t *testing.T) {
 	t.Parallel()

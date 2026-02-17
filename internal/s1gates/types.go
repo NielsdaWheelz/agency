@@ -198,3 +198,35 @@ type GateTransitionResult struct {
 
 // CanonicalGateSourcePath is the repo-relative path to the release-gates source.
 const CanonicalGateSourcePath = "docs/v2.1/release-gates.md"
+
+// CanonicalIssueMapPath is the repo-relative path to the issue-map source.
+const CanonicalIssueMapPath = "docs/v2.1/issue-map.md"
+
+// Gate status values.
+const (
+	GateStatusReady   = "ready"
+	GateStatusBlocked = "blocked"
+)
+
+// GateStatus represents the aggregate evaluation status of a single gate.
+type GateStatus struct {
+	GateID        string   `json:"gate_id"`
+	TotalItems    int      `json:"total_items"`
+	ClosedItems   int      `json:"closed_items"`
+	BlockingItems []string `json:"blocking_items"`
+	Status        string   `json:"status"`
+}
+
+// GatesEvaluateRequest represents the request for aggregate gate evaluation.
+type GatesEvaluateRequest struct {
+	GateSetSource string `json:"gate_set_source"`
+	Slice         string `json:"slice"`
+}
+
+// GatesEvaluateResult represents the aggregate gate evaluation result.
+type GatesEvaluateResult struct {
+	Slice      string      `json:"slice"`
+	GateA      *GateStatus `json:"gate_a"`
+	GateB      *GateStatus `json:"gate_b"`
+	SliceReady bool        `json:"slice_ready"`
+}
