@@ -201,6 +201,10 @@ const (
 	EGateApprovalRequired     Code = "E_GATE_APPROVAL_REQUIRED"      // transition caller role does not satisfy policy
 	EGateReopenReasonRequired Code = "E_GATE_REOPEN_REASON_REQUIRED" // reopen transition is missing reason or evidence
 	EGateE2ERequired          Code = "E_GATE_E2E_REQUIRED"           // closure requires GH e2e evidence for this gate item
+
+	// v2.1 Slice S1 gate readiness error codes (PR-03)
+	EGateSetDrift Code = "E_GATE_SET_DRIFT" // release-gates.md and issue-map.md are inconsistent
+	EGateBlocked  Code = "E_GATE_BLOCKED"   // gate or slice attempted to complete while blockers remain
 )
 
 // AgencyError is the standard error type for agency errors.
