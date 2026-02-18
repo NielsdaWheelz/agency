@@ -459,6 +459,53 @@ func TestS1PR03ErrorFormat(t *testing.T) {
 	}
 }
 
+// TestS1PR04ErrorCodesExist verifies v2.1 S1 PR-04 gate set change validation error codes are defined and stable.
+func TestS1PR04ErrorCodesExist(t *testing.T) {
+	t.Parallel()
+
+	codes := []Code{
+		EGateChangeReasonRequired,
+		EGateChangeTargetRequired,
+		EGateChangeApprovalRequired,
+	}
+
+	expectedStrings := map[Code]string{
+		EGateChangeReasonRequired:   "E_GATE_CHANGE_REASON_REQUIRED",
+		EGateChangeTargetRequired:   "E_GATE_CHANGE_TARGET_REQUIRED",
+		EGateChangeApprovalRequired: "E_GATE_CHANGE_APPROVAL_REQUIRED",
+	}
+
+	for _, code := range codes {
+		expected := expectedStrings[code]
+		assert.Equal(t, expected, string(code))
+	}
+}
+
+// TestS1PR04ErrorFormat verifies S1 PR-04 error codes format correctly.
+func TestS1PR04ErrorFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code Code
+		msg  string
+		want string
+	}{
+		{EGateChangeReasonRequired, "missing reason", "E_GATE_CHANGE_REASON_REQUIRED: missing reason"},
+		{EGateChangeTargetRequired, "invalid target", "E_GATE_CHANGE_TARGET_REQUIRED: invalid target"},
+		{EGateChangeApprovalRequired, "missing approver", "E_GATE_CHANGE_APPROVAL_REQUIRED: missing approver"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(string(tt.code), func(t *testing.T) {
+			t.Parallel()
+
+			err := New(tt.code, tt.msg)
+			assert.Equal(t, tt.want, err.Error())
+		})
+	}
+}
+
 // TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
 func TestSlice3ErrorFormat(t *testing.T) {
 	t.Parallel()
