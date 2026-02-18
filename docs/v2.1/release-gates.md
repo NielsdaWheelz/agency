@@ -1,10 +1,12 @@
 # v2.1 Release Gates
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 Status: active
 
 This document defines mandatory hardening gates for v2.1.
 Product parity work does not override these gates.
+For S1, gate membership is sourced from local `docs/issues/*.md` artifacts.
+Post-S1 direction is GitHub-issue-native tracking, with local markdown treated as compatibility input only.
 
 ## Gate A: P0 safety closure (must be zero open)
 

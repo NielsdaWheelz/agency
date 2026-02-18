@@ -1,6 +1,6 @@
 # v2.1 Product Brief
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 Status: active
 
 ## Problem
@@ -43,6 +43,7 @@ daemon+CLI layer while preserving Agency's sandbox-first model.
 9. History-based checkpoint reversion UX for headless invocations:
    users can browse prior messages/tool activity in terminal, navigate with arrow keys,
    choose a point, and revert to the corresponding checkpoint.
+10. Release-gating implementation surfaces use durable package boundaries (no temporary slice-scoped namespaces carried into later slices).
 
 ## Out of scope (v2.1)
 
@@ -51,6 +52,7 @@ daemon+CLI layer while preserving Agency's sandbox-first model.
 3. Merge queue orchestration.
 4. Autonomous policy-driven auto-fix loops from review comments.
 5. Any move away from sandbox-first safety model.
+6. Full migration of S1 markdown issue artifacts to GitHub issue APIs (forward path is GH-native after S1).
 
 ## Conductor parity definition
 

@@ -1,6 +1,6 @@
 # Slice S1 - PR Roadmap
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 Status: draft
 Upstream spec: `docs/v2.1/s1/s1_spec.md`
 
@@ -110,9 +110,12 @@ PR-03 Gate + Slice Readiness Evaluation
   - Release-readiness flows consume S1 gate-evaluation outcomes to decide blocked vs ready state without ad-hoc interpretation.
   - Closure evidence for closed gate items is surfaced through one consistent reporting contract for implementation/test proof.
   - Freeze-readiness governance includes unresolved-default blocking semantics so incomplete defaults cannot be treated as frozen.
+  - Temporary S1 namespace implementation is fully migrated and cleaned up (legacy slice-scoped namespace removed; durable release-gates namespace remains).
+  - Release-gate orchestration is issue-source abstracted for GH-native migration, with markdown issue stubs retained only as S1 compatibility provider.
 - **Non-goals**:
   - No S2+ product feature delivery (daemon read convergence, chat continuation, runner-capability expansion, review/merge expansion).
   - No GUI/full-TUI additions.
+  - No full GitHub issue provider delivery in PR-05; only boundary abstraction plus markdown compatibility adapter.
 
 ## 5. L3 hardening checks
 

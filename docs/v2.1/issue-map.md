@@ -1,10 +1,11 @@
 # v2.1 Issue Map
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 Status: active
 
 This map links v2.1 slices to issue stubs for execution tracking.
 It is intentionally selective for v2.1 scope and release-gate relevance.
+S1 uses markdown issue stubs as compatibility source; long-term tracking direction is GitHub-issue-native.
 
 ## S1 Platform Hardening Gates
 

@@ -1,6 +1,6 @@
 # S1 Platform Hardening Gates Roadmap - Ownership Ledger
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 Status: draft
 
 ## Ownership matrix detail
@@ -19,9 +19,11 @@ Status: draft
 2. Acceptance scenarios may list supporting PRs, but each scenario has one primary owner.
 3. If overlap appears during L4 scoping, split cluster ownership before implementation.
 4. PR-05 may consume outputs from PR-03/PR-04 but cannot redefine their normative behavior.
+5. PR-05 must complete namespace cleanup by removing temporary slice-scoped namespaces and leaving only durable release-gates surfaces.
 
 ## Residual coordination risks
 
 1. Aggregate drift checks can be duplicated across PR-03 and PR-04 if boundaries are ignored.
 2. Closure-evidence rendering in PR-05 can drift from PR-01 intake shape unless vocabulary is locked before L4.
 3. Freeze-readiness governance must remain process-level and not mutate S1 runtime semantics.
+4. Issue-source migration from markdown issue stubs to GitHub issues must preserve S1 contract determinism during transition.

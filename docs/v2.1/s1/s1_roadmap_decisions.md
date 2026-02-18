@@ -1,6 +1,6 @@
 # S1 Platform Hardening Gates Roadmap - Decisions
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 Status: draft
 
 ## Decision ledger
@@ -16,3 +16,5 @@ Status: draft
 | D-007 | Should runner-capability behavior delivery be owned by this S1 roadmap because it appears in Gate B? | No. S1 L3 owns gate-policy and gate-evaluation behavior; runner-capability behavior may be delivered by downstream capability slices, and S1 evaluates closure evidence once delivered. | Keeps S1 scoped to hardening-gate contract ownership while preserving Gate B closure accountability. | none | `@nnandal` + `Codex` | fixed in L3 |
 | D-008 | Should acceptance scenarios allow multiple equal owners? | No. Each scenario has one primary owner PR; supporting PRs are explicitly secondary. | Improves accountability and avoids ownership drift during L4 decomposition. | none | `@nnandal` + `Codex` | fixed in L3 |
 | D-009 | Should S1 stop at policy definition, or include release-operational consumption of policy outputs? | Include operational consumption in PR-05. | S1 acceptance is release blocking; policy without release gate enforcement/reporting cannot deterministically gate ship readiness. | none | `@nnandal` + `Codex` | fixed in L3 |
+| D-010 | Should temporary S1 namespace be allowed to carry into Slice S2? | No. PR-05 must migrate and delete it before S2 starts. | Prevents temporary-surface debt from becoming long-term architecture. | none | `@nnandal` + `Codex` | fixed in L3/L4 |
+| D-011 | Should PR-05 remain directly coupled to markdown issue parsing once release orchestration is introduced? | No. PR-05 should introduce an issue-source boundary so GitHub issues can become canonical post-S1 while preserving S1 compatibility. | Avoids long-term coupling to local markdown artifacts and enables enterprise GH-native governance evolution without breaking S1 contracts. | Keep markdown adapter as compatibility source behind the boundary until GH provider lands. | `@nnandal` + `Codex` | fixed in L3/L4 |
