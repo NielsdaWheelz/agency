@@ -202,6 +202,34 @@ const CanonicalGateSourcePath = "docs/v2.1/release-gates.md"
 // CanonicalIssueMapPath is the repo-relative path to the issue-map source.
 const CanonicalIssueMapPath = "docs/v2.1/issue-map.md"
 
+// Gate IDs.
+const (
+	GateIDA = "A"
+	GateIDB = "B"
+)
+
+// Change types for gate-set change proposals.
+const (
+	ChangeTypeAdd     = "add"
+	ChangeTypeRemove  = "remove"
+	ChangeTypeReplace = "replace"
+	ChangeTypeReorder = "reorder"
+)
+
+// ValidGateIDs is the set of legal gate IDs for change validation.
+var ValidGateIDs = map[string]bool{
+	GateIDA: true,
+	GateIDB: true,
+}
+
+// ValidChangeTypes is the set of legal change types for gate-set change proposals.
+var ValidChangeTypes = map[string]bool{
+	ChangeTypeAdd:     true,
+	ChangeTypeRemove:  true,
+	ChangeTypeReplace: true,
+	ChangeTypeReorder: true,
+}
+
 // Gate status values.
 const (
 	GateStatusReady   = "ready"
@@ -229,4 +257,20 @@ type GatesEvaluateResult struct {
 	GateA      *GateStatus `json:"gate_a"`
 	GateB      *GateStatus `json:"gate_b"`
 	SliceReady bool        `json:"slice_ready"`
+}
+
+// GateSetChange represents a gate-set change proposal for validation.
+type GateSetChange struct {
+	GateID         string   `json:"gate_id"`
+	ChangeType     string   `json:"change_type"`
+	IssuePath      string   `json:"issue_path"`
+	IssuePaths     []string `json:"issue_paths"`
+	Reason         string   `json:"reason"`
+	ApprovedBy     string   `json:"approved_by"`
+	SyncedIssueMap bool     `json:"synced_issue_map"`
+}
+
+// GateSetChangeValidationResult represents the outcome of gate-set change validation.
+type GateSetChangeValidationResult struct {
+	Valid bool `json:"valid"`
 }

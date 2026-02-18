@@ -205,6 +205,11 @@ const (
 	// v2.1 Slice S1 gate readiness error codes (PR-03)
 	EGateSetDrift Code = "E_GATE_SET_DRIFT" // release-gates.md and issue-map.md are inconsistent
 	EGateBlocked  Code = "E_GATE_BLOCKED"   // gate or slice attempted to complete while blockers remain
+
+	// v2.1 Slice S1 gate set change validation error codes (PR-04)
+	EGateChangeReasonRequired   Code = "E_GATE_CHANGE_REASON_REQUIRED"   // gate-set change omits non-empty reason
+	EGateChangeTargetRequired   Code = "E_GATE_CHANGE_TARGET_REQUIRED"   // gate-set change has missing or invalid target fields
+	EGateChangeApprovalRequired Code = "E_GATE_CHANGE_APPROVAL_REQUIRED" // remove/replace gate-set change lacks explicit approver
 )
 
 // AgencyError is the standard error type for agency errors.
