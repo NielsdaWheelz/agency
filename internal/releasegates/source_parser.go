@@ -1,4 +1,4 @@
-package s1gates
+package releasegates
 
 import (
 	"fmt"
@@ -10,16 +10,9 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// gateHeadingRe matches ## Gate A or ## Gate B headings.
 var gateHeadingRe = regexp.MustCompile(`(?i)^##\s+Gate\s+(A|B)\b`)
-
-// anyH2Re matches any ## heading.
 var anyH2Re = regexp.MustCompile(`^##\s+`)
-
-// numberedItemRe matches "1. `path`" list entries.
 var numberedItemRe = regexp.MustCompile("^\\d+\\.\\s+`([^`]+)`")
-
-// fenceRe matches opening/closing fenced code block markers.
 var fenceRe = regexp.MustCompile("^```")
 
 // RepoFileExists returns a FileExistsFn that checks paths relative to repoRoot.
@@ -31,20 +24,15 @@ func RepoFileExists(repoRoot string) FileExistsFn {
 }
 
 // ParseGateSet parses a release-gates markdown document and returns the
-// resolved GateSet with deterministic Gate A/B membership. Only Gate A and
-// Gate B sections are parsed; other gates (C, D, etc.) are ignored.
-//
-// fileExists is called for each issue path to verify it resolves to an
-// existing file. Unresolved paths, duplicates, and malformed source
-// content produce E_GATE_SET_INVALID.
+// resolved GateSet with deterministic Gate A/B membership.
 func ParseGateSet(content string, sourceRef string, fileExists FileExistsFn) (*GateSet, error) {
 	lines := strings.Split(content, "\n")
 
 	var gateAItems []string
 	var gateBItems []string
-	seen := make(map[string]string) // issue_path -> gate_id
+	seen := make(map[string]string)
 
-	var currentGate string // "", "A", "B", or "other"
+	var currentGate string
 	inFence := false
 
 	for _, line := range lines {
@@ -55,7 +43,6 @@ func ParseGateSet(content string, sourceRef string, fileExists FileExistsFn) (*G
 			continue
 		}
 
-		// Check for gate headings.
 		if m := gateHeadingRe.FindStringSubmatch(line); m != nil {
 			currentGate = strings.ToUpper(m[1])
 			continue
@@ -69,11 +56,9 @@ func ParseGateSet(content string, sourceRef string, fileExists FileExistsFn) (*G
 			continue
 		}
 
-		// Check for numbered list items with backtick-wrapped paths.
 		if m := numberedItemRe.FindStringSubmatch(line); m != nil {
 			issuePath := m[1]
 
-			// Reject duplicates across gates.
 			if prevGate, dup := seen[issuePath]; dup {
 				return nil, agencyerrors.NewWithDetails(
 					agencyerrors.EGateSetInvalid,
@@ -83,7 +68,6 @@ func ParseGateSet(content string, sourceRef string, fileExists FileExistsFn) (*G
 			}
 			seen[issuePath] = currentGate
 
-			// Verify issue path exists.
 			if !fileExists(issuePath) {
 				return nil, agencyerrors.NewWithDetails(
 					agencyerrors.EGateSetInvalid,

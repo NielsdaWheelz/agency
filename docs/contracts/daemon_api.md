@@ -191,6 +191,48 @@ response: `RegisterRepoResponse`
 
 response: `ListReposData`
 
+### GET /spec/v2.1/s1/release/readiness
+
+query:
+- `repo_id` (required)
+
+response: `S1ReleaseReadinessData`
+- `slice`, `slice_ready`, `gate_a` (`S1GateStatusData`), `gate_b` (`S1GateStatusData`)
+
+`S1GateStatusData`: `gate_id`, `status`, `total_items`, `closed_items`, `blocking_items`
+
+error codes:
+- `E_GATE_BLOCKED` (409): slice not ready, gates are blocked
+- `E_GATE_SET_INVALID` (400): gate source unreadable/malformed
+- `E_REPO_NOT_FOUND` (404): repo_id not found
+
+### GET /spec/v2.1/s1/release/closure-report
+
+query:
+- `repo_id` (required)
+
+response: `S1ClosureReportData`
+- `slice`, `gate_a` (`S1GateClosureData`), `gate_b` (`S1GateClosureData`)
+
+`S1GateClosureData`: `gate_id`, `status`, `total_items`, `closed_items`, `blocking_items`, `closed_evidence`
+
+`S1ClosedItemEvidence`: `issue_path`, `implemented_refs`, `targeted_tests`, `suite_tests`
+
+error codes:
+- `E_GATE_SET_INVALID` (400): gate source unreadable/malformed
+
+### GET /spec/v2.1/s1/release/freeze-readiness
+
+query:
+- `repo_id` (required)
+
+response: `S1FreezeReadinessData`
+- `freeze_ready`, `unresolved_count`, `spec_path`, `first_question`
+
+error codes:
+- `E_GATE_BLOCKED` (409): freeze blocked by unresolved defaults
+- `E_GATE_SET_INVALID` (400): spec source unreadable/malformed
+
 ## stubs
 
 - complete error code catalog per endpoint

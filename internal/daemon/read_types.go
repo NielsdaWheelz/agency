@@ -261,6 +261,68 @@ type InvocationLogsOffsetData struct {
 	TotalBytes int64  `json:"total_bytes"` // current file size
 }
 
+// ----- S1 Release Gate DTOs (PR-05) -----
+
+// S1ReleaseReadinessData is the data payload for GET /spec/v2.1/s1/release/readiness.
+type S1ReleaseReadinessData struct {
+	Slice      string            `json:"slice"`
+	SliceReady bool              `json:"slice_ready"`
+	GateA      *S1GateStatusData `json:"gate_a"`
+	GateB      *S1GateStatusData `json:"gate_b"`
+}
+
+// S1GateStatusData is the gate-level status within S1 release data.
+type S1GateStatusData struct {
+	GateID        string   `json:"gate_id"`
+	Status        string   `json:"status"`
+	TotalItems    int      `json:"total_items"`
+	ClosedItems   int      `json:"closed_items"`
+	BlockingItems []string `json:"blocking_items"`
+}
+
+// S1ClosureReportData is the data payload for GET /spec/v2.1/s1/release/closure-report.
+type S1ClosureReportData struct {
+	Slice string             `json:"slice"`
+	GateA *S1GateClosureData `json:"gate_a"`
+	GateB *S1GateClosureData `json:"gate_b"`
+}
+
+// S1GateClosureData is the gate-level closure snapshot within S1 closure report.
+type S1GateClosureData struct {
+	GateID         string                 `json:"gate_id"`
+	Status         string                 `json:"status"`
+	TotalItems     int                    `json:"total_items"`
+	ClosedItems    int                    `json:"closed_items"`
+	BlockingItems  []string               `json:"blocking_items"`
+	ClosedEvidence []S1ClosedItemEvidence `json:"closed_evidence"`
+}
+
+// S1ClosedItemEvidence is the evidence payload for a single closed gate item.
+type S1ClosedItemEvidence struct {
+	IssuePath       string               `json:"issue_path"`
+	ImplementedRefs []string             `json:"implemented_refs"`
+	TargetedTests   []S1TestEvidenceData `json:"targeted_tests"`
+	SuiteTests      []S1TestEvidenceData `json:"suite_tests"`
+}
+
+// S1TestEvidenceData is a single test evidence entry in daemon response.
+type S1TestEvidenceData struct {
+	IssuePath   string `json:"issue_path"`
+	Command     string `json:"command"`
+	Scope       string `json:"scope"`
+	Result      string `json:"result"`
+	ArtifactRef string `json:"artifact_ref"`
+	RecordedAt  string `json:"recorded_at"`
+}
+
+// S1FreezeReadinessData is the data payload for GET /spec/v2.1/s1/release/freeze-readiness.
+type S1FreezeReadinessData struct {
+	FreezeReady     bool   `json:"freeze_ready"`
+	UnresolvedCount int    `json:"unresolved_count"`
+	SpecPath        string `json:"spec_path"`
+	FirstQuestion   string `json:"first_question,omitempty"`
+}
+
 // GetDiffParams holds query parameters for GET /invocations/{id}/diff.
 type GetDiffParams struct {
 	IncludePatch       bool // default true

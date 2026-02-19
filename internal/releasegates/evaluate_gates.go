@@ -1,4 +1,4 @@
-package s1gates
+package releasegates
 
 import (
 	"fmt"
@@ -9,17 +9,8 @@ import (
 )
 
 // EvaluateGates performs deterministic aggregate evaluation for Gate A, Gate B,
-// and Slice S1 readiness. It returns per-gate status, closed/total counts,
-// blocking item references in canonical order, and overall slice readiness.
-//
-// Error precedence:
-//  1. gate source parse/load failures (E_GATE_SET_INVALID)
-//  2. issue-map parse/load failures (E_GATE_SET_INVALID)
-//  3. aggregate item-evaluation artifact failures (E_GATE_SET_INVALID)
-//  4. gate-source vs issue-map drift (E_GATE_SET_DRIFT)
-//  5. success result (slice_ready true or false)
+// and Slice S1 readiness.
 func EvaluateGates(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateResult, error) {
-	// Request validation.
 	if req.Slice != "S1" {
 		return nil, agencyerrors.NewWithDetails(
 			agencyerrors.EGateSetInvalid,
@@ -35,19 +26,16 @@ func EvaluateGates(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateRes
 		)
 	}
 
-	// Step 1: Parse canonical gate source.
-	gateSet, err := loadGateSet(repoRoot)
+	gateSet, err := LoadGateSet(repoRoot)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 2: Parse canonical issue-map.
-	issueMap, err := loadIssueMap(repoRoot)
+	issueMap, err := LoadIssueMap(repoRoot)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 3: Evaluate each gate item; surface first artifact failure in canonical order.
 	allItems := make([]string, 0, len(gateSet.GateAItems)+len(gateSet.GateBItems))
 	allItems = append(allItems, gateSet.GateAItems...)
 	allItems = append(allItems, gateSet.GateBItems...)
@@ -70,14 +58,12 @@ func EvaluateGates(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateRes
 		evaluations[issuePath] = eval
 	}
 
-	// Step 4: Drift detection — each canonical gate issue must appear exactly once in issue-map.
-	if driftErr := detectDrift(allItems, issueMap); driftErr != nil {
+	if driftErr := DetectDrift(allItems, issueMap); driftErr != nil {
 		return nil, driftErr
 	}
 
-	// Step 5: Compute aggregate result.
-	gateA := computeGateStatus("A", gateSet.GateAItems, evaluations)
-	gateB := computeGateStatus("B", gateSet.GateBItems, evaluations)
+	gateA := ComputeGateStatus("A", gateSet.GateAItems, evaluations)
+	gateB := ComputeGateStatus("B", gateSet.GateBItems, evaluations)
 
 	return &GatesEvaluateResult{
 		Slice:      "S1",
@@ -87,8 +73,8 @@ func EvaluateGates(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateRes
 	}, nil
 }
 
-// loadGateSet reads and parses the canonical release-gates source.
-func loadGateSet(repoRoot string) (*GateSet, error) {
+// LoadGateSet reads and parses the canonical release-gates source.
+func LoadGateSet(repoRoot string) (*GateSet, error) {
 	fullPath := filepath.Join(repoRoot, CanonicalGateSourcePath)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
@@ -101,8 +87,8 @@ func loadGateSet(repoRoot string) (*GateSet, error) {
 	return ParseGateSet(string(data), CanonicalGateSourcePath, RepoFileExists(repoRoot))
 }
 
-// loadIssueMap reads and parses the canonical issue-map source.
-func loadIssueMap(repoRoot string) (*IssueMapResult, error) {
+// LoadIssueMap reads and parses the canonical issue-map source.
+func LoadIssueMap(repoRoot string) (*IssueMapResult, error) {
 	fullPath := filepath.Join(repoRoot, CanonicalIssueMapPath)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
@@ -115,10 +101,9 @@ func loadIssueMap(repoRoot string) (*IssueMapResult, error) {
 	return ParseIssueMap(string(data))
 }
 
-// detectDrift checks that each canonical gate issue path appears exactly once
-// in the issue-map. Returns E_GATE_SET_DRIFT for the first mismatch in
-// canonical gate order.
-func detectDrift(canonicalItems []string, issueMap *IssueMapResult) error {
+// DetectDrift checks that each canonical gate issue path appears exactly once
+// in the issue-map.
+func DetectDrift(canonicalItems []string, issueMap *IssueMapResult) error {
 	for _, issuePath := range canonicalItems {
 		count := issueMap.Counts[issuePath]
 		if count == 1 {
@@ -141,10 +126,8 @@ func detectDrift(canonicalItems []string, issueMap *IssueMapResult) error {
 	return nil
 }
 
-// computeGateStatus computes the aggregate status for a single gate.
-// An item is counted as closed only when state==closed and evaluator reports
-// no blocking code. BlockingItems preserves canonical order from the gate source.
-func computeGateStatus(gateID string, items []string, evaluations map[string]*GateItemEvaluation) *GateStatus {
+// ComputeGateStatus computes the aggregate status for a single gate.
+func ComputeGateStatus(gateID string, items []string, evaluations map[string]*GateItemEvaluation) *GateStatus {
 	status := &GateStatus{
 		GateID:        gateID,
 		TotalItems:    len(items),
