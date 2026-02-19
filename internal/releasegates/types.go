@@ -1,9 +1,17 @@
-// Package s1gates implements deterministic gate corpus intake and gate-item
-// evaluation for v2.1 Slice S1 platform hardening gates.
-package s1gates
+// Package releasegates implements release-gating evaluation, closure reporting,
+// and freeze-readiness governance for v2.1 platform hardening gates. This
+// package is the durable replacement for the temporary slice-scoped namespace.
+package releasegates
 
 import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
+)
+
+// Canonical source paths consumed by release-gate orchestration.
+const (
+	CanonicalGateSourcePath = "docs/v2.1/release-gates.md"
+	CanonicalIssueMapPath   = "docs/v2.1/issue-map.md"
+	CanonicalS1SpecPath     = "docs/v2.1/s1/s1_spec.md"
 )
 
 // Gate item priorities.
@@ -129,6 +137,42 @@ var EnforcementScopes = map[string]bool{
 // FileExistsFn reports whether a file path exists.
 type FileExistsFn func(path string) bool
 
+// Gate IDs.
+const (
+	GateIDA = "A"
+	GateIDB = "B"
+)
+
+// Change types for gate-set change proposals.
+const (
+	ChangeTypeAdd     = "add"
+	ChangeTypeRemove  = "remove"
+	ChangeTypeReplace = "replace"
+	ChangeTypeReorder = "reorder"
+)
+
+// ValidGateIDs is the set of legal gate IDs for change validation.
+var ValidGateIDs = map[string]bool{
+	GateIDA: true,
+	GateIDB: true,
+}
+
+// ValidChangeTypes is the set of legal change types for gate-set change proposals.
+var ValidChangeTypes = map[string]bool{
+	ChangeTypeAdd:     true,
+	ChangeTypeRemove:  true,
+	ChangeTypeReplace: true,
+	ChangeTypeReorder: true,
+}
+
+// Gate status values.
+const (
+	GateStatusReady   = "ready"
+	GateStatusBlocked = "blocked"
+)
+
+// ----- Domain Models (PR-01..PR-04 parity) -----
+
 // GateSet represents the resolved gate membership from the canonical source.
 type GateSet struct {
 	Slice      string   `json:"slice"`
@@ -196,46 +240,6 @@ type GateTransitionResult struct {
 	State     string `json:"state"`
 }
 
-// CanonicalGateSourcePath is the repo-relative path to the release-gates source.
-const CanonicalGateSourcePath = "docs/v2.1/release-gates.md"
-
-// CanonicalIssueMapPath is the repo-relative path to the issue-map source.
-const CanonicalIssueMapPath = "docs/v2.1/issue-map.md"
-
-// Gate IDs.
-const (
-	GateIDA = "A"
-	GateIDB = "B"
-)
-
-// Change types for gate-set change proposals.
-const (
-	ChangeTypeAdd     = "add"
-	ChangeTypeRemove  = "remove"
-	ChangeTypeReplace = "replace"
-	ChangeTypeReorder = "reorder"
-)
-
-// ValidGateIDs is the set of legal gate IDs for change validation.
-var ValidGateIDs = map[string]bool{
-	GateIDA: true,
-	GateIDB: true,
-}
-
-// ValidChangeTypes is the set of legal change types for gate-set change proposals.
-var ValidChangeTypes = map[string]bool{
-	ChangeTypeAdd:     true,
-	ChangeTypeRemove:  true,
-	ChangeTypeReplace: true,
-	ChangeTypeReorder: true,
-}
-
-// Gate status values.
-const (
-	GateStatusReady   = "ready"
-	GateStatusBlocked = "blocked"
-)
-
 // GateStatus represents the aggregate evaluation status of a single gate.
 type GateStatus struct {
 	GateID        string   `json:"gate_id"`
@@ -273,4 +277,68 @@ type GateSetChange struct {
 // GateSetChangeValidationResult represents the outcome of gate-set change validation.
 type GateSetChangeValidationResult struct {
 	Valid bool `json:"valid"`
+}
+
+// IssueMapResult represents the parsed result of an issue-map document.
+type IssueMapResult struct {
+	Paths  []string       // unique issue paths in first-encounter order
+	Counts map[string]int // occurrence count per issue path
+}
+
+// ----- PR-05 Service DTOs -----
+
+// ReleaseReadinessRequest is the input for release-readiness evaluation.
+type ReleaseReadinessRequest struct {
+	Slice string `json:"slice"`
+}
+
+// ReleaseReadinessResult is the output for release-readiness evaluation.
+type ReleaseReadinessResult struct {
+	Slice      string      `json:"slice"`
+	SliceReady bool        `json:"slice_ready"`
+	GateA      *GateStatus `json:"gate_a"`
+	GateB      *GateStatus `json:"gate_b"`
+}
+
+// ClosureReportRequest is the input for closure-evidence reporting.
+type ClosureReportRequest struct {
+	Slice string `json:"slice"`
+}
+
+// ClosureReportResult is the output for closure-evidence reporting.
+type ClosureReportResult struct {
+	Slice string               `json:"slice"`
+	GateA *GateClosureSnapshot `json:"gate_a"`
+	GateB *GateClosureSnapshot `json:"gate_b"`
+}
+
+// GateClosureSnapshot captures the closure state of a single gate.
+type GateClosureSnapshot struct {
+	GateID         string               `json:"gate_id"`
+	Status         string               `json:"status"`
+	TotalItems     int                  `json:"total_items"`
+	ClosedItems    int                  `json:"closed_items"`
+	BlockingItems  []string             `json:"blocking_items"`
+	ClosedEvidence []ClosedItemEvidence `json:"closed_evidence"`
+}
+
+// ClosedItemEvidence surfaces implementation/test proof for a closed gate item.
+type ClosedItemEvidence struct {
+	IssuePath       string         `json:"issue_path"`
+	ImplementedRefs []string       `json:"implemented_refs"`
+	TargetedTests   []TestEvidence `json:"targeted_tests"`
+	SuiteTests      []TestEvidence `json:"suite_tests"`
+}
+
+// FreezeReadinessRequest is the input for freeze-readiness evaluation.
+type FreezeReadinessRequest struct {
+	SpecPath string `json:"spec_path"`
+}
+
+// FreezeReadinessResult is the output for freeze-readiness evaluation.
+type FreezeReadinessResult struct {
+	FreezeReady     bool   `json:"freeze_ready"`
+	UnresolvedCount int    `json:"unresolved_count"`
+	SpecPath        string `json:"spec_path"`
+	FirstQuestion   string `json:"first_question,omitempty"`
 }

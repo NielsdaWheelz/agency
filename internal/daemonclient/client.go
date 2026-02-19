@@ -1168,3 +1168,140 @@ func (c *Client) GetRepo(ctx context.Context, repoID string) (*GetRepoResult, er
 		RequestID: apiResp.RequestID,
 	}, nil
 }
+
+// ----- PR-05 S1 Release Gate Client Methods -----
+
+// S1ReleaseReadinessResult wraps the S1 release readiness response.
+type S1ReleaseReadinessResult struct {
+	Data      daemon.S1ReleaseReadinessData
+	RequestID string
+}
+
+// GetS1ReleaseReadiness queries the daemon for S1 release readiness.
+func (c *Client) GetS1ReleaseReadiness(ctx context.Context, repoID string) (*S1ReleaseReadinessResult, error) {
+	u := "http://daemon/spec/v2.1/s1/release/readiness?repo_id=" + url.QueryEscape(repoID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.S1ReleaseReadinessData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &S1ReleaseReadinessResult{
+		Data:      data,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// S1ClosureReportResult wraps the S1 closure report response.
+type S1ClosureReportResult struct {
+	Data      daemon.S1ClosureReportData
+	RequestID string
+}
+
+// GetS1ClosureReport queries the daemon for the S1 closure report.
+func (c *Client) GetS1ClosureReport(ctx context.Context, repoID string) (*S1ClosureReportResult, error) {
+	u := "http://daemon/spec/v2.1/s1/release/closure-report?repo_id=" + url.QueryEscape(repoID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.S1ClosureReportData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &S1ClosureReportResult{
+		Data:      data,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// S1FreezeReadinessResult wraps the S1 freeze readiness response.
+type S1FreezeReadinessResult struct {
+	Data      daemon.S1FreezeReadinessData
+	RequestID string
+}
+
+// GetS1FreezeReadiness queries the daemon for S1 freeze readiness.
+func (c *Client) GetS1FreezeReadiness(ctx context.Context, repoID string) (*S1FreezeReadinessResult, error) {
+	u := "http://daemon/spec/v2.1/s1/release/freeze-readiness?repo_id=" + url.QueryEscape(repoID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.S1FreezeReadinessData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &S1FreezeReadinessResult{
+		Data:      data,
+		RequestID: apiResp.RequestID,
+	}, nil
+}

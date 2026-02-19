@@ -1,4 +1,4 @@
-package s1gates
+package releasegates
 
 import (
 	"fmt"
@@ -10,13 +10,6 @@ import (
 const driftSyncSource = "release-gates_vs_issue-map"
 
 // ValidateGateSetChange validates a gate-set change proposal deterministically.
-//
-// Validation precedence (first failure wins):
-//  1. reason validation (E_GATE_CHANGE_REASON_REQUIRED)
-//  2. gate_id/change_type/target-shape validation (E_GATE_CHANGE_TARGET_REQUIRED)
-//  3. approval validation (E_GATE_CHANGE_APPROVAL_REQUIRED)
-//  4. synchronization validation (E_GATE_SET_DRIFT)
-//  5. success ({valid: true})
 func ValidateGateSetChange(req GateSetChange, repoRoot string) (*GateSetChangeValidationResult, error) {
 	if strings.TrimSpace(req.Reason) == "" {
 		return nil, agencyerrors.NewWithDetails(
@@ -101,7 +94,7 @@ func validateTargetExclusivity(req GateSetChange) error {
 }
 
 func loadGateSetForChangeValidation(repoRoot string) (*GateSet, error) {
-	gateSet, err := loadGateSet(repoRoot)
+	gateSet, err := LoadGateSet(repoRoot)
 	if err != nil {
 		return nil, newDriftError("", "", "source_invalid",
 			"canonical gate source is unreadable or malformed")
@@ -212,7 +205,7 @@ func validateSync(req GateSetChange, repoRoot string, gateSet *GateSet) error {
 		return newDriftError("", "", "unsynced_flag", "synced_issue_map must be true")
 	}
 
-	issueMap, err := loadIssueMap(repoRoot)
+	issueMap, err := LoadIssueMap(repoRoot)
 	if err != nil {
 		return newDriftError("", "", "source_invalid",
 			"canonical issue-map is unreadable or malformed")

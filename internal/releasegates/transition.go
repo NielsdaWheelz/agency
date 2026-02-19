@@ -1,4 +1,4 @@
-package s1gates
+package releasegates
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// legalTransitions defines the allowed gate-item state transitions.
 var legalTransitions = map[[2]string]bool{
 	{StateOpen, StateInProgress}:                 true,
 	{StateInProgress, StateReadyForVerification}: true,
@@ -18,25 +17,7 @@ var legalTransitions = map[[2]string]bool{
 }
 
 // TransitionGateItem validates and applies a gate-item state transition.
-//
-// Validation precedence (non-closure):
-//  1. Issue artifact parse/load failure (E_GATE_ITEM_NOT_FOUND or E_GATE_ITEM_INVALID)
-//  2. from_state mismatch with current parsed state (E_GATE_TRANSITION_INVALID)
-//  3. Illegal lifecycle edge including self-transition (E_GATE_TRANSITION_INVALID)
-//  4. Malformed/unknown actor_role (E_GATE_TRANSITION_INVALID)
-//  5. Non-member gate issue path (E_GATE_TRANSITION_INVALID)
-//
-// Closure guard precedence (ready_for_verification -> closed):
-//  1. PR-01 evaluator blocking_code
-//  2. Request/parsed evidence-ref non-empty (E_GATE_ITEM_EVIDENCE_MISSING)
-//  3. Gate A/B role policy (E_GATE_APPROVAL_REQUIRED)
-//  4. GH e2e evidence (E_GATE_E2E_REQUIRED)
-//  5. Design enforcement evidence (E_GATE_ITEM_TESTS_INCOMPLETE)
-//
-// Reopen guard (closed -> in_progress):
-//   - Non-empty reason and evidence_refs (E_GATE_REOPEN_REASON_REQUIRED)
 func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionResult, error) {
-	// --- Precedence 1: parse/load issue artifact ---
 	fullPath := filepath.Join(repoRoot, req.IssuePath)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
@@ -56,7 +37,6 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 		return nil, err
 	}
 
-	// --- Precedence 2: from_state mismatch ---
 	if req.FromState != ref.State {
 		return nil, agencyerrors.NewWithDetails(
 			agencyerrors.EGateTransitionInvalid,
@@ -65,7 +45,6 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 		)
 	}
 
-	// --- Precedence 3: illegal lifecycle edge (including self-transition) ---
 	edge := [2]string{req.FromState, req.ToState}
 	if !legalTransitions[edge] {
 		return nil, agencyerrors.NewWithDetails(
@@ -75,7 +54,6 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 		)
 	}
 
-	// --- Precedence 4: malformed/unknown actor_role ---
 	if !ValidActorRoles[req.ActorRole] {
 		return nil, agencyerrors.NewWithDetails(
 			agencyerrors.EGateTransitionInvalid,
@@ -84,7 +62,6 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 		)
 	}
 
-	// --- Precedence 5: non-member gate issue path ---
 	gateID, err := resolveGateMembership(req.IssuePath, repoRoot)
 	if err != nil {
 		return nil, agencyerrors.NewWithDetails(
@@ -101,14 +78,12 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 		)
 	}
 
-	// --- Closure guards: ready_for_verification -> closed ---
 	if req.FromState == StateReadyForVerification && req.ToState == StateClosed {
 		if err := enforceClosureGuards(req, ref, ce, gateID, repoRoot); err != nil {
 			return nil, err
 		}
 	}
 
-	// --- Reopen guards: closed -> in_progress ---
 	if req.FromState == StateClosed && req.ToState == StateInProgress {
 		if req.Reason == "" || len(req.EvidenceRefs) == 0 {
 			return nil, agencyerrors.NewWithDetails(
@@ -119,7 +94,6 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 		}
 	}
 
-	// --- Persist state ---
 	if err := persistState(fullPath, req.ToState, string(data)); err != nil {
 		return nil, agencyerrors.WrapWithDetails(
 			agencyerrors.EGateTransitionInvalid,
@@ -135,9 +109,7 @@ func TransitionGateItem(req GateTransition, repoRoot string) (*GateTransitionRes
 	}, nil
 }
 
-// enforceClosureGuards applies the closure-specific guard chain in deterministic order.
 func enforceClosureGuards(req GateTransition, ref *GateItemRef, ce *ClosureEvidence, gateID string, repoRoot string) error {
-	// Guard 1: PR-01 evaluator blocking_code (acceptance/tests/closure-block/evidence preconditions)
 	eval, err := EvaluateGateItem(req.IssuePath, repoRoot)
 	if err != nil {
 		return err
@@ -150,7 +122,6 @@ func enforceClosureGuards(req GateTransition, ref *GateItemRef, ce *ClosureEvide
 		)
 	}
 
-	// Guard 2: request evidence_refs and parsed implemented_refs non-empty
 	implementedEmpty := ce == nil || len(ce.ImplementedRefs) == 0
 	if len(req.EvidenceRefs) == 0 || implementedEmpty {
 		return agencyerrors.NewWithDetails(
@@ -160,7 +131,6 @@ func enforceClosureGuards(req GateTransition, ref *GateItemRef, ce *ClosureEvide
 		)
 	}
 
-	// Guard 3: Gate A/B role policy
 	if gateID == "A" && req.ActorRole != RoleMaintainer {
 		return agencyerrors.NewWithDetails(
 			agencyerrors.EGateApprovalRequired,
@@ -176,7 +146,6 @@ func enforceClosureGuards(req GateTransition, ref *GateItemRef, ce *ClosureEvide
 		)
 	}
 
-	// Guard 4: GH e2e evidence when requires_gh_e2e=true
 	if ref.RequiresGHE2E {
 		if !hasPassingE2EEvidence(ce) {
 			return agencyerrors.NewWithDetails(
@@ -187,7 +156,6 @@ func enforceClosureGuards(req GateTransition, ref *GateItemRef, ce *ClosureEvide
 		}
 	}
 
-	// Guard 5: design enforcement evidence when type=design
 	if ref.Type == TypeDesign {
 		if !hasEnforcementEvidence(ce) {
 			return agencyerrors.NewWithDetails(
@@ -201,9 +169,6 @@ func enforceClosureGuards(req GateTransition, ref *GateItemRef, ce *ClosureEvide
 	return nil
 }
 
-// resolveGateMembership reads the canonical release-gates source and returns
-// the gate ID ("A" or "B") for the given issue path, or "" if the path is not
-// a member of either gate. Returns an error if the source cannot be read/parsed.
 func resolveGateMembership(issuePath string, repoRoot string) (string, error) {
 	sourcePath := filepath.Join(repoRoot, CanonicalGateSourcePath)
 	data, err := os.ReadFile(sourcePath)
@@ -230,8 +195,6 @@ func resolveGateMembership(issuePath string, repoRoot string) (string, error) {
 	return "", nil
 }
 
-// hasPassingE2EEvidence checks whether closure evidence contains at least one
-// passing evidence row with scope=e2e_opt_in.
 func hasPassingE2EEvidence(ce *ClosureEvidence) bool {
 	if ce == nil {
 		return false
@@ -249,8 +212,6 @@ func hasPassingE2EEvidence(ce *ClosureEvidence) bool {
 	return false
 }
 
-// hasEnforcementEvidence checks whether closure evidence contains at least one
-// passing evidence row with an enforcement-eligible scope.
 func hasEnforcementEvidence(ce *ClosureEvidence) bool {
 	if ce == nil {
 		return false
@@ -268,14 +229,10 @@ func hasEnforcementEvidence(ce *ClosureEvidence) bool {
 	return false
 }
 
-// persistState writes the new state value into the issue stub file.
-// It replaces an existing state: line, or inserts one after labels: (or after
-// the title if labels: is absent).
 func persistState(fullPath string, newState string, content string) error {
 	lines := strings.Split(content, "\n")
 	newStateLine := fmt.Sprintf("state: %s", newState)
 
-	// Try to replace existing state: line.
 	replaced := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -287,7 +244,6 @@ func persistState(fullPath string, newState string, content string) error {
 	}
 
 	if !replaced {
-		// Insert after labels: line, or after title if labels absent.
 		insertIdx := findInsertIndex(lines)
 		lines = insertLineAfter(lines, insertIdx, newStateLine)
 	}
@@ -295,8 +251,6 @@ func persistState(fullPath string, newState string, content string) error {
 	return os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
-// findInsertIndex returns the line index after which a new state: line should be inserted.
-// Prefers position after labels: line; falls back to after the title line.
 func findInsertIndex(lines []string) int {
 	titleIdx := -1
 	labelsIdx := -1
@@ -321,7 +275,6 @@ func findInsertIndex(lines []string) int {
 	return 0
 }
 
-// insertLineAfter inserts a new line after the given index.
 func insertLineAfter(lines []string, afterIdx int, newLine string) []string {
 	insertAt := afterIdx + 1
 	result := make([]string, 0, len(lines)+1)

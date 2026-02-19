@@ -1,4 +1,4 @@
-package s1gates
+package releasegates
 
 import (
 	"encoding/json"
@@ -9,34 +9,19 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// titleRe matches the issue title line.
 var titleRe = regexp.MustCompile(`^#\s+(.+)$`)
-
-// titleTagRe extracts [tag] entries from the title.
 var titleTagRe = regexp.MustCompile(`\[([^\]]+)\]`)
-
-// labelsRe matches the labels metadata line.
 var labelsRe = regexp.MustCompile(`(?i)^labels:\s*(.+)$`)
-
-// stateRe matches the optional state metadata line.
 var stateRe = regexp.MustCompile(`(?i)^state:\s*(.+)$`)
-
-// checkboxCheckedRe matches a checked checkbox.
 var checkboxCheckedRe = regexp.MustCompile(`^\s*-\s+\[[xX]\]`)
-
-// checkboxUncheckedRe matches an unchecked checkbox.
 var checkboxUncheckedRe = regexp.MustCompile(`^\s*-\s+\[\s\]`)
-
-// h2Re matches ## headings (not deeper).
 var h2Re = regexp.MustCompile(`^##\s+(.+)$`)
 
 // ParseIssue parses an issue stub markdown into a normalized GateItemRef and
-// optional ClosureEvidence. The issue must contain a title line and an
-// ## acceptance criteria section; missing sections produce E_GATE_ITEM_INVALID.
+// optional ClosureEvidence.
 func ParseIssue(content string, issuePath string) (*GateItemRef, *ClosureEvidence, error) {
 	lines := strings.Split(content, "\n")
 
-	// Extract metadata from header area.
 	title, titleTags := parseTitle(lines)
 	if title == "" {
 		return nil, nil, agencyerrors.New(agencyerrors.EGateItemInvalid, "missing title line")
@@ -57,7 +42,6 @@ func ParseIssue(content string, issuePath string) (*GateItemRef, *ClosureEvidenc
 	}
 	requiresGHE2E := hasLabel(labels, "requires:gh-e2e")
 
-	// Parse sections.
 	sections := parseSections(content)
 	acceptSection, hasAccept := sections["acceptance criteria"]
 	if !hasAccept {
@@ -66,7 +50,6 @@ func ParseIssue(content string, issuePath string) (*GateItemRef, *ClosureEvidenc
 
 	acceptanceComplete := checkAcceptance(acceptSection)
 
-	// Parse optional closure evidence.
 	var ce *ClosureEvidence
 	if ceSection, hasCE := sections["closure evidence"]; hasCE {
 		var err error
@@ -76,7 +59,6 @@ func ParseIssue(content string, issuePath string) (*GateItemRef, *ClosureEvidenc
 		}
 	}
 
-	// Build evidence refs from closure evidence.
 	var evidenceRefs []string
 	if ce != nil {
 		evidenceRefs = ce.ImplementedRefs
@@ -95,7 +77,6 @@ func ParseIssue(content string, issuePath string) (*GateItemRef, *ClosureEvidenc
 	return ref, ce, nil
 }
 
-// parseTitle extracts the title text and square-bracket tags from the first # heading.
 func parseTitle(lines []string) (string, []string) {
 	for _, line := range lines {
 		if m := titleRe.FindStringSubmatch(line); m != nil {
@@ -111,7 +92,6 @@ func parseTitle(lines []string) (string, []string) {
 	return "", nil
 }
 
-// parseLabels extracts and normalizes labels from the labels: metadata line.
 func parseLabels(lines []string) []string {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -133,9 +113,6 @@ func parseLabels(lines []string) []string {
 	return nil
 }
 
-// parseStateLine extracts the state from the optional state: metadata line.
-// Returns E_GATE_ITEM_INVALID if an explicit state: line has an unrecognized value.
-// Returns StateOpen when no state: metadata is present.
 func parseStateLine(lines []string) (string, error) {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -151,7 +128,6 @@ func parseStateLine(lines []string) (string, error) {
 	return StateOpen, nil
 }
 
-// derivePriority extracts priority from labels first, then title tags as fallback.
 func derivePriority(labels []string, titleTags []string) string {
 	for _, l := range labels {
 		if ValidPriorities[l] {
@@ -166,7 +142,6 @@ func derivePriority(labels []string, titleTags []string) string {
 	return ""
 }
 
-// deriveType extracts the type from labels with "type:" prefix.
 func deriveType(labels []string) string {
 	for _, l := range labels {
 		if strings.HasPrefix(l, "type:") {
@@ -179,7 +154,6 @@ func deriveType(labels []string) string {
 	return ""
 }
 
-// hasLabel checks whether the given label string is present.
 func hasLabel(labels []string, target string) bool {
 	for _, l := range labels {
 		if l == target {
@@ -189,8 +163,6 @@ func hasLabel(labels []string, target string) bool {
 	return false
 }
 
-// parseSections splits markdown into ## sections, returning a map of
-// normalized heading -> content. Headings inside fenced blocks are ignored.
 func parseSections(content string) map[string]string {
 	lines := strings.Split(content, "\n")
 	sections := make(map[string]string)
@@ -216,7 +188,6 @@ func parseSections(content string) map[string]string {
 		}
 
 		if m := h2Re.FindStringSubmatch(line); m != nil {
-			// Save previous section.
 			if currentName != "" {
 				sections[currentName] = strings.Join(currentLines, "\n")
 			}
@@ -237,7 +208,6 @@ func parseSections(content string) map[string]string {
 	return sections
 }
 
-// normalizeHeading lowercases, trims, and strips trailing punctuation from a heading.
 func normalizeHeading(h string) string {
 	h = strings.ToLower(strings.TrimSpace(h))
 	h = strings.Join(strings.Fields(h), " ")
@@ -245,7 +215,6 @@ func normalizeHeading(h string) string {
 	return h
 }
 
-// checkAcceptance returns true if all checkboxes in the section are checked.
 func checkAcceptance(sectionContent string) bool {
 	lines := strings.Split(sectionContent, "\n")
 	checked := 0
@@ -260,15 +229,12 @@ func checkAcceptance(sectionContent string) bool {
 	return checked > 0 && unchecked == 0
 }
 
-// parseClosureEvidenceBlock extracts and validates the first fenced JSON block
-// from the closure evidence section content.
 func parseClosureEvidenceBlock(sectionContent string, issuePath string) (*ClosureEvidence, error) {
 	jsonContent, found := extractFirstFencedJSON(sectionContent)
 	if !found {
 		return nil, agencyerrors.New(agencyerrors.EGateItemInvalid, "closure evidence section has no fenced JSON block")
 	}
 
-	// Verify required top-level keys exist.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(jsonContent), &raw); err != nil {
 		return nil, agencyerrors.New(agencyerrors.EGateItemInvalid, fmt.Sprintf("invalid closure evidence JSON: %v", err))
@@ -281,14 +247,12 @@ func parseClosureEvidenceBlock(sectionContent string, issuePath string) (*Closur
 		}
 	}
 
-	// Unmarshal into typed struct.
 	var ce ClosureEvidence
 	if err := json.Unmarshal([]byte(jsonContent), &ce); err != nil {
 		return nil, agencyerrors.New(agencyerrors.EGateItemInvalid, fmt.Sprintf("closure evidence schema error: %v", err))
 	}
 	ce.IssuePath = issuePath
 
-	// Validate test evidence entries: enum validity then semantic rules.
 	for i, te := range ce.TargetedTestRefs {
 		if !ValidScopes[te.Scope] {
 			return nil, agencyerrors.New(agencyerrors.EGateItemInvalid,
@@ -326,8 +290,6 @@ func parseClosureEvidenceBlock(sectionContent string, issuePath string) (*Closur
 	return &ce, nil
 }
 
-// extractFirstFencedJSON finds the first fenced code block (optionally tagged
-// json) and returns its content.
 func extractFirstFencedJSON(content string) (string, bool) {
 	lines := strings.Split(content, "\n")
 	var blockLines []string

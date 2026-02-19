@@ -208,9 +208,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/shutdown", s.handleShutdown)
 	mux.HandleFunc("/invocations/", s.handleInvocations)
 	mux.HandleFunc("/worktrees/", s.handleWorktrees)
-	mux.HandleFunc("/worktrees", s.handleWorktrees) // Without trailing slash for create
-	mux.HandleFunc("/repos/", s.handleRepos)        // PR-A: repo registry
-	mux.HandleFunc("/repos", s.handleRepos)         // PR-A: repo registry (no trailing slash)
+	mux.HandleFunc("/worktrees", s.handleWorktrees)             // Without trailing slash for create
+	mux.HandleFunc("/repos/", s.handleRepos)                    // PR-A: repo registry
+	mux.HandleFunc("/repos", s.handleRepos)                     // PR-A: repo registry (no trailing slash)
+	mux.HandleFunc("/spec/v2.1/s1/release/", s.handleS1Release) // PR-05: S1 release gates
 }
 
 // handleHealth handles GET /health.

@@ -1,4 +1,4 @@
-package s1gates
+package releasegates
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 
 // RequireSliceReady evaluates gates and returns E_GATE_BLOCKED if the slice
 // is not ready. If the slice is ready, returns the aggregate result unchanged.
-// Non-blocked errors from EvaluateGates are propagated unchanged.
 func RequireSliceReady(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateResult, error) {
 	result, err := EvaluateGates(req, repoRoot)
 	if err != nil {
