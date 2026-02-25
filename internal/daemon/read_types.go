@@ -26,6 +26,14 @@ type AmbiguousDetails struct {
 	Candidates []string `json:"candidates"`
 }
 
+// InvalidQueryArgumentDetails is the structured error details for invalid
+// list-filter enum inputs (L2 InvalidQueryArgumentDetails).
+type InvalidQueryArgumentDetails struct {
+	Param         string   `json:"param"`
+	Value         string   `json:"value"`
+	AllowedValues []string `json:"allowed_values"`
+}
+
 // CursorInvalidDetails is the details shape for E_CURSOR_INVALID errors.
 type CursorInvalidDetails struct {
 	Reason string `json:"reason"`

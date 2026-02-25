@@ -1692,6 +1692,354 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// S2 PR-01: Daemon Read API Contract Hardening — Acceptance Tests
+// ---------------------------------------------------------------------------
+
+// decodeDetails extracts and decodes the Details field from an APIResponse.
+func decodeDetails(t *testing.T, resp APIResponse, target interface{}) {
+	t.Helper()
+	dataBytes, err := json.Marshal(resp.Details)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(dataBytes, target))
+}
+
+func TestHandleListWorktrees_InvalidStateReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID+"&state=bogus")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+
+	var details InvalidQueryArgumentDetails
+	decodeDetails(t, resp, &details)
+	assert.Equal(t, "state", details.Param)
+	assert.Equal(t, "bogus", details.Value)
+	assert.Equal(t, []string{"present", "archived", "all"}, details.AllowedValues)
+}
+
+func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&state=bogus")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+
+	var details InvalidQueryArgumentDetails
+	decodeDetails(t, resp, &details)
+	assert.Equal(t, "state", details.Param)
+	assert.Equal(t, "bogus", details.Value)
+	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+}
+
+func TestHandleListInvocations_InvalidModeReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&mode=bogus")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+
+	var details InvalidQueryArgumentDetails
+	decodeDetails(t, resp, &details)
+	assert.Equal(t, "mode", details.Param)
+	assert.Equal(t, "bogus", details.Value)
+	assert.Equal(t, []string{"headed", "headless", "all"}, details.AllowedValues)
+}
+
+func TestHandleListInvocations_InvalidFiltersFailClosed_DeterministicPrecedence(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&state=badstate&mode=badmode")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+
+	// Canonical validation order: state then mode; first invalid wins.
+	var details InvalidQueryArgumentDetails
+	decodeDetails(t, resp, &details)
+	assert.Equal(t, "state", details.Param)
+	assert.Equal(t, "badstate", details.Value)
+	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+}
+
+func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {
+	t.Parallel()
+
+	// Server with NO repo index loaded — getRepoIDsForQuery would fail with E_INTERNAL.
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: ""}
+
+	// No repo_id, no repo index — but invalid state should fail first.
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?state=bogus")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode,
+		"enum validation must run before repo index enumeration")
+}
+
+func TestHandleListInvocations_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {
+	t.Parallel()
+
+	// Server with NO repo index loaded.
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: ""}
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?state=bogus")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode,
+		"enum validation must run before repo index enumeration")
+}
+
+func TestHandleListWorktrees_Limit500Accepted(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID+"&limit=500")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+}
+
+func TestHandleListInvocations_Limit500Accepted(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&limit=500")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+	assert.Len(t, data.Invocations, 3)
+}
+
+func TestHandleListInvocations_WorktreeIDFilter_Compatibility(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_id=wt-1")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	// inv-1 and inv-2 are in wt-1; inv-3 is in wt-2
+	assert.Len(t, data.Invocations, 2)
+	for _, inv := range data.Invocations {
+		assert.Equal(t, "wt-1", inv.WorktreeID,
+			"worktree_id filter must not widen to all invocations")
+	}
+}
+
+func TestHandleListInvocations_WorktreeFilterPrecedence_WorktreeRefWins(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// worktree_ref=alpha resolves to wt-1; worktree_id=wt-2 would select wt-2.
+	// worktree_ref takes precedence.
+	w := env.doInvocationRequest(t, http.MethodGet,
+		"/invocations/?repo_id="+env.RepoID+"&worktree_ref=alpha&worktree_id=wt-2")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	// worktree_ref=alpha → wt-1: inv-1 and inv-2
+	assert.Len(t, data.Invocations, 2)
+	for _, inv := range data.Invocations {
+		assert.Equal(t, "wt-1", inv.WorktreeID,
+			"worktree_ref must take precedence over worktree_id")
+	}
+}
+
+func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
+	t.Parallel()
+
+	// Set up a repo with two worktrees sharing an ID prefix to trigger ambiguous resolution.
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	repoID := "test-repo-ambig-wt"
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
+		},
+	}))
+
+	// Two worktrees with same name "alpha" in same repo
+	for _, wtID := range []string{"wt-alpha-1", "wt-alpha-2"} {
+		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+		require.NoError(t, err)
+		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, &store.IntegrationWorktreeMeta{
+			SchemaVersion: "1.0",
+			WorktreeID:    wtID,
+			Name:          "alpha",
+			RepoID:        repoID,
+			Branch:        "agency/" + wtID,
+			ParentBranch:  "main",
+			TreePath:      "/tmp/wt/" + wtID,
+			CreatedAt:     "2026-02-05T10:00:00Z",
+			State:         store.WorktreeStatePresent,
+		}))
+	}
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: repoID}
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha?repo_id="+repoID)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_WORKTREE_ID_AMBIGUOUS", resp.ErrorCode)
+
+	// Verify candidates are present in details
+	require.NotNil(t, resp.Details, "ambiguous error must include details with candidates")
+	detailsMap, err := json.Marshal(resp.Details)
+	require.NoError(t, err)
+	var details AmbiguousDetails
+	require.NoError(t, json.Unmarshal(detailsMap, &details))
+	assert.Len(t, details.Candidates, 2)
+}
+
+func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	repoID := "test-repo-ambig-inv"
+
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fs.NewRealFS(), dataDir, func() time.Time { return now })
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	srv.Clock = func() time.Time { return now }
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
+		},
+	}))
+
+	// Two invocations with same name "shared-run" in same repo
+	for _, invID := range []string{"inv-shared-1", "inv-shared-2"} {
+		_, err := st.EnsureInvocationDir(repoID, invID)
+		require.NoError(t, err)
+		require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
+			SchemaVersion:         "1.0",
+			InvocationID:          invID,
+			InvocationName:        "shared-run",
+			IntegrationWorktreeID: "wt-1",
+			SandboxPath:           "/tmp/sandbox/" + invID,
+			SandboxBranch:         "agency/sandbox-" + invID,
+			BaseCommit:            "abc",
+			Runner:                "claude",
+			Mode:                  store.RunnerModeHeadless,
+			StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
+			Status:                store.InvocationStatusRunning,
+		}))
+	}
+
+	env := &readTestEnv{Server: srv, Store: st, RepoID: repoID}
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/shared-run?repo_id="+repoID)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVOCATION_ID_AMBIGUOUS", resp.ErrorCode)
+
+	require.NotNil(t, resp.Details, "ambiguous error must include details with candidates")
+	detailsMap, err := json.Marshal(resp.Details)
+	require.NoError(t, err)
+	var details AmbiguousDetails
+	require.NoError(t, json.Unmarshal(detailsMap, &details))
+	assert.Len(t, details.Candidates, 2)
+}
+
+func TestWorktreesRouting_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"POST_to_list_worktrees", "/worktrees?repo_id=" + env.RepoID},
+		{"POST_to_get_worktree", "/worktrees/wt-1?repo_id=" + env.RepoID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := env.doWorktreeRequest(t, http.MethodPost, tt.path)
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+
+			// Router-level 405 uses writeError (not writeAPIError), so envelope
+			// includes ok+error_code but not request_id. Assert the error shape.
+			var body map[string]interface{}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+			assert.Equal(t, false, body["ok"])
+			assert.Equal(t, "E_METHOD_NOT_ALLOWED", body["error_code"])
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// End S2 PR-01 acceptance tests
+// ---------------------------------------------------------------------------
+
 func TestParseGetLogsParams_OffsetMode(t *testing.T) {
 	t.Parallel()
 
