@@ -1,7 +1,7 @@
 # pr-02 worklog: shared cli navigation resolution kernel
 
 Last updated: 2026-02-25
-Status: draft
+Status: implemented
 Upstream l2: `docs/v2.1/s2/s2_spec.md`
 Upstream l3: `docs/v2.1/s2/s2_roadmap.md` (PR-02)
 
@@ -44,6 +44,7 @@ Upstream l3: `docs/v2.1/s2/s2_roadmap.md` (PR-02)
 - boundary cleanup: complete (PR-03/PR-04/PR-05 surfaces remain explicit non-goals).
 - traceability completeness: complete (all PR-02 L3 acceptance bullets mapped to deliverables/tests).
 - open-questions/defaults freeze check: complete (table cleared; no temporary defaults remain).
+- implementation: complete (all deliverables implemented, all tests passing, `make verify` clean).
 
 ## decisions resolved during drafting
 - D-001 resolved: PR-02 will use a narrow, typed daemonclient read-API error passthrough path for kernel consumers to preserve daemon `hint` and structured `details` (including ambiguity candidates) without broadening `AgencyError` or changing unrelated daemonclient call-site behavior.
