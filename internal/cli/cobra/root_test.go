@@ -202,6 +202,23 @@ func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestAgentCLI_RegistersCanonicalPathShellEnterSubcommands(t *testing.T) {
+	rootCmd := NewRootCmd()
+	agentCmd, _, err := rootCmd.Find([]string{"agent"})
+	require.NoError(t, err)
+
+	subcmds := make(map[string]bool)
+	for _, sub := range agentCmd.Commands() {
+		subcmds[sub.Name()] = true
+	}
+
+	assert.True(t, subcmds["path"], "agent must include canonical 'path' subcommand")
+	assert.True(t, subcmds["shell"], "agent must include canonical 'shell' subcommand")
+	assert.True(t, subcmds["enter"], "agent must include canonical 'enter' subcommand")
+	assert.True(t, subcmds["attach"], "agent must retain 'attach' for compatibility (PR-05 owns alias rollout)")
+	assert.False(t, subcmds["restart"], "agent must NOT include 'restart' in PR-04 (reserved for S3)")
+}
+
 func TestWatchCmd_ReturnsUsageError(t *testing.T) {
 	_, _, err := executeCmd("watch")
 	require.Error(t, err, "expected error when watch called (not implemented)")

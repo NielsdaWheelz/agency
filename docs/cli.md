@@ -30,9 +30,11 @@ legacy commands (v1):
   completion  generate shell completion scripts (bash, zsh)
   version     print agency version
 
-v2 commands (slice 8):
+v2 commands (slice 8+):
   worktree    manage integration worktrees
   agent       manage agent invocations (headed + headless via daemon)
+              subcommands: start, ls, show, attach, enter, stop, kill, diff,
+                           land, discard, open, path, shell, logs
   daemon      manage the agency daemon (headless supervision)
   checkpoint  manage sandbox checkpoints for headless invocations
   repo        manage repository registry
@@ -540,6 +542,66 @@ opens the sandbox in the configured editor.
 ```bash
 agency agent open <invocation_id|name|prefix> [--editor <name>]
 ```
+
+resolves invocation via daemon-first navigation kernel. no local store discovery.
+
+**error codes:**
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_AMBIGUOUS` — ref matches multiple invocations (via navigation kernel)
+- `E_SANDBOX_MISSING` — sandbox directory no longer exists on disk
+
+### `agency agent path`
+
+prints the daemon-resolved sandbox path for scripting.
+
+**usage:**
+```bash
+agency agent path <invocation_ref>
+```
+
+**example:**
+```bash
+cd $(agency agent path 20260131)
+```
+
+resolves invocation via daemon-first navigation kernel. no local store discovery.
+`agent path` is a pure path-printing surface — it does not fail if the path no longer exists.
+
+### `agency agent shell`
+
+opens a login shell with the working directory set to the sandbox path.
+
+**usage:**
+```bash
+agency agent shell <invocation_ref>
+```
+
+spawns `$SHELL` (or `/bin/sh`) with the daemon-resolved sandbox as the working directory.
+
+**error codes:**
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_AMBIGUOUS` — ref matches multiple invocations
+- `E_SANDBOX_MISSING` — sandbox directory no longer exists on disk
+
+### `agency agent enter`
+
+attaches to a running headed invocation's tmux session (canonical interactive navigation).
+
+**usage:**
+```bash
+agency agent enter <invocation_ref>
+```
+
+resolves invocation identity/path via daemon-first navigation kernel with TTY preflight.
+headed-only: headless invocations are rejected with `E_INVOCATION_INVALID_MODE`.
+tmux session name is derived deterministically from `tmux.SessionName(invocation_id)`.
+
+**error codes:**
+- `E_NOT_INTERACTIVE` — not running in an interactive terminal
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_AMBIGUOUS` — ref matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headless; enter only supports headed
+- `E_SESSION_ENDED` — tmux session not found
 
 ### `agency agent logs`
 

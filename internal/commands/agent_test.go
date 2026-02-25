@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,6 +267,893 @@ func TestAgentAttach_HeadedInvocation_SessionMissing(t *testing.T) {
 	require.Error(t, err, "AgentAttach error = nil, want E_SESSION_ENDED")
 
 	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04: Agent navigation convergence — setup helper
+// ---------------------------------------------------------------------------
+
+type agentNavTestEnv struct {
+	DataDir      string
+	RepoID       string
+	WorktreeID   string
+	InvocationID string
+	SandboxPath  string
+}
+
+// setupAgentNavEnv creates a test environment with a daemon, one integration
+// worktree, and one invocation. Uses t.Setenv for AGENCY_DATA_DIR / AGENCY_CONFIG_DIR
+// so tests must NOT be marked t.Parallel().
+func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNavTestEnv {
+	t.Helper()
+
+	dataTmp, err := os.MkdirTemp("", "an")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
+
+	repoID := "r1"
+	wtID := "20260131120000-abcd"
+	invID := "20260131130000-efgh"
+
+	// Create integration worktree in store
+	wtDir := filepath.Join(dataTmp, "repos", repoID, "integration_worktrees", wtID)
+	treePath := filepath.Join(wtDir, "tree")
+	require.NoError(t, os.MkdirAll(treePath, 0755))
+
+	agencyDir := filepath.Join(treePath, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
+		[]byte("# Integration worktree\n"), 0644))
+
+	wtMeta := &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0",
+		WorktreeID:    wtID,
+		Name:          name,
+		RepoID:        repoID,
+		Branch:        "agency/" + name + "-abcd",
+		ParentBranch:  "main",
+		TreePath:      treePath,
+		CreatedAt:     "2026-01-31T12:00:00Z",
+		State:         store.WorktreeStatePresent,
+	}
+	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), metaBytes, 0644))
+
+	// Create invocation
+	invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", invID)
+	require.NoError(t, os.MkdirAll(invDir, 0755))
+
+	sandboxDir := filepath.Join(dataTmp, "repos", repoID, "sandboxes", invID)
+	sandboxTreeDir := filepath.Join(sandboxDir, "tree")
+	require.NoError(t, os.MkdirAll(sandboxTreeDir, 0755))
+
+	invMeta := &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          invID,
+		IntegrationWorktreeID: wtID,
+		SandboxPath:           sandboxTreeDir,
+		SandboxBranch:         "agency/sandbox-" + invID,
+		BaseCommit:            "abc123def456",
+		Runner:                "claude",
+		Mode:                  mode,
+		StartedAt:             "2026-01-31T13:00:00Z",
+		Status:                store.InvocationStatusRunning,
+	}
+	if mode == store.RunnerModeHeaded {
+		invMeta.TmuxSession = tmux.SessionName(invID)
+	}
+	imBytes, _ := json.MarshalIndent(invMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imBytes, 0644))
+
+	// Start daemon
+	fsys := fs.NewRealFS()
+	cr := testutil.NewFakeCommandRunner()
+	st := store.NewStore(fsys, dataTmp, time.Now)
+	configDir := filepath.Join(dataTmp, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	srv := daemon.NewServer(st, cr, fsys, configDir)
+
+	socketPath := st.DaemonSocketPath()
+	listener, listenErr := net.Listen("unix", socketPath)
+	require.NoError(t, listenErr)
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+
+	client := daemonclient.NewClient(socketPath)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
+
+	t.Setenv("AGENCY_DATA_DIR", dataTmp)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	return agentNavTestEnv{
+		DataDir:      dataTmp,
+		RepoID:       repoID,
+		WorktreeID:   wtID,
+		InvocationID: invID,
+		SandboxPath:  sandboxTreeDir,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04 Acceptance 1: agent ls/show daemon-of-record read behavior
+// ---------------------------------------------------------------------------
+
+func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
+	env := setupAgentNavEnv(t, "ls-test", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoFlag: env.RepoID}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	assert.Contains(t, out, env.InvocationID)
+	assert.Contains(t, out, "claude")
+	assert.Contains(t, out, "headed")
+}
+
+func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
+	env := setupAgentNavEnv(t, "show-test", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	assert.Contains(t, out, "invocation_id:          "+env.InvocationID)
+	assert.Contains(t, out, "worktree_id:            "+env.WorktreeID)
+	assert.Contains(t, out, "runner:                 claude")
+	assert.Contains(t, out, "mode:                   headed")
+	assert.Contains(t, out, "sandbox_path:           "+env.SandboxPath)
+}
+
+func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
+	env := setupAgentNavEnv(t, "lsjson", store.RunnerModeHeadless)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var dtos []daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dtos))
+	require.Len(t, dtos, 1)
+
+	assert.Equal(t, env.InvocationID, dtos[0].InvocationID)
+	assert.Equal(t, env.RepoID, dtos[0].RepoID)
+	assert.Equal(t, "claude", dtos[0].Runner)
+	assert.Equal(t, "headless", dtos[0].Mode)
+	assert.Equal(t, env.SandboxPath, dtos[0].SandboxPath)
+}
+
+func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
+	env := setupAgentNavEnv(t, "showjson", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var dto daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dto))
+
+	assert.Equal(t, env.InvocationID, dto.InvocationID)
+	assert.Equal(t, env.RepoID, dto.RepoID)
+	assert.Equal(t, "claude", dto.Runner)
+	assert.Equal(t, env.SandboxPath, dto.SandboxPath)
+}
+
+func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
+	dataTmp, err := os.MkdirTemp("", "an")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
+
+	repoID := "r1"
+	wtID := "20260131120000-abcd"
+
+	// Create worktree
+	wtDir := filepath.Join(dataTmp, "repos", repoID, "integration_worktrees", wtID)
+	treePath := filepath.Join(wtDir, "tree")
+	require.NoError(t, os.MkdirAll(treePath, 0755))
+	agencyDir := filepath.Join(treePath, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
+		[]byte("# Integration worktree\n"), 0644))
+	wtMeta := &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+	}
+	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+
+	// Two invocations with shared prefix
+	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
+		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
+		require.NoError(t, os.MkdirAll(invDir, 0755))
+		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
+		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
+		im := &store.InvocationMeta{
+			SchemaVersion: "1.0", InvocationID: id,
+			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
+			Runner: "claude", Mode: store.RunnerModeHeaded,
+			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
+		}
+		imB, _ := json.MarshalIndent(im, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imB, 0644))
+	}
+
+	// Start daemon
+	fsys2 := fs.NewRealFS()
+	cr2 := testutil.NewFakeCommandRunner()
+	st2 := store.NewStore(fsys2, dataTmp, time.Now)
+	configDir := filepath.Join(dataTmp, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	srv := daemon.NewServer(st2, cr2, fsys2, configDir)
+	socketPath := st2.DaemonSocketPath()
+	listener, listenErr := net.Listen("unix", socketPath)
+	require.NoError(t, listenErr)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(socketPath)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second))
+
+	t.Setenv("AGENCY_DATA_DIR", dataTmp)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	var stdout, stderr bytes.Buffer
+	showErr := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShowOpts{InvocationRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+
+	require.Error(t, showErr)
+	assert.Equal(t, errors.EInvocationIDAmbiguous, errors.GetCode(showErr),
+		"agent show must return entity-specific ambiguity code, not E_AMBIGUOUS")
+
+	dre, ok := daemonclient.AsDaemonReadError(showErr)
+	require.True(t, ok, "error must be DaemonReadError with rich details")
+	candidates := dre.Candidates()
+	assert.Len(t, candidates, 2, "daemon should return both candidate IDs")
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04 Acceptance 2: canonical agent path/open/shell/enter daemon-first navigation
+// ---------------------------------------------------------------------------
+
+func TestAgentPath_UsesNavigationKernelDaemonResolution(t *testing.T) {
+	env := setupAgentNavEnv(t, "path-test", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentPathOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Equal(t, env.SandboxPath+"\n", stdout.String(),
+		"stdout must be exactly the daemon-resolved sandbox_path plus newline")
+}
+
+func TestAgentOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+	env := setupAgentNavEnv(t, "open-test", store.RunnerModeHeaded)
+	shimPath, recordFile := createShimScript(t)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	cwd, args := readShimRecord(t, recordFile)
+
+	assert.Equal(t, env.SandboxPath, cwd,
+		"editor dispatch cwd must equal daemon-resolved sandbox_path")
+	assert.Contains(t, args, env.SandboxPath,
+		"editor must receive daemon-resolved sandbox_path as argument")
+}
+
+func TestAgentShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+	env := setupAgentNavEnv(t, "shell-test", store.RunnerModeHeaded)
+	shimPath, recordFile := createShimScript(t)
+	t.Setenv("SHELL", shimPath)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShellOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	cwd, args := readShimRecord(t, recordFile)
+
+	assert.Equal(t, env.SandboxPath, cwd,
+		"shell cwd must equal daemon-resolved sandbox_path")
+	assert.Equal(t, "-l", args,
+		"shell should be invoked with -l (login)")
+}
+
+func TestAgentEnter_UsesNavigationKernelInvocationResolution_HeadedOnly(t *testing.T) {
+	env := setupAgentNavEnv(t, "enter-test", store.RunnerModeHeaded)
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	sessionName := tmux.SessionName(env.InvocationID)
+	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+	var attachCalled bool
+	var attachedSession string
+
+	var stdout, stderr bytes.Buffer
+	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentEnterOpts{
+			InvocationRef:   env.InvocationID,
+			RepoFlag:        env.RepoID,
+			IsInteractive:   func() bool { return true },
+			TmuxClient:      fakeTmux,
+			DataDirOverride: env.DataDir,
+			TmuxAttachFn: func(sess string) error {
+				attachCalled = true
+				attachedSession = sess
+				return nil
+			},
+		}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.True(t, attachCalled, "tmux attach must be called")
+	assert.Equal(t, sessionName, attachedSession,
+		"tmux session target must be derived from daemon-resolved invocation_id via tmux.SessionName")
+}
+
+func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
+	dataTmp, err := os.MkdirTemp("", "an")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
+
+	repoID := "r1"
+	wtID := "20260131120000-abcd"
+	// Create worktree
+	wtDir := filepath.Join(dataTmp, "repos", repoID, "integration_worktrees", wtID)
+	treePath := filepath.Join(wtDir, "tree")
+	require.NoError(t, os.MkdirAll(treePath, 0755))
+	agencyDir := filepath.Join(treePath, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
+		[]byte("# Integration worktree\n"), 0644))
+	wtMeta := &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+	}
+	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+
+	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
+		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
+		require.NoError(t, os.MkdirAll(invDir, 0755))
+		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
+		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
+		im := &store.InvocationMeta{
+			SchemaVersion: "1.0", InvocationID: id,
+			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
+			Runner: "claude", Mode: store.RunnerModeHeaded,
+			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
+		}
+		imB, _ := json.MarshalIndent(im, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imB, 0644))
+	}
+
+	fsys2 := fs.NewRealFS()
+	cr2 := testutil.NewFakeCommandRunner()
+	st2 := store.NewStore(fsys2, dataTmp, time.Now)
+	configDir := filepath.Join(dataTmp, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	srv := daemon.NewServer(st2, cr2, fsys2, configDir)
+	socketPath := st2.DaemonSocketPath()
+	listener, listenErr := net.Listen("unix", socketPath)
+	require.NoError(t, listenErr)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(socketPath)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second))
+
+	t.Setenv("AGENCY_DATA_DIR", dataTmp)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	var stdout, stderr bytes.Buffer
+	pathErr := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentPathOpts{InvocationRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+
+	require.Error(t, pathErr)
+	assert.Equal(t, errors.EAmbiguous, errors.GetCode(pathErr),
+		"navigation ambiguity must return E_AMBIGUOUS, not entity-specific code")
+
+	ae, ok := errors.AsAgencyError(pathErr)
+	require.True(t, ok)
+	require.NotNil(t, ae.Details)
+	assert.Equal(t, "invocation", ae.Details["target_kind"])
+	assert.Equal(t, "2", ae.Details["candidate_count"])
+}
+
+func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
+	dataTmp, err := os.MkdirTemp("", "an")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
+
+	repoID := "r1"
+	wtID := "20260131120000-abcd"
+	wtDir := filepath.Join(dataTmp, "repos", repoID, "integration_worktrees", wtID)
+	treePath := filepath.Join(wtDir, "tree")
+	require.NoError(t, os.MkdirAll(treePath, 0755))
+	agencyDir := filepath.Join(treePath, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
+		[]byte("# Integration worktree\n"), 0644))
+	wtMeta := &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+	}
+	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+
+	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
+		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
+		require.NoError(t, os.MkdirAll(invDir, 0755))
+		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
+		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
+		im := &store.InvocationMeta{
+			SchemaVersion: "1.0", InvocationID: id,
+			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
+			Runner: "claude", Mode: store.RunnerModeHeaded,
+			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
+		}
+		imB, _ := json.MarshalIndent(im, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imB, 0644))
+	}
+
+	fsys2 := fs.NewRealFS()
+	st2 := store.NewStore(fsys2, dataTmp, time.Now)
+	configDir := filepath.Join(dataTmp, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	srv := daemon.NewServer(st2, testutil.NewFakeCommandRunner(), fsys2, configDir)
+	socketPath := st2.DaemonSocketPath()
+	listener, listenErr := net.Listen("unix", socketPath)
+	require.NoError(t, listenErr)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(socketPath)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second))
+
+	t.Setenv("AGENCY_DATA_DIR", dataTmp)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	shimPath, recordFile := createShimScript(t)
+
+	var stdout, stderr bytes.Buffer
+	openErr := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentOpenOpts{InvocationRef: "20260201000000", RepoFlag: repoID, Editor: shimPath}, &stdout, &stderr)
+
+	require.Error(t, openErr)
+	assert.Equal(t, errors.EAmbiguous, errors.GetCode(openErr),
+		"navigation ambiguity must return E_AMBIGUOUS")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr),
+		"editor shim must NOT be executed on ambiguous target")
+}
+
+func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
+	dataTmp, err := os.MkdirTemp("", "an")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
+
+	repoID := "r1"
+	wtID := "20260131120000-abcd"
+	wtDir := filepath.Join(dataTmp, "repos", repoID, "integration_worktrees", wtID)
+	treePath := filepath.Join(wtDir, "tree")
+	require.NoError(t, os.MkdirAll(treePath, 0755))
+	agencyDir := filepath.Join(treePath, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
+		[]byte("# Integration worktree\n"), 0644))
+	wtMeta := &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+	}
+	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+
+	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
+		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
+		require.NoError(t, os.MkdirAll(invDir, 0755))
+		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
+		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
+		im := &store.InvocationMeta{
+			SchemaVersion: "1.0", InvocationID: id,
+			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
+			Runner: "claude", Mode: store.RunnerModeHeaded,
+			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
+		}
+		imB, _ := json.MarshalIndent(im, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imB, 0644))
+	}
+
+	fsys2 := fs.NewRealFS()
+	st2 := store.NewStore(fsys2, dataTmp, time.Now)
+	configDir := filepath.Join(dataTmp, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	srv := daemon.NewServer(st2, testutil.NewFakeCommandRunner(), fsys2, configDir)
+	socketPath := st2.DaemonSocketPath()
+	listener, listenErr := net.Listen("unix", socketPath)
+	require.NoError(t, listenErr)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(socketPath)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second))
+
+	t.Setenv("AGENCY_DATA_DIR", dataTmp)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	var attachCalled bool
+	fakeTmux := testutil.NewFakeTmuxClient()
+
+	var stdout, stderr bytes.Buffer
+	enterErr := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentEnterOpts{
+			InvocationRef:   "20260201000000",
+			RepoFlag:        repoID,
+			IsInteractive:   func() bool { return true },
+			TmuxClient:      fakeTmux,
+			DataDirOverride: dataTmp,
+			TmuxAttachFn: func(sess string) error {
+				attachCalled = true
+				return nil
+			},
+		}, &stdout, &stderr)
+
+	require.Error(t, enterErr)
+	assert.Equal(t, errors.EAmbiguous, errors.GetCode(enterErr),
+		"navigation ambiguity must return E_AMBIGUOUS")
+	assert.False(t, attachCalled, "tmux attach must NOT be invoked on ambiguous target")
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04 Acceptance 3: command-family policy + deterministic target selection
+// ---------------------------------------------------------------------------
+
+func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
+	dataTmp, err := os.MkdirTemp("", "an")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
+
+	repo1, repo2 := "r1", "r2"
+	wtID1, wtID2 := "20260131000000-aaaa", "20260131000000-bbbb"
+	invID1, invID2 := "20260131100000-aaaa", "20260131100000-bbbb"
+
+	for _, r := range []struct{ repoID, wtID, invID string }{
+		{repo1, wtID1, invID1}, {repo2, wtID2, invID2},
+	} {
+		wtDir := filepath.Join(dataTmp, "repos", r.repoID, "integration_worktrees", r.wtID)
+		tp := filepath.Join(wtDir, "tree")
+		require.NoError(t, os.MkdirAll(tp, 0755))
+		ad := filepath.Join(tp, ".agency")
+		require.NoError(t, os.MkdirAll(ad, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(ad, integrationworktree.IntegrationMarkerFileName),
+			[]byte("# Integration worktree\n"), 0644))
+		wm := &store.IntegrationWorktreeMeta{
+			SchemaVersion: "1.0", WorktreeID: r.wtID, Name: "wt-" + r.repoID,
+			RepoID: r.repoID, Branch: "agency/b", ParentBranch: "main",
+			TreePath: tp, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		}
+		wmb, _ := json.MarshalIndent(wm, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), wmb, 0644))
+
+		invDir := filepath.Join(dataTmp, "repos", r.repoID, "invocations", r.invID)
+		require.NoError(t, os.MkdirAll(invDir, 0755))
+		sp := filepath.Join(dataTmp, "repos", r.repoID, "sandboxes", r.invID, "tree")
+		require.NoError(t, os.MkdirAll(sp, 0755))
+		im := &store.InvocationMeta{
+			SchemaVersion: "1.0", InvocationID: r.invID,
+			IntegrationWorktreeID: r.wtID, SandboxPath: sp,
+			SandboxBranch: "agency/sandbox-" + r.invID, BaseCommit: "abc",
+			Runner: "claude", Mode: store.RunnerModeHeaded,
+			StartedAt: "2026-01-31T10:00:00Z", Status: store.InvocationStatusRunning,
+		}
+		imb, _ := json.MarshalIndent(im, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imb, 0644))
+	}
+
+	repoIndex := store.RepoIndex{
+		SchemaVersion: "1.0",
+		Repos: map[string]store.RepoIndexEntry{
+			"k1": {RepoID: repo1, Paths: []string{"/r1"}, LastSeenAt: "2026-01-31T12:00:00Z"},
+			"k2": {RepoID: repo2, Paths: []string{"/r2"}, LastSeenAt: "2026-01-31T12:00:00Z"},
+		},
+	}
+	idxBytes, _ := json.MarshalIndent(repoIndex, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(dataTmp, "repo_index.json"), idxBytes, 0644))
+
+	fsys2 := fs.NewRealFS()
+	st2 := store.NewStore(fsys2, dataTmp, time.Now)
+	configDir := filepath.Join(dataTmp, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	srv := daemon.NewServer(st2, testutil.NewFakeCommandRunner(), fsys2, configDir)
+	socketPath := st2.DaemonSocketPath()
+	listener, listenErr := net.Listen("unix", socketPath)
+	require.NoError(t, listenErr)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(socketPath)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second))
+
+	t.Setenv("AGENCY_DATA_DIR", dataTmp)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	var stdout, stderr bytes.Buffer
+	lsErr := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{AllRepos: true, JSON: true}, &stdout, &stderr)
+	require.NoError(t, lsErr)
+
+	var dtos []daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dtos))
+	require.Len(t, dtos, 2)
+
+	repoIDs := map[string]bool{}
+	for _, dto := range dtos {
+		repoIDs[dto.RepoID] = true
+		assert.NotEmpty(t, dto.InvocationID, "each row must preserve invocation_id")
+	}
+	assert.True(t, repoIDs[repo1], "repo1 must appear in JSON output")
+	assert.True(t, repoIDs[repo2], "repo2 must appear in JSON output")
+}
+
+func TestAgentPath_OutputsDaemonResolvedPath(t *testing.T) {
+	env := setupAgentNavEnv(t, "pathout", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentPathOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	printedPath := strings.TrimSpace(stdout.String())
+	assert.Equal(t, env.SandboxPath, printedPath,
+		"printed path must equal daemon DTO sandbox_path (not re-derived)")
+}
+
+func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.T) {
+	env := setupAgentNavEnv(t, "human", store.RunnerModeHeaded)
+
+	var humanOut, jsonOut, stderr bytes.Buffer
+
+	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoFlag: env.RepoID}, &humanOut, &stderr)
+	require.NoError(t, err)
+
+	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &jsonOut, &stderr)
+	require.NoError(t, err)
+
+	humanStr := humanOut.String()
+	assert.NotContains(t, humanStr, `"invocation_id"`,
+		"human output must not introduce JSON machine token grammar")
+	assert.Contains(t, humanStr, env.InvocationID,
+		"human output must still include invocation ID for readability")
+
+	var dtos []daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &dtos),
+		"JSON output must decode to daemon DTO slice (canonical script-safe format)")
+	require.Len(t, dtos, 1)
+	assert.Equal(t, env.RepoID, dtos[0].RepoID)
+	assert.Equal(t, env.InvocationID, dtos[0].InvocationID)
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04 Acceptance 4: invocation-mode validity + E_INVOCATION_INVALID_MODE
+// ---------------------------------------------------------------------------
+
+func TestAgentEnter_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
+	env := setupAgentNavEnv(t, "headless-enter", store.RunnerModeHeadless)
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	var attachCalled bool
+
+	var stdout, stderr bytes.Buffer
+	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentEnterOpts{
+			InvocationRef:   env.InvocationID,
+			RepoFlag:        env.RepoID,
+			IsInteractive:   func() bool { return true },
+			TmuxClient:      fakeTmux,
+			DataDirOverride: env.DataDir,
+			TmuxAttachFn: func(sess string) error {
+				attachCalled = true
+				return nil
+			},
+		}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
+	assert.False(t, attachCalled, "tmux attach must NOT be called for headless invocation")
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Contains(t, ae.Details["hint"], "logs",
+		"error hint should suggest alternative for headless")
+}
+
+func TestAgentEnter_NotInteractive_ReturnsENotInteractive(t *testing.T) {
+	env := setupAgentNavEnv(t, "noterm-enter", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentEnterOpts{
+			InvocationRef:   env.InvocationID,
+			RepoFlag:        env.RepoID,
+			IsInteractive:   func() bool { return false },
+			DataDirOverride: env.DataDir,
+		}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.NotEmpty(t, ae.Details["hint"], "error must include recovery hint")
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04: D-004 — no E_INVOCATION_BROKEN on canonical navigation surfaces
+// ---------------------------------------------------------------------------
+
+func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *testing.T) {
+	env := setupAgentNavEnv(t, "brk-nav", store.RunnerModeHeaded)
+
+	for _, verb := range []string{"path", "open", "shell", "enter"} {
+		t.Run(verb, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			var navErr error
+
+			ref := "nonexistent-invocation"
+			switch verb {
+			case "path":
+				navErr = AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+					AgentPathOpts{InvocationRef: ref, RepoFlag: env.RepoID}, &stdout, &stderr)
+			case "open":
+				shimPath, _ := createShimScript(t)
+				navErr = AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+					AgentOpenOpts{InvocationRef: ref, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+			case "shell":
+				shimPath, _ := createShimScript(t)
+				t.Setenv("SHELL", shimPath)
+				navErr = AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+					AgentShellOpts{InvocationRef: ref, RepoFlag: env.RepoID}, &stdout, &stderr)
+			case "enter":
+				navErr = AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+					AgentEnterOpts{
+						InvocationRef:   ref,
+						RepoFlag:        env.RepoID,
+						IsInteractive:   func() bool { return true },
+						TmuxClient:      testutil.NewFakeTmuxClient(),
+						DataDirOverride: env.DataDir,
+						TmuxAttachFn:    func(string) error { return nil },
+					}, &stdout, &stderr)
+			}
+
+			require.Error(t, navErr)
+			code := errors.GetCode(navErr)
+			assert.NotEqual(t, errors.EInvocationBroken, code,
+				"canonical navigation must not return E_INVOCATION_BROKEN after PR-04 migration")
+			assert.Equal(t, errors.EInvocationNotFound, code,
+				"expected daemon-first E_INVOCATION_NOT_FOUND for missing target")
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S2-PR04: D-005 — sandbox missing uses daemon-resolved path
+// ---------------------------------------------------------------------------
+
+func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
+	env := setupAgentNavEnv(t, "open-missing", store.RunnerModeHeaded)
+
+	require.NoError(t, os.RemoveAll(env.SandboxPath))
+
+	shimPath, recordFile := createShimScript(t)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, env.SandboxPath, ae.Details["sandbox_path"],
+		"error details must include daemon-resolved sandbox_path")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr),
+		"editor shim must NOT be executed when sandbox is missing")
+}
+
+func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
+	env := setupAgentNavEnv(t, "shell-missing", store.RunnerModeHeaded)
+
+	require.NoError(t, os.RemoveAll(env.SandboxPath))
+
+	shimPath, recordFile := createShimScript(t)
+	t.Setenv("SHELL", shimPath)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShellOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, env.SandboxPath, ae.Details["sandbox_path"],
+		"error details must include daemon-resolved sandbox_path")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr),
+		"shell shim must NOT be executed when sandbox is missing")
 }
 
 // ---------------------------------------------------------------------------
