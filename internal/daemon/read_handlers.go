@@ -79,6 +79,18 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 	// Parse query params
 	params := parseListWorktreesParams(r)
 
+	// Validate enum params before any repo scanning
+	if !isValidWorktreeState(params.State) {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_ARGUMENT",
+			fmt.Sprintf("invalid value for parameter 'state': %q", params.State), "",
+			InvalidQueryArgumentDetails{
+				Param:         "state",
+				Value:         params.State,
+				AllowedValues: validWorktreeStates,
+			})
+		return
+	}
+
 	// Get all repos to scan
 	repoIDs, err := s.getRepoIDsForQuery(params.RepoID)
 	if err != nil {
@@ -177,6 +189,28 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query params
 	params := parseListInvocationsParams(r)
+
+	// Validate enum params before any repo scanning (state first, then mode)
+	if !isValidInvocationState(params.State) {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_ARGUMENT",
+			fmt.Sprintf("invalid value for parameter 'state': %q", params.State), "",
+			InvalidQueryArgumentDetails{
+				Param:         "state",
+				Value:         params.State,
+				AllowedValues: validInvocationStates,
+			})
+		return
+	}
+	if !isValidInvocationMode(params.Mode) {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_ARGUMENT",
+			fmt.Sprintf("invalid value for parameter 'mode': %q", params.Mode), "",
+			InvalidQueryArgumentDetails{
+				Param:         "mode",
+				Value:         params.Mode,
+				AllowedValues: validInvocationModes,
+			})
+		return
+	}
 
 	// Get all repos to scan
 	repoIDs, err := s.getRepoIDsForQuery(params.RepoID)
@@ -506,13 +540,28 @@ func (s *Server) resolveWorktreeRef(ref string, repoID string) (*store.Integrati
 		return nil, err
 	}
 
+	var lastAmbiguousErr error
 	for _, rid := range repoIDs {
 		record, err := s.resolveWorktreeRefForRepo(ref, rid)
 		if err == nil && record != nil {
 			return record, nil
 		}
+		if ambErr, ok := err.(*ids.ErrWorktreeAmbiguous); ok {
+			candidates := make([]string, len(ambErr.Candidates))
+			for i, c := range ambErr.Candidates {
+				candidates[i] = c.WorktreeID
+			}
+			lastAmbiguousErr = errors.NewWithDetails(
+				errors.EWorktreeIDAmbiguous,
+				ambErr.Error(),
+				map[string]string{"candidates": strings.Join(candidates, ",")},
+			)
+		}
 	}
 
+	if lastAmbiguousErr != nil {
+		return nil, lastAmbiguousErr
+	}
 	return nil, errors.New(errors.EWorktreeNotFound, "worktree not found: "+ref)
 }
 
@@ -563,13 +612,28 @@ func (s *Server) resolveInvocationRef(ref string, repoID string) (*resolvedInvoc
 		return nil, err
 	}
 
+	var lastAmbiguousErr error
 	for _, rid := range repoIDs {
 		record, err := s.resolveInvocationRefForRepo(ref, rid)
 		if err == nil && record != nil {
 			return record, nil
 		}
+		if ambErr, ok := err.(*ids.ErrInvocationAmbiguous); ok {
+			candidates := make([]string, len(ambErr.Candidates))
+			for i, c := range ambErr.Candidates {
+				candidates[i] = c.InvocationID
+			}
+			lastAmbiguousErr = errors.NewWithDetails(
+				errors.EInvocationIDAmbiguous,
+				ambErr.Error(),
+				map[string]string{"candidates": strings.Join(candidates, ",")},
+			)
+		}
 	}
 
+	if lastAmbiguousErr != nil {
+		return nil, lastAmbiguousErr
+	}
 	return nil, errors.New(errors.EInvocationNotFound, "invocation not found: "+ref)
 }
 
@@ -988,6 +1052,41 @@ func parseGetLogsParams(r *http.Request) GetLogsParams {
 	return params
 }
 
+// ----- Enum Validation -----
+
+var (
+	validWorktreeStates   = []string{"present", "archived", "all"}
+	validInvocationStates = []string{"active", "finished", "all"}
+	validInvocationModes  = []string{"headed", "headless", "all"}
+)
+
+func isValidWorktreeState(s string) bool {
+	for _, v := range validWorktreeStates {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidInvocationState(s string) bool {
+	for _, v := range validInvocationStates {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidInvocationMode(s string) bool {
+	for _, v := range validInvocationModes {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // ----- Filter Helpers -----
 
 func matchesWorktreeState(state store.WorktreeState, filter string) bool {
@@ -996,7 +1095,9 @@ func matchesWorktreeState(state store.WorktreeState, filter string) bool {
 		return true
 	case "archived":
 		return state == store.WorktreeStateArchived
-	default: // "present" or empty
+	case "present":
+		return state == store.WorktreeStatePresent
+	default:
 		return state == store.WorktreeStatePresent
 	}
 }
@@ -1006,7 +1107,6 @@ func matchesInvocationState(status store.InvocationStatus, landing store.Landing
 	case "all":
 		return true
 	case "active":
-		// Active means not in terminal state
 		return status == store.InvocationStatusStarting ||
 			status == store.InvocationStatusRunning ||
 			(status == store.InvocationStatusFinished &&
