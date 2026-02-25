@@ -478,7 +478,7 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	result, err := client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	result, err := client.GetInvocationRich(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -1066,21 +1066,19 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	return nil
 }
 
-// AgentOpenOpts holds options for the agent open command.
-type AgentOpenOpts struct {
-	// InvocationRef is the invocation reference (id, name, or prefix).
-	InvocationRef string
+// ---------------------------------------------------------------------------
+// Shared navigation kernel setup for agent path/open/shell/enter (S2-PR04)
+// ---------------------------------------------------------------------------
 
-	// RepoFlag is the --repo flag value (PR-A).
-	RepoFlag string
+type agentNavSetup struct {
+	dirs   paths.Dirs
+	client *daemonclient.Client
 }
 
-// AgentOpen opens the sandbox directory in the configured editor.
-// PR-A: Supports --repo for CWD-less operation.
-func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
+func setupAgentNav(ctx context.Context, fsys fs.FS) (*agentNavSetup, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
@@ -1090,74 +1088,358 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
+	return &agentNavSetup{dirs: dirs, client: client}, nil
+}
 
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
-		AllowAllRepos: false,
-		CmdName:       "agent open",
-	})
+func (ns *agentNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string, isInteractive func() bool) NavigationDeps {
+	return NavigationDeps{
+		ResolveRepo: func(ctx context.Context) (*RepoContextResult, error) {
+			return ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+				RepoFlag:      repoFlag,
+				AllowAllRepos: false,
+				CmdName:       cmdName,
+			})
+		},
+		EnsureDaemon:    func(ctx context.Context) error { return nil },
+		CheckAPIVersion: func(ctx context.Context) error { return ns.client.CheckAPIVersion(ctx) },
+		GetInvocation: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
+			result, err := ns.client.GetInvocationRich(ctx, ref, repoID)
+			if err != nil {
+				return nil, err
+			}
+			return &NavigationResult{
+				TargetKind:       TargetInvocation,
+				ResolvedRepoID:   result.Invocation.RepoID,
+				ResolvedID:       result.Invocation.InvocationID,
+				ResolvedPath:     result.Invocation.SandboxPath,
+				ResolutionSource: "daemon_get_invocation",
+			}, nil
+		},
+		IsInteractive: isInteractive,
+	}
+}
+
+// resolvedInvocationMode returns the daemon-resolved invocation mode for the
+// navigation result's target ID. This is a separate daemon read because the
+// navigation kernel only returns identity/path, not the full DTO.
+func (ns *agentNavSetup) resolvedInvocationMode(ctx context.Context, invocationID, repoID string) (string, error) {
+	result, err := ns.client.GetInvocationRich(ctx, invocationID, repoID)
+	if err != nil {
+		return "", err
+	}
+	return result.Invocation.Mode, nil
+}
+
+// ---------------------------------------------------------------------------
+// AgentPath: canonical agent path command (S2-PR04)
+// ---------------------------------------------------------------------------
+
+// AgentPathOpts holds options for the agent path command.
+type AgentPathOpts struct {
+	InvocationRef string
+	RepoFlag      string
+}
+
+// AgentPath outputs the daemon-resolved sandbox path for an invocation.
+// S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
+func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentPathOpts, stdout, stderr io.Writer) error {
+	ns, err := setupAgentNav(ctx, fsys)
 	if err != nil {
 		return err
 	}
 
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true,
-	})
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent path", func() bool { return false })
+	intent := NavigationIntent{
+		CommandFamily: "agent",
+		Verb:          "path",
+		Selection: NavigationSelection{
+			SelectorSource: SelectorExplicitRef,
+			TargetKind:     TargetInvocation,
+			Ref:            opts.InvocationRef,
+		},
+	}
+
+	result, err := ResolveNavigation(ctx, intent, deps)
 	if err != nil {
 		return err
 	}
 
-	if record.Broken {
-		return errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		)
+	_, _ = fmt.Fprintln(stdout, result.ResolvedPath)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// AgentOpen: canonical agent open command (S2-PR04 migration to nav kernel)
+// ---------------------------------------------------------------------------
+
+// AgentOpenOpts holds options for the agent open command.
+type AgentOpenOpts struct {
+	InvocationRef string
+	RepoFlag      string
+	Editor        string // override for tests; empty uses config/env/default
+}
+
+// AgentOpen opens the sandbox directory in the configured editor.
+// S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
+// No local invocation target discovery — sandbox_path sourced from daemon.
+func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
+	ns, err := setupAgentNav(ctx, fsys)
+	if err != nil {
+		return err
 	}
 
-	if !record.SandboxExists {
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent open", func() bool { return false })
+	intent := NavigationIntent{
+		CommandFamily: "agent",
+		Verb:          "open",
+		Selection: NavigationSelection{
+			SelectorSource: SelectorExplicitRef,
+			TargetKind:     TargetInvocation,
+			Ref:            opts.InvocationRef,
+		},
+	}
+
+	result, err := ResolveNavigation(ctx, intent, deps)
+	if err != nil {
+		return err
+	}
+
+	sandboxPath := result.ResolvedPath
+
+	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
 		return errors.NewWithDetails(
 			errors.ESandboxMissing,
 			"sandbox no longer exists",
 			map[string]string{
-				"invocation_id": record.InvocationID,
-				"sandbox_path":  record.Meta.SandboxPath,
+				"invocation_id": result.ResolvedID,
+				"sandbox_path":  sandboxPath,
 				"hint":          "sandbox was removed after landing or discarding",
 			},
 		)
 	}
 
-	// Get editor from config or environment
-	userCfg, _, _ := config.LoadUserConfig(fsys, dirs.ConfigDir)
-	editor := userCfg.Defaults.Editor
+	editor := opts.Editor
+	if editor == "" {
+		userCfg, _, _ := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
+		editor = userCfg.Defaults.Editor
+	}
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
 	}
 	if editor == "" {
-		editor = "code" // default to VS Code
+		editor = "code"
 	}
 
-	// Open editor
-	_, _ = fmt.Fprintf(stdout, "Opening sandbox in %s: %s\n", editor, record.Meta.SandboxPath)
-	result, err := cr.Run(ctx, editor, []string{record.Meta.SandboxPath}, exec.RunOpts{})
-	if err != nil {
-		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", err)
-	}
-	if result.ExitCode != 0 {
-		_, _ = fmt.Fprintf(stderr, "warning: editor exited with code %d\n", result.ExitCode)
+	cmd := osexec.Command(editor, sandboxPath)
+	cmd.Dir = sandboxPath
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if runErr := cmd.Run(); runErr != nil {
+		if exitErr, ok := runErr.(*osexec.ExitError); ok {
+			return errors.WithExitCode(
+				errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", exitErr.ExitCode())),
+				exitErr.ExitCode(),
+			)
+		}
+		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", runErr)
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// AgentShell: canonical agent shell command (S2-PR04)
+// ---------------------------------------------------------------------------
+
+// AgentShellOpts holds options for the agent shell command.
+type AgentShellOpts struct {
+	InvocationRef string
+	RepoFlag      string
+}
+
+// AgentShell opens a shell with cwd set to the daemon-resolved sandbox path.
+// S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
+func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShellOpts, stdout, stderr io.Writer) error {
+	ns, err := setupAgentNav(ctx, fsys)
+	if err != nil {
+		return err
+	}
+
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent shell", func() bool { return false })
+	intent := NavigationIntent{
+		CommandFamily: "agent",
+		Verb:          "shell",
+		Selection: NavigationSelection{
+			SelectorSource: SelectorExplicitRef,
+			TargetKind:     TargetInvocation,
+			Ref:            opts.InvocationRef,
+		},
+	}
+
+	result, err := ResolveNavigation(ctx, intent, deps)
+	if err != nil {
+		return err
+	}
+
+	sandboxPath := result.ResolvedPath
+
+	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
+		return errors.NewWithDetails(
+			errors.ESandboxMissing,
+			"sandbox no longer exists",
+			map[string]string{
+				"invocation_id": result.ResolvedID,
+				"sandbox_path":  sandboxPath,
+				"hint":          "sandbox was removed after landing or discarding",
+			},
+		)
+	}
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	cmd := osexec.Command(shell, "-l")
+	cmd.Dir = sandboxPath
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if runErr := cmd.Run(); runErr != nil {
+		if exitErr, ok := runErr.(*osexec.ExitError); ok {
+			return errors.WithExitCode(
+				errors.New(errors.EInternal, fmt.Sprintf("shell exited with code %d", exitErr.ExitCode())),
+				exitErr.ExitCode(),
+			)
+		}
+		return errors.Wrap(errors.EInternal, "failed to run shell", runErr)
+	}
+
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// AgentEnter: canonical agent enter command (S2-PR04)
+// ---------------------------------------------------------------------------
+
+// AgentEnterOpts holds options for the agent enter command.
+type AgentEnterOpts struct {
+	InvocationRef string
+	RepoFlag      string
+
+	// IsInteractive reports whether the current session is an interactive terminal.
+	// If nil, defaults to checking os.Stdin via term.IsTerminal.
+	IsInteractive func() bool
+
+	// TmuxClient is the tmux client for session checks (optional, uses real client if nil).
+	TmuxClient tmux.Client
+
+	// TmuxAttachFn is a narrow seam for testability (D-003).
+	// Defaults to realTmuxAttach in production.
+	TmuxAttachFn func(sessionName string) error
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+}
+
+// AgentEnter attaches to a running headed invocation via daemon-first resolution.
+// S2-PR04: Canonical interactive navigation — consumes PR-02 kernel with TTY preflight.
+// Headed-only: headless invocations return E_INVOCATION_INVALID_MODE.
+func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentEnterOpts, stdout, stderr io.Writer) error {
+	isInteractive := opts.IsInteractive
+	if isInteractive == nil {
+		isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
+	}
+
+	var ns *agentNavSetup
+	var err error
+	if opts.DataDirOverride != "" {
+		st := store.NewStore(fsys, opts.DataDirOverride, time.Now)
+		socketPath := st.DaemonSocketPath()
+		logPath := st.DaemonLogPath()
+		client, clientErr := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+		if clientErr != nil {
+			return clientErr
+		}
+		homeDir, _ := os.UserHomeDir()
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dirs.DataDir = opts.DataDirOverride
+		ns = &agentNavSetup{dirs: dirs, client: client}
+	} else {
+		ns, err = setupAgentNav(ctx, fsys)
+		if err != nil {
+			return err
+		}
+	}
+
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent enter", isInteractive)
+	intent := NavigationIntent{
+		CommandFamily: "agent",
+		Verb:          "enter",
+		Selection: NavigationSelection{
+			SelectorSource: SelectorExplicitRef,
+			TargetKind:     TargetInvocation,
+			Ref:            opts.InvocationRef,
+		},
+		Interactive: true,
+		RequiresTTY: true,
+	}
+
+	result, err := ResolveNavigation(ctx, intent, deps)
+	if err != nil {
+		return err
+	}
+
+	mode, err := ns.resolvedInvocationMode(ctx, result.ResolvedID, result.ResolvedRepoID)
+	if err != nil {
+		return err
+	}
+	if mode != "headed" {
+		return errors.NewWithDetails(
+			errors.EInvocationInvalidMode,
+			"invocation is headless; enter is only supported for headed invocations",
+			map[string]string{
+				"invocation_id": result.ResolvedID,
+				"mode":          mode,
+				"hint":          "use 'agency agent logs' to view headless invocation output",
+			},
+		)
+	}
+
+	sessionName := tmux.SessionName(result.ResolvedID)
+
+	tmuxClient := opts.TmuxClient
+	if tmuxClient == nil {
+		tmuxClient = tmux.NewExecClient(cr)
+	}
+
+	exists, checkErr := tmuxClient.HasSession(ctx, sessionName)
+	if checkErr != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: could not check tmux session status: %v\n", checkErr)
+	}
+	if !exists {
+		return errors.NewWithDetails(
+			errors.ESessionEnded,
+			"tmux session not found",
+			map[string]string{
+				"session_name":  sessionName,
+				"invocation_id": result.ResolvedID,
+				"hint":          "session ended; use 'agency agent logs' or 'agency agent open' to view",
+			},
+		)
+	}
+
+	attachFn := opts.TmuxAttachFn
+	if attachFn == nil {
+		attachFn = realTmuxAttach
+	}
+	return attachFn(sessionName)
 }
 
 // AgentLogsOpts holds options for the agent logs command.

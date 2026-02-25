@@ -29,12 +29,15 @@ Subcommands:
   ls        List agent invocations
   show      Show details of an invocation
   attach    Attach to a running headed invocation
+  enter     Attach to a running headed invocation (canonical)
   stop      Stop an invocation gracefully (Ctrl-C)
   kill      Kill an invocation forcefully
   diff      Show sandbox changes vs integration
   land      Apply sandbox changes to integration
   discard   Discard sandbox changes
   open      Open sandbox in editor
+  path      Print sandbox path
+  shell     Open shell in sandbox
   logs      View invocation logs`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,6 +57,9 @@ Subcommands:
 		newAgentLandCmd(),
 		newAgentDiscardCmd(),
 		newAgentOpenCmd(),
+		newAgentPathCmd(),
+		newAgentShellCmd(),
+		newAgentEnterCmd(),
 		newAgentLogsCmd(),
 	)
 
@@ -508,6 +514,116 @@ Example:
 			ctx := context.Background()
 
 			return commands.AgentOpen(ctx, cr, fsys, cwd, commands.AgentOpenOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+
+	return cmd
+}
+
+func newAgentPathCmd() *cobra.Command {
+	var repoFlag string
+
+	cmd := &cobra.Command{
+		Use:   "path <invocation_ref>",
+		Short: "Print sandbox path",
+		Long: `Print the sandbox path for an agent invocation.
+
+The path is resolved via the daemon and printed to stdout.
+
+Example:
+  agency agent path 20260131
+  agency agent path --repo abc123 my-invocation
+  cd $(agency agent path 20260131)`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentPath(ctx, cr, fsys, cwd, commands.AgentPathOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+
+	return cmd
+}
+
+func newAgentShellCmd() *cobra.Command {
+	var repoFlag string
+
+	cmd := &cobra.Command{
+		Use:   "shell <invocation_ref>",
+		Short: "Open shell in sandbox",
+		Long: `Open a login shell with the working directory set to the sandbox path.
+
+The sandbox path is resolved via the daemon before shell dispatch.
+
+Example:
+  agency agent shell 20260131
+  agency agent shell --repo abc123 my-invocation`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentShell(ctx, cr, fsys, cwd, commands.AgentShellOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+
+	return cmd
+}
+
+func newAgentEnterCmd() *cobra.Command {
+	var repoFlag string
+
+	cmd := &cobra.Command{
+		Use:   "enter <invocation_ref>",
+		Short: "Attach to a running headed invocation",
+		Long: `Attach to a running headed invocation's tmux session.
+
+This is the canonical interactive navigation command for headed invocations.
+Headless invocations are rejected. Detach from the session with Ctrl+b, d.
+
+Example:
+  agency agent enter 20260131
+  agency agent enter --repo abc123 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentEnter(ctx, cr, fsys, cwd, commands.AgentEnterOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
