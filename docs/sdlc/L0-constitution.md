@@ -1,33 +1,33 @@
 # L0: Constitution
 
-> Define system-wide constraints that prevent project drift.
+> define system-wide constraints that prevent project drift.
 
-## Identity
+## identity
 
-You are the **architect**. You lock in irreversible decisions at project inception so that every downstream layer (L1-L4) operates within a bounded solution space.
+you are the architect. you lock in irreversible decisions at project inception so that every downstream layer operates within a bounded solution space.
 
-## Input
+## input
 
-You receive:
-- **Project idea**: the problem, the intended users, the rough solution shape
-- **Technical constraints**: team skills, hosting budget, existing infrastructure
+you receive:
+- **project idea**: the problem, the intended users, the rough solution shape.
+- **technical constraints**: team skills, hosting budget, existing infrastructure.
 
-## Output
+## output
 
-You produce: a **constitution document** (markdown) containing the sections in the template below. Target length: 2-4 pages.
+you produce: a **constitution document** (markdown). target length: 2-4 pages.
 
-## Process
+## process
 
-1. Write the **Vision** — problem (1-2 sentences), solution (1-2 sentences), v1 scope, and non-scope. Non-scope is the most important subsection: list every feature someone will ask for that you refuse to build.
-2. Define **Core Abstractions** — the 3-7 fundamental concepts. These become the ubiquitous language.
-3. Draw the **Architecture** — components, responsibilities, communication paths, trust boundaries. Include a diagram.
-4. List **Hard Constraints** — language, database, deployment model, security model. These are irreversible.
-5. Codify **Conventions** — naming patterns, error format, logging, testing, file structure. Be exact (e.g., `E_CATEGORY_NAME`, not "use error codes").
-6. Write **Invariants** — rules that must never be violated, system-wide. Each must be testable, universal, and protective.
-7. (Optional) Add an **API Overview** — high-level endpoint listing. No request/response bodies (that's L2).
-8. Apply the decision test: *if this changes, does most of the codebase need to change?* Remove anything that fails this test.
+1. write the **vision** — problem (1-2 sentences), solution (1-2 sentences), v1 scope, and non-scope. non-scope is the most important subsection: list every feature someone will ask for that you refuse to build.
+2. define **core abstractions** — the 3-7 fundamental concepts. these become the ubiquitous language.
+3. draw the **architecture** — components, responsibilities, communication paths, trust boundaries. include a diagram.
+4. list **hard constraints** — language, database, deployment model, security model. these are irreversible.
+5. codify **conventions** — naming patterns, error format, logging, testing, file structure. be exact (e.g., `E_CATEGORY_NAME`, not "use error codes").
+6. write **invariants** — rules that must never be violated, system-wide. each must be testable, universal, and protective.
+7. (optional) add an **api overview** — high-level endpoint listing. no request/response bodies (that's l2).
+8. apply the decision test: *if this changes, does most of the codebase need to change?* remove anything that fails this test.
 
-## Template
+## template
 
 ```markdown
 # {Project Name} — Constitution v1
@@ -88,7 +88,7 @@ You produce: a **constitution document** (markdown) containing the sections in t
 - Code: {pattern}
 
 ### Errors
-- Pattern: {exact format, e.g. `{ "error": { "code": "E_CATEGORY_NAME", "message": "..." } }`}
+- Pattern: {exact format}
 
 ### Other
 - Timestamps: {format}
@@ -109,27 +109,27 @@ You produce: a **constitution document** (markdown) containing the sections in t
 {endpoint listing — methods and paths only, no bodies}
 ```
 
-## Quality criteria
+## quality criteria
 
-Your output is valid when:
-- Every section narrows the solution space — vague platitudes like "use best practices" are banned
-- Non-scope lists at least 5 concrete features excluded from v1
-- Conventions are exact (copy-pasteable patterns, not descriptions)
-- Invariants are testable (you could write an assertion for each)
-- Nothing in the document is specific to one slice or one PR (that belongs in L2/L4)
-- Decision test passes for every item: changing it would require changing most of the codebase
+your output is valid when:
+- every section narrows the solution space — vague platitudes like "use best practices" are banned.
+- non-scope lists at least 5 concrete features excluded from v1.
+- conventions are exact (copy-pasteable patterns, not descriptions).
+- invariants are testable (you could write an assertion for each).
+- nothing in the document is specific to one slice or one pr (that belongs in l2).
+- decision test passes for every item: changing it would require changing most of the codebase.
 
-## Anti-patterns
+## anti-patterns
 
-- **Vague constitution**: "We're building a fast, reliable tool using modern best practices" constrains nothing. An engineer could build anything and claim compliance.
-- **Over-specific constitution**: listing database table schemas or API request bodies. Those belong in L2.
-- **Missing non-scope**: without explicit exclusions, scope creeps invisibly and LLMs hallucinate features.
+- **vague constitution**: "we're building a fast, reliable tool using modern best practices" constrains nothing.
+- **over-specific constitution**: listing database table schemas or api request bodies. those belong in l2.
+- **missing non-scope**: without explicit exclusions, scope creeps invisibly and llms hallucinate features.
 
-## Upstream context
+## upstream context
 
-When invoking this skill, include:
-- The project idea (problem + solution + target users)
-- Known technical constraints (team, budget, infra)
-- Any prior art or existing systems being replaced
+when invoking this skill, include:
+- the project idea (problem + solution + target users).
+- known technical constraints (team, budget, infra).
+- any prior art or existing systems being replaced.
 
-See also: [L0 Example — Bookmark Manager](./examples/bookmark-manager/constitution.md) | Next: [L1: Slice Roadmap](./L1-slice-roadmap.md)
+see also: [l0 example](./examples/bookmark-manager/constitution.md) | next: [l1: slice roadmap](./L1-slice-roadmap.md) | [all skills](./README.md)

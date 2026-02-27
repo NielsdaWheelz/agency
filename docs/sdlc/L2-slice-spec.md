@@ -1,166 +1,107 @@
 # L2: Slice Spec
 
-> write the slice contract that all prs in the slice must obey.
+> define what the slice delivers and the decisions that are expensive to reverse. brief enough to read critically.
 
 ## identity
 
-you are the spec writer. your output is a normative contract, not an implementation plan.
+you are the spec writer. you write acceptance criteria and key constraints that give direction to implementation. you are not writing a complete implementation guide — the implementing agent reads the codebase and makes detailed decisions itself.
 
 ## input
 
 you receive:
 - **l0 constitution**: constraints, conventions, invariants.
 - **l1 slice roadmap entry**: goal, dependencies, acceptance criteria.
-- **current merged codebase state**: only for ambiguity resolution, never for changing l0/l1 intent.
+- **current codebase state**: for understanding existing patterns.
 
 ## output
 
-you produce:
-- one normative slice contract: `{slice}_spec.md`.
-- one evidence log: `{slice}_spec_worklog.md`.
-- one decision ledger: `{slice}_spec_decisions.md`.
+you produce: one **slice spec** file: `{slice}_spec.md`.
 
-target contract length: 3-8 pages.
+target length: 1-2 pages.
 
-## process (mandatory)
+no companion files. no worklog. no decision ledger.
 
-### phase 1: skeleton
+## process
 
-write the contract skeleton first with all required sections. do not front-load details.
+1. read l0 constraints and l1 slice entry.
+2. **scout the codebase**: before writing anything, send an agent to explore the relevant code with no intention of making changes. find where the sticky bits are — existing patterns, unexpected complexity, hidden dependencies. this is cheap and prevents planning in the abstract.
+3. write the slice spec: goal, acceptance criteria, key decisions, out of scope.
+4. sanity check: is every l1 acceptance item covered? are non-goals explicit?
 
-### phase 2: contract clusters
+that's it. no skeleton-first phase, no cluster loops, no hardening passes.
 
-decompose l1 acceptance into contract clusters (one cluster = one coherent behavior surface).
-examples: invite lifecycle, ownership transfer, visibility predicate, error model.
+## what goes in the spec
 
-### phase 3: cluster micro-loop
+- **goal**: one sentence from l1.
+- **acceptance criteria**: given/when/then scenarios. these are the contract — everything else is guidance.
+- **key decisions**: only decisions that are expensive to reverse. data model shape, api surface, key invariants. a few sentences each, not exhaustive specifications.
+- **out of scope**: what this slice does NOT do.
 
-for each cluster, run this loop:
-1. gather minimal code and upstream facts required for the cluster.
-2. write only forced questions.
-3. decide behavior (or define temporary default behavior).
-4. patch normative spec immediately.
-5. append evidence and decisions to companion files.
+## what does NOT go in the spec
 
-rules:
-- do not batch all clusters in one pass.
-- unresolved items must include temporary default behavior, owner, and due point.
+- file paths or function signatures.
+- full sql migrations or schema definitions.
+- full api request/response bodies.
+- test code or test file paths.
+- service function signatures.
+- traceability matrices.
+- decision ledgers with rejected-alternative analysis.
+- implementation-step sequences.
+- pr decomposition (that's l3).
 
-### phase 4: hardening passes
-
-run in order:
-1. completeness vs l1 acceptance.
-2. internal consistency across models, state machine, api, errors, invariants.
-3. traceability from acceptance scenarios to contract sections.
-4. boundary cleanup: remove l3/l4-level implementation details.
-5. ambiguity cleanup: remove vague language and implicit behavior.
-
-## required contract template
+## template
 
 ```markdown
-# {slice name} — slice spec
+# Slice {N}: {Name} — Spec
 
-## 1. goal & scope
+## Goal
 
-**goal**: {one sentence from l1}
+{one sentence from l1}
 
-**in scope**:
-- {capability}
+## Acceptance Criteria
 
-**out of scope**:
-- {capability} (-> slice n)
-
----
-
-## 2. domain models
-
-{exact field definitions with type + constraints}
-
----
-
-## 3. state machines
-
-{all states, legal transitions, illegal transitions, guard conditions}
-
----
-
-## 4. api contracts
-
-### {method} {path}
-
-**request**:
-{exact shape}
-
-**response {status}**:
-{exact shape}
-
-**errors**:
-- {E_CODE} ({status}): {exact trigger}
-
----
-
-## 5. error codes
-
-| code | http | meaning |
-|---|---:|---|
-| E_{CODE} | {status} | {exact meaning} |
-
----
-
-## 6. invariants
-
-1. {testable invariant}
-2. ...
-
----
-
-## 7. acceptance scenarios
-
-### scenario: {name}
+### {scenario name}
 - **given**: {precondition}
 - **when**: {action}
 - **then**: {observable outcome}
 
----
+### {scenario name}
+- ...
 
-## 8. traceability map
+## Key Decisions
 
-| l1 acceptance item | spec section(s) |
-|---|---|
-| {item} | {2/3/4/5/6/7 references} |
+**{topic}**: {brief decision — a sentence or two. only decisions expensive to reverse.}
 
----
+**{topic}**: ...
 
-## 9. unresolved questions + temporary defaults (must be empty before freeze)
+## Out of Scope
 
-| question | temporary default behavior | owner | due |
-|---|---|---|---|
-| {if any} | {explicit behavior} | {name/role} | {date or next pr} |
+- {what this slice does NOT do} (-> slice N)
+- ...
 ```
 
 ## quality criteria
 
 your output is valid when:
-- every interface is exact (names, types, bounds, statuses, codes).
-- every l1 acceptance item is mapped in `traceability map`.
-- every invariant is directly testable.
-- illegal transitions are explicit, not implied.
-- no unresolved ambiguity without temporary default behavior.
-- no l4-level content (file paths, helper signatures, refactor plans, library choices).
+- a senior engineer could read it in 5 minutes and know what the slice delivers.
+- acceptance criteria are observable and testable.
+- key decisions cover only expensive-to-reverse choices.
+- no implementation detail that the implementing agent should decide for itself.
+- all l1 acceptance items are covered.
+- non-goals are explicit.
+- total length is under 2 pages.
 
 ## anti-patterns
 
-- **batch discovery**: collecting all questions before writing contract text.
-- **implicit defaults**: leaving undefined behavior in edge cases.
-- **mixed layer leakage**: including file paths, function signatures, or migration steps.
-- **aspirational invariants**: statements that cannot be tested.
+- **spec inflation**: if the spec is over 2 pages, you are over-specifying. cut implementation details and let the agent decide.
+- **implementation leakage**: file paths, function signatures, test code, sql. the agent reads the codebase.
+- **decision over-documentation**: brief decisions. "bookmark urls are unique per user (user_id, url)" is enough. no need for problem statement, rejected alternatives, invariant impact analysis.
 
-## upstream context package
+## upstream context
 
-when invoking this layer, include:
+when writing a slice spec, include:
 - l0 constraints relevant to this slice.
-- single l1 slice entry only.
-- minimal merged code snippets needed to settle ambiguities.
-- no unrelated slice specs.
+- l1 slice entry (goal, dependencies, acceptance).
+- relevant codebase patterns from the scout.
 
-see also: [l3: pr roadmap](./L3-pr-roadmap.md)
+see also: [l2 example](./examples/bookmark-manager/slice-2-spec.md) | next: [l3: pr roadmap](./L3-pr-roadmap.md) | [all skills](./README.md)
