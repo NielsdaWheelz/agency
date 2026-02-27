@@ -264,8 +264,11 @@ func newAgentAttachCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "attach <invocation_id|prefix>",
-		Short: "Attach to a running headed invocation",
+		Short: "Compatibility alias for 'agent enter'",
 		Long: `Attach to a running headed invocation's tmux session.
+
+This command is a compatibility alias for 'agency agent enter'.
+Prefer 'agency agent enter' for canonical invocation navigation.
 
 This is only supported for headed (interactive) invocations.
 Detach from the session with Ctrl+b, d.

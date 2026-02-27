@@ -14,15 +14,16 @@ import (
 
 func newOpenCmd() *cobra.Command {
 	var editor string
+	var repoFlag string
 
 	cmd := &cobra.Command{
-		Use:   "open <run>",
-		Short: "Open run worktree in editor",
-		Long: `Open a run worktree in your editor.
-Resolves globally (works from anywhere, not just inside a repo).
+		Use:   "open <invocation_ref>",
+		Short: "Compatibility alias for 'agent open'",
+		Long: `Compatibility alias for 'agency agent open'.
+Opens daemon-resolved sandbox path in your editor.
 
 Arguments:
-  run    run name, run_id, or unique run_id prefix`,
+  invocation_ref   invocation id, name, or unique prefix`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stdout := cmd.OutOrStdout()
@@ -37,16 +38,18 @@ Arguments:
 			fsys := fs.NewRealFS()
 			ctx := context.Background()
 
-			opts := commands.OpenOpts{
-				RunID:  args[0],
-				Editor: editor,
+			opts := commands.AgentOpenOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+				Editor:        editor,
 			}
 
-			return commands.Open(ctx, cr, fsys, cwd, opts, stdout, stderr)
+			return commands.AgentOpen(ctx, cr, fsys, cwd, opts, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&editor, "editor", "", "editor name (default: user config defaults.editor)")
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }

@@ -2,7 +2,6 @@ package cobra
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -14,21 +13,16 @@ import (
 )
 
 func newAttachCmd() *cobra.Command {
-	var repoPath string
+	var repoFlag string
 
 	cmd := &cobra.Command{
-		Use:   "attach <run>",
-		Short: "Attach to a tmux session for an existing run",
-		Long: `Attach to the tmux session for an existing run.
-Works from any directory; resolves runs globally.
+		Use:   "attach <invocation_ref>",
+		Short: "Compatibility alias for 'agent attach'",
+		Long: `Compatibility alias for 'agency agent attach'.
+Attaches to a headed invocation after daemon-first resolution.
 
 Arguments:
-  run    run name, run_id, or unique run_id prefix
-
-Resolution:
-  - run_id and prefix resolution is always global
-  - name resolution prefers current repo (if inside one)
-  - use --repo to disambiguate when names conflict across repos`,
+  invocation_ref   invocation id, name, or unique prefix`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stdout := cmd.OutOrStdout()
@@ -43,27 +37,16 @@ Resolution:
 			fsys := fs.NewRealFS()
 			ctx := context.Background()
 
-			opts := commands.AttachOpts{
-				RunID:    args[0],
-				RepoPath: repoPath,
+			opts := commands.AgentAttachOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
 			}
 
-			err = commands.Attach(ctx, cr, fsys, cwd, opts, stdout, stderr)
-			if err != nil {
-				// Print helpful details for E_SESSION_NOT_FOUND
-				if ae, ok := errors.AsAgencyError(err); ok && ae.Code == errors.ESessionNotFound {
-					if ae.Details != nil {
-						if suggestion := ae.Details["suggestion"]; suggestion != "" {
-							_, _ = fmt.Fprintf(stderr, "\n%s\n", suggestion)
-						}
-					}
-				}
-			}
-			return err
+			return commands.AgentAttach(ctx, cr, fsys, cwd, opts, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&repoPath, "repo", "", "scope name resolution to a specific repo")
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 
 	return cmd
 }

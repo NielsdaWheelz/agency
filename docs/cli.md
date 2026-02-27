@@ -385,7 +385,8 @@ sandbox_exists:         true
 
 ### `agency agent attach`
 
-attaches to a running headed invocation's tmux session.
+compatibility alias for `agency agent enter` that attaches to a running headed invocation's tmux session.
+prefer `agency agent enter` for canonical invocation navigation.
 
 **usage:**
 ```bash
@@ -396,20 +397,21 @@ agency agent attach <invocation_id|prefix>
 - `invocation_id|prefix`: invocation identifier (id or unique prefix)
 
 **behavior:**
-1. resolves invocation
-2. verifies invocation mode is `headed` (attach not supported for headless)
-3. verifies tmux session exists
-4. attaches to tmux session (blocks until user detaches)
+1. performs TTY preflight
+2. resolves invocation via daemon-first navigation
+3. verifies invocation mode is `headed` (attach not supported for headless)
+4. verifies tmux session exists
+5. attaches to tmux session (blocks until user detaches)
 
 **output:**
 (enters tmux session)
 
 **error codes:**
+- `E_NOT_INTERACTIVE` — command requires an interactive terminal
 - `E_INVOCATION_NOT_FOUND` — invocation not found
-- `E_INVOCATION_ID_AMBIGUOUS` — prefix matches multiple invocations
+- `E_AMBIGUOUS` — ref matches multiple invocations
 - `E_INVOCATION_INVALID_MODE` — invocation is headless; attach only supports headed
-- `E_TMUX_SESSION_MISSING` — tmux session not found (may have exited)
-- `E_TMUX_ATTACH_FAILED` — failed to attach to tmux session
+- `E_SESSION_ENDED` — tmux session not found (may have exited)
 
 ### `agency agent stop`
 
@@ -1247,39 +1249,75 @@ agency show my-feature --capture # capture transcript + show
 agency show my-feature --json | jq '.data.derived.derived_status'
 ```
 
-## `agency attach`
+## `agency path`
 
-attaches to an existing tmux session for a run.
+compatibility alias for `agency agent path`.
+prints daemon-resolved sandbox path as a single line.
 
 **usage:**
 ```bash
-agency attach <run_id>
+agency path <invocation_ref> [--repo <repo_id|prefix>]
 ```
 
 **arguments:**
-- `run_id`: the run identifier or name
+- `invocation_ref`: invocation id, name, or unique prefix
 
 **behavior:**
-- resolves repo root from current directory
-- loads run metadata from `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/meta.json`
-- verifies tmux session exists
-- attaches to the tmux session (blocks until user detaches)
+- resolves invocation via daemon-first navigation
+- prints `sandbox_path` exactly (single line + newline)
+- pure path output surface (does not check path existence)
 
 **error codes:**
-- `E_NO_REPO` — not inside a git repository
-- `E_RUN_NOT_FOUND` — run not found (meta.json does not exist)
-- `E_SESSION_NOT_FOUND` — tmux session does not exist (killed or system restarted)
-- `E_TMUX_NOT_INSTALLED` — tmux not found
+- `E_NO_REPO_CONTEXT` — no repo context and no `--repo` provided
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_AMBIGUOUS` — ref matches multiple invocations
 
-**when session is missing:**
+## `agency open`
 
-if the run exists but the tmux session has been killed (e.g., system restarted), attach will fail with `E_SESSION_NOT_FOUND` and suggest using `agency resume <name>` instead:
+compatibility alias for `agency agent open`.
+opens daemon-resolved sandbox path in editor.
 
+**usage:**
+```bash
+agency open <invocation_ref> [--repo <repo_id|prefix>] [--editor <name>]
 ```
-E_SESSION_NOT_FOUND: tmux session 'agency_<run_id>' does not exist
 
-try: agency resume <name>
+**arguments:**
+- `invocation_ref`: invocation id, name, or unique prefix
+
+**error codes:**
+- `E_NO_REPO_CONTEXT` — no repo context and no `--repo` provided
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_AMBIGUOUS` — ref matches multiple invocations
+- `E_SANDBOX_MISSING` — sandbox directory no longer exists on disk
+
+## `agency attach`
+
+compatibility alias for `agency agent attach` (which itself aliases canonical `agency agent enter`).
+attaches to a running headed invocation tmux session.
+
+**usage:**
+```bash
+agency attach <invocation_ref> [--repo <repo_id|prefix>]
 ```
+
+**arguments:**
+- `invocation_ref`: invocation id, name, or unique prefix
+
+**behavior:**
+1. performs TTY preflight
+2. resolves invocation via daemon-first navigation
+3. validates invocation mode is headed
+4. validates tmux session exists
+5. attaches to tmux session
+
+**error codes:**
+- `E_NOT_INTERACTIVE` — command requires an interactive terminal
+- `E_NO_REPO_CONTEXT` — no repo context and no `--repo` provided
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_AMBIGUOUS` — ref matches multiple invocations
+- `E_INVOCATION_INVALID_MODE` — invocation is headless
+- `E_SESSION_ENDED` — tmux session not found
 
 ## `agency stop`
 

@@ -41,7 +41,7 @@ This file is binding for contributors and agents. If a rule is listed under Bind
 
 - docs/standards/binding.md
 - docs/contracts/events.md
-- .claude/prompts/test-writing.md
+- docs/sdlc/testing_standards.md
 - .claude/prompts/event-writing.md
 
 ## Runner Protocol
