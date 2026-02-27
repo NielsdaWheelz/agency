@@ -552,123 +552,15 @@ type AgentAttachOpts struct {
 
 // AgentAttach attaches to a running headed invocation's tmux session.
 // This is only supported for headed invocations.
-// PR-10: This is a real interactive TTY attach - refuses if stdin is not a terminal.
+// PR-05: compatibility alias over canonical AgentEnter daemon-first resolution.
 func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentAttachOpts, stdout, stderr io.Writer) error {
-	// PR-10: Check if stdin is a TTY - attach requires interactive terminal
-	isInteractive := opts.IsInteractive
-	if isInteractive == nil {
-		isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-	}
-	if !isInteractive() {
-		return errors.NewWithDetails(
-			errors.ENotInteractive,
-			"attach requires an interactive terminal",
-			map[string]string{
-				"hint": "run this command in an interactive terminal, or use 'agency agent logs' to view output",
-			},
-		)
-	}
-
-	// Resolve paths
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	// PR-A: Resolve repo context via daemon
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
-		AllowAllRepos: false,
-		CmdName:       "agent attach",
-	})
-	if err != nil {
-		return err
-	}
-
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true, // allow attaching to see final state
-	})
-	if err != nil {
-		return err
-	}
-
-	if record.Broken {
-		return errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		)
-	}
-
-	// Verify this is a headed invocation
-	if record.Meta.Mode != store.RunnerModeHeaded {
-		return errors.NewWithDetails(
-			errors.EInvocationInvalidMode,
-			"invocation is headless; attach is only supported for headed invocations",
-			map[string]string{
-				"invocation_id": record.InvocationID,
-				"mode":          string(record.Meta.Mode),
-				"hint":          "use 'agency agent logs' to view headless invocation output",
-			},
-		)
-	}
-
-	// Get session name from meta
-	sessionName := record.Meta.TmuxSession
-	if sessionName == "" {
-		// Fall back to computed name if not in meta (shouldn't happen for properly started invocations)
-		sessionName = tmux.SessionName(record.InvocationID)
-	}
-
-	// PR-10: Check if session exists using tmux client for preflight check
-	tmuxClient := opts.TmuxClient
-	if tmuxClient == nil {
-		tmuxClient = tmux.NewExecClient(cr)
-	}
-
-	exists, err := tmuxClient.HasSession(ctx, sessionName)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "warning: could not check tmux session status: %v\n", err)
-	}
-	if !exists {
-		return errors.NewWithDetails(
-			errors.ESessionEnded,
-			"tmux session not found",
-			map[string]string{
-				"session_name":  sessionName,
-				"invocation_id": record.InvocationID,
-				"hint":          "session ended; use 'agency agent logs' or 'agency agent open' to view",
-			},
-		)
-	}
-
-	// PR-10: Real TTY attach - use os/exec directly with stdin/stdout/stderr connected
-	// This bypasses the tmux.Client interface because we need interactive I/O
-	return realTmuxAttach(sessionName)
+	return AgentEnter(ctx, cr, fsys, cwd, AgentEnterOpts{
+		InvocationRef:   opts.InvocationRef,
+		RepoFlag:        opts.RepoFlag,
+		IsInteractive:   opts.IsInteractive,
+		TmuxClient:      opts.TmuxClient,
+		DataDirOverride: opts.DataDirOverride,
+	}, stdout, stderr)
 }
 
 // realTmuxAttach performs a real interactive tmux attach with stdin/stdout/stderr connected.
@@ -1355,6 +1247,15 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	isInteractive := opts.IsInteractive
 	if isInteractive == nil {
 		isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
+	}
+	if !isInteractive() {
+		return errors.NewWithDetails(
+			errors.ENotInteractive,
+			"this command requires an interactive terminal",
+			map[string]string{
+				"hint": "run this command in an interactive terminal, or use a non-interactive alternative",
+			},
+		)
 	}
 
 	var ns *agentNavSetup

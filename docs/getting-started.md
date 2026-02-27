@@ -389,7 +389,8 @@ AGENTS (AI executions in sandboxes)
     --headless --prompt-file task.md        start headless with file
   agency agent ls [--watch]                 list agents
   agency agent show <ref>                   show details
-  agency agent attach <ref>                 attach to tmux session
+  agency agent enter <ref>                  attach to tmux session (canonical)
+  agency agent attach <ref>                 attach compatibility alias
   agency agent logs <ref> [--follow]        view logs
   agency agent diff <ref>                   show sandbox changes
   agency agent open <ref>                   open sandbox in editor
@@ -415,7 +416,7 @@ PUSH & MERGE (v1 commands)
   agency resolve <ref>                      conflict resolution guidance
 
 SESSION CONTROL (v1 commands)
-  agency attach <ref>                       attach to tmux session
+  agency attach <ref>                       compatibility alias for agent attach/enter
   agency resume <ref>                       attach (create if needed)
   agency stop <ref>                         send Ctrl+C
   agency kill <ref>                         kill session

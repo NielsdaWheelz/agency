@@ -269,6 +269,53 @@ func TestAgentAttach_HeadedInvocation_SessionMissing(t *testing.T) {
 	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
 }
 
+func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
+	env := setupAgentNavEnv(t, "attach-ambig", store.RunnerModeHeaded)
+
+	secondID := "20260131130000-zzzz"
+	secondInvDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations", secondID)
+	require.NoError(t, os.MkdirAll(secondInvDir, 0o755))
+
+	secondSandbox := filepath.Join(env.DataDir, "repos", env.RepoID, "sandboxes", secondID, "tree")
+	require.NoError(t, os.MkdirAll(secondSandbox, 0o755))
+
+	secondMeta := &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          secondID,
+		IntegrationWorktreeID: env.WorktreeID,
+		SandboxPath:           secondSandbox,
+		SandboxBranch:         "agency/sandbox-" + secondID,
+		BaseCommit:            "abc123def456",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeaded,
+		StartedAt:             "2026-01-31T13:10:00Z",
+		Status:                store.InvocationStatusRunning,
+	}
+	secondMetaBytes, _ := json.MarshalIndent(secondMeta, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(secondInvDir, "meta.json"), secondMetaBytes, 0o644))
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	var stdout, stderr bytes.Buffer
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
+			InvocationRef:   "20260131130000",
+			RepoFlag:        env.RepoID,
+			TmuxClient:      fakeTmux,
+			IsInteractive:   func() bool { return true },
+			DataDirOverride: env.DataDir,
+		}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err),
+		"compatibility attach should use shared navigation ambiguity semantics")
+	assert.Len(t, fakeTmux.HasSessionCalls, 0, "tmux preflight must not run for ambiguous targets")
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, "invocation", ae.Details["target_kind"])
+	assert.Equal(t, "2", ae.Details["candidate_count"])
+}
+
 // ---------------------------------------------------------------------------
 // S2-PR04: Agent navigation convergence — setup helper
 // ---------------------------------------------------------------------------
