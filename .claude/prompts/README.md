@@ -5,7 +5,6 @@ this directory contains task-specific prompts for agents.
 ## prompts
 
 - `event-writing.md` - binding rules for event writes.
-- `test-writing.md` - binding + advisory test guidance.
 
 ## rules
 

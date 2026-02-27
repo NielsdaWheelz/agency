@@ -35,7 +35,7 @@ this document defines the testing policy.
 
 ## references
 
-- `.claude/prompts/test-writing.md`
+- `docs/sdlc/testing_standards.md`
 
 ## daemon read API tests
 
