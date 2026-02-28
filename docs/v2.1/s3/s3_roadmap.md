@@ -126,3 +126,17 @@ PR-04 Interactive History Selector + Deterministic Mapping   PR-05 Turn-Aware Di
 2. Ordering correctness: no PR depends on behavior from an unmerged PR; timeline/order contracts land before follow-up/restart/diff/checks consumers.
 3. Acceptance completeness: every S3 L2 acceptance scenario has one primary owner.
 4. Scope purity: roadmap content avoids file paths, function signatures, and test-case detail.
+
+## 6. Deferred hardening PR candidates (post-core S3)
+
+### PR-06: Unified Invocation Event Writer + Cross-Surface Sequencing
+- **Goal**: consolidate invocation event appends under one daemon-owned writer contract so event sequencing remains deterministic when multiple mutation surfaces write concurrently.
+- **Dependencies**: PR-03.
+- **Acceptance**:
+  - Follow-up prompts, checkpoint engine events, checkpoint-apply events, and landing/discard lifecycle events all use one invocation-event append path.
+  - Sequence allocation is invocation-scoped and monotonic under concurrent writes from different producers.
+  - Retry/idempotency semantics remain deterministic for follow-up prompt writes (`client_request_id`) after writer unification.
+  - Event append failure behavior is explicit and consistent across all producers (no silent best-effort divergence by surface).
+- **Non-goals**:
+  - No new user-facing CLI command family.
+  - No change to timeline entry taxonomy or cursor contract semantics.
