@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	osexec "os/exec"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
@@ -1341,6 +1342,191 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		attachFn = realTmuxAttach
 	}
 	return attachFn(sessionName)
+}
+
+// AgentHistoryOpts holds options for the agent history command.
+type AgentHistoryOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+
+	// RepoFlag is the --repo flag value.
+	RepoFlag string
+
+	// JSON outputs as JSON.
+	JSON bool
+
+	// Limit controls page size (default daemon behavior if zero).
+	Limit int
+
+	// Cursor continues from a prior page.
+	Cursor string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+}
+
+// AgentHistory reads the unified invocation timeline via daemon read API.
+func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentHistoryOpts, stdout, stderr io.Writer) error {
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent history",
+	})
+	if err != nil {
+		return err
+	}
+
+	result, err := client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
+		Limit:  opts.Limit,
+		Cursor: opts.Cursor,
+	})
+	if err != nil {
+		return err
+	}
+
+	if opts.JSON {
+		return writeAgentHistoryJSONFromDTO(stdout, result.Entries, result.NextCursor)
+	}
+	return writeAgentHistoryHumanFromDTO(stdout, result.Entries, result.NextCursor)
+}
+
+func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(struct {
+		Entries    []daemon.TimelineEntryDTO `json:"entries"`
+		NextCursor string                    `json:"next_cursor,omitempty"`
+	}{
+		Entries:    entries,
+		NextCursor: nextCursor,
+	})
+}
+
+func writeAgentHistoryHumanFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
+	if len(entries) == 0 {
+		_, _ = fmt.Fprintln(w, "No timeline entries found.")
+		return nil
+	}
+
+	for _, entry := range entries {
+		_, _ = fmt.Fprintf(w, "%s  %s  %s\n", entry.Timestamp, entry.Kind, timelineEntrySummary(entry))
+	}
+	if nextCursor != "" {
+		_, _ = fmt.Fprintf(w, "\nnext_cursor: %s\n", nextCursor)
+	}
+	return nil
+}
+
+func timelineEntrySummary(entry daemon.TimelineEntryDTO) string {
+	switch entry.Kind {
+	case "prompt_seed":
+		return truncateTimelineText(timelineString(entry.Data, "text"), 120)
+	case "message":
+		role := timelineString(entry.Data, "role")
+		text := truncateTimelineText(timelineString(entry.Data, "text"), 120)
+		if role != "" {
+			return role + ": " + text
+		}
+		return text
+	case "tool_use":
+		name := timelineString(entry.Data, "name")
+		command := timelineString(entry.Data, "command")
+		details := strings.TrimSpace(strings.TrimSpace(name + " " + command))
+		if details == "" {
+			details = "tool activity"
+		}
+		if exitCode, ok := timelineInt(entry.Data, "exit_code"); ok {
+			details += fmt.Sprintf(" (exit=%d)", exitCode)
+		}
+		return truncateTimelineText(details, 120)
+	case "raw_log_coverage":
+		if bytes, ok := timelineInt(entry.Data, "bytes"); ok {
+			return fmt.Sprintf("%d bytes captured", bytes)
+		}
+		return "raw log coverage present"
+	case "checkpoint_event", "invocation_event":
+		if kind := timelineString(entry.Data, "event_kind"); kind != "" {
+			return kind
+		}
+	}
+	if kind := timelineString(entry.Data, "event_kind"); kind != "" {
+		return kind
+	}
+	return entry.Source
+}
+
+func timelineString(data map[string]interface{}, key string) string {
+	if data == nil {
+		return ""
+	}
+	if v, ok := data[key]; ok {
+		if s, ok := v.(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
+func timelineInt(data map[string]interface{}, key string) (int64, bool) {
+	if data == nil {
+		return 0, false
+	}
+	v, ok := data[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
+func truncateTimelineText(value string, max int) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\n", " ")
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
 }
 
 // AgentLogsOpts holds options for the agent logs command.

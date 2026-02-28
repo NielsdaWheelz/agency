@@ -1,6 +1,6 @@
 # v2.1 Slice Roadmap
 
-Last updated: 2026-02-16
+Last updated: 2026-02-28
 Status: active
 Mode: L1-style product slice sequencing
 
@@ -28,7 +28,7 @@ S5 Invocation-Centric Review + PR + Merge
 S6 Reports v2 + CLI Ergonomics Cleanup
   |
   v
-S7 Checks-First Watch Seed (Stretch)
+S7 Full-Screen Watch/TUI Seed (Stretch)
 ```
 
 ## Slices
@@ -52,10 +52,10 @@ S7 Checks-First Watch Seed (Stretch)
 - **Acceptance**: v2 `agent`/`worktree` reads resolve through daemon APIs (except bootstrap/health fallback), and navigation/list/filter flows support direct path/shell/open/select usage.
 
 ### Slice S3: Chat Control Plane + Restart-From-Checkpoint
-- **Goal**: enable detached conversational continuation for headless invocations.
-- **Outcome**: users can read full transcript (prompts/messages/tool-use/logs), send follow-up prompts, enter/detach/re-enter sessions, restart from checkpoint in one flow, and restore from an interactive history selector.
+- **Goal**: enable detached conversational continuation for headless invocations with CLI-first parity for history, restart, turn-aware diff context, and checks-first readiness.
+- **Outcome**: users can read full transcript (prompts/messages/tool-use/logs), send follow-up prompts, enter/detach/re-enter sessions, restart from checkpoint in one flow, restore from an interactive history selector, request turn-aware diff context, and inspect checks-first readiness in terminal.
 - **Dependencies**: S2.
-- **Acceptance**: detached headless continuity supports follow-up prompting, repeated detach/re-entry, explicit checkpoint restore, and arrow-key history-based restore.
+- **Acceptance**: detached headless continuity supports follow-up prompting, repeated detach/re-entry, explicit checkpoint restore, arrow-key history-based restore, deterministic turn-to-diff mapping, and a scriptable checks-first readiness surface.
 
 ### Slice S4: Runner Capability Model + Agent Mutation JSON
 - **Goal**: remove hard-coded runner assumptions and normalize automation outputs.
@@ -75,8 +75,8 @@ S7 Checks-First Watch Seed (Stretch)
 - **Dependencies**: S5.
 - **Acceptance**: report strictness is mode-aware and ergonomics targets (`--yes`, high-traffic flags) are complete.
 
-### Slice S7: Checks-First Watch Seed (Stretch)
-- **Goal**: provide a minimal checks-first watch surface without full TUI scope.
-- **Outcome**: users can monitor review/merge readiness in one terminal-oriented surface.
+### Slice S7: Full-Screen Watch/TUI Seed (Stretch)
+- **Goal**: provide a full-screen watch/TUI shell that builds on S3 checks-first terminal contracts.
+- **Outcome**: users can monitor invocation/review/merge readiness in a richer terminal workspace without introducing GUI scope.
 - **Dependencies**: S6.
-- **Acceptance**: checks summary view exists and is useful without introducing GUI/full-TUI complexity.
+- **Acceptance**: full-screen terminal watch shell exists and reuses S3 checks/readiness contracts without redefining CLI parity behavior.

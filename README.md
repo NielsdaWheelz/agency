@@ -45,6 +45,7 @@ headless (fire-and-forget):
 ```bash
 agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent logs <invocation-id> --follow
+agency agent history <invocation-id> --limit 50
 ```
 
 ## how it works

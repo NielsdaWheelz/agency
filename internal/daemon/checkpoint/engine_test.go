@@ -1480,3 +1480,92 @@ func TestApplier_Apply_ReturnsTypedErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestEngine_EventSeqMonotonicAcrossEngineRestart(t *testing.T) {
+	t.Parallel()
+
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+
+	e1, _ := newTestEngine(t, sr, cfg)
+	e1.emitCheckpointCreated(1, true, "head-1")
+	e1.emitCheckpointFailed("first-engine-failure")
+
+	events := readEvents(t, e1.eventsPath)
+	require.Len(t, events, 2)
+	assert.Equal(t, uint64(1), events[0].Seq)
+	assert.Equal(t, uint64(2), events[1].Seq)
+
+	clock2 := newTestClock(time.Date(2026, 1, 15, 12, 5, 0, 0, time.UTC))
+	e2 := NewEngine(
+		"test-inv-001",
+		"test-repo",
+		e1.sandboxPath,
+		e1.repoRoot,
+		e1.checkpointsDir,
+		e1.eventsPath,
+		cfg,
+		sr,
+		fs.NewRealFS(),
+		clock2.Now,
+	)
+
+	e2.emitCheckpointCreated(2, true, "head-2")
+
+	events = readEvents(t, e1.eventsPath)
+	require.Len(t, events, 3)
+	assert.Equal(t, uint64(1), events[0].Seq)
+	assert.Equal(t, uint64(2), events[1].Seq)
+	assert.Equal(t, uint64(3), events[2].Seq, "sequence must continue across engine restart")
+}
+
+func TestApplier_Apply_EmitsMonotonicSeqAfterExistingEvents(t *testing.T) {
+	t.Parallel()
+
+	sandboxPath := t.TempDir()
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	cpFile := &CheckpointsFile{
+		SchemaVersion: SchemaVersion,
+		Checkpoints: []Checkpoint{
+			{ID: 3, SnapshotRef: "refs/agency/snapshots/inv/3", SnapshotCommit: "ccc333"},
+		},
+	}
+	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
+
+	seedEvents := []Event{
+		NewEvent("test-inv", 7, EventKindCheckpointCreated, CheckpointCreatedData(1, true, "head-a"), time.Date(2026, 1, 15, 11, 0, 0, 0, time.UTC)),
+		NewEvent("test-inv", 8, EventKindCheckpointFailed, CheckpointFailedData("seed-failure"), time.Date(2026, 1, 15, 11, 1, 0, 0, time.UTC)),
+	}
+	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	require.NoError(t, err)
+	for _, ev := range seedEvents {
+		line, mErr := json.Marshal(ev)
+		require.NoError(t, mErr)
+		_, _ = f.Write(append(line, '\n'))
+	}
+	require.NoError(t, f.Close())
+
+	sr := newStubRunner()
+	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
+
+	sr.stub(fmt.Sprintf("git -C %s cat-file -t ccc333", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+	sr.stub(fmt.Sprintf("git -C %s reset --hard", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s checkout ccc333 -- .", sandboxPath), exec.CmdResult{})
+
+	_, err = applier.Apply(context.Background(), 3)
+	require.NoError(t, err)
+
+	events := readEvents(t, eventsPath)
+	require.Len(t, events, 3)
+	assert.Equal(t, uint64(7), events[0].Seq)
+	assert.Equal(t, uint64(8), events[1].Seq)
+	assert.Equal(t, uint64(9), events[2].Seq, "checkpoint apply event must continue the existing sequence")
+	assert.Equal(t, EventKindCheckpointApplied, events[2].Kind)
+}

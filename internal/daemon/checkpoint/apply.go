@@ -104,7 +104,9 @@ func (a *Applier) Apply(ctx context.Context, checkpointID int) (*Checkpoint, err
 	}
 
 	// 7. Emit checkpoint_applied event
-	a.emitCheckpointApplied(checkpointID, cp.SnapshotCommit)
+	if err := a.emitCheckpointApplied(checkpointID, cp.SnapshotCommit); err != nil {
+		return nil, errors.Wrap(errors.ECheckpointFailed, "failed to append checkpoint_applied event", err)
+	}
 
 	return cp, nil
 }
@@ -129,10 +131,10 @@ func (a *Applier) loadCheckpoints() (*CheckpointsFile, error) {
 }
 
 // emitCheckpointApplied emits a checkpoint_applied event.
-func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string) {
+func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string) error {
 	event := Event{
 		SchemaVersion: "1.0",
-		Seq:           1, // Events during apply get fresh sequence
+		Seq:           loadMaxEventSeq(a.eventsPath) + 1,
 		Timestamp:     a.clock().UTC().Format(time.RFC3339),
 		InvocationID:  a.invocationID,
 		Kind:          EventKindCheckpointApplied,
@@ -141,18 +143,21 @@ func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string)
 
 	data, err := json.Marshal(event)
 	if err != nil {
-		return
+		return err
 	}
 	data = append(data, '\n')
 
-	// Best-effort append
+	// Append is strict: failure should fail the operation.
 	f, err := os.OpenFile(a.eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
 	defer func() { _ = f.Close() }()
 
-	_, _ = f.Write(data)
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return nil
 }
 
 // LoadCheckpointsFile is a helper to load checkpoints.json from a path.

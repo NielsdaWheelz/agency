@@ -1101,6 +1101,69 @@ func (c *Client) GetInvocationLogsOffset(ctx context.Context, ref string, repoID
 	}, nil
 }
 
+// GetInvocationTimelineOpts holds options for timeline reads.
+type GetInvocationTimelineOpts struct {
+	Limit  int    // default 100, max 500
+	Cursor string // opaque pagination cursor
+}
+
+// GetInvocationTimelineResult wraps the timeline response.
+type GetInvocationTimelineResult struct {
+	Entries    []daemon.TimelineEntryDTO
+	NextCursor string
+	RequestID  string
+}
+
+// GetInvocationTimeline gets the unified timeline for an invocation via daemon.
+func (c *Client) GetInvocationTimeline(ctx context.Context, ref string, repoID string, opts GetInvocationTimelineOpts) (*GetInvocationTimelineResult, error) {
+	u := fmt.Sprintf("http://daemon/invocations/%s/timeline?", url.PathEscape(ref))
+	if repoID != "" {
+		u += "repo_id=" + url.QueryEscape(repoID) + "&"
+	}
+	if opts.Limit > 0 {
+		u += fmt.Sprintf("limit=%d&", opts.Limit)
+	}
+	if opts.Cursor != "" {
+		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
+	}
+	u = u[:len(u)-1] // trim trailing & or ?
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var data daemon.InvocationTimelineData
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, err
+	}
+
+	return &GetInvocationTimelineResult{
+		Entries:    data.Entries,
+		NextCursor: data.NextCursor,
+		RequestID:  apiResp.RequestID,
+	}, nil
+}
+
 // ListCheckpointsOpts holds options for listing checkpoints.
 type ListCheckpointsOpts struct {
 	Limit  int    // default 100, max 500

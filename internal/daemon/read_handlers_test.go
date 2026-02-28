@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2098,4 +2099,199 @@ func TestParseGetLogsParams_OffsetMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	promptPath := env.Store.InvocationPromptPath(env.RepoID, "inv-1")
+	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt: fix flaky test"), 0o600))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+	}))
+
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		env.Store.SandboxRawLogPath(env.RepoID, "inv-1"),
+		[]byte("{\"type\":\"raw\"}\n{\"type\":\"raw2\"}\n"),
+		0o644,
+	))
+
+	streamEvents := []map[string]any{
+		{
+			"schema_version": "1.0",
+			"seq":            1,
+			"timestamp":      "2026-02-05T11:50:10Z",
+			"invocation_id":  "inv-1",
+			"runner":         "claude",
+			"kind":           "message",
+			"data": map[string]any{
+				"role":         "assistant",
+				"text":         "looking now",
+				"has_tool_use": true,
+			},
+		},
+		{
+			"schema_version": "1.0",
+			"seq":            2,
+			"timestamp":      "2026-02-05T11:50:20Z",
+			"invocation_id":  "inv-1",
+			"runner":         "claude",
+			"kind":           "tool_start",
+			"data": map[string]any{
+				"name":    "shell",
+				"command": "go test ./...",
+			},
+		},
+		{
+			"schema_version": "1.0",
+			"seq":            3,
+			"timestamp":      "2026-02-05T11:50:30Z",
+			"invocation_id":  "inv-1",
+			"runner":         "claude",
+			"kind":           "tool_end",
+			"data": map[string]any{
+				"name":      "shell",
+				"command":   "go test ./...",
+				"exit_code": 0,
+			},
+		},
+	}
+
+	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	require.NoError(t, err)
+	for _, ev := range streamEvents {
+		line, mErr := json.Marshal(ev)
+		require.NoError(t, mErr)
+		_, _ = streamFile.Write(append(line, '\n'))
+	}
+	require.NoError(t, streamFile.Close())
+
+	invocationEventsPath := env.Store.InvocationEventsPath(env.RepoID, "inv-1")
+	require.NoError(t, os.WriteFile(invocationEventsPath, []byte(
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"inv-1","kind":"agency.checkpoint_applied","data":{"checkpoint_id":2}}`+"\n",
+	), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+			Kind    string `json:"kind"`
+		} `json:"entries"`
+		NextCursor string `json:"next_cursor"`
+	}
+	decodeData(t, resp, &data)
+
+	require.NotEmpty(t, data.Entries)
+	seenKinds := map[string]bool{}
+	for _, entry := range data.Entries {
+		seenKinds[entry.Kind] = true
+	}
+	assert.True(t, seenKinds["prompt_seed"], "timeline must include prompt seed context")
+	assert.True(t, seenKinds["message"], "timeline must include assistant/user messages")
+	assert.True(t, seenKinds["tool_use"], "timeline must include tool-use activity")
+	assert.True(t, seenKinds["raw_log_coverage"], "timeline must include raw-log coverage marker")
+}
+
+func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	promptPath := env.Store.InvocationPromptPath(env.RepoID, "inv-1")
+	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt"), 0o600))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+	}))
+
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte("raw-log\n"), 0o644))
+
+	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	require.NoError(t, err)
+	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
+	for i := 1; i <= 6; i++ {
+		ev := map[string]any{
+			"schema_version": "1.0",
+			"seq":            i,
+			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+			"invocation_id":  "inv-1",
+			"runner":         "claude",
+			"kind":           "message",
+			"data": map[string]any{
+				"role": "assistant",
+				"text": fmt.Sprintf("message-%d", i),
+			},
+		}
+		line, mErr := json.Marshal(ev)
+		require.NoError(t, mErr)
+		_, _ = streamFile.Write(append(line, '\n'))
+	}
+	require.NoError(t, streamFile.Close())
+
+	getPage := func(cursor string) ([]string, string) {
+		path := "/invocations/inv-1/timeline?repo_id=" + env.RepoID + "&limit=2"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		w := env.doInvocationRequest(t, http.MethodGet, path)
+		assert.Equal(t, http.StatusOK, w.Code)
+		resp := decodeAPIResponse(t, w)
+		assert.True(t, resp.OK)
+
+		var data struct {
+			Entries []struct {
+				EntryID string `json:"entry_id"`
+			} `json:"entries"`
+			NextCursor string `json:"next_cursor"`
+		}
+		decodeData(t, resp, &data)
+
+		ids := make([]string, 0, len(data.Entries))
+		for _, entry := range data.Entries {
+			ids = append(ids, entry.EntryID)
+		}
+		return ids, data.NextCursor
+	}
+
+	firstIDs, c1 := getPage("")
+	secondIDs, c2 := getPage(c1)
+	thirdIDs, c3 := getPage(c2)
+	fourthIDs, _ := getPage(c3)
+
+	paged := append(append(append(firstIDs, secondIDs...), thirdIDs...), fourthIDs...)
+	require.NotEmpty(t, paged)
+
+	seen := map[string]bool{}
+	for _, id := range paged {
+		assert.False(t, seen[id], "pagination must not duplicate entries")
+		seen[id] = true
+	}
+
+	wAll := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=100")
+	assert.Equal(t, http.StatusOK, wAll.Code)
+	respAll := decodeAPIResponse(t, wAll)
+	assert.True(t, respAll.OK)
+
+	var allData struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+		} `json:"entries"`
+	}
+	decodeData(t, respAll, &allData)
+
+	allIDs := make([]string, 0, len(allData.Entries))
+	for _, entry := range allData.Entries {
+		allIDs = append(allIDs, entry.EntryID)
+	}
+	assert.Equal(t, allIDs, paged, "cursor pagination must provide deterministic continuation without skip/dup drift")
 }
