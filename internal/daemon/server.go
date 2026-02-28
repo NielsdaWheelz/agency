@@ -92,6 +92,10 @@ type Server struct {
 	// Used to prevent duplicate worktree creation from retried requests.
 	worktreeIdempotency map[string]WorktreeIdempotencyEntry
 
+	// followUpMu serializes follow-up prompt writes per daemon process.
+	// It protects duplicate detection + append sequencing to invocation events.
+	followUpMu sync.Mutex
+
 	// headedStartingFirstSeen tracks when a "starting" headed invocation was first
 	// observed without a tmux session. Used for grace window before marking failed.
 	// PR-11: Maps invocation_id -> count of ticks observed without tmux session.
@@ -480,6 +484,13 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationTimeline(w, r, invocationRef)
+	case "chat":
+		// S3 PR-02: POST /invocations/{ref}/chat
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleControlPlaneFollowUpPrompt(w, r, invocationRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
 	}

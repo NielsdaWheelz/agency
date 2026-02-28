@@ -38,6 +38,7 @@ Subcommands:
   open      Open sandbox in editor
   path      Print sandbox path
   shell     Open shell in sandbox
+  chat      Send follow-up prompt to a headless invocation
   history   Show unified invocation timeline
   logs      View invocation logs`,
 		Args: cobra.NoArgs,
@@ -61,6 +62,7 @@ Subcommands:
 		newAgentPathCmd(),
 		newAgentShellCmd(),
 		newAgentEnterCmd(),
+		newAgentChatCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),
 	)
@@ -659,6 +661,53 @@ func parseWatchInterval(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("--interval must be between 250ms and 5s")
 	}
 	return d, nil
+}
+
+func newAgentChatCmd() *cobra.Command {
+	var repoFlag string
+	var prompt string
+	var promptFile string
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "chat <invocation_ref>",
+		Short: "Send follow-up prompt to a headless invocation",
+		Long: `Send a follow-up prompt to an existing headless invocation.
+
+Use either --prompt or --prompt-file. The request is idempotent at the
+daemon control plane using client_request_id semantics.
+
+Example:
+  agency agent chat 20260131 --prompt "continue with test fixes"
+  agency agent chat --repo abc123 my-invocation --prompt-file followup.md
+  agency agent chat --json 20260131 --prompt "next step"`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentChat(ctx, cr, fsys, cwd, commands.AgentChatOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+				Prompt:        prompt,
+				PromptFile:    promptFile,
+				JSON:          jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Follow-up prompt text")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing follow-up prompt")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+
+	return cmd
 }
 
 func newAgentHistoryCmd() *cobra.Command {

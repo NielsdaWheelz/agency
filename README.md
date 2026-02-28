@@ -45,7 +45,8 @@ headless (fire-and-forget):
 ```bash
 agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent logs <invocation-id> --follow
-agency agent history <invocation-id> --limit 50
+agency agent chat <invocation-id> --prompt "continue with edge-case tests"
+agency agent history <invocation-id> --limit 50   # limit must be 1..500
 ```
 
 ## how it works

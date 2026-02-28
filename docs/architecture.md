@@ -91,6 +91,7 @@ HTTP/1.1 over Unix socket.
 - `POST /invocations` — create invocation (headed or headless)
 - `POST /invocations/{ref}/stop` — graceful stop
 - `POST /invocations/{ref}/kill` — forceful kill
+- `POST /invocations/{ref}/chat` — append invocation-scoped follow-up prompt (idempotent by `client_request_id`)
 - `POST /invocations/{ref}/land` — land sandbox to integration
 - `POST /invocations/{ref}/discard` — discard sandbox
 - `POST /invocations/{ref}/checkpoints/{id}/apply` — rollback to checkpoint
@@ -105,8 +106,8 @@ HTTP/1.1 over Unix socket.
 - `GET /invocations` — list invocations (with filtering)
 - `GET /invocations/{ref}` — resolve invocation by name/id/prefix
 - `GET /invocations/{ref}/diff` — structured diff with commits
-- `GET /invocations/{ref}/logs` — log tail with truncation metadata
-- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt/messages/tool-use/raw coverage + lifecycle events) with stable cursor pagination
+- `GET /invocations/{ref}/logs` — log reads (offset/tail) with strict bound validation (`tail_bytes` in `1..1048576`)
+- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt seed/messages/tool-use/follow-up prompts/raw coverage + lifecycle events) with stable cursor pagination
 - `GET /invocations/{ref}/checkpoints` — checkpoint list
 
 ### invocation flow (headed)

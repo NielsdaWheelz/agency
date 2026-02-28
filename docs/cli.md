@@ -293,7 +293,7 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 6. captures base_commit from integration branch
 7. creates sandbox worktree
 8. writes invocation `meta.json` with `status=starting`, `mode=headless`
-9. resolves prompt from `--prompt` or `--prompt-file` (required)
+9. resolves prompt from `--prompt` or `--prompt-file` using bounded reads (required, max 256KB)
 10. ensures daemon is running (autostarts if needed)
 11. sends start request to daemon via IPC
 12. daemon validates sandbox markers, spawns runner process, streams logs
@@ -323,6 +323,9 @@ Attaching to tmux session... (detach with Ctrl+b, d)
 - `E_TMUX_SESSION_EXISTS` — tmux session already exists (leaked session or parallel execution)
 - `E_INVOCATION_START_FAILED` — tmux session creation failed
 - `E_RUNNER_NOT_CONFIGURED` — runner command not found
+- `E_PROMPT_REQUIRED` — headless prompt missing or empty
+- `E_PROMPT_TOO_LARGE` — prompt exceeds 256KB bound
+- `E_USAGE` — invalid prompt flags (for example both `--prompt` and `--prompt-file`)
 
 ### `agency agent ls`
 
@@ -605,6 +608,39 @@ tmux session name is derived deterministically from `tmux.SessionName(invocation
 - `E_INVOCATION_INVALID_MODE` — invocation is headless; enter only supports headed
 - `E_SESSION_ENDED` — tmux session not found
 
+### `agency agent chat`
+
+sends a follow-up prompt to an existing headless invocation without creating a new invocation.
+
+**usage:**
+```bash
+agency agent chat <invocation_ref> [--repo <id|prefix>] [--prompt <text> | --prompt-file <path>] [--json]
+```
+
+**arguments:**
+- `invocation_ref`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--prompt`: inline follow-up prompt
+- `--prompt-file`: read follow-up prompt from file (bounded read, max 256KB)
+- `--json`: machine-readable response (includes `timeline_entry_id`, `already_applied`, `client_request_id`)
+- `--repo`: repo id or unique prefix
+
+**behavior:**
+1. resolves invocation through daemon-first navigation
+2. validates target is running headless invocation
+3. sends follow-up prompt with `client_request_id` for idempotent control-plane handling
+4. appends a follow-up prompt invocation event (or reuses existing event on duplicate request identity)
+5. returns the unified timeline entry identity; no new invocation is created
+
+**error codes:**
+- `E_PROMPT_REQUIRED` — prompt missing or empty
+- `E_PROMPT_TOO_LARGE` — prompt exceeds 256KB bound
+- `E_USAGE` — invalid prompt flags (for example both `--prompt` and `--prompt-file`)
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_INVALID_MODE` — invocation is not headless
+- `E_INVOCATION_NOT_RUNNING` — invocation exists but is not running
+
 ### `agency agent history`
 
 reads the unified invocation timeline used for detached transcript/history inspection.
@@ -618,7 +654,7 @@ agency agent history <invocation_ref> [--repo <id|prefix>] [--limit <n>] [--curs
 - `invocation_ref`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--limit`: maximum entries returned per page (default: 100, max: 500)
+- `--limit`: maximum entries returned per page (default: 100, required range: 1..500)
 - `--cursor`: opaque continuation cursor from prior response
 - `--json`: machine-readable output
 - `--repo`: repo id or unique prefix
@@ -627,12 +663,14 @@ agency agent history <invocation_ref> [--repo <id|prefix>] [--limit <n>] [--curs
 - prompt seed context (`prompt_seed`)
 - assistant/user messages (`message`)
 - tool activity (`tool_use`)
+- follow-up prompts (`followup_prompt`)
 - raw-log coverage marker (`raw_log_coverage`)
 - invocation/checkpoint lifecycle events (`invocation_event` / `checkpoint_event`)
 
 **pagination model:**
 - deterministic keyset cursoring (no offset drift)
 - incremental continuation is stable across pages (no duplicate/skip drift)
+- invalid `--limit` values fail closed with `E_INVALID_ARGUMENT` (no silent coercion)
 
 ### `agency agent logs`
 

@@ -192,23 +192,15 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 // agentStartHeadlessControlPlane handles headless invocation start via daemon control plane (PR-05).
 // CLI does NOT create invocation or sandbox - daemon does everything.
 func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, repoRootPath string, dirs paths.Dirs, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
-	// Resolve prompt
-	prompt := opts.Prompt
-	if prompt == "" && opts.PromptFile != "" {
-		data, err := os.ReadFile(opts.PromptFile)
-		if err != nil {
-			return errors.WrapWithDetails(
-				errors.EPromptRequired,
-				"failed to read prompt file",
-				err,
-				map[string]string{"path": opts.PromptFile},
-			)
-		}
-		prompt = string(data)
-	}
-
-	if prompt == "" {
-		return errors.New(errors.EPromptRequired, "headless mode requires a prompt (use --prompt or --prompt-file)")
+	prompt, err := resolveBoundedPromptInput(
+		opts.Prompt,
+		opts.PromptFile,
+		daemon.MaxPromptSize,
+		"headless mode requires a prompt (use --prompt or --prompt-file)",
+		"headless mode prompt cannot be empty",
+	)
+	if err != nil {
+		return err
 	}
 
 	// Ensure daemon is running
@@ -1344,6 +1336,162 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	return attachFn(sessionName)
 }
 
+// AgentChatOpts holds options for the agent chat command (S3 PR-02).
+type AgentChatOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+
+	// RepoFlag is the --repo flag value.
+	RepoFlag string
+
+	// Prompt is direct prompt text.
+	Prompt string
+
+	// PromptFile is a file path containing the prompt text.
+	PromptFile string
+
+	// JSON outputs as JSON.
+	JSON bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+}
+
+// AgentChat submits a follow-up prompt to an existing headless invocation.
+func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChatOpts, stdout, stderr io.Writer) error {
+	prompt, err := resolveBoundedPromptInput(
+		opts.Prompt,
+		opts.PromptFile,
+		daemon.MaxPromptSize,
+		"follow-up prompt requires --prompt or --prompt-file",
+		"follow-up prompt cannot be empty",
+	)
+	if err != nil {
+		return err
+	}
+
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent chat",
+	})
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.SubmitFollowUpPrompt(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpPromptOpts{
+		Prompt: prompt,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": resp.Hint},
+		)
+	}
+
+	if opts.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(resp)
+	}
+
+	_, _ = fmt.Fprintln(stdout, "accepted follow-up prompt")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:    %s\n", resp.InvocationID)
+	if resp.TimelineEntry != "" {
+		_, _ = fmt.Fprintf(stdout, "  timeline_entry:   %s\n", resp.TimelineEntry)
+	}
+	if resp.AlreadyApplied {
+		_, _ = fmt.Fprintln(stdout, "\nNote: duplicate request id detected; existing follow-up entry reused.")
+	}
+	return nil
+}
+
+func resolveBoundedPromptInput(prompt, promptFile string, maxBytes int, missingPromptMessage, emptyPromptMessage string) (string, error) {
+	if prompt != "" && promptFile != "" {
+		return "", errors.New(errors.EUsage, "use either --prompt or --prompt-file, not both")
+	}
+	if prompt != "" {
+		if len(prompt) > maxBytes {
+			return "", errors.NewWithDetails(
+				errors.EPromptTooLarge,
+				fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", maxBytes, len(prompt)),
+				map[string]string{
+					"max_bytes": fmt.Sprintf("%d", maxBytes),
+					"got_bytes": fmt.Sprintf("%d", len(prompt)),
+				},
+			)
+		}
+		return prompt, nil
+	}
+	if promptFile == "" {
+		return "", errors.New(errors.EPromptRequired, missingPromptMessage)
+	}
+
+	f, err := os.Open(promptFile)
+	if err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EPromptRequired,
+			"failed to read prompt file",
+			err,
+			map[string]string{"path": promptFile},
+		)
+	}
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(f, int64(maxBytes)+1))
+	if err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EPromptRequired,
+			"failed to read prompt file",
+			err,
+			map[string]string{"path": promptFile},
+		)
+	}
+	if len(data) > maxBytes {
+		return "", errors.NewWithDetails(
+			errors.EPromptTooLarge,
+			fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", maxBytes, len(data)),
+			map[string]string{
+				"path":      promptFile,
+				"max_bytes": fmt.Sprintf("%d", maxBytes),
+				"got_bytes": fmt.Sprintf("%d", len(data)),
+			},
+		)
+	}
+	if len(data) == 0 {
+		return "", errors.New(errors.EPromptRequired, emptyPromptMessage)
+	}
+	return string(data), nil
+}
+
 // AgentHistoryOpts holds options for the agent history command.
 type AgentHistoryOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
@@ -1355,7 +1503,7 @@ type AgentHistoryOpts struct {
 	// JSON outputs as JSON.
 	JSON bool
 
-	// Limit controls page size (default daemon behavior if zero).
+	// Limit controls page size (must be in [1, 500]).
 	Limit int
 
 	// Cursor continues from a prior page.
@@ -1367,6 +1515,18 @@ type AgentHistoryOpts struct {
 
 // AgentHistory reads the unified invocation timeline via daemon read API.
 func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentHistoryOpts, stdout, stderr io.Writer) error {
+	if opts.Limit < 1 || opts.Limit > 500 {
+		return errors.NewWithDetails(
+			errors.EInvalidArgument,
+			fmt.Sprintf("invalid value for parameter 'limit': %d", opts.Limit),
+			map[string]string{
+				"param": "limit",
+				"min":   "1",
+				"max":   "500",
+			},
+		)
+	}
+
 	var dataDir string
 	if opts.DataDirOverride != "" {
 		dataDir = opts.DataDirOverride
@@ -1473,6 +1633,8 @@ func timelineEntrySummary(entry daemon.TimelineEntryDTO) string {
 		if kind := timelineString(entry.Data, "event_kind"); kind != "" {
 			return kind
 		}
+	case "followup_prompt":
+		return truncateTimelineText(timelineString(entry.Data, "text"), 120)
 	}
 	if kind := timelineString(entry.Data, "event_kind"); kind != "" {
 		return kind

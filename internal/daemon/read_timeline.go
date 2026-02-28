@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -42,7 +43,19 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 	}
 
 	repoID := r.URL.Query().Get("repo_id")
-	params := parseGetTimelineParams(r)
+	params, invalidLimit := parseGetTimelineParams(r)
+	if invalidLimit != "" {
+		s.writeAPIError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter 'limit': %q", invalidLimit),
+			"provide limit in [1, 500]",
+			nil,
+		)
+		return
+	}
 
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
 	if resolveErr != nil {
@@ -59,17 +72,19 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func parseGetTimelineParams(r *http.Request) GetTimelineParams {
+func parseGetTimelineParams(r *http.Request) (GetTimelineParams, string) {
 	params := GetTimelineParams{
 		Limit: 100,
 	}
 	if limit := r.URL.Query().Get("limit"); limit != "" {
-		if parsed, err := strconv.Atoi(limit); err == nil && parsed > 0 && parsed <= 500 {
-			params.Limit = parsed
+		parsed, err := strconv.Atoi(limit)
+		if err != nil || parsed < 1 || parsed > 500 {
+			return params, limit
 		}
+		params.Limit = parsed
 	}
 	params.Cursor = r.URL.Query().Get("cursor")
-	return params
+	return params, ""
 }
 
 func (s *Server) collectTimelineEntries(record *resolvedInvocation) []timelineSortableEntry {
@@ -200,6 +215,8 @@ func readInvocationEventTimelineEntries(path, fallbackTimestamp string) []timeli
 		entryKind := "invocation_event"
 		if strings.HasPrefix(kind, "agency.checkpoint_") {
 			entryKind = "checkpoint_event"
+		} else if kind == followUpPromptEventKind {
+			entryKind = "followup_prompt"
 		}
 
 		entryID := "inv_event:" + strconv.Itoa(lineNumber) + ":" + kind

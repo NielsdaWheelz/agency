@@ -109,6 +109,33 @@ type ControlPlaneStartResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
+// ControlPlaneFollowUpPromptRequest is the request body for POST /invocations/{ref}/chat (S3 PR-02).
+type ControlPlaneFollowUpPromptRequest struct {
+	// Prompt is the follow-up prompt text (max 256KB).
+	Prompt string `json:"prompt"`
+
+	// ClientRequestID is required for idempotent retries.
+	ClientRequestID string `json:"client_request_id"`
+}
+
+// ControlPlaneFollowUpPromptResponse is the response body for POST /invocations/{ref}/chat (S3 PR-02).
+type ControlPlaneFollowUpPromptResponse struct {
+	OK             bool   `json:"ok"`
+	InvocationID   string `json:"invocation_id,omitempty"`
+	TimelineEntry  string `json:"timeline_entry_id,omitempty"`
+	AlreadyApplied bool   `json:"already_applied,omitempty"`
+
+	// Standard response fields
+	APIVersion      int    `json:"api_version"`
+	BuildVersion    string `json:"build_version,omitempty"`
+	ClientRequestID string `json:"client_request_id,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
 // IdempotencyEntry tracks a recent request for idempotency.
 type IdempotencyEntry struct {
 	InvocationID string

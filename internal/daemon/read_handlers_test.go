@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -192,6 +193,16 @@ func (env *readTestEnv) doWorktreeRequestWithHeaders(t *testing.T, method, path 
 func (env *readTestEnv) doInvocationRequest(t *testing.T, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
+	w := httptest.NewRecorder()
+	env.Server.handleInvocations(w, req)
+	return w
+}
+
+// doInvocationRequestWithBody makes a request to the invocations handler with a JSON body.
+func (env *readTestEnv) doInvocationRequestWithBody(t *testing.T, method, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	env.Server.handleInvocations(w, req)
 	return w
@@ -2294,4 +2305,149 @@ func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) 
 		allIDs = append(allIDs, entry.EntryID)
 	}
 	assert.Equal(t, allIDs, paged, "cursor pagination must provide deterministic continuation without skip/dup drift")
+}
+
+func TestHandleGetInvocationTimeline_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	tests := []struct {
+		name  string
+		limit string
+	}{
+		{name: "zero", limit: "0"},
+		{name: "too_large", limit: "501"},
+		{name: "non_numeric", limit: "abc"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := env.doInvocationRequest(t, http.MethodGet,
+				"/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit="+tc.limit)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			resp := decodeAPIResponse(t, w)
+			assert.False(t, resp.OK)
+			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+		})
+	}
+}
+
+func TestHandleGetInvocationLogs_TailBytesInvalidReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	tests := []struct {
+		name      string
+		tailBytes string
+	}{
+		{name: "zero", tailBytes: "0"},
+		{name: "too_large", tailBytes: "1048577"},
+		{name: "non_numeric", tailBytes: "abc"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := env.doInvocationRequest(t, http.MethodGet,
+				"/invocations/inv-1/logs?repo_id="+env.RepoID+"&tail_bytes="+tc.tailBytes)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			resp := decodeAPIResponse(t, w)
+			assert.False(t, resp.OK)
+			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+		})
+	}
+}
+
+func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocation(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	before, err := store.ScanInvocationsForRepo(env.Store.DataDir, env.RepoID)
+	require.NoError(t, err)
+	beforeCount := len(before)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-1",
+		"prompt":            "investigate retry path",
+	})
+	require.NoError(t, err)
+
+	w := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var writeResp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&writeResp))
+	assert.Equal(t, true, writeResp["ok"])
+
+	after, err := store.ScanInvocationsForRepo(env.Store.DataDir, env.RepoID)
+	require.NoError(t, err)
+	assert.Equal(t, beforeCount, len(after), "follow-up prompt must not create a new invocation")
+
+	wTimeline := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, wTimeline.Code)
+	resp := decodeAPIResponse(t, wTimeline)
+	assert.True(t, resp.OK)
+
+	var timeline struct {
+		Entries []struct {
+			Kind string                 `json:"kind"`
+			Data map[string]interface{} `json:"data"`
+		} `json:"entries"`
+	}
+	decodeData(t, resp, &timeline)
+
+	found := false
+	for _, entry := range timeline.Entries {
+		if entry.Kind == "followup_prompt" && entry.Data["text"] == "investigate retry path" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "accepted follow-up prompt must appear in unified timeline")
+}
+
+func TestHandleControlPlaneFollowUpPrompt_IdempotentRetryNoDuplicateTimelineWrites(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-dup",
+		"prompt":            "retry-safe follow-up",
+	})
+	require.NoError(t, err)
+
+	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+	assert.Equal(t, http.StatusOK, w1.Code)
+
+	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+	assert.Equal(t, http.StatusOK, w2.Code)
+
+	wTimeline := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=500")
+	assert.Equal(t, http.StatusOK, wTimeline.Code)
+	resp := decodeAPIResponse(t, wTimeline)
+	assert.True(t, resp.OK)
+
+	var timeline struct {
+		Entries []struct {
+			Kind string                 `json:"kind"`
+			Data map[string]interface{} `json:"data"`
+		} `json:"entries"`
+	}
+	decodeData(t, resp, &timeline)
+
+	count := 0
+	for _, entry := range timeline.Entries {
+		if entry.Kind == "followup_prompt" && entry.Data["client_request_id"] == "followup-req-dup" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "duplicate follow-up submissions must not write duplicate timeline entries")
 }
