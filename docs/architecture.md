@@ -81,7 +81,7 @@ the daemon runs as a foreground process, listening on a Unix socket at `${AGENCY
 - **checkpoint engine**: fsnotify-based snapshots with deduplication
 - **stream parsing**: real-time parsing of runner output for semantic status
 - **headed reconciliation**: detect tmux session exit, update state
-- **read API**: serve list/show/diff/logs queries for the CLI
+- **read API**: serve list/show/diff/logs/timeline queries for the CLI
 
 ### API
 
@@ -106,6 +106,7 @@ HTTP/1.1 over Unix socket.
 - `GET /invocations/{ref}` — resolve invocation by name/id/prefix
 - `GET /invocations/{ref}/diff` — structured diff with commits
 - `GET /invocations/{ref}/logs` — log tail with truncation metadata
+- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt/messages/tool-use/raw coverage + lifecycle events) with stable cursor pagination
 - `GET /invocations/{ref}/checkpoints` — checkpoint list
 
 ### invocation flow (headed)

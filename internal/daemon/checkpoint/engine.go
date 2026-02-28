@@ -54,7 +54,7 @@ func NewEngine(
 	fsys fs.FS,
 	clock func() time.Time,
 ) *Engine {
-	return &Engine{
+	engine := &Engine{
 		invocationID:   invocationID,
 		repoID:         repoID,
 		sandboxPath:    sandboxPath,
@@ -68,6 +68,11 @@ func NewEngine(
 		watchedDirs:    make(map[string]bool),
 		done:           make(chan struct{}),
 	}
+
+	// Preserve durable monotonic ordering across daemon restarts by
+	// continuing from the highest sequence already persisted on disk.
+	engine.eventSeq.Store(loadMaxEventSeq(eventsPath))
+	return engine
 }
 
 // Run starts the checkpoint engine. It blocks until Stop is called.

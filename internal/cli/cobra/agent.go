@@ -38,6 +38,7 @@ Subcommands:
   open      Open sandbox in editor
   path      Print sandbox path
   shell     Open shell in sandbox
+  history   Show unified invocation timeline
   logs      View invocation logs`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -60,6 +61,7 @@ Subcommands:
 		newAgentPathCmd(),
 		newAgentShellCmd(),
 		newAgentEnterCmd(),
+		newAgentHistoryCmd(),
 		newAgentLogsCmd(),
 	)
 
@@ -657,6 +659,56 @@ func parseWatchInterval(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("--interval must be between 250ms and 5s")
 	}
 	return d, nil
+}
+
+func newAgentHistoryCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+	var limit int
+	var cursor string
+
+	cmd := &cobra.Command{
+		Use:   "history <invocation_ref>",
+		Short: "Show unified invocation timeline",
+		Long: `Show the unified, typed timeline for an invocation.
+
+The timeline merges prompt seed context, assistant/user messages, tool-use
+activity, and raw-log coverage markers into one deterministic order.
+
+Use --limit and --cursor for stable paginated reads.
+
+Example:
+  agency agent history 20260131
+  agency agent history --repo abc123 my-invocation
+  agency agent history --limit 50 --cursor <opaque>
+  agency agent history --json 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentHistory(ctx, cr, fsys, cwd, commands.AgentHistoryOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+				JSON:          jsonOut,
+				Limit:         limit,
+				Cursor:        cursor,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().IntVar(&limit, "limit", 100, "Maximum entries to return (1-500)")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Pagination cursor from previous response")
+
+	return cmd
 }
 
 func newAgentLogsCmd() *cobra.Command {

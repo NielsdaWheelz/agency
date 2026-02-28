@@ -1204,6 +1204,142 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// S3 PR-01: AgentHistory integration tests
+// ---------------------------------------------------------------------------
+
+func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-typed")
+	invocationID := "20260131180000-hist"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt: investigate failure"), 0o600))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("{\"raw\":1}\n"), 0o644))
+
+	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamBytes := "" +
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"checking"}}` + "\n" +
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"shell","command":"go test ./..."}}` + "\n"
+	require.NoError(t, os.WriteFile(streamPath, []byte(streamBytes), 0o644))
+
+	eventsPath := st.InvocationEventsPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(eventsPath, []byte(
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"`+invocationID+`","kind":"agency.checkpoint_applied","data":{"checkpoint_id":1}}`+"\n",
+	), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var payload struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+			Kind    string `json:"kind"`
+		} `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	require.NotEmpty(t, payload.Entries)
+
+	seenKinds := map[string]bool{}
+	for _, entry := range payload.Entries {
+		seenKinds[entry.Kind] = true
+	}
+	assert.True(t, seenKinds["prompt_seed"])
+	assert.True(t, seenKinds["message"])
+	assert.True(t, seenKinds["tool_use"])
+	assert.True(t, seenKinds["raw_log_coverage"])
+}
+
+func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-page")
+	invocationID := "20260131190000-page"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt"), 0o600))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("raw\n"), 0o644))
+
+	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamBytes := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"one"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"two"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"shell","command":"echo hi"}}`,
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"shell","command":"echo hi","exit_code":0}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamBytes, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	readPage := func(limit int, cursor string) ([]string, string) {
+		var out bytes.Buffer
+		var errOut bytes.Buffer
+		err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+			InvocationRef:   invocationID,
+			JSON:            true,
+			Limit:           limit,
+			Cursor:          cursor,
+			DataDirOverride: dataDir,
+		}, &out, &errOut)
+		require.NoError(t, err)
+
+		var payload struct {
+			Entries []struct {
+				EntryID string `json:"entry_id"`
+			} `json:"entries"`
+			NextCursor string `json:"next_cursor"`
+		}
+		require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+
+		ids := make([]string, 0, len(payload.Entries))
+		for _, entry := range payload.Entries {
+			ids = append(ids, entry.EntryID)
+		}
+		return ids, payload.NextCursor
+	}
+
+	allIDs, _ := readPage(100, "")
+	require.NotEmpty(t, allIDs)
+
+	pagedIDs := make([]string, 0)
+	cursor := ""
+	for {
+		ids, next := readPage(2, cursor)
+		pagedIDs = append(pagedIDs, ids...)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	assert.Equal(t, allIDs, pagedIDs)
+}
+
+// ---------------------------------------------------------------------------
 // PR-B: AgentLogs integration tests
 // ---------------------------------------------------------------------------
 

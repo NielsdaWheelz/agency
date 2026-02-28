@@ -605,6 +605,35 @@ tmux session name is derived deterministically from `tmux.SessionName(invocation
 - `E_INVOCATION_INVALID_MODE` — invocation is headless; enter only supports headed
 - `E_SESSION_ENDED` — tmux session not found
 
+### `agency agent history`
+
+reads the unified invocation timeline used for detached transcript/history inspection.
+
+**usage:**
+```bash
+agency agent history <invocation_ref> [--repo <id|prefix>] [--limit <n>] [--cursor <opaque>] [--json]
+```
+
+**arguments:**
+- `invocation_ref`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--limit`: maximum entries returned per page (default: 100, max: 500)
+- `--cursor`: opaque continuation cursor from prior response
+- `--json`: machine-readable output
+- `--repo`: repo id or unique prefix
+
+**entry coverage:**
+- prompt seed context (`prompt_seed`)
+- assistant/user messages (`message`)
+- tool activity (`tool_use`)
+- raw-log coverage marker (`raw_log_coverage`)
+- invocation/checkpoint lifecycle events (`invocation_event` / `checkpoint_event`)
+
+**pagination model:**
+- deterministic keyset cursoring (no offset drift)
+- incremental continuation is stable across pages (no duplicate/skip drift)
+
 ### `agency agent logs`
 
 views invocation logs.

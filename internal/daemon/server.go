@@ -473,6 +473,13 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationLogs(w, r, invocationRef)
+	case "timeline":
+		// S3 PR-01: GET /invocations/{ref}/timeline
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleGetInvocationTimeline(w, r, invocationRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
 	}

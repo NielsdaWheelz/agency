@@ -269,6 +269,38 @@ type InvocationLogsOffsetData struct {
 	TotalBytes int64  `json:"total_bytes"` // current file size
 }
 
+// ----- Timeline Response Types (S3 PR-01) -----
+
+// TimelineEntryDTO is a normalized, typed entry in the invocation timeline.
+type TimelineEntryDTO struct {
+	EntryID   string                 `json:"entry_id"`
+	Kind      string                 `json:"kind"`
+	Source    string                 `json:"source"`
+	Timestamp string                 `json:"timestamp"`
+	Seq       uint64                 `json:"seq,omitempty"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+}
+
+// InvocationTimelineData is the data payload for GET /invocations/{id}/timeline.
+type InvocationTimelineData struct {
+	Entries    []TimelineEntryDTO `json:"entries"`
+	NextCursor string             `json:"next_cursor,omitempty"`
+}
+
+// TimelineCursor is the internal cursor structure for timeline keyset pagination.
+type TimelineCursor struct {
+	Timestamp  string `json:"timestamp"`
+	SourceRank int    `json:"source_rank"`
+	Seq        uint64 `json:"seq"`
+	EntryID    string `json:"entry_id"`
+}
+
+// GetTimelineParams holds query parameters for GET /invocations/{id}/timeline.
+type GetTimelineParams struct {
+	Limit  int    // default 100, max 500
+	Cursor string // opaque pagination cursor
+}
+
 // ----- S1 Release Gate DTOs (PR-05) -----
 
 // S1ReleaseReadinessData is the data payload for GET /spec/v2.1/s1/release/readiness.
