@@ -399,6 +399,20 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 				fmt.Sprintf("provide a limit in [1, %d]", MaxLogChunk), nil)
 			return
 		}
+	} else if tailBytesRaw := r.URL.Query().Get("tail_bytes"); tailBytesRaw != "" {
+		tailBytes, err := strconv.Atoi(tailBytesRaw)
+		if err != nil || tailBytes < 1 || tailBytes > MaxLogChunk {
+			s.writeAPIError(
+				w,
+				http.StatusBadRequest,
+				requestID,
+				string(errors.EInvalidArgument),
+				fmt.Sprintf("invalid value for parameter 'tail_bytes': %q", tailBytesRaw),
+				fmt.Sprintf("provide tail_bytes in [1, %d]", MaxLogChunk),
+				nil,
+			)
+			return
+		}
 	}
 
 	// Resolve invocation ref

@@ -186,6 +186,8 @@ agency agent logs <invocation-id> --follow        # tail -f style, live updates
 agency agent logs <invocation-id> --kind stderr   # stderr
 agency agent logs <invocation-id> --kind stream   # normalized event stream
 agency agent logs <invocation-id> --offset 1024   # start from byte offset
+agency agent history <invocation-id> --limit 50   # unified timeline (limit must be 1..500)
+agency agent chat <invocation-id> --prompt "continue with tests"
 ```
 
 ## step 6: work with checkpoints
@@ -392,6 +394,8 @@ AGENTS (AI executions in sandboxes)
   agency agent enter <ref>                  attach to tmux session (canonical)
   agency agent attach <ref>                 attach compatibility alias
   agency agent logs <ref> [--follow]        view logs
+  agency agent history <ref> [--limit <n>]  unified timeline (n in 1..500)
+  agency agent chat <ref> --prompt "..."    send follow-up prompt to headless run
   agency agent diff <ref>                   show sandbox changes
   agency agent open <ref>                   open sandbox in editor
   agency agent stop <ref>                   graceful stop

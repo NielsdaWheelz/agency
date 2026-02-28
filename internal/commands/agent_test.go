@@ -1244,6 +1244,7 @@ func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
 	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		JSON:            true,
+		Limit:           100,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
@@ -1474,4 +1475,115 @@ func TestAgentLogs_StderrKind(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "error output\n", stdout.String())
+}
+
+func TestAgentHistory_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-invalid-limit")
+	invocationID := "20260131180000-hlim"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           0,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-file-limit")
+	invocationID := "20260131181000-chat"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	oversizedPromptPath := filepath.Join(t.TempDir(), "prompt.txt")
+	require.NoError(t, os.WriteFile(oversizedPromptPath, bytes.Repeat([]byte("x"), daemon.MaxPromptSize+1), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+		InvocationRef:   invocationID,
+		PromptFile:      oversizedPromptPath,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EPromptTooLarge, errors.GetCode(err))
+}
+
+func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-output")
+	invocationID := "20260131182000-cout"
+
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var humanOut, jsonOut, stderr bytes.Buffer
+	err := AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+		InvocationRef:   invocationID,
+		Prompt:          "continue with regression analysis",
+		DataDirOverride: dataDir,
+	}, &humanOut, &stderr)
+	require.NoError(t, err)
+
+	err = AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+		InvocationRef:   invocationID,
+		Prompt:          "second follow-up",
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, humanOut.String(), invocationID)
+	assert.Contains(t, strings.ToLower(humanOut.String()), "accepted")
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	assert.Equal(t, true, payload["ok"])
+	assert.Equal(t, invocationID, payload["invocation_id"])
+}
+
+func TestResolveBoundedPromptInput_MissingPromptUsesContextMessage(t *testing.T) {
+	t.Parallel()
+
+	_, err := resolveBoundedPromptInput("", "", 64, "custom missing prompt message", "custom empty prompt message")
+	require.Error(t, err)
+	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "custom missing prompt message")
+}
+
+func TestResolveBoundedPromptInput_RejectsPromptAndFileTogether(t *testing.T) {
+	t.Parallel()
+
+	_, err := resolveBoundedPromptInput("inline", "prompt.txt", 64, "unused", "unused")
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestResolveBoundedPromptInput_EmptyFileUsesContextMessage(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	emptyPath := filepath.Join(tempDir, "empty-prompt.txt")
+	require.NoError(t, os.WriteFile(emptyPath, nil, 0o600))
+
+	_, err := resolveBoundedPromptInput("", emptyPath, 64, "unused", "context-specific empty file message")
+	require.Error(t, err)
+	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "context-specific empty file message")
 }

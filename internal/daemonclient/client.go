@@ -172,6 +172,11 @@ type ControlPlaneStartHeadedOpts struct {
 	NoIncludeUntracked bool
 }
 
+// SubmitFollowUpPromptOpts holds options for invocation-scoped follow-up prompts (S3 PR-02).
+type SubmitFollowUpPromptOpts struct {
+	Prompt string
+}
+
 // ControlPlaneStartHeadless starts a headless invocation via the control plane endpoint (PR-05).
 // This endpoint handles all creation: invocation ID generation, sandbox creation, and runner start.
 func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlaneStartOpts) (*daemon.ControlPlaneStartResponse, error) {
@@ -256,6 +261,43 @@ func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts ControlPlaneS
 		return nil, err
 	}
 
+	return &result, nil
+}
+
+// SubmitFollowUpPrompt submits a follow-up prompt to an existing invocation (S3 PR-02).
+func (c *Client) SubmitFollowUpPrompt(ctx context.Context, invocationRef, repoID string, opts SubmitFollowUpPromptOpts) (*daemon.ControlPlaneFollowUpPromptResponse, error) {
+	clientRequestID := uuid.New().String()
+	reqBody := daemon.ControlPlaneFollowUpPromptRequest{
+		Prompt:          opts.Prompt,
+		ClientRequestID: clientRequestID,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("http://daemon/invocations/%s/chat", url.PathEscape(invocationRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.ControlPlaneFollowUpPromptResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
 	return &result, nil
 }
 
