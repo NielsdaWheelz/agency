@@ -647,14 +647,15 @@ applies a checkpoint and restarts the same headless invocation in one invocation
 
 **usage:**
 ```bash
-agency agent restart <invocation_ref> --checkpoint <id> [--repo <id|prefix>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
+agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <id|prefix>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--checkpoint`: checkpoint id to restore before restart (required)
+- `--checkpoint`: checkpoint id to restore before restart (explicit/script-safe mode)
+- `--history`: open interactive arrow-key selector over timeline history
 - `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
 - `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
 - `--json`: machine-readable response
@@ -663,17 +664,22 @@ agency agent restart <invocation_ref> --checkpoint <id> [--repo <id|prefix>] [--
 **behavior:**
 1. resolves invocation through daemon-first navigation
 2. validates target is headless
-3. if invocation has a stored custom-env profile, requires explicit replay of all required env keys
-4. if running, force-stops current process and waits for terminalization
-5. applies checkpoint to sandbox
-6. restarts runner under the same `invocation_id` and returns new `pid/pgid`
+3. if `--history` is used, requires an interactive terminal and opens a selector (`↑/↓` or `k/j`, `enter` to confirm, `q` to cancel)
+4. deterministic mapping rule for `--history`: selected timeline entry maps to the latest `checkpoint_event` at or before that entry; if no valid mapping exists, returns deterministic error guidance
+5. if invocation has a stored custom-env profile, requires explicit replay of all required env keys
+6. if running, force-stops current process and waits for terminalization
+7. applies checkpoint to sandbox
+8. restarts runner under the same `invocation_id` and returns new `pid/pgid`
 
 **error codes:**
-- `E_USAGE` — invalid CLI usage (for example malformed `--env` value or missing `--checkpoint`)
+- `E_USAGE` — invalid CLI usage (for example malformed `--env` value, missing selector mode, or conflicting `--checkpoint` + `--history`)
+- `E_NOT_INTERACTIVE` — `--history` used outside an interactive terminal
+- `E_ABORTED` — interactive selection canceled by user
+- `E_INVALID_ARGUMENT` — history/checkpoint selection input is invalid or exceeds bounded selector limits
 - `E_INVALID_REQUEST` — restart env replay is incomplete for required keys
 - `E_INVOCATION_NOT_FOUND` — invocation not found
 - `E_INVOCATION_INVALID_MODE` — invocation is not headless
-- `E_CHECKPOINT_NOT_FOUND` — checkpoint id does not exist
+- `E_CHECKPOINT_NOT_FOUND` — explicit checkpoint id does not exist, or selected history point has no valid checkpoint mapping
 - `E_RUNNER_ARG_CONFLICT` — runner args include reserved flags
 - `E_RUNNER_START_FAILED` — runner failed to start after restore
 

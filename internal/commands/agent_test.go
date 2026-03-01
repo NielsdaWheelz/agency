@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -1571,6 +1572,19 @@ func TestAgentRestart_InvalidCheckpointIDReturnsUsage(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestAgentRestart_NegativeCheckpointIDReturnsUsage(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
+		InvocationRef: "inv-123",
+		CheckpointID:  -1,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "--checkpoint must be a positive integer")
+}
+
 func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 	t.Parallel()
 
@@ -1719,4 +1733,241 @@ func TestResolveBoundedPromptInput_EmptyFileUsesContextMessage(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "context-specific empty file message")
+}
+
+func TestRunInteractiveHistorySelector_ArrowNavigationAndConfirm(t *testing.T) {
+	t.Parallel()
+
+	items := []historySelectorItem{
+		{Entry: daemon.TimelineEntryDTO{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z"}, Summary: "first"},
+		{Entry: daemon.TimelineEntryDTO{EntryID: "e-2", Kind: "message", Timestamp: "2026-02-05T11:50:20Z"}, Summary: "second"},
+		{Entry: daemon.TimelineEntryDTO{EntryID: "e-3", Kind: "message", Timestamp: "2026-02-05T11:50:30Z"}, Summary: "third"},
+	}
+
+	// Initial selection is newest (last item). Arrow-up then Enter should pick e-2.
+	input := bytes.NewBufferString("\x1b[A\r")
+	var output bytes.Buffer
+	selected, err := runInteractiveHistorySelector(items, input, &output)
+	require.NoError(t, err)
+	assert.Equal(t, "e-2", selected.Entry.EntryID)
+}
+
+func TestRunInteractiveHistorySelector_CancelReturnsAborted(t *testing.T) {
+	t.Parallel()
+
+	items := []historySelectorItem{
+		{Entry: daemon.TimelineEntryDTO{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z"}, Summary: "first"},
+	}
+
+	input := bytes.NewBufferString("q")
+	var output bytes.Buffer
+	_, err := runInteractiveHistorySelector(items, input, &output)
+	require.Error(t, err)
+	assert.Equal(t, errors.EAborted, errors.GetCode(err))
+}
+
+func TestMapTimelineSelectionToCheckpoint_Deterministic(t *testing.T) {
+	t.Parallel()
+
+	entries := []daemon.TimelineEntryDTO{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:05Z"},
+		{
+			EntryID:   "cp-1",
+			Kind:      "checkpoint_event",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data: map[string]interface{}{
+				"event_kind":    "agency.checkpoint_created",
+				"checkpoint_id": 1,
+			},
+		},
+		{EntryID: "e-2", Kind: "followup_prompt", Timestamp: "2026-02-05T11:50:20Z"},
+		{
+			EntryID:   "cp-2",
+			Kind:      "checkpoint_event",
+			Timestamp: "2026-02-05T11:50:30Z",
+			Data: map[string]interface{}{
+				"event_kind":    "agency.checkpoint_created",
+				"checkpoint_id": 2,
+			},
+		},
+		{EntryID: "e-3", Kind: "message", Timestamp: "2026-02-05T11:50:40Z"},
+	}
+	checkpoints := []daemon.CheckpointDTO{
+		{ID: 1},
+		{ID: 2},
+	}
+
+	first, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-2")
+	require.NoError(t, err)
+	second, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-2")
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, first)
+	assert.Equal(t, first, second)
+}
+
+func TestMapTimelineSelectionToCheckpoint_NoMappingReturnsCheckpointNotFound(t *testing.T) {
+	t.Parallel()
+
+	entries := []daemon.TimelineEntryDTO{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:05Z"},
+		{EntryID: "e-2", Kind: "message", Timestamp: "2026-02-05T11:50:06Z"},
+	}
+	checkpoints := []daemon.CheckpointDTO{{ID: 1}}
+
+	_, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-1")
+	require.Error(t, err)
+	assert.Equal(t, errors.ECheckpointNotFound, errors.GetCode(err))
+}
+
+func TestMapTimelineSelectionToCheckpoint_MappedCheckpointUnavailableReturnsCheckpointNotFound(t *testing.T) {
+	t.Parallel()
+
+	entries := []daemon.TimelineEntryDTO{
+		{
+			EntryID:   "cp-1",
+			Kind:      "checkpoint_event",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data: map[string]interface{}{
+				"event_kind":    "agency.checkpoint_created",
+				"checkpoint_id": 1,
+			},
+		},
+		{
+			EntryID:   "cp-2",
+			Kind:      "checkpoint_event",
+			Timestamp: "2026-02-05T11:50:30Z",
+			Data: map[string]interface{}{
+				"event_kind":    "agency.checkpoint_created",
+				"checkpoint_id": 2,
+			},
+		},
+		{EntryID: "e-3", Kind: "message", Timestamp: "2026-02-05T11:50:40Z"},
+	}
+	checkpoints := []daemon.CheckpointDTO{
+		{ID: 1},
+	}
+
+	_, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-3")
+	require.Error(t, err)
+	assert.Equal(t, errors.ECheckpointNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "mapped checkpoint 2 is no longer available")
+}
+
+func TestAgentRestart_InteractiveHistory_NonInteractiveFailsFast(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
+		InvocationRef:      "inv-123",
+		InteractiveHistory: true,
+		IsInteractive:      func() bool { return false },
+		DataDirOverride:    t.TempDir(),
+		HistorySelectorIn:  bytes.NewBuffer(nil),
+		HistorySelectorOut: &bytes.Buffer{},
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
+}
+
+func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestartFlow(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-history")
+	invocationID := "20260131185000-rhist"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
+				SnapshotCommit:    "deadbeef",
+				SandboxHeadSHA:    "deadbeef",
+				CreatedAt:         "2026-02-05T11:50:10Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+			{
+				ID:                2,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/2",
+				SnapshotCommit:    "feedface",
+				SandboxHeadSHA:    "feedface",
+				CreatedAt:         "2026-02-05T11:50:30Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+
+	eventsLines := strings.Join([]string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","kind":"agency.followup_prompt","data":{"text":"continue from cp1"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(eventsLines), 0o644))
+
+	runnerDir := t.TempDir()
+	runnerPath := filepath.Join(runnerDir, "restart-runner.sh")
+	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	cfg := map[string]any{
+		"version": 1,
+		"defaults": map[string]string{
+			"runner": "claude",
+			"editor": "code",
+		},
+		"runners": map[string]string{
+			"claude": runnerPath,
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var jsonOut, stderr bytes.Buffer
+	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
+		InvocationRef:      invocationID,
+		InteractiveHistory: true,
+		IsInteractive:      func() bool { return true },
+		HistorySelector: func(items []historySelectorItem, _ io.Reader, _ io.Writer) (historySelectorItem, error) {
+			for _, item := range items {
+				if item.Entry.EntryID == "inv_event:2:agency.followup_prompt" {
+					return item, nil
+				}
+			}
+			t.Fatalf("expected follow-up timeline entry in selector items")
+			return historySelectorItem{}, nil
+		},
+		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &stderr)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	assert.Equal(t, true, payload["ok"])
+	assert.Equal(t, invocationID, payload["invocation_id"])
+	// Selected follow-up entry is before checkpoint 2, so deterministic mapping must pick checkpoint 1.
+	assert.Equal(t, float64(1), payload["checkpoint_id"])
 }
