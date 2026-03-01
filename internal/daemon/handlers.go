@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -260,11 +262,9 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		Setpgid: true, // Create new process group
 	}
 
-	// Set up environment
-	cmd.Env = os.Environ()
-	for k, v := range req.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	// Set up deterministic, automation-safe environment for headless runner starts.
+	cmd.Env = mergeEnvDeterministic(os.Environ(), nonInteractiveRunnerEnv(), req.Env)
+	cmd.Stdin = nil
 
 	// Set up pipes for stdout/stderr
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -325,6 +325,8 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	// Update invocation meta
 	now := s.Clock().UTC().Format(time.RFC3339)
 	daemonPID := os.Getpid()
+	envKeys := sortedEnvKeys(req.Env)
+	runnerArgs := append([]string(nil), req.RunnerArgs...)
 	err = s.Store.UpdateInvocationMeta(req.RepoID, req.InvocationID, func(m *store.InvocationMeta) {
 		m.Status = store.InvocationStatusRunning
 		m.PID = &pid
@@ -335,12 +337,15 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		m.LifecycleOwner = "daemon"
 		m.PromptPath = promptPath
 		m.PromptSHA256 = promptSHA
+		m.RunnerArgs = runnerArgs
+		m.CustomEnvKeys = envKeys
 	})
 	if err != nil {
 		// Best-effort: kill the process we just started
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
+		_ = streamFile.Close()
 		s.mu.Lock()
 		delete(s.processes, req.InvocationID)
 		s.mu.Unlock()
@@ -805,6 +810,86 @@ func safeIntPtr(p *int) int {
 	return *p
 }
 
+// nonInteractiveRunnerEnv returns deterministic defaults for automation-safe
+// non-interactive runner launches.
+func nonInteractiveRunnerEnv() map[string]string {
+	return map[string]string{
+		"CI":                  "1",
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PROMPT_DISABLED":  "1",
+	}
+}
+
+// mergeEnvDeterministic merges base and overlay env maps with deterministic
+// ordering, no duplicate keys, and "last overlay wins" semantics.
+func mergeEnvDeterministic(baseEnv []string, overlays ...map[string]string) []string {
+	merged := make(map[string]string, len(baseEnv))
+
+	for _, entry := range baseEnv {
+		key, val, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			continue
+		}
+		merged[key] = val
+	}
+	for _, overlay := range overlays {
+		for k, v := range overlay {
+			merged[k] = v
+		}
+	}
+
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make([]string, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, k+"="+merged[k])
+	}
+	return result
+}
+
+// sortedEnvKeys returns unique env keys in sorted order.
+func sortedEnvKeys(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// loadMaxStreamSeq returns the highest seq observed in an existing stream log.
+// Used to keep stream sequence ordering monotonic across restart boundaries.
+func loadMaxStreamSeq(path string) uint64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = f.Close() }()
+
+	var maxSeq uint64
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxTimelineLineBytes)
+	for scanner.Scan() {
+		var event struct {
+			Seq uint64 `json:"seq"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.Seq > maxSeq {
+			maxSeq = event.Seq
+		}
+	}
+	return maxSeq
+}
+
 // handleControlPlaneStartHeadless handles POST /invocations/start_headless (PR-05 control plane).
 // This is the new endpoint where daemon creates everything: invocation, sandbox, and starts runner.
 func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.Request) {
@@ -1021,6 +1106,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	daemonPID := os.Getpid()
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
+	envKeys := sortedEnvKeys(req.Env)
+	runnerArgs := append([]string(nil), req.RunnerArgs...)
 
 	_ = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(m *store.InvocationMeta) {
 		m.Status = store.InvocationStatusRunning
@@ -1032,6 +1119,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		m.LifecycleOwner = "daemon"
 		m.PromptPath = s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
 		m.PromptSHA256 = promptSHA
+		m.RunnerArgs = runnerArgs
+		m.CustomEnvKeys = envKeys
 	})
 
 	// 18. Read final meta and return success
@@ -1242,10 +1331,9 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	}
 
 	// Set up environment
-	cmd.Env = os.Environ()
-	for k, v := range req.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = mergeEnvDeterministic(os.Environ(), nonInteractiveRunnerEnv(), req.Env)
+	// Explicitly disallow interactive stdin expectations for headless runner starts.
+	cmd.Stdin = nil
 
 	// Set up pipes for stdout/stderr
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -1275,8 +1363,10 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	pid := cmd.Process.Pid
 	pgid := pid
 
-	// PR-07: Create stream parser for normalized events
+	// PR-07/S3 PR-03: keep stream sequence monotonic across restart boundaries.
+	initialSeq := loadMaxStreamSeq(streamLogPath)
 	parser := stream.NewParser(result.InvocationID, req.Runner, s.Clock)
+	parser.SetInitialSeq(initialSeq)
 
 	// PR-08: Create checkpoint engine
 	checkpointsDir := s.Store.SandboxDir(repoID, result.InvocationID)
@@ -1691,6 +1781,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	// 17. Update invocation meta: status = "running", tmux_session set, daemon ownership
 	now := s.Clock().UTC().Format(time.RFC3339)
 	daemonPID := os.Getpid()
+	runnerArgs := append([]string(nil), req.RunnerArgs...)
 	err = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.TmuxSession = sessionName
@@ -1698,6 +1789,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		meta.DaemonInstanceID = s.InstanceID
 		meta.ClaimedAt = now
 		meta.LifecycleOwner = "daemon"
+		meta.RunnerArgs = runnerArgs
 	})
 	if err != nil {
 		// Best-effort: kill the session we just created

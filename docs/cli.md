@@ -641,6 +641,42 @@ agency agent chat <invocation_ref> [--repo <id|prefix>] [--prompt <text> | --pro
 - `E_INVOCATION_INVALID_MODE` — invocation is not headless
 - `E_INVOCATION_NOT_RUNNING` — invocation exists but is not running
 
+### `agency agent restart`
+
+applies a checkpoint and restarts the same headless invocation in one invocation-scoped flow.
+
+**usage:**
+```bash
+agency agent restart <invocation_ref> --checkpoint <id> [--repo <id|prefix>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
+```
+
+**arguments:**
+- `invocation_ref`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--checkpoint`: checkpoint id to restore before restart (required)
+- `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
+- `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
+- `--json`: machine-readable response
+- `--repo`: repo id or unique prefix
+
+**behavior:**
+1. resolves invocation through daemon-first navigation
+2. validates target is headless
+3. if invocation has a stored custom-env profile, requires explicit replay of all required env keys
+4. if running, force-stops current process and waits for terminalization
+5. applies checkpoint to sandbox
+6. restarts runner under the same `invocation_id` and returns new `pid/pgid`
+
+**error codes:**
+- `E_USAGE` — invalid CLI usage (for example malformed `--env` value or missing `--checkpoint`)
+- `E_INVALID_REQUEST` — restart env replay is incomplete for required keys
+- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_INVALID_MODE` — invocation is not headless
+- `E_CHECKPOINT_NOT_FOUND` — checkpoint id does not exist
+- `E_RUNNER_ARG_CONFLICT` — runner args include reserved flags
+- `E_RUNNER_START_FAILED` — runner failed to start after restore
+
 ### `agency agent history`
 
 reads the unified invocation timeline used for detached transcript/history inspection.

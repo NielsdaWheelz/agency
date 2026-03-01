@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -1556,6 +1557,138 @@ func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
+}
+
+func TestAgentRestart_InvalidCheckpointIDReturnsUsage(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
+		InvocationRef: "inv-123",
+		CheckpointID:  0,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-output")
+	invocationID := "20260131183000-rout"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
+				SnapshotCommit:    "deadbeef",
+				SandboxHeadSHA:    "deadbeef",
+				CreatedAt:         "2026-02-05T11:50:30Z",
+				IncludesUntracked: true,
+				Diffstat:          "+0 -0 in 0 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"),
+		cpBytes,
+		0o644,
+	))
+
+	runnerDir := t.TempDir()
+	runnerPath := filepath.Join(runnerDir, "restart-runner.sh")
+	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	cfg := map[string]any{
+		"version": 1,
+		"defaults": map[string]string{
+			"runner": "claude",
+			"editor": "code",
+		},
+		"runners": map[string]string{
+			"claude": runnerPath,
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var humanOut, jsonOut, stderr bytes.Buffer
+	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
+		InvocationRef:   invocationID,
+		CheckpointID:    1,
+		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+		DataDirOverride: dataDir,
+	}, &humanOut, &stderr)
+	require.NoError(t, err)
+
+	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
+		InvocationRef:   invocationID,
+		CheckpointID:    1,
+		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, humanOut.String(), invocationID)
+	assert.Contains(t, strings.ToLower(humanOut.String()), "checkpoint")
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	assert.Equal(t, true, payload["ok"])
+	assert.Equal(t, invocationID, payload["invocation_id"])
+	assert.Equal(t, float64(1), payload["checkpoint_id"])
+}
+
+func TestAgentRestart_RequiresExplicitEnvReplayWhenProfilePresent(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-env-required")
+	invocationID := "20260131184000-renv"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.CustomEnvKeys = []string{"API_TOKEN"}
+	}))
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), cr, fsys, repoDir, AgentRestartOpts{
+		InvocationRef:   invocationID,
+		CheckpointID:    1,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.Code("E_INVALID_REQUEST"), errors.GetCode(err))
+	assert.Contains(t, err.Error(), "explicit env values")
 }
 
 func TestResolveBoundedPromptInput_MissingPromptUsesContextMessage(t *testing.T) {

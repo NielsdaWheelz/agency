@@ -449,6 +449,13 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	case "checkpoints":
 		// PR-12: Handle GET /invocations/{ref}/checkpoints (list) and POST .../apply
 		s.handleCheckpointsRoute(w, r, invocationRef, action)
+	case "restart":
+		// S3 PR-03: POST /invocations/{ref}/restart
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleRestartFromCheckpoint(w, r, invocationRef)
 	case "land":
 		// PR-09: Land sandbox changes to integration worktree
 		if r.Method != http.MethodPost {

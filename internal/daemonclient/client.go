@@ -543,6 +543,50 @@ func (c *Client) CheckpointApply(ctx context.Context, repoID, invocationID strin
 	return &result, nil
 }
 
+// RestartFromCheckpointOpts holds options for canonical restart-from-checkpoint flow (S3 PR-03).
+type RestartFromCheckpointOpts struct {
+	CheckpointID int
+	Env          map[string]string
+	RunnerArgs   []string
+}
+
+// RestartFromCheckpoint applies checkpoint and restarts the same invocation in one flow.
+func (c *Client) RestartFromCheckpoint(ctx context.Context, invocationRef, repoID string, opts RestartFromCheckpointOpts) (*daemon.RestartFromCheckpointResponse, error) {
+	req := daemon.RestartFromCheckpointRequest{
+		CheckpointID: opts.CheckpointID,
+		Env:          opts.Env,
+		RunnerArgs:   opts.RunnerArgs,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("http://daemon/invocations/%s/restart", url.PathEscape(invocationRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.RestartFromCheckpointResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // ----- PR-09 Landing Client Methods -----
 
 // LandOpts holds options for landing via daemon.

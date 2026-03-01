@@ -131,6 +131,47 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 }
 
+func TestDaemonControlPlaneStart_PersistsRestartProfile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "start-profile")
+
+	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "persist runtime profile",
+		RunnerArgs:  []string{"--allowed-extra"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+			"CUSTOM_FLAG":      "1",
+		},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	require.Eventually(t, func() bool {
+		meta, readErr := env.Store.ReadInvocationMeta(repoID, resp.InvocationID)
+		if readErr != nil {
+			return false
+		}
+		if len(meta.RunnerArgs) != 1 || meta.RunnerArgs[0] != "--allowed-extra" {
+			return false
+		}
+		return len(meta.CustomEnvKeys) == 2 &&
+			meta.CustomEnvKeys[0] == "CUSTOM_FLAG" &&
+			meta.CustomEnvKeys[1] == "FAKE_RUNNER_MODE"
+	}, 5*time.Second, 50*time.Millisecond, "runtime profile was not persisted in invocation meta")
+
+	_, _ = env.Client.Kill(ctx, repoID, resp.InvocationID)
+}
+
 func TestDaemonControlPlaneStartAndStop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -620,6 +661,241 @@ func TestDaemonCheckpointLifecycle(t *testing.T) {
 	restoredContent, err := os.ReadFile(testFilePath)
 	require.NoError(t, err, "failed to read restored file")
 	assert.Equal(t, "checkpoint test content\n", string(restoredContent))
+}
+
+// S3 PR-03: restart from checkpoint in one invocation-scoped flow.
+func TestDaemonRestartFromCheckpoint_RequiresExplicitEnvReplay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-env-required")
+	startResp := startTestInvocation(t, env.Client, repoRoot, "restart-env-required", "sleep")
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: 1,
+	})
+	require.NoError(t, err, "restart transport error")
+	require.False(t, restartResp.OK, "restart should fail without explicit env replay")
+	assert.Equal(t, "E_INVALID_REQUEST", restartResp.ErrorCode)
+	assert.Contains(t, restartResp.Message, "explicit env values")
+	assert.Contains(t, restartResp.Hint, "FAKE_RUNNER_MODE")
+
+	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
+// S3 PR-03: restart from checkpoint in one invocation-scoped flow.
+func TestDaemonRestartFromCheckpoint_ReusesStoredRunnerArgsWhenNotProvided(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-reuse-args")
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "runner arg replay",
+		RunnerArgs:  []string{"--allowed-extra"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "start transport error")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	testFilePath := filepath.Join(startResp.SandboxPath, "restart-reuse-args.txt")
+	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var cpData []byte
+	require.Eventually(t, func() bool {
+		var readErr error
+		cpData, readErr = os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(cpData, &cpFile) != nil {
+			return false
+		}
+		return len(cpFile.Checkpoints) > 0
+	}, 10*time.Second, 100*time.Millisecond, "checkpoint not created for restart arg replay test")
+
+	var cpFile checkpoint.CheckpointsFile
+	require.NoError(t, json.Unmarshal(cpData, &cpFile), "failed to parse checkpoints.json")
+	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: latestCP.ID,
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
+
+	require.Eventually(t, func() bool {
+		meta, readErr := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+		if readErr != nil {
+			return false
+		}
+		return meta.Status == store.InvocationStatusRunning &&
+			len(meta.RunnerArgs) == 1 &&
+			meta.RunnerArgs[0] == "--allowed-extra"
+	}, 5*time.Second, 50*time.Millisecond, "restart did not preserve stored runner args")
+
+	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
+// S3 PR-03: restart from checkpoint in one invocation-scoped flow.
+func TestDaemonRestartFromCheckpoint_OneFlowMaintainsInvocationContinuity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-flow")
+	startResp := startTestInvocation(t, env.Client, repoRoot, "restart-flow", "sleep")
+
+	// Create content in sandbox and wait for checkpoint creation.
+	testFilePath := filepath.Join(startResp.SandboxPath, "restart-checkpoint.txt")
+	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var cpData []byte
+	require.Eventually(t, func() bool {
+		var readErr error
+		cpData, readErr = os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(cpData, &cpFile) != nil {
+			return false
+		}
+		return len(cpFile.Checkpoints) > 0
+	}, 10*time.Second, 100*time.Millisecond, "checkpoint not created for restart test")
+
+	var cpFile checkpoint.CheckpointsFile
+	require.NoError(t, json.Unmarshal(cpData, &cpFile), "failed to parse checkpoints.json")
+	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
+
+	// Mutate sandbox after checkpoint; restart+apply should revert this mutation.
+	require.NoError(t, os.WriteFile(testFilePath, []byte("modified after checkpoint\n"), 0o644))
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: latestCP.ID,
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
+	assert.Equal(t, startResp.InvocationID, restartResp.InvocationID)
+	assert.Equal(t, latestCP.ID, restartResp.CheckpointID)
+	assert.NotZero(t, restartResp.PID)
+
+	// Invocation continuity: same invocation is running again and accepts follow-up prompts.
+	require.Eventually(t, func() bool {
+		meta, readErr := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+		return readErr == nil && meta.Status == store.InvocationStatusRunning
+	}, 5*time.Second, 50*time.Millisecond, "invocation did not return to running state after restart")
+
+	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+		Prompt: "continue after restart",
+	})
+	require.NoError(t, err, "follow-up transport error after restart")
+	require.True(t, followResp.OK, "follow-up failed after restart: %s - %s", followResp.ErrorCode, followResp.Message)
+	assert.Equal(t, startResp.InvocationID, followResp.InvocationID)
+
+	// Checkpoint apply should have restored file content.
+	restoredContent, readErr := os.ReadFile(testFilePath)
+	require.NoError(t, readErr, "failed reading restored file")
+	assert.Equal(t, "checkpoint source\n", string(restoredContent))
+
+	// Cleanup.
+	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
+// S3 PR-03: stream sequence ordering must remain monotonic across checkpoint restart boundaries.
+func TestDaemonRestartFromCheckpoint_StreamSeqRemainsMonotonic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-seq")
+
+	startResp := startTestInvocation(t, env.Client, repoRoot, "restart-seq", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Seed checkpoints.json with a valid snapshot commit so restart can apply.
+	snapshotCommit := gitExec(t, startResp.SandboxPath, "rev-parse", "HEAD")
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       fmt.Sprintf("%s%s/%d", checkpoint.RefPrefix, startResp.InvocationID, 1),
+				SnapshotCommit:    snapshotCommit,
+				SandboxHeadSHA:    snapshotCommit,
+				CreatedAt:         time.Now().UTC().Format(time.RFC3339),
+				IncludesUntracked: true,
+				Diffstat:          "+0 -0 in 0 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err, "marshal checkpoint file")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(env.Store.SandboxDir(repoID, startResp.InvocationID), "checkpoints.json"),
+		cpBytes,
+		0o644,
+	))
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: 1,
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "exit-ok",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	streamData, err := os.ReadFile(env.Store.SandboxStreamLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "read stream log")
+	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "expected stream events from initial run + restart run")
+
+	var seqs []uint64
+	for _, line := range lines {
+		var event struct {
+			Seq uint64 `json:"seq"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil && event.Seq > 0 {
+			seqs = append(seqs, event.Seq)
+		}
+	}
+	require.GreaterOrEqual(t, len(seqs), 2, "expected at least two normalized events with sequence numbers")
+	for i := 1; i < len(seqs); i++ {
+		assert.Greater(t, seqs[i], seqs[i-1], "stream seq must remain strictly increasing across restart")
+	}
 }
 
 // ---------------------------------------------------------------------------
