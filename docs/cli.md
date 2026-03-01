@@ -34,7 +34,8 @@ v2 commands (slice 8+):
   worktree    manage integration worktrees
   agent       manage agent invocations (headed + headless via daemon)
               subcommands: start, ls, show, attach, enter, stop, kill, diff,
-                           land, discard, open, path, shell, logs
+                           land, discard, open, path, shell, chat, restart,
+                           history, logs, checks
   daemon      manage the agency daemon (headless supervision)
   checkpoint  manage sandbox checkpoints for headless invocations
   repo        manage repository registry
@@ -494,11 +495,59 @@ shows sandbox changes vs the integration worktree.
 
 **usage:**
 ```bash
-agency agent diff <invocation_id|name|prefix>
+agency agent diff <invocation_id|name|prefix> [--repo <id|prefix>] [--json] [--turn <entry_id> | --turn-range <start>..<end>]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--json`: machine-readable output
+- `--turn`: single timeline entry id to anchor deterministic diff context
+- `--turn-range`: inclusive timeline range (`<start_entry_id>..<end_entry_id>`)
+
+**behavior:**
+- default mode shows committed diff (`base_commit..sandbox_tip`) and uncommitted sandbox changes
+- turn-aware mode maps selected timeline turn(s) to checkpoint-bounded commit ranges
+- when turn selectors are used, uncommitted working tree diff is intentionally excluded
+- invalid selectors fail with `E_INVALID_ARGUMENT`; missing checkpoint mapping fails with `E_CHECKPOINT_NOT_FOUND`
+
+**examples:**
+```bash
+agency agent diff 20260131
+agency agent diff --repo abc123 my-invocation
+agency agent diff --turn inv_event:2:agency.followup_prompt 20260131
+agency agent diff --turn-range stream:4..stream:9 --json 20260131
+```
+
+### `agency agent checks`
+
+shows checks-first readiness state for review/merge progression.
+
+**usage:**
+```bash
+agency agent checks <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--json`: machine-readable output
+
+**behavior:**
+- reports readiness (`ready` or `blocked`) with deterministic blocking reason taxonomy
+- includes invocation-linked navigation commands for `agent history` and turn-aware `agent diff`
+- terminal and json modes share the same readiness truth (no dual semantics)
+
+**examples:**
+```bash
+agency agent checks 20260131
+agency agent checks --repo abc123 my-invocation
+agency agent checks --json 20260131
+```
 
 ### `agency agent land`
 

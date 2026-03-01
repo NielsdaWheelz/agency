@@ -491,6 +491,13 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationTimeline(w, r, invocationRef)
+	case "checks":
+		// S3 PR-05: GET /invocations/{ref}/checks
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleGetInvocationChecks(w, r, invocationRef)
 	case "chat":
 		// S3 PR-02: POST /invocations/{ref}/chat
 		if r.Method != http.MethodPost {

@@ -996,9 +996,12 @@ func (c *Client) GetInvocationRich(ctx context.Context, ref string, repoID strin
 
 // GetInvocationDiffOpts holds options for getting invocation diff.
 type GetInvocationDiffOpts struct {
-	IncludePatch       bool // default true
-	MaxPatchBytes      int  // default 2MB, max 5MB
-	IncludeUncommitted bool // default true
+	IncludePatch       bool   // default true
+	MaxPatchBytes      int    // default 2MB, max 5MB
+	IncludeUncommitted bool   // default true
+	TurnID             string // optional single turn selector
+	TurnStartID        string // optional inclusive turn-range start selector
+	TurnEndID          string // optional inclusive turn-range end selector
 }
 
 // GetInvocationDiffResult wraps the invocation diff response.
@@ -1021,6 +1024,15 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 	}
 	if !opts.IncludeUncommitted {
 		u += "include_uncommitted=false&"
+	}
+	if opts.TurnID != "" {
+		u += "turn=" + url.QueryEscape(opts.TurnID) + "&"
+	}
+	if opts.TurnStartID != "" {
+		u += "turn_start=" + url.QueryEscape(opts.TurnStartID) + "&"
+	}
+	if opts.TurnEndID != "" {
+		u += "turn_end=" + url.QueryEscape(opts.TurnEndID) + "&"
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 
@@ -1056,6 +1068,54 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 
 	return &GetInvocationDiffResult{
 		Diff:      diff,
+		RequestID: apiResp.RequestID,
+	}, nil
+}
+
+// GetInvocationChecksResult wraps the invocation checks response.
+type GetInvocationChecksResult struct {
+	Checks    daemon.InvocationChecksData
+	RequestID string
+}
+
+// GetInvocationChecks gets checks/readiness data for an invocation via the daemon.
+func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID string) (*GetInvocationChecksResult, error) {
+	u := fmt.Sprintf("http://daemon/invocations/%s/checks", url.PathEscape(ref))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
+
+	dataBytes, err := json.Marshal(apiResp.Data)
+	if err != nil {
+		return nil, err
+	}
+	var checks daemon.InvocationChecksData
+	if err := json.Unmarshal(dataBytes, &checks); err != nil {
+		return nil, err
+	}
+
+	return &GetInvocationChecksResult{
+		Checks:    checks,
 		RequestID: apiResp.RequestID,
 	}, nil
 }

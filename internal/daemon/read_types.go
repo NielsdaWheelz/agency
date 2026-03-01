@@ -143,15 +143,67 @@ type DiffRange struct {
 	PatchBytes     int          `json:"patch_bytes"`
 }
 
+// DiffTurnSelector captures the turn selector used for turn-aware diff context.
+type DiffTurnSelector struct {
+	Kind        string `json:"kind"` // "single" or "range"
+	TurnID      string `json:"turn_id,omitempty"`
+	StartTurnID string `json:"start_turn_id,omitempty"`
+	EndTurnID   string `json:"end_turn_id,omitempty"`
+}
+
+// DiffTurnContext describes deterministic turn-to-diff mapping metadata.
+type DiffTurnContext struct {
+	Selector          DiffTurnSelector `json:"selector"`
+	StartCheckpointID int              `json:"start_checkpoint_id"`
+	EndCheckpointID   int              `json:"end_checkpoint_id"`
+	FromCommit        string           `json:"from_commit"`
+	ToCommit          string           `json:"to_commit"`
+}
+
 // InvocationDiffData is the data payload for GET /invocations/{id}/diff.
 type InvocationDiffData struct {
-	BaseCommit               string     `json:"base_commit"`
-	SandboxBranchTip         string     `json:"sandbox_branch_tip"`
-	HasCommits               bool       `json:"has_commits"`
-	HasUncommitted           bool       `json:"has_uncommitted"`
-	CommittedRange           *DiffRange `json:"committed_range,omitempty"`
-	WorkingTree              *DiffRange `json:"working_tree,omitempty"`
-	PatchIncludesUncommitted bool       `json:"patch_includes_uncommitted"`
+	BaseCommit               string           `json:"base_commit"`
+	SandboxBranchTip         string           `json:"sandbox_branch_tip"`
+	HasCommits               bool             `json:"has_commits"`
+	HasUncommitted           bool             `json:"has_uncommitted"`
+	CommittedRange           *DiffRange       `json:"committed_range,omitempty"`
+	WorkingTree              *DiffRange       `json:"working_tree,omitempty"`
+	PatchIncludesUncommitted bool             `json:"patch_includes_uncommitted"`
+	TurnContext              *DiffTurnContext `json:"turn_context,omitempty"`
+}
+
+// InvocationCheckReason is one deterministic blocking reason in checks output.
+type InvocationCheckReason struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
+}
+
+// InvocationChecksNavigation links readiness findings back to invocation context.
+type InvocationChecksNavigation struct {
+	InvocationRef  string `json:"invocation_ref"`
+	RepoID         string `json:"repo_id"`
+	LatestTurnID   string `json:"latest_turn_id,omitempty"`
+	HistoryCommand string `json:"history_command"`
+	DiffCommand    string `json:"diff_command,omitempty"`
+}
+
+// InvocationChecksData is the data payload for GET /invocations/{id}/checks.
+type InvocationChecksData struct {
+	InvocationID    string                     `json:"invocation_id"`
+	RepoID          string                     `json:"repo_id"`
+	Ready           bool                       `json:"ready"`
+	Readiness       string                     `json:"readiness"` // "ready" or "blocked"
+	Status          string                     `json:"status"`
+	DisplayStatus   string                     `json:"display_status"`
+	SemanticStatus  string                     `json:"semantic_status,omitempty"`
+	LandingStatus   string                     `json:"landing_status,omitempty"`
+	RunnerStatus    string                     `json:"runner_status,omitempty"`
+	RunnerSummary   string                     `json:"runner_summary,omitempty"`
+	RunnerUpdatedAt string                     `json:"runner_updated_at,omitempty"`
+	HowToTest       string                     `json:"how_to_test,omitempty"`
+	BlockingReasons []InvocationCheckReason    `json:"blocking_reasons"`
+	Navigation      InvocationChecksNavigation `json:"navigation"`
 }
 
 // ----- Logs Response Types -----
@@ -365,7 +417,10 @@ type S1FreezeReadinessData struct {
 
 // GetDiffParams holds query parameters for GET /invocations/{id}/diff.
 type GetDiffParams struct {
-	IncludePatch       bool // default true
-	MaxPatchBytes      int  // default 2097152 (2MB), max 5242880 (5MB)
-	IncludeUncommitted bool // default true
+	IncludePatch       bool   // default true
+	MaxPatchBytes      int    // default 2097152 (2MB), max 5242880 (5MB)
+	IncludeUncommitted bool   // default true
+	TurnID             string // optional timeline entry id (turn selector)
+	TurnStartID        string // optional inclusive range start timeline entry id
+	TurnEndID          string // optional inclusive range end timeline entry id
 }
