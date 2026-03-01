@@ -211,10 +211,15 @@ after rollback, start a new invocation to continue work.
 ```bash
 # see changes vs the integration worktree
 agency agent diff <invocation-id>
+agency agent diff <invocation-id> --turn <entry_id>     # turn-aware context
+agency agent diff <invocation-id> --turn-range <a>..<b> # inclusive range
 
 # open the sandbox in your editor
 agency agent open <invocation-id>
 agency agent open <invocation-id> --editor cursor
+
+# check readiness blockers before landing/review
+agency agent checks <invocation-id>
 ```
 
 ## step 8: land changes into your worktree
@@ -397,6 +402,8 @@ AGENTS (AI executions in sandboxes)
   agency agent history <ref> [--limit <n>]  unified timeline (n in 1..500)
   agency agent chat <ref> --prompt "..."    send follow-up prompt to headless run
   agency agent diff <ref>                   show sandbox changes
+  agency agent diff <ref> --turn <entry_id> turn-aware diff context
+  agency agent checks <ref>                 readiness + blocking reasons
   agency agent open <ref>                   open sandbox in editor
   agency agent stop <ref>                   graceful stop
   agency agent kill <ref>                   forceful kill

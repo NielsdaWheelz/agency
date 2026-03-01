@@ -348,6 +348,18 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 
 	// Parse diff params
 	params := parseGetDiffParams(r)
+	if err := validateGetDiffParams(params); err != nil {
+		s.writeAPIError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			err.Error(),
+			"use a timeline turn id from 'agency agent history' and pass either turn or turn_start/turn_end",
+			nil,
+		)
+		return
+	}
 
 	// Resolve invocation ref
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
@@ -360,7 +372,20 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 	// Build diff data
 	diffData, err := s.buildInvocationDiff(ctx, record, params)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		code := errors.GetCode(err)
+		status := http.StatusInternalServerError
+		hint := ""
+		switch code {
+		case errors.EInvalidArgument:
+			status = http.StatusBadRequest
+			hint = "use 'agency agent history' to list valid turn selectors"
+		case errors.ECheckpointNotFound:
+			status = http.StatusNotFound
+			hint = "ensure checkpoints exist for the selected turn context"
+		case errors.EInternal:
+			code = errors.EInternal
+		}
+		s.writeAPIError(w, status, requestID, string(code), err.Error(), hint, nil)
 		return
 	}
 
@@ -737,20 +762,34 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 	}
 	sandboxTip := strings.TrimSpace(tipResult.Stdout)
 
+	diffFrom := baseCommit
+	diffTo := sandboxTip
+	var turnContext *DiffTurnContext
+	if hasTurnSelector(params) {
+		resolved, err := s.resolveTurnDiffContext(record, params)
+		if err != nil {
+			return nil, err
+		}
+		diffFrom = resolved.FromCommit
+		diffTo = resolved.ToCommit
+		turnContext = &resolved.TurnContext
+	}
+
 	data := &InvocationDiffData{
 		BaseCommit:       baseCommit,
 		SandboxBranchTip: sandboxTip,
+		TurnContext:      turnContext,
 	}
 
 	// Check if there are commits
-	logResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "log", "--oneline", baseCommit + ".." + sandboxTip}, exec.RunOpts{})
+	logResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "log", "--oneline", diffFrom + ".." + diffTo}, exec.RunOpts{})
 	if err == nil && strings.TrimSpace(logResult.Stdout) != "" {
 		data.HasCommits = true
 
 		// Build committed range
 		committedRange := &DiffRange{
-			From: baseCommit,
-			To:   sandboxTip,
+			From: diffFrom,
+			To:   diffTo,
 		}
 
 		// Get commits
@@ -768,12 +807,12 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 		}
 
 		// Get diffstat
-		statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat", baseCommit + ".." + sandboxTip}, exec.RunOpts{})
+		statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat", diffFrom + ".." + diffTo}, exec.RunOpts{})
 		committedRange.Diffstat = extractDiffstat(statResult.Stdout)
 
 		// Get patch if requested
 		if params.IncludePatch {
-			patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", baseCommit + ".." + sandboxTip}, exec.RunOpts{})
+			patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", diffFrom + ".." + diffTo}, exec.RunOpts{})
 			patch := patchResult.Stdout
 			committedRange.PatchBytes = len(patch)
 			if len(patch) > params.MaxPatchBytes {
@@ -787,7 +826,7 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 	}
 
 	// Check for uncommitted changes
-	if params.IncludeUncommitted {
+	if params.IncludeUncommitted && !hasTurnSelector(params) {
 		statusResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "status", "--porcelain"}, exec.RunOpts{})
 		if err == nil && strings.TrimSpace(statusResult.Stdout) != "" {
 			data.HasUncommitted = true
@@ -1023,6 +1062,9 @@ func parseGetDiffParams(r *http.Request) GetDiffParams {
 	if includeUncommitted := r.URL.Query().Get("include_uncommitted"); includeUncommitted == "0" || includeUncommitted == "false" {
 		params.IncludeUncommitted = false
 	}
+	params.TurnID = strings.TrimSpace(r.URL.Query().Get("turn"))
+	params.TurnStartID = strings.TrimSpace(r.URL.Query().Get("turn_start"))
+	params.TurnEndID = strings.TrimSpace(r.URL.Query().Get("turn_end"))
 
 	return params
 }

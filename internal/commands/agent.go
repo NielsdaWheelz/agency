@@ -677,18 +677,45 @@ type AgentDiffOpts struct {
 
 	// RepoFlag is the --repo flag value (PR-A).
 	RepoFlag string
+
+	// JSON outputs as JSON.
+	JSON bool
+
+	// TurnID selects a single timeline entry id for turn-aware diff context.
+	TurnID string
+
+	// TurnRange selects an inclusive timeline range using "<start>..<end>".
+	TurnRange string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // AgentDiff shows the diff between sandbox and base_commit.
 // PR-A: Supports --repo for CWD-less operation.
 func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiffOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	if opts.TurnID != "" && opts.TurnRange != "" {
+		return errors.New(errors.EUsage, "use either --turn or --turn-range, not both")
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	turnStart, turnEnd, err := parseTurnRange(opts.TurnRange)
+	if err != nil {
+		return err
+	}
+
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	logPath := st.DaemonLogPath()
 
@@ -713,12 +740,33 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	result, err := client.GetInvocationDiff(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationDiffOpts{
 		IncludePatch:       true,
 		IncludeUncommitted: true,
+		TurnID:             strings.TrimSpace(opts.TurnID),
+		TurnStartID:        turnStart,
+		TurnEndID:          turnEnd,
 	})
 	if err != nil {
 		return err
 	}
 
 	diff := result.Diff
+
+	if opts.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(diff)
+	}
+
+	if diff.TurnContext != nil {
+		_, _ = fmt.Fprintf(stdout, "Turn context:\n")
+		switch diff.TurnContext.Selector.Kind {
+		case "range":
+			_, _ = fmt.Fprintf(stdout, "  selector:      %s..%s\n", diff.TurnContext.Selector.StartTurnID, diff.TurnContext.Selector.EndTurnID)
+		default:
+			_, _ = fmt.Fprintf(stdout, "  selector:      %s\n", diff.TurnContext.Selector.TurnID)
+		}
+		_, _ = fmt.Fprintf(stdout, "  checkpoints:   %d -> %d\n", diff.TurnContext.StartCheckpointID, diff.TurnContext.EndCheckpointID)
+		_, _ = fmt.Fprintf(stdout, "  commit_range:  %s..%s\n\n", diff.TurnContext.FromCommit, diff.TurnContext.ToCommit)
+	}
 
 	// Show commit list
 	_, _ = fmt.Fprintf(stdout, "Commits in sandbox:\n")
@@ -764,6 +812,152 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		}
 	}
 
+	return nil
+}
+
+func parseTurnRange(turnRange string) (string, string, error) {
+	trimmed := strings.TrimSpace(turnRange)
+	if trimmed == "" {
+		return "", "", nil
+	}
+	if strings.Count(trimmed, "..") != 1 {
+		return "", "", errors.NewWithDetails(
+			errors.EUsage,
+			"invalid --turn-range value",
+			map[string]string{
+				"hint": "use --turn-range <start_entry_id>..<end_entry_id>",
+			},
+		)
+	}
+	start, end, ok := strings.Cut(trimmed, "..")
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	if !ok || start == "" || end == "" {
+		return "", "", errors.NewWithDetails(
+			errors.EUsage,
+			"invalid --turn-range value",
+			map[string]string{
+				"hint": "use --turn-range <start_entry_id>..<end_entry_id>",
+			},
+		)
+	}
+	return start, end, nil
+}
+
+// AgentChecksOpts holds options for the agent checks command.
+type AgentChecksOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+
+	// RepoFlag is the --repo flag value (PR-A).
+	RepoFlag string
+
+	// JSON outputs as JSON.
+	JSON bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+}
+
+// AgentChecks reports checks/readiness state for invocation review/merge progression.
+func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChecksOpts, stdout, stderr io.Writer) error {
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent checks",
+	})
+	if err != nil {
+		return err
+	}
+
+	result, err := client.GetInvocationChecks(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return err
+	}
+
+	if opts.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result.Checks)
+	}
+	return writeAgentChecksHumanFromDTO(stdout, &result.Checks)
+}
+
+func writeAgentChecksHumanFromDTO(w io.Writer, checks *daemon.InvocationChecksData) error {
+	readiness := "BLOCKED"
+	if checks.Ready {
+		readiness = "READY"
+	}
+
+	_, _ = fmt.Fprintf(w, "Readiness:            %s\n", readiness)
+	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", checks.InvocationID)
+	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", checks.RepoID)
+	_, _ = fmt.Fprintf(w, "status:               %s\n", checks.Status)
+	_, _ = fmt.Fprintf(w, "display_status:       %s\n", checks.DisplayStatus)
+	if checks.LandingStatus != "" {
+		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", checks.LandingStatus)
+	}
+	if checks.SemanticStatus != "" {
+		_, _ = fmt.Fprintf(w, "semantic_status:      %s\n", checks.SemanticStatus)
+	}
+	if checks.RunnerStatus != "" {
+		_, _ = fmt.Fprintf(w, "runner_status:        %s\n", checks.RunnerStatus)
+	}
+	if checks.RunnerUpdatedAt != "" {
+		_, _ = fmt.Fprintf(w, "runner_updated_at:    %s\n", checks.RunnerUpdatedAt)
+	}
+	if checks.RunnerSummary != "" {
+		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", checks.RunnerSummary)
+	}
+	if checks.HowToTest != "" {
+		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", checks.HowToTest)
+	}
+
+	_, _ = fmt.Fprintf(w, "\nBlocking reasons:\n")
+	if len(checks.BlockingReasons) == 0 {
+		_, _ = fmt.Fprintf(w, "  (none)\n")
+	} else {
+		for _, reason := range checks.BlockingReasons {
+			_, _ = fmt.Fprintf(w, "  - [%s] %s\n", reason.Code, reason.Message)
+			if strings.TrimSpace(reason.Hint) != "" {
+				_, _ = fmt.Fprintf(w, "      hint: %s\n", reason.Hint)
+			}
+		}
+	}
+
+	_, _ = fmt.Fprintf(w, "\nNavigation:\n")
+	_, _ = fmt.Fprintf(w, "  history: %s\n", checks.Navigation.HistoryCommand)
+	if checks.Navigation.DiffCommand != "" {
+		_, _ = fmt.Fprintf(w, "  diff:    %s\n", checks.Navigation.DiffCommand)
+	}
+	if checks.Navigation.LatestTurnID != "" {
+		_, _ = fmt.Fprintf(w, "  turn:    %s\n", checks.Navigation.LatestTurnID)
+	}
 	return nil
 }
 

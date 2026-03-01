@@ -42,7 +42,8 @@ Subcommands:
   chat      Send follow-up prompt to a headless invocation
   restart   Restart invocation from checkpoint
   history   Show unified invocation timeline
-  logs      View invocation logs`,
+  logs      View invocation logs
+  checks    Show checks/readiness surface`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
@@ -68,6 +69,7 @@ Subcommands:
 		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),
+		newAgentChecksCmd(),
 	)
 
 	return cmd
@@ -383,6 +385,9 @@ Example:
 
 func newAgentDiffCmd() *cobra.Command {
 	var repoFlag string
+	var jsonOut bool
+	var turnID string
+	var turnRange string
 
 	cmd := &cobra.Command{
 		Use:   "diff <invocation_ref>",
@@ -394,11 +399,21 @@ Displays:
 - File changes between base_commit and sandbox tip
 - Uncommitted changes in sandbox (if any)
 
+Optionally anchor diff context to timeline turn selectors:
+- --turn <entry_id> for a single turn
+- --turn-range <start_entry_id>..<end_entry_id> for an inclusive turn range
+
 Example:
   agency agent diff 20260131
-  agency agent diff --repo abc123 my-invocation`,
+  agency agent diff --repo abc123 my-invocation
+  agency agent diff --turn inv_event:2:agency.followup_prompt 20260131
+  agency agent diff --turn-range stream:4..stream:9 --json 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if turnID != "" && turnRange != "" {
+				return errors.New(errors.EUsage, "use either --turn or --turn-range, not both")
+			}
+
 			cwd, err := os.Getwd()
 			if err != nil {
 				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
@@ -411,11 +426,17 @@ Example:
 			return commands.AgentDiff(ctx, cr, fsys, cwd, commands.AgentDiffOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
+				JSON:          jsonOut,
+				TurnID:        turnID,
+				TurnRange:     turnRange,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVar(&turnID, "turn", "", "Timeline entry id to anchor diff context")
+	cmd.Flags().StringVar(&turnRange, "turn-range", "", "Inclusive turn range (<start_entry_id>..<end_entry_id>)")
 
 	return cmd
 }
@@ -911,6 +932,47 @@ Example:
 	cmd.Flags().StringVar(&kind, "kind", "raw", "Log kind: raw, stderr, stream")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output (poll for new data)")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Byte offset to start reading from")
+
+	return cmd
+}
+
+func newAgentChecksCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "checks <invocation_ref>",
+		Short: "Show checks/readiness for review progression",
+		Long: `Show the checks-first readiness surface for an invocation.
+
+This command reports merge/review readiness state, blocking reasons, and
+navigation context back to invocation history and turn-aware diff.
+
+Example:
+  agency agent checks 20260131
+  agency agent checks --repo abc123 my-invocation
+  agency agent checks --json 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentChecks(ctx, cr, fsys, cwd, commands.AgentChecksOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+				JSON:          jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }
