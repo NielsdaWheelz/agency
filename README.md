@@ -47,7 +47,11 @@ agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent logs <invocation-id> --follow
 agency agent chat <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
+agency checkpoint ls --invocation <invocation-id>
+agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 ```
+
+if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 
 ## how it works
 

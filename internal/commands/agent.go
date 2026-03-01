@@ -1434,6 +1434,102 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	return nil
 }
 
+// AgentRestartOpts holds options for the agent restart command (S3 PR-03).
+type AgentRestartOpts struct {
+	// InvocationRef is the invocation reference (id, name, or prefix).
+	InvocationRef string
+
+	// RepoFlag is the --repo flag value.
+	RepoFlag string
+
+	// CheckpointID is the explicit checkpoint to restore before restart.
+	CheckpointID int
+
+	// RunnerArgs are additional arguments for restarted runner execution.
+	RunnerArgs []string
+
+	// Env are explicit environment overrides for restarted runner execution.
+	Env map[string]string
+
+	// JSON outputs as JSON.
+	JSON bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+}
+
+// AgentRestart performs invocation-scoped restart from an explicit checkpoint.
+func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestartOpts, stdout, stderr io.Writer) error {
+	_ = stderr
+
+	if opts.CheckpointID <= 0 {
+		return errors.New(errors.EUsage, "--checkpoint must be a positive integer")
+	}
+
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return err
+	}
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent restart",
+	})
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.RestartFromCheckpoint(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: opts.CheckpointID,
+		RunnerArgs:   opts.RunnerArgs,
+		Env:          opts.Env,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": resp.Hint},
+		)
+	}
+
+	if opts.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(resp)
+	}
+
+	_, _ = fmt.Fprintln(stdout, "restarted invocation from checkpoint")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:    %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  checkpoint_id:    %d\n", resp.CheckpointID)
+	_, _ = fmt.Fprintf(stdout, "  snapshot_commit:  %s\n", resp.SnapshotCommit)
+	_, _ = fmt.Fprintf(stdout, "  restored_at:      %s\n", resp.RestoredAt)
+	_, _ = fmt.Fprintf(stdout, "  pid:              %d\n", resp.PID)
+	return nil
+}
+
 func resolveBoundedPromptInput(prompt, promptFile string, maxBytes int, missingPromptMessage, emptyPromptMessage string) (string, error) {
 	if prompt != "" && promptFile != "" {
 		return "", errors.New(errors.EUsage, "use either --prompt or --prompt-file, not both")

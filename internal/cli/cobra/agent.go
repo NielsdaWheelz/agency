@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -39,6 +40,7 @@ Subcommands:
   path      Print sandbox path
   shell     Open shell in sandbox
   chat      Send follow-up prompt to a headless invocation
+  restart   Restart invocation from checkpoint
   history   Show unified invocation timeline
   logs      View invocation logs`,
 		Args: cobra.NoArgs,
@@ -63,6 +65,7 @@ Subcommands:
 		newAgentShellCmd(),
 		newAgentEnterCmd(),
 		newAgentChatCmd(),
+		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),
 	)
@@ -708,6 +711,79 @@ Example:
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
+}
+
+func newAgentRestartCmd() *cobra.Command {
+	var repoFlag string
+	var checkpointID int
+	var runnerArgs []string
+	var envAssignments []string
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "restart <invocation_ref>",
+		Short: "Restart headless invocation from checkpoint",
+		Long: `Restart a headless invocation from an explicit checkpoint in one flow.
+
+This command performs checkpoint restore and runner restart as a single
+invocation-scoped operation.
+
+Example:
+  agency agent restart 20260131 --checkpoint 3
+  agency agent restart --repo abc123 my-invocation --checkpoint 7
+  agency agent restart 20260131 --checkpoint 3 --runner-arg "--model=sonnet"
+  agency agent restart 20260131 --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
+  agency agent restart --json 20260131 --checkpoint 3`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			envMap, err := parseEnvAssignments(envAssignments)
+			if err != nil {
+				return errors.New(errors.EUsage, err.Error())
+			}
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentRestart(ctx, cr, fsys, cwd, commands.AgentRestartOpts{
+				InvocationRef: args[0],
+				RepoFlag:      repoFlag,
+				CheckpointID:  checkpointID,
+				RunnerArgs:    runnerArgs,
+				Env:           envMap,
+				JSON:          jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore (required)")
+	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to restarted runner (repeatable)")
+	cmd.Flags().StringArrayVar(&envAssignments, "env", nil, "Environment override KEY=VALUE for restart (repeatable)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	_ = cmd.MarkFlagRequired("checkpoint")
+
+	return cmd
+}
+
+func parseEnvAssignments(assignments []string) (map[string]string, error) {
+	if len(assignments) == 0 {
+		return nil, nil
+	}
+	env := make(map[string]string, len(assignments))
+	for _, assignment := range assignments {
+		key, value, ok := strings.Cut(assignment, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid --env value %q (expected KEY=VALUE)", assignment)
+		}
+		env[key] = value
+	}
+	return env, nil
 }
 
 func newAgentHistoryCmd() *cobra.Command {

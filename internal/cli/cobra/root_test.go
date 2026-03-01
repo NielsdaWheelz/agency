@@ -216,7 +216,7 @@ func TestAgentCLI_RegistersCanonicalPathShellEnterSubcommands(t *testing.T) {
 	assert.True(t, subcmds["shell"], "agent must include canonical 'shell' subcommand")
 	assert.True(t, subcmds["enter"], "agent must include canonical 'enter' subcommand")
 	assert.True(t, subcmds["attach"], "agent must retain 'attach' for compatibility (PR-05 owns alias rollout)")
-	assert.False(t, subcmds["restart"], "agent must NOT include 'restart' in PR-04 (reserved for S3)")
+	assert.True(t, subcmds["restart"], "agent must include canonical 'restart' subcommand in S3")
 }
 
 func TestWatchCmd_ReturnsUsageError(t *testing.T) {

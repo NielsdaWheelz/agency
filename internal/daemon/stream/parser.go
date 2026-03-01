@@ -71,6 +71,14 @@ func NewParser(invocationID, runner string, clock func() time.Time) *Parser {
 	}
 }
 
+// SetInitialSeq seeds the parser sequence counter.
+// Used when appending to an existing stream log (e.g., restart-in-place).
+func (p *Parser) SetInitialSeq(seq uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.seq = seq
+}
+
 // GetSemanticStatus returns the current semantic status.
 func (p *Parser) GetSemanticStatus() *runnerstatus.Status {
 	p.mu.Lock()

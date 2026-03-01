@@ -286,3 +286,42 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 
 	assert.False(t, resp.OK, "expected OK=false for nonexistent runner")
 }
+
+func TestMergeEnvDeterministic_OverrideWinsNoDuplicatesSorted(t *testing.T) {
+	t.Parallel()
+
+	base := []string{
+		"Z=9",
+		"A=old",
+		"A=older",
+		"PATH=/bin",
+	}
+	merged := mergeEnvDeterministic(
+		base,
+		map[string]string{
+			"CI": "1",
+			"A":  "default",
+		},
+		map[string]string{
+			"A": "override",
+			"B": "2",
+		},
+	)
+
+	assert.Equal(t, []string{
+		"A=override",
+		"B=2",
+		"CI=1",
+		"PATH=/bin",
+		"Z=9",
+	}, merged)
+}
+
+func TestNonInteractiveRunnerEnv_ContainsRequiredDefaults(t *testing.T) {
+	t.Parallel()
+
+	env := nonInteractiveRunnerEnv()
+	assert.Equal(t, "1", env["CI"])
+	assert.Equal(t, "0", env["GIT_TERMINAL_PROMPT"])
+	assert.Equal(t, "1", env["GH_PROMPT_DISABLED"])
+}

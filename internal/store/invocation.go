@@ -162,6 +162,14 @@ type InvocationMeta struct {
 	// Set at invocation creation time based on CLI flag --no-include-untracked.
 	// Default is true (include untracked files).
 	CheckpointIncludeUntracked bool `json:"checkpoint_include_untracked"`
+
+	// RunnerArgs stores the invocation runner arguments used at start time.
+	// Restart flows use these when explicit runner args are not provided.
+	RunnerArgs []string `json:"runner_args,omitempty"`
+
+	// CustomEnvKeys stores environment key names that were provided at start time.
+	// Values are intentionally not persisted to avoid storing secrets at rest.
+	CustomEnvKeys []string `json:"custom_env_keys,omitempty"`
 }
 
 // InvocationFlags contains boolean flags for operational state.
