@@ -23,8 +23,8 @@ func RepoFileExists(repoRoot string) FileExistsFn {
 	}
 }
 
-// ParseGateSet parses a release-gates markdown document and returns the
-// resolved GateSet with deterministic Gate A/B membership.
+// ParseGateSet parses canonical gate sections and returns the resolved GateSet
+// with deterministic Gate A/B membership.
 func ParseGateSet(content string, sourceRef string, fileExists FileExistsFn) (*GateSet, error) {
 	lines := strings.Split(content, "\n")
 

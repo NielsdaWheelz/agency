@@ -8,7 +8,7 @@ define and enforce the v2.1 runner capability target set:
 
 ## context
 - section: v2.1 parity additions
-- source: docs/v2.1/product-brief.md + docs/v2.1/parity-matrix.md
+- source: docs/v2.1/constitution.md
 - details:
   - v2.1 requires capability-driven runner support beyond current hardcoded `claude|codex`.
   - each runner needs explicit capability metadata (headed/headless, semantic stream parsing, resume behavior, default args safety).

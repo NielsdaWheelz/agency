@@ -8,7 +8,7 @@ make daemon APIs the canonical read and mutation authority for v2 `agent` and
 
 ## context
 - section: v2.1 parity baseline
-- source: docs/v2.1/product-brief.md + docs/v2.1/parity-matrix.md
+- source: docs/v2.1/constitution.md
 - details:
   - v2.1 direction requires daemon-centric lifecycle control, not split
     direct-store reads in CLI command handlers.

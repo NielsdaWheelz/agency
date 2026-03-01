@@ -69,7 +69,7 @@ func TestReleaseGatesMigration_BehaviorParityWithLegacy(t *testing.T) {
 		repoRoot := filepath.Join(testdataDir(), "repo_valid")
 		fileExists := RepoFileExists(repoRoot)
 
-		gs, err := ParseGateSet(content, "docs/v2.1/release-gates.md", fileExists)
+		gs, err := ParseGateSet(content, CanonicalGateSourcePath, fileExists)
 		require.NoError(t, err)
 		assert.Equal(t, "S1", gs.Slice)
 		assert.Len(t, gs.GateAItems, 2)

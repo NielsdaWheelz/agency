@@ -22,10 +22,10 @@ Status: draft
 | 2026-02-17 | `docs/v2.1/s1/s1_spec.md:376` | Gate `ready` iff every item is closed. | Closed-count and readiness semantics. |
 | 2026-02-17 | `docs/v2.1/s1/s1_spec.md:377` | Closed semantics include acceptance/tests/evidence completeness. | Prevents state-only closed counting. |
 | 2026-02-17 | `docs/v2.1/s1/s1_spec.md:380` | Reopened gate item immediately re-blocks the gate. | Aggregate behavior must observe transition side effects instantly. |
-| 2026-02-17 | `docs/v2.1/s1/s1_spec.md:385` | Gate-set synchronization invariant references `release-gates.md` and `issue-map.md`. | Drift detection requirement. |
-| 2026-02-17 | `docs/v2.1/release-gates.md:9` | Gate A issue list is canonical and explicitly ordered. | Canonical source and blocker ordering baseline. |
-| 2026-02-17 | `docs/v2.1/release-gates.md:15` | Gate B issue list is canonical and explicitly ordered. | Canonical source and blocker ordering baseline. |
-| 2026-02-17 | `docs/v2.1/issue-map.md:6` | Issue map is execution tracking across slices, not gate-only inventory. | Drives drift definition to gate-membership coverage, not full-document equality. |
+| 2026-02-17 | `docs/v2.1/s1/s1_spec.md:385` | Gate-set synchronization invariant references `constitution.md` and `constitution.md`. | Drift detection requirement. |
+| 2026-02-17 | `docs/v2.1/constitution.md:9` | Gate A issue list is canonical and explicitly ordered. | Canonical source and blocker ordering baseline. |
+| 2026-02-17 | `docs/v2.1/constitution.md:15` | Gate B issue list is canonical and explicitly ordered. | Canonical source and blocker ordering baseline. |
+| 2026-02-17 | `docs/v2.1/constitution.md:6` | Issue map is execution tracking across slices, not gate-only inventory. | Drives drift definition to gate-membership coverage, not full-document equality. |
 | 2026-02-17 | `internal/s1gates/source_parser.go:33` | PR-01 parser resolves canonical Gate A/B membership deterministically. | Reused as aggregate source loader. |
 | 2026-02-17 | `internal/s1gates/evaluate_item.go:35` | PR-01 evaluator already encodes acceptance/tests/evidence blocking semantics. | Reused to determine item closure validity in aggregate readiness. |
 | 2026-02-17 | `internal/s1gates/transition.go:20` | PR-02 transition engine persists state to issue stubs. | PR-03 must read current artifact state and reflect reopen effects immediately. |

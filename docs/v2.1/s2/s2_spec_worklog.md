@@ -13,11 +13,11 @@ Status: draft
 | 2026-02-25 | `docs/v2.1/slice-roadmap.md:50` | S2 outcome removes local store scans from CLI read handlers and improves multi-target navigation. | Defines architecture and UX target. |
 | 2026-02-25 | `docs/v2.1/slice-roadmap.md:52` | S2 acceptance requires daemon `agent`/`worktree` reads plus direct path/shell/open/select flows. | Primary L1 acceptance target. |
 | 2026-02-25 | `docs/v2.1/slice-roadmap.md:54` | S3 owns chat control plane + restart-from-checkpoint continuity. | Prevents S2 scope leakage. |
-| 2026-02-25 | `docs/v2.1/product-brief.md:20` | v2.1 goal makes daemon APIs read/write authority for `agent` + `worktree` surfaces. | Product-level authority requirement. |
-| 2026-02-25 | `docs/v2.1/product-brief.md:30` | Local read fallback is allowed only for daemon bootstrap/health boundaries. | Defines S2 fallback exception boundary. |
-| 2026-02-25 | `docs/v2.1/product-brief.md:32` | Product scope names `agent path`, `agent shell`, `agent enter`, `agent restart`. | Creates command-surface migration decision for S2. |
-| 2026-02-25 | `docs/v2.1/product-brief.md:36` | Fleet operations require list/filter/sort/status plus fast enter/detach loops with scriptable outputs. | Drives list/filter/navigation invariants. |
-| 2026-02-25 | `docs/v2.1/product-brief.md:54` | v2.1 must keep sandbox-first safety model. | Constrains navigation command design. |
+| 2026-02-25 | `docs/v2.1/constitution.md:20` | v2.1 goal makes daemon APIs read/write authority for `agent` + `worktree` surfaces. | Product-level authority requirement. |
+| 2026-02-25 | `docs/v2.1/constitution.md:30` | Local read fallback is allowed only for daemon bootstrap/health boundaries. | Defines S2 fallback exception boundary. |
+| 2026-02-25 | `docs/v2.1/constitution.md:32` | Product scope names `agent path`, `agent shell`, `agent enter`, `agent restart`. | Creates command-surface migration decision for S2. |
+| 2026-02-25 | `docs/v2.1/constitution.md:36` | Fleet operations require list/filter/sort/status plus fast enter/detach loops with scriptable outputs. | Drives list/filter/navigation invariants. |
+| 2026-02-25 | `docs/v2.1/constitution.md:54` | v2.1 must keep sandbox-first safety model. | Constrains navigation command design. |
 | 2026-02-25 | `docs/sdlc/L2-slice-spec.md:29` | L2 phase 1 requires writing the skeleton first. | Determines drafting sequence. |
 | 2026-02-25 | `docs/sdlc/L2-slice-spec.md:33` | L2 phase 2 requires contract clusters by behavior surface. | Drives cluster layout in this worklog. |
 | 2026-02-25 | `docs/sdlc/L2-slice-spec.md:38` | L2 micro-loop requires minimal facts, forced questions, immediate spec patching, and companion logs. | Justifies iterative drafting style. |

@@ -8,7 +8,7 @@ compatible, deterministic, and mode-aware.
 
 ## context
 - section: v2.1 reports transition
-- source: docs/v2.1/product-brief.md + docs/v2.1/slice-roadmap.md
+- source: docs/v2.1/constitution.md + docs/v2.1/slice-roadmap.md
 - details:
   - v2.1 scope includes report friction reduction with JSON-compatible outputs.
   - without an explicit contract, strictness and fallback behavior can drift between commands.

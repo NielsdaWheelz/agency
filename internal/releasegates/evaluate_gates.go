@@ -73,28 +73,28 @@ func EvaluateGates(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateRes
 	}, nil
 }
 
-// LoadGateSet reads and parses the canonical release-gates source.
+// LoadGateSet reads and parses canonical gate membership from the constitution.
 func LoadGateSet(repoRoot string) (*GateSet, error) {
 	fullPath := filepath.Join(repoRoot, CanonicalGateSourcePath)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, agencyerrors.NewWithDetails(
 			agencyerrors.EGateSetInvalid,
-			fmt.Sprintf("cannot read gate source: %s", CanonicalGateSourcePath),
+			fmt.Sprintf("cannot read constitution gate source: %s", CanonicalGateSourcePath),
 			map[string]string{"path": CanonicalGateSourcePath},
 		)
 	}
 	return ParseGateSet(string(data), CanonicalGateSourcePath, RepoFileExists(repoRoot))
 }
 
-// LoadIssueMap reads and parses the canonical issue-map source.
+// LoadIssueMap reads and parses canonical issue-map membership from the constitution.
 func LoadIssueMap(repoRoot string) (*IssueMapResult, error) {
 	fullPath := filepath.Join(repoRoot, CanonicalIssueMapPath)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, agencyerrors.NewWithDetails(
 			agencyerrors.EGateSetInvalid,
-			fmt.Sprintf("cannot read issue-map: %s", CanonicalIssueMapPath),
+			fmt.Sprintf("cannot read constitution issue-map source: %s", CanonicalIssueMapPath),
 			map[string]string{"path": CanonicalIssueMapPath},
 		)
 	}
@@ -115,7 +115,7 @@ func DetectDrift(canonicalItems []string, issueMap *IssueMapResult) error {
 		}
 		return agencyerrors.NewWithDetails(
 			agencyerrors.EGateSetDrift,
-			fmt.Sprintf("gate-source/issue-map drift: %s", issuePath),
+			fmt.Sprintf("constitution-gates/issue-map drift: %s", issuePath),
 			map[string]string{
 				"issue_path":      issuePath,
 				"issue_map_count": fmt.Sprintf("%d", count),

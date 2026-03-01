@@ -11,9 +11,9 @@ Status: draft
 |---|---|---|---|
 | 2026-02-16 | `docs/v2.1/slice-roadmap.md:42` | S1 goal is release-blocking safety and contract integrity closure. | Defines S1 scope intent. |
 | 2026-02-16 | `docs/v2.1/slice-roadmap.md:46` | S1 acceptance requires all Gate A/B items closed with tests. | Primary acceptance target. |
-| 2026-02-16 | `docs/v2.1/release-gates.md:9` | Gate A defined as must-zero-open P0 safety closure. | Establishes gate taxonomy and strictness. |
-| 2026-02-16 | `docs/v2.1/release-gates.md:15` | Gate B defined as parity-critical P1 closure before RC. | Establishes second mandatory gate set. |
-| 2026-02-16 | `docs/v2.1/release-gates.md:56` | Gate D requires tests for behavior changes and contract updates. | Justifies test evidence invariants in S1. |
+| 2026-02-16 | `docs/v2.1/constitution.md:9` | Gate A defined as must-zero-open P0 safety closure. | Establishes gate taxonomy and strictness. |
+| 2026-02-16 | `docs/v2.1/constitution.md:15` | Gate B defined as parity-critical P1 closure before RC. | Establishes second mandatory gate set. |
+| 2026-02-16 | `docs/v2.1/constitution.md:56` | Gate D requires tests for behavior changes and contract updates. | Justifies test evidence invariants in S1. |
 | 2026-02-16 | `docs/standards/binding.md:3` | Rule-touching changes must include enforcement (tests/lint/CI checks). | Hard requirement for closure semantics. |
 | 2026-02-16 | `docs/standards/binding.md:39` | `go test ./...` must pass. | Supports suite-level test evidence requirement. |
 | 2026-02-16 | `docs/testing.md:19` | New error codes must be tested. | Supports error model requirements. |
@@ -23,8 +23,8 @@ Status: draft
 | 2026-02-16 | `docs/issues/daemon-p0-08-unsafe-deletes-in-landing.md:14` | Issue stubs currently use checkbox acceptance criteria. | Input for `acceptance_complete` semantics. |
 | 2026-02-16 | `Makefile:25` | `make test` runs `go test ./...`. | Confirms executable suite evidence surface. |
 | 2026-02-16 | `Makefile:62` | GH e2e flow is opt-in (`AGENCY_GH_E2E=1`). | Supports scoped e2e policy in gate closure rules. |
-| 2026-02-16 | `docs/v2.1/README.md:44` | Sequencing updates must keep `slice-roadmap.md` and `issue-map.md` in sync. | Supports gate-set drift consistency constraints. |
-| 2026-02-16 | `docs/v2.1/issue-map.md:9` | `issue-map.md` is the execution mapping for slices. | Supports synchronized gate membership requirement. |
+| 2026-02-16 | `docs/v2.1/README.md:44` | Sequencing updates must keep `slice-roadmap.md` and `constitution.md` in sync. | Supports gate-set drift consistency constraints. |
+| 2026-02-16 | `docs/v2.1/constitution.md:9` | `constitution.md` is the execution mapping for slices. | Supports synchronized gate membership requirement. |
 | 2026-02-16 | `docs/sdlc/README.md:93` | L2 consistency pass requires no contradictions across sections. | Supports explicit drift detection/error model. |
 | 2026-02-16 | `docs/sdlc/README.md:94` | L2 traceability pass requires contract mapping to tests. | Supports closure evidence schema requirements. |
 | 2026-02-16 | `docs/ownership.md:7` | Maintainer is final decision maker and owns release/security. | Supports stricter Gate A (`p0`) closure role policy. |
@@ -35,7 +35,7 @@ Status: draft
 | 2026-02-16 | `docs/issues/README.md:4` | Issue stubs define baseline metadata + acceptance sections. | Motivates explicit closure-evidence extension for gate evaluation. |
 | 2026-02-17 | `docs/v2.1/s1/s1_prs/s1_pr04.md:63` | PR-04 target-shape drafting required explicit per-change-type target fields and `replace` pair semantics. | Drove L2 clarification for `replace` target representation and invariants. |
 | 2026-02-17 | `docs/v2.1/s1/s1_spec.md:313` | Change-validate error surface uses `E_GATE_SET_DRIFT` for synchronization failures. | Drove explicit L2 normalization that unverifiable sync also maps to drift semantics. |
-| 2026-02-17 | `docs/v2.1/s1/s1_prs/s1_pr04.md:90` | PR-04 synchronization policy requires canonical `release-gates.md` vs `issue-map.md` verification at validation time. | Drove L2 invariant refinement toward enforceable synchronization-validation contract language. |
+| 2026-02-17 | `docs/v2.1/s1/s1_prs/s1_pr04.md:90` | PR-04 synchronization policy requires canonical `constitution.md` vs `constitution.md` verification at validation time. | Drove L2 invariant refinement toward enforceable synchronization-validation contract language. |
 
 ### Cluster status
 

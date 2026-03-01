@@ -8,7 +8,7 @@ manage large numbers of worktrees and invocations efficiently.
 
 ## context
 - section: v2.1 parity baseline
-- source: docs/v2.1/product-brief.md + docs/v2.1/parity-matrix.md
+- source: docs/v2.1/constitution.md
 - details:
   - parity expectations include fast navigation across many concurrent agents.
   - command UX must support selection and entry without requiring manual path spelunking.

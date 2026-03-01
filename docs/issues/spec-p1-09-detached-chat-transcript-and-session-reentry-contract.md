@@ -8,7 +8,7 @@ send follow-up prompts, and re-enter/detach repeatedly without losing context.
 
 ## context
 - section: v2.1 parity baseline
-- source: docs/v2.1/product-brief.md + docs/v2.1/parity-matrix.md
+- source: docs/v2.1/constitution.md
 - details:
   - detached users need visibility into prompts, assistant messages, tool usage,
     and raw logs from one invocation timeline.

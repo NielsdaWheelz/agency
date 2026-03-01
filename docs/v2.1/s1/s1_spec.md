@@ -11,7 +11,7 @@ Upstream slice: `docs/v2.1/slice-roadmap.md` (Slice S1)
 **In Scope**:
 - Gate A (`p0` safety) and Gate B (`p1` parity-critical) closure semantics for v2.1.
 - Deterministic definition of "closed with tests" for every issue referenced by
-  `docs/v2.1/release-gates.md` sections A and B.
+  `docs/v2.1/constitution.md` Gate A and Gate B sections.
 - Evidence requirements for issue closure and gate completion.
 - Slice completion rules that unblock downstream Slice S2 work.
 
@@ -30,9 +30,9 @@ Upstream slice: `docs/v2.1/slice-roadmap.md` (Slice S1)
 | Field | Type | Constraints |
 |---|---|---|
 | `slice` | string | must be `S1` |
-| `gate_a_items` | []GateItemRef | exactly the issue paths listed in `release-gates.md` Gate A |
-| `gate_b_items` | []GateItemRef | exactly the issue paths listed in `release-gates.md` Gate B |
-| `source_ref` | string | must reference `docs/v2.1/release-gates.md` |
+| `gate_a_items` | []GateItemRef | exactly the issue paths listed in `constitution.md` Gate A |
+| `gate_b_items` | []GateItemRef | exactly the issue paths listed in `constitution.md` Gate B |
+| `source_ref` | string | must reference `docs/v2.1/constitution.md` |
 
 ### GateItemRef
 
@@ -198,7 +198,7 @@ States:
 Legal transitions:
 1. `stable -> pending_change` when a GateSetChange proposal exists.
 2. `pending_change -> stable_with_new_version` when change reason is approved
-   and `release-gates.md` and `issue-map.md` remain consistent.
+   and the constitution Gate A/B membership and Issue Map section remain consistent.
 3. `stable_with_new_version -> pending_change` on subsequent proposals.
 
 Illegal transitions:
@@ -253,7 +253,7 @@ below are normative regardless of implementation surface.
 **request**:
 ```json
 {
-  "gate_set_source": "docs/v2.1/release-gates.md",
+  "gate_set_source": "docs/v2.1/constitution.md",
   "slice": "S1"
 }
 ```
@@ -286,7 +286,7 @@ below are normative regardless of implementation surface.
 
 **errors**:
 - `E_GATE_SET_INVALID` (400): Gate A/B issue list cannot be resolved deterministically.
-- `E_GATE_SET_DRIFT` (409): release-gates and issue-map references diverge.
+- `E_GATE_SET_DRIFT` (409): constitution gate membership and issue-map references diverge.
 - `E_GATE_BLOCKED` (409): `slice_ready` requested as true while any gate is blocked.
 
 ### POST /spec/v2.1/s1/gates/change-validate
@@ -315,7 +315,7 @@ below are normative regardless of implementation surface.
 - `E_GATE_CHANGE_REASON_REQUIRED` (400): `reason` missing/empty.
 - `E_GATE_CHANGE_TARGET_REQUIRED` (400): change target fields are missing or invalid for the requested `change_type`.
 - `E_GATE_CHANGE_APPROVAL_REQUIRED` (409): removal/replacement missing explicit approval.
-- `E_GATE_SET_DRIFT` (409): change leaves `release-gates.md` and `issue-map.md` unsynchronized or synchronization cannot be validated from canonical sources.
+- `E_GATE_SET_DRIFT` (409): change leaves constitution Gate A/B and Issue Map unsynchronized or synchronization cannot be validated from canonical sources.
 
 ### POST /spec/v2.1/s1/gate-item/transition
 
@@ -362,7 +362,7 @@ below are normative regardless of implementation surface.
 | `E_GATE_ITEM_EVIDENCE_MISSING` | 409 | closure attempted without non-empty `evidence_refs` |
 | `E_GATE_ITEM_CLOSURE_BLOCK_MISSING` | 409 | required closure evidence block is absent |
 | `E_GATE_SET_INVALID` | 400 | gate set cannot be parsed/resolved from source docs |
-| `E_GATE_SET_DRIFT` | 409 | `release-gates.md` and `issue-map.md` are inconsistent or synchronization cannot be validated |
+| `E_GATE_SET_DRIFT` | 409 | constitution Gate A/B and Issue Map are inconsistent or synchronization cannot be validated |
 | `E_GATE_CHANGE_REASON_REQUIRED` | 400 | gate-set change omits non-empty reason |
 | `E_GATE_CHANGE_TARGET_REQUIRED` | 400 | gate-set change has missing or invalid target fields for `change_type` |
 | `E_GATE_CHANGE_APPROVAL_REQUIRED` | 409 | remove/replace gate-set change lacks explicit approver |
@@ -377,7 +377,7 @@ below are normative regardless of implementation surface.
 ## 6. Invariants
 
 1. Gate A and Gate B item sets are exactly the issue paths in
-   `docs/v2.1/release-gates.md` sections A and B.
+   `docs/v2.1/constitution.md` Gate A and Gate B sections.
 2. A gate is `ready` if and only if every item in its set is `closed`.
 3. An item is `closed` if and only if acceptance criteria are complete, required
    tests pass, and evidence references are present.
@@ -387,8 +387,8 @@ below are normative regardless of implementation surface.
    and one suite-level pass record (`go test ./...` equivalent).
 7. Any closed Gate A/B issue must include a closure evidence block with
    implementation references and test evidence.
-8. Any GateSet change validation must reject when `release-gates.md` and
-   `issue-map.md` are unsynchronized or synchronization cannot be validated from
+8. Any GateSet change validation must reject when constitution Gate A/B and
+   Issue Map sections are unsynchronized or synchronization cannot be validated from
    canonical sources.
 9. Every gate-item state transition must include actor role; `reason` field must
    be present for all transitions and non-empty for reopen transitions.
@@ -428,7 +428,7 @@ below are normative regardless of implementation surface.
 - **then**: Gate B transitions to `blocked`
 
 ### scenario: gate-set drift is rejected
-- **given**: `release-gates.md` changed but `issue-map.md` was not updated
+- **given**: constitution Gate A/B membership changed but constitution Issue Map was not updated
 - **when**: gate evaluation runs
 - **then**: evaluation fails with `E_GATE_SET_DRIFT`
 
@@ -468,7 +468,7 @@ below are normative regardless of implementation surface.
 
 | l1 acceptance item | spec section(s) |
 |---|---|
-| all gates listed in `release-gates.md` section A and B are closed with tests | 1, 2, 3, 4, 5, 6, 7 |
+| all gates listed in `constitution.md` Gate A and Gate B are closed with tests | 1, 2, 3, 4, 5, 6, 7 |
 
 ---
 

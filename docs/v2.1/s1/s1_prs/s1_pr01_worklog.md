@@ -24,8 +24,8 @@ Status: draft
 | 2026-02-16 | `docs/v2.1/s1/s1_spec.md:239` | L2 item-level error model defines `E_GATE_ITEM_*` family. | Cluster 3 error surfaces. |
 | 2026-02-16 | `docs/v2.1/s1/s1_spec.md:220` | L2 evaluate success example includes `missing_requirements` for incomplete items. | Exposes success-path representation for incomplete preconditions. |
 | 2026-02-16 | `docs/v2.1/s1/s1_spec.md:353` | Error-code table includes `E_GATE_SET_INVALID` and PR-01 item errors. | Confirms constants needed in `internal/errors`. |
-| 2026-02-16 | `docs/v2.1/release-gates.md:9` | Gate A list is explicit numbered issue paths. | Canonical intake source section A. |
-| 2026-02-16 | `docs/v2.1/release-gates.md:15` | Gate B list is explicit numbered issue paths. | Canonical intake source section B. |
+| 2026-02-16 | `docs/v2.1/constitution.md:9` | Gate A list is explicit numbered issue paths. | Canonical intake source section A. |
+| 2026-02-16 | `docs/v2.1/constitution.md:15` | Gate B list is explicit numbered issue paths. | Canonical intake source section B. |
 | 2026-02-16 | `docs/issues/README.md:4` | Issue stubs are markdown with labels + acceptance criteria. | Intake parser target format. |
 | 2026-02-16 | `docs/issues/events-p0-event-system-hardening.md:3` | Issue labels carry `p0` + `type:*` metadata. | Priority/type derivation source. |
 | 2026-02-16 | `docs/issues/events-p0-event-system-hardening.md:32` | Acceptance criteria are checklist-based. | `acceptance_complete` derivation source. |
@@ -40,7 +40,7 @@ Status: draft
 ## acceptance-cluster notes
 
 ### cluster 1: deterministic gate corpus intake
-- Scope chosen: parse Gate A/B only from canonical `release-gates.md`.
+- Scope chosen: parse Gate A/B only from canonical `constitution.md`.
 - Forced decision resolved: reject duplicate/missing issue refs at intake time with `E_GATE_SET_INVALID`.
 - Output contract in `s1_pr01.md` maps this cluster to `source_parser.go` + source parser tests.
 

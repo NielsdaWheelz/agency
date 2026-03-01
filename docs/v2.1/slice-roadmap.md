@@ -43,7 +43,7 @@ S7 Full-Screen Watch/TUI Seed (Stretch)
 - **Goal**: close release-blocking safety and contract integrity issues.
 - **Outcome**: P0 closure + parity-critical P1 hardening baseline.
 - **Dependencies**: S0.
-- **Acceptance**: all gates listed in `release-gates.md` section A and B are closed with tests.
+- **Acceptance**: all issues listed in `constitution.md` Gate A and Gate B are closed with tests.
 
 ### Slice S2: Daemon Read Convergence + Sandbox Navigation
 - **Goal**: finish daemon-first read architecture and detached/fleet navigation basics.

@@ -6,7 +6,7 @@ Added deterministic aggregate evaluation for Gate A, Gate B, and Slice S1 readin
 
 - **`internal/errors/errors.go`**: Added `E_GATE_SET_DRIFT` and `E_GATE_BLOCKED` error constants.
 - **`internal/s1gates/types.go`**: Added `GateStatus`, `GatesEvaluateRequest`, `GatesEvaluateResult` types, `CanonicalIssueMapPath` constant, and `GateStatusReady`/`GateStatusBlocked` constants.
-- **`internal/s1gates/issue_map_parser.go`**: Deterministic parser for `docs/v2.1/issue-map.md` that extracts issue paths from numbered backtick-wrapped list items under H2 sections, with fenced-content skipping and occurrence counting.
+- **`internal/s1gates/issue_map_parser.go`**: Deterministic parser for `docs/v2.1/constitution.md` that extracts issue paths from numbered backtick-wrapped list items under H2 sections, with fenced-content skipping and occurrence counting.
 - **`internal/s1gates/evaluate_gates.go`**: `EvaluateGates()` — request validation, gate source parsing (PR-01), issue-map parsing, per-item evaluation (PR-01), drift detection, and aggregate status computation with deterministic error precedence.
 - **`internal/s1gates/require_ready.go`**: `RequireSliceReady()` — strict enforcement wrapper that returns `E_GATE_BLOCKED` with deterministic detail keys when slice is not ready.
 - **`internal/s1gates/testdata/repo_gates_eval/*`**: 5 fixture repos (valid_blocked, valid_all_closed, drift_missing, drift_duplicate, item_malformed) covering all static test variants.
@@ -118,7 +118,7 @@ Aggregate evaluation:
 - Maps per-item parse/load failures to E_GATE_SET_INVALID with
   issue_path, item_error_code, item_error_message details
 - Detects drift when any Gate A/B issue is missing from or duplicated
-  in issue-map.md, reporting first canonical mismatch
+  in the constitution Issue Map section, reporting first canonical mismatch
 
 Error precedence: gate source invalid > issue-map invalid > item
 artifact invalid > drift > success result.

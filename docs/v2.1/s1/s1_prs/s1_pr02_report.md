@@ -31,7 +31,7 @@
 
 - **Reuse of PR-01 evaluator**: Closure guards call `EvaluateGateItem` and check its `BlockingCode` before running PR-02-specific guards. This avoids duplicating acceptance/tests/closure-block/evidence-ref validation.
 
-- **Gate membership via canonical source**: `resolveGateMembership` reads `docs/v2.1/release-gates.md` relative to `repoRoot`, parses with `ParseGateSet`, and classifies the issue as Gate A, B, or non-member. Follows the decision ledger: "use canonical gate membership from release-gates.md via PR-01 source parser; do not infer from priority alone."
+- **Gate membership via canonical source**: `resolveGateMembership` reads `docs/v2.1/constitution.md` relative to `repoRoot`, parses with `ParseGateSet`, and classifies the issue as Gate A, B, or non-member. Follows the decision ledger: "use canonical gate membership from constitution.md via PR-01 source parser; do not infer from priority alone."
 
 ## 4. Decisions Made (and Why)
 
@@ -42,7 +42,7 @@
 | Evidence scope/result enum validation before semantic checks | Prevents invalid enum values from silently bypassing closure guards. Consistent with spec: "unknown evidence scope/result are invalid artifacts." |
 | Fixture repos use temp dirs exclusively | `TransitionGateItem` writes to disk. Temp dirs ensure test isolation and avoid modifying committed testdata. |
 | `EnforcementScopes` includes all valid scopes | Spec says "scope in {targeted, suite, e2e_opt_in, lint, format, vet}" for design enforcement evidence. All 6 scopes qualify. |
-| `CanonicalGateSourcePath` as package-level constant | Hardcoded to `docs/v2.1/release-gates.md`. Could be parameterized later, but the spec defines a fixed canonical source and the decision ledger confirms this. |
+| `CanonicalGateSourcePath` as package-level constant | Hardcoded to `docs/v2.1/constitution.md`. Could be parameterized later, but the spec defines a fixed canonical source and the decision ledger confirms this. |
 
 ## 5. Deviations from L4/L3/L2
 

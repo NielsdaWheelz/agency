@@ -9,9 +9,10 @@ import (
 
 // Canonical source paths consumed by release-gate orchestration.
 const (
-	CanonicalGateSourcePath = "docs/v2.1/release-gates.md"
-	CanonicalIssueMapPath   = "docs/v2.1/issue-map.md"
-	CanonicalS1SpecPath     = "docs/v2.1/s1/s1_spec.md"
+	CanonicalConstitutionPath = "docs/v2.1/constitution.md"
+	CanonicalGateSourcePath   = CanonicalConstitutionPath
+	CanonicalIssueMapPath     = CanonicalConstitutionPath
+	CanonicalS1SpecPath       = "docs/v2.1/s1/s1_spec.md"
 )
 
 // Gate item priorities.

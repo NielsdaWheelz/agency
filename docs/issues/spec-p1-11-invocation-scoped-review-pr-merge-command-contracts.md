@@ -8,7 +8,7 @@ define explicit command and contract behavior for invocation-scoped
 
 ## context
 - section: v2.1 parity baseline
-- source: docs/v2.1/product-brief.md + docs/v2.1/parity-matrix.md
+- source: docs/v2.1/constitution.md
 - details:
   - v2.1 requires deterministic invocation-centric PR/review/merge operations.
   - current docs list target commands but do not yet define shared response/error contracts.

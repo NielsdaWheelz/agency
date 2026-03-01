@@ -8,7 +8,7 @@ arrow-key terminal navigation, in addition to explicit checkpoint id selection.
 
 ## context
 - section: v2.1 parity additions
-- source: docs/v2.1/product-brief.md + docs/v2.1/parity-matrix.md
+- source: docs/v2.1/constitution.md
 - details:
   - users should be able to navigate prior messages/tool activity and choose a revert point without manually mapping ids.
   - selector must remain terminal-only and lightweight (no full TUI requirement).

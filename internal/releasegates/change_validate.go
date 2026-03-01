@@ -7,7 +7,7 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-const driftSyncSource = "release-gates_vs_issue-map"
+const driftSyncSource = "constitution-gates_vs_issue-map"
 
 // ValidateGateSetChange validates a gate-set change proposal deterministically.
 func ValidateGateSetChange(req GateSetChange, repoRoot string) (*GateSetChangeValidationResult, error) {
@@ -225,7 +225,7 @@ func validateSync(req GateSetChange, repoRoot string, gateSet *GateSet) error {
 			driftKind = "duplicate"
 		}
 		return newDriftError(issuePath, fmt.Sprintf("%d", count), driftKind,
-			fmt.Sprintf("gate-source/issue-map drift: %s", issuePath))
+			fmt.Sprintf("constitution-gates/issue-map drift: %s", issuePath))
 	}
 	return nil
 }

@@ -1,20 +1,23 @@
 package releasegates
 
 import (
+	"regexp"
 	"strings"
 
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// ParseIssueMap parses an issue-map markdown document and returns deterministic
-// issue occurrence counts.
+var issueMapHeadingRe = regexp.MustCompile(`(?i)^##\s+Issue\s+Map\b`)
+
+// ParseIssueMap parses the Issue Map section from the canonical constitution
+// and returns deterministic issue occurrence counts.
 func ParseIssueMap(content string) (*IssueMapResult, error) {
 	lines := strings.Split(content, "\n")
 
 	counts := make(map[string]int)
 	var paths []string
 	inFence := false
-	underH2 := false
+	inIssueMapSection := false
 
 	for _, line := range lines {
 		if fenceRe.MatchString(line) {
@@ -24,13 +27,17 @@ func ParseIssueMap(content string) (*IssueMapResult, error) {
 			continue
 		}
 
-		if anyH2Re.MatchString(line) {
-			underH2 = true
+		if issueMapHeadingRe.MatchString(line) {
+			inIssueMapSection = true
 			continue
 		}
 
-		if !underH2 {
+		if !inIssueMapSection {
 			continue
+		}
+
+		if anyH2Re.MatchString(line) {
+			break
 		}
 
 		if m := numberedItemRe.FindStringSubmatch(line); m != nil {
@@ -44,7 +51,7 @@ func ParseIssueMap(content string) (*IssueMapResult, error) {
 
 	if len(paths) == 0 {
 		return nil, agencyerrors.New(agencyerrors.EGateSetInvalid,
-			"issue-map contains no parseable issue references")
+			"issue-map section contains no parseable issue references")
 	}
 
 	return &IssueMapResult{
