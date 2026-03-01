@@ -129,7 +129,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	applier := checkpoint.NewApplier(
+	applier := checkpoint.NewApplierWithWriter(
 		record.InvocationID,
 		meta.SandboxPath,
 		s.Store.SandboxDir(record.RepoID, record.InvocationID),
@@ -137,6 +137,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		s.Runner,
 		s.FS,
 		s.Clock,
+		s.InvocationEvents,
 	)
 	cp, err := applier.Apply(r.Context(), req.CheckpointID)
 	if err != nil {

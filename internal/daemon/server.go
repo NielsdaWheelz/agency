@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -44,6 +45,9 @@ type Server struct {
 
 	// Clock returns the current time (injectable for testing).
 	Clock func() time.Time
+
+	// InvocationEvents appends invocation-scoped events with shared sequencing.
+	InvocationEvents *invocationevents.Writer
 
 	// PIDChecker checks if a PID is alive (injectable for testing).
 	PIDChecker func(int) bool
@@ -92,10 +96,6 @@ type Server struct {
 	// Used to prevent duplicate worktree creation from retried requests.
 	worktreeIdempotency map[string]WorktreeIdempotencyEntry
 
-	// followUpMu serializes follow-up prompt writes per daemon process.
-	// It protects duplicate detection + append sequencing to invocation events.
-	followUpMu sync.Mutex
-
 	// headedStartingFirstSeen tracks when a "starting" headed invocation was first
 	// observed without a tmux session. Used for grace window before marking failed.
 	// PR-11: Maps invocation_id -> count of ticks observed without tmux session.
@@ -122,7 +122,7 @@ type Server struct {
 // NewServer creates a new daemon server with the given dependencies.
 func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir string) *Server {
 	repoLock := lock.NewRepoLock(st.DataDir)
-	return &Server{
+	server := &Server{
 		Store:                   st,
 		Runner:                  runner,
 		FS:                      fsys,
@@ -140,6 +140,10 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		shutdownCh:              make(chan struct{}),
 		reconcileLoopDone:       make(chan struct{}), // PR-11
 	}
+	server.InvocationEvents = invocationevents.NewWriter(func() time.Time {
+		return server.Clock()
+	})
+	return server
 }
 
 // IsPIDAlive checks if a process with the given PID is alive.

@@ -1,33 +1,18 @@
 package daemon
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
-	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-const (
-	followUpPromptEventKind   = "agency.followup_prompt"
-	maxFollowUpEventLineBytes = 4 * 1024 * 1024
-)
-
-type invocationEventLine struct {
-	SchemaVersion string         `json:"schema_version"`
-	Seq           uint64         `json:"seq"`
-	Timestamp     string         `json:"timestamp"`
-	InvocationID  string         `json:"invocation_id"`
-	Kind          string         `json:"kind"`
-	Data          map[string]any `json:"data,omitempty"`
-}
+const followUpPromptEventKind = "agency.followup_prompt"
 
 // handleControlPlaneFollowUpPrompt handles POST /invocations/{ref}/chat (S3 PR-02).
 func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http.Request, invocationRef string) {
@@ -122,120 +107,28 @@ func (s *Server) writeFollowUpSuccess(w http.ResponseWriter, invocationID, timel
 }
 
 func (s *Server) appendFollowUpPromptEvent(eventsPath, invocationID, clientRequestID, prompt string) (string, bool, error) {
-	s.followUpMu.Lock()
-	defer s.followUpMu.Unlock()
-
-	if existingSeq, duplicate, err := findFollowUpPromptSeq(eventsPath, clientRequestID); err != nil {
-		return "", false, err
-	} else if duplicate {
-		return followUpTimelineEntryID(existingSeq), true, nil
+	writer := s.InvocationEvents
+	if writer == nil {
+		writer = invocationevents.NewWriter(s.Clock)
 	}
 
-	maxSeq, err := loadMaxInvocationEventSeq(eventsPath)
-	if err != nil {
-		return "", false, err
-	}
-	seq := maxSeq + 1
-
-	event := invocationEventLine{
-		SchemaVersion: "1.0",
-		Seq:           seq,
-		Timestamp:     s.Clock().UTC().Format(time.RFC3339),
-		InvocationID:  invocationID,
-		Kind:          followUpPromptEventKind,
-		Data: map[string]any{
+	result, err := writer.Append(
+		eventsPath,
+		invocationID,
+		followUpPromptEventKind,
+		map[string]any{
 			"text":              prompt,
 			"client_request_id": clientRequestID,
 		},
-	}
-
-	if err := appendInvocationEventLine(eventsPath, event); err != nil {
+		invocationevents.AppendOptions{
+			IdempotencyDataKey:   "client_request_id",
+			IdempotencyDataValue: clientRequestID,
+		},
+	)
+	if err != nil {
 		return "", false, err
 	}
-	return followUpTimelineEntryID(seq), false, nil
-}
-
-func appendInvocationEventLine(eventsPath string, event invocationEventLine) error {
-	dir := filepath.Dir(eventsPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	return f.Sync()
-}
-
-func loadMaxInvocationEventSeq(eventsPath string) (uint64, error) {
-	f, err := os.Open(eventsPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	defer func() { _ = f.Close() }()
-
-	var maxSeq uint64
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxFollowUpEventLineBytes)
-	for scanner.Scan() {
-		var line struct {
-			Seq uint64 `json:"seq"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
-		}
-		if line.Seq > maxSeq {
-			maxSeq = line.Seq
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, err
-	}
-	return maxSeq, nil
-}
-
-func findFollowUpPromptSeq(eventsPath, clientRequestID string) (uint64, bool, error) {
-	f, err := os.Open(eventsPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, false, nil
-		}
-		return 0, false, err
-	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxFollowUpEventLineBytes)
-	for scanner.Scan() {
-		var line invocationEventLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
-		}
-		if line.Kind != followUpPromptEventKind {
-			continue
-		}
-		if reqID, ok := line.Data["client_request_id"].(string); ok && reqID == clientRequestID {
-			return line.Seq, true, nil
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, false, err
-	}
-	return 0, false, nil
+	return followUpTimelineEntryID(result.Seq), result.AlreadyApplied, nil
 }
 
 func followUpTimelineEntryID(seq uint64) string {

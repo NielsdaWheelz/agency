@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -41,6 +42,17 @@ type stubCall struct {
 	args []string
 	dir  string
 	env  map[string]string
+}
+
+type failingAppender struct {
+	err error
+}
+
+func (f failingAppender) Append(string, string, string, map[string]any, invocationevents.AppendOptions) (invocationevents.AppendResult, error) {
+	if f.err != nil {
+		return invocationevents.AppendResult{}, f.err
+	}
+	return invocationevents.AppendResult{Seq: 1}, nil
 }
 
 func newStubRunner() *stubRunner {
@@ -1286,7 +1298,7 @@ func TestEngine_EventEmission(t *testing.T) {
 		require.Error(t, err)
 
 		// Manually emit failure event (as the caller would)
-		e.emitCheckpointFailed(err.Error())
+		require.NoError(t, e.emitCheckpointFailed(err.Error()))
 
 		events := readEvents(t, e.eventsPath)
 		foundFailed := false
@@ -1489,8 +1501,8 @@ func TestEngine_EventSeqMonotonicAcrossEngineRestart(t *testing.T) {
 	cfg.IncludeUntracked = true
 
 	e1, _ := newTestEngine(t, sr, cfg)
-	e1.emitCheckpointCreated(1, true, "head-1")
-	e1.emitCheckpointFailed("first-engine-failure")
+	require.NoError(t, e1.emitCheckpointCreated(1, true, "head-1"))
+	require.NoError(t, e1.emitCheckpointFailed("first-engine-failure"))
 
 	events := readEvents(t, e1.eventsPath)
 	require.Len(t, events, 2)
@@ -1511,7 +1523,7 @@ func TestEngine_EventSeqMonotonicAcrossEngineRestart(t *testing.T) {
 		clock2.Now,
 	)
 
-	e2.emitCheckpointCreated(2, true, "head-2")
+	require.NoError(t, e2.emitCheckpointCreated(2, true, "head-2"))
 
 	events = readEvents(t, e1.eventsPath)
 	require.Len(t, events, 3)
@@ -1568,4 +1580,21 @@ func TestApplier_Apply_EmitsMonotonicSeqAfterExistingEvents(t *testing.T) {
 	assert.Equal(t, uint64(8), events[1].Seq)
 	assert.Equal(t, uint64(9), events[2].Seq, "checkpoint apply event must continue the existing sequence")
 	assert.Equal(t, EventKindCheckpointApplied, events[2].Kind)
+}
+
+func TestEngine_createCheckpointInternal_EventAppendFailure(t *testing.T) {
+	t.Parallel()
+
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	e, _ := newTestEngine(t, sr, cfg)
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+	e.eventWriter = failingAppender{
+		err: fmt.Errorf("append failed"),
+	}
+
+	err := e.createCheckpointInternal(context.Background())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "checkpoint_created")
 }

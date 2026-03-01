@@ -234,10 +234,12 @@ restores sandbox via `git reset --hard` + `git clean -fd` + `git checkout <snaps
 ### events
 
 emitted to `invocations/<id>/events.jsonl`:
+- `agency.followup_prompt` (idempotent by `client_request_id`)
 - `agency.checkpoint_created`
 - `agency.checkpoint_failed`
 - `agency.checkpoint_applied` (rollback)
 - `agency.checkpoint_denylist_triggered`
+- `agency.land_*`, `agency.discard_*`, `agency.conflict_detected`
 
 ## landing service
 
@@ -273,7 +275,7 @@ repo-level file-based advisory locks acquired before mutations.
 
 ### events
 
-append-only JSONL at `invocations/<id>/events.jsonl`. contractually required on all mutations. append failure fails the operation. writes are locked and atomic.
+append-only JSONL at `invocations/<id>/events.jsonl`. contractually required on all mutations. append failure fails the operation. writes are locked and atomic via one daemon-owned invocation event writer (`internal/daemon/invocationevents`), which allocates one monotonic invocation-scoped sequence across follow-up, checkpoint, checkpoint-apply, and landing/discard producers.
 
 ### schema versioning
 
