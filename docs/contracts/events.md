@@ -9,7 +9,9 @@ This file defines the contract for per-run and per-invocation events.
 
 ## format
 
-JSONL, one event per line. Each line is a single JSON object with this schema:
+JSONL, one event per line.
+
+### run event schema (legacy/v1 flows)
 
 ```json
 {
@@ -22,18 +24,42 @@ JSONL, one event per line. Each line is a single JSON object with this schema:
 }
 ```
 
+### invocation event schema (daemon-owned mutation flows)
+
+```json
+{
+  "schema_version": "1.0",
+  "seq": 42,
+  "timestamp": "2026-01-19T12:00:00Z",
+  "invocation_id": "<invocation_id>",
+  "kind": "agency.followup_prompt",
+  "data": {}
+}
+```
+
 ## rules
 
 1. schema_version is required and must match exactly.
 2. timestamp is RFC3339 UTC.
-3. event is a stable string. adding or changing event names requires updating this doc and adding tests.
+3. event kind is stable (`event` for run events, `kind` for invocation events). adding or changing event names requires updating this doc and adding tests.
 4. data is a JSON object. keys must be stable and documented. avoid secrets. avoid large payloads.
 5. ordering is file order. events are append-only; do not rewrite.
-6. writes are locked per run/invocation. concurrent writers must not interleave JSON.
-7. permissions are private: 0700 dirs, 0600 files.
-8. events are required in contract flows. append failure must fail the operation.
+6. invocation event sequence allocation is invocation-scoped and monotonic (`seq`); concurrent producers must serialize through one writer contract.
+7. writes are locked per run/invocation. concurrent writers must not interleave JSON.
+8. permissions are private: 0700 dirs, 0600 files.
+9. events are required in contract flows. append failure must fail the operation.
+10. follow-up retries with the same `client_request_id` are idempotent and must not create duplicate invocation event lines.
 
-## known event names (non-exhaustive)
+## invocation event producers (v2.1 S3 PR-06)
+
+All of the following append through one invocation-scoped writer contract:
+
+- follow-up prompt writes (`agency.followup_prompt`)
+- checkpoint lifecycle writes (`agency.checkpoint_created`, `agency.checkpoint_failed`, `agency.checkpoint_denylist_triggered`)
+- checkpoint apply writes (`agency.checkpoint_applied`)
+- land/discard lifecycle writes (`agency.land_*`, `agency.discard_*`, `agency.conflict_detected`)
+
+## known run event names (non-exhaustive)
 
 - cmd_start, cmd_end
 - stop, kill_session
@@ -50,3 +76,21 @@ JSONL, one event per line. Each line is a single JSON object with this schema:
 - gh_merge_started, gh_merge_finished
 - verify_started, verify_finished
 - archive_started, archive_finished, archive_failed
+
+## known invocation event kinds (non-exhaustive)
+
+- agency.followup_prompt
+- agency.checkpoint_created
+- agency.checkpoint_failed
+- agency.checkpoint_denylist_triggered
+- agency.checkpoint_applied
+- agency.land_started
+- agency.land_failed
+- agency.land_cleanup_warning
+- agency.land_succeeded
+- agency.discard_started
+- agency.discard_stop_warning
+- agency.discard_cleanup_warning
+- agency.discard_succeeded
+- agency.conflict_detected
+

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -39,11 +40,12 @@ type LandResult struct {
 
 // Service handles landing and discard operations.
 type Service struct {
-	store      *store.Store
-	runner     exec.CommandRunner
-	fsys       fs.FS
-	clock      func() time.Time
-	eventsPath func(repoID, invocationID string) string
+	store       *store.Store
+	runner      exec.CommandRunner
+	fsys        fs.FS
+	clock       func() time.Time
+	eventsPath  func(repoID, invocationID string) string
+	eventWriter invocationevents.Appender
 }
 
 // NewService creates a new landing service.
@@ -53,11 +55,27 @@ func NewService(
 	fsys fs.FS,
 	clock func() time.Time,
 ) *Service {
+	return NewServiceWithWriter(st, runner, fsys, clock, invocationevents.NewWriter(clock))
+}
+
+// NewServiceWithWriter creates a landing service with a shared invocation
+// event writer.
+func NewServiceWithWriter(
+	st *store.Store,
+	runner exec.CommandRunner,
+	fsys fs.FS,
+	clock func() time.Time,
+	eventWriter invocationevents.Appender,
+) *Service {
+	if eventWriter == nil {
+		eventWriter = invocationevents.NewWriter(clock)
+	}
 	return &Service{
-		store:  st,
-		runner: runner,
-		fsys:   fsys,
-		clock:  clock,
+		store:       st,
+		runner:      runner,
+		fsys:        fsys,
+		clock:       clock,
+		eventWriter: eventWriter,
 		eventsPath: func(repoID, invocationID string) string {
 			return st.InvocationEventsPath(repoID, invocationID)
 		},
@@ -114,45 +132,50 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 	}
 
 	// 5. Emit land_started event
-	s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_started", map[string]any{
+	if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_started", map[string]any{
 		"invocation_id": opts.InvocationID,
 		"worktree_id":   meta.IntegrationWorktreeID,
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	// 6. Capture integration HEAD before landing
 	headBefore, err := s.getHeadCommit(ctx, integrationPath)
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to capture integration HEAD: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to capture integration HEAD", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to capture integration HEAD: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to capture integration HEAD", err),
+		)
 	}
 
 	// 7. Check if base_commit check is required
 	if opts.RequireBase && headBefore != meta.BaseCommit {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "integration branch has diverged from base_commit",
-		})
-		return nil, errors.NewWithDetails(errors.ELandFailed,
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
 			"integration branch has diverged from base_commit",
-			map[string]string{
-				"base_commit":      meta.BaseCommit,
-				"integration_head": headBefore,
-				"hint":             "remove --require-base to allow landing onto moved HEAD, or rebase sandbox manually",
-			},
+			errors.NewWithDetails(errors.ELandFailed,
+				"integration branch has diverged from base_commit",
+				map[string]string{
+					"base_commit":      meta.BaseCommit,
+					"integration_head": headBefore,
+					"hint":             "remove --require-base to allow landing onto moved HEAD, or rebase sandbox manually",
+				},
+			),
 		)
 	}
 
 	// 8. Determine landing mode
 	commitCount, err := s.countCommits(ctx, opts.RepoRoot, meta.BaseCommit, meta.SandboxBranch)
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to count commits: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to determine commit count", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to count commits: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to determine commit count", err),
+		)
 	}
 
 	var result *LandResult
@@ -164,31 +187,34 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		var dirty bool
 		dirty, err = s.isSandboxDirty(ctx, sandboxPath)
 		if err != nil {
-			s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-				"invocation_id": opts.InvocationID,
-				"reason":        "failed to check sandbox status: " + err.Error(),
-			})
-			return nil, errors.Wrap(errors.ELandFailed, "failed to check sandbox status", err)
+			return nil, s.emitLandFailure(
+				opts.RepoID,
+				opts.InvocationID,
+				"failed to check sandbox status: "+err.Error(),
+				errors.Wrap(errors.ELandFailed, "failed to check sandbox status", err),
+			)
 		}
 
 		if !dirty {
 			// Case C: Nothing to land
-			s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-				"invocation_id": opts.InvocationID,
-				"reason":        "nothing to land",
-			})
-			return nil, errors.New(errors.ELandNothingToLand, "nothing to land — sandbox has no commits and no uncommitted changes")
+			return nil, s.emitLandFailure(
+				opts.RepoID,
+				opts.InvocationID,
+				"nothing to land",
+				errors.New(errors.ELandNothingToLand, "nothing to land — sandbox has no commits and no uncommitted changes"),
+			)
 		}
 
 		if !opts.Apply {
 			// No commits but dirty tree - require --apply
-			s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-				"invocation_id": opts.InvocationID,
-				"reason":        "no commits to cherry-pick; --apply required",
-			})
-			return nil, errors.NewWithDetails(errors.ELandApplyRequired,
-				"no commits to cherry-pick; use --apply to land working tree changes",
-				map[string]string{"hint": "run 'agency agent land --apply' to apply uncommitted changes"},
+			return nil, s.emitLandFailure(
+				opts.RepoID,
+				opts.InvocationID,
+				"no commits to cherry-pick; --apply required",
+				errors.NewWithDetails(errors.ELandApplyRequired,
+					"no commits to cherry-pick; use --apply to land working tree changes",
+					map[string]string{"hint": "run 'agency agent land --apply' to apply uncommitted changes"},
+				),
 			)
 		}
 
@@ -202,11 +228,12 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 
 	// 9. Cleanup on success
 	if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta); err != nil {
-		// Log but don't fail - landing succeeded
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_warning", map[string]any{
+		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_warning", map[string]any{
 			"invocation_id": opts.InvocationID,
 			"warning":       err.Error(),
-		})
+		}); emitErr != nil {
+			return nil, emitErr
+		}
 	}
 
 	// 10. Update invocation meta
@@ -222,13 +249,15 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 	})
 
 	// 12. Emit success event
-	s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_succeeded", map[string]any{
+	if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_succeeded", map[string]any{
 		"invocation_id": opts.InvocationID,
 		"head_before":   result.IntegrationHeadBefore,
 		"head_after":    result.IntegrationHeadAfter,
 		"mode":          string(result.Mode),
 		"commits":       result.CommitsLanded,
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -267,11 +296,12 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 
 	result, err := s.runner.Run(ctx, "git", cherryPickArgs, exec.RunOpts{})
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "cherry-pick execution error: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to execute cherry-pick", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"cherry-pick execution error: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to execute cherry-pick", err),
+		)
 	}
 
 	if result.ExitCode != 0 {
@@ -281,10 +311,12 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 			// Abort the cherry-pick
 			_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "cherry-pick", "--abort"}, exec.RunOpts{})
 
-			s.emitEvent(opts.RepoID, opts.InvocationID, "agency.conflict_detected", map[string]any{
+			if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.conflict_detected", map[string]any{
 				"invocation_id": opts.InvocationID,
 				"files":         conflictFiles,
-			})
+			}); err != nil {
+				return nil, err
+			}
 
 			conflictFilesJSON, _ := json.Marshal(conflictFiles)
 			return nil, errors.NewWithDetails(errors.ELandConflict,
@@ -298,11 +330,12 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 		}
 
 		// Non-conflict failure
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "cherry-pick failed: " + result.Stderr,
-		})
-		return nil, errors.New(errors.ELandFailed, "cherry-pick failed: "+result.Stderr)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"cherry-pick failed: "+result.Stderr,
+			errors.New(errors.ELandFailed, "cherry-pick failed: "+result.Stderr),
+		)
 	}
 
 	// Get new HEAD
@@ -326,11 +359,12 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 	// Create tmp directory for patch file
 	tmpDir := filepath.Join(s.store.SandboxDir(opts.RepoID, opts.InvocationID), "tmp")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to create tmp directory: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to create tmp directory", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to create tmp directory: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to create tmp directory", err),
+		)
 	}
 
 	patchPath := filepath.Join(tmpDir, "land.patch")
@@ -339,11 +373,12 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 	// Exclude .agency/ — the daemon writes SANDBOX_MARKER there, not the user.
 	_, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "add", "-A", "--", ":(exclude).agency"}, exec.RunOpts{})
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to stage changes: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to stage changes in sandbox", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to stage changes: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to stage changes in sandbox", err),
+		)
 	}
 
 	// Generate patch: diff between base_commit and current staged state.
@@ -353,36 +388,40 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 		"diff", "--cached", meta.BaseCommit, "--", ":(exclude).agency",
 	}, exec.RunOpts{})
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to generate diff: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to generate diff", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to generate diff: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to generate diff", err),
+		)
 	}
 
 	if diffResult.ExitCode != 0 {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "diff command failed: " + diffResult.Stderr,
-		})
-		return nil, errors.New(errors.ELandFailed, "failed to generate diff: "+diffResult.Stderr)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"diff command failed: "+diffResult.Stderr,
+			errors.New(errors.ELandFailed, "failed to generate diff: "+diffResult.Stderr),
+		)
 	}
 
 	if strings.TrimSpace(diffResult.Stdout) == "" {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "no changes to apply (empty diff)",
-		})
-		return nil, errors.New(errors.ELandNothingToLand, "nothing to land — diff is empty")
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"no changes to apply (empty diff)",
+			errors.New(errors.ELandNothingToLand, "nothing to land — diff is empty"),
+		)
 	}
 
 	// Write patch file
 	if err := os.WriteFile(patchPath, []byte(diffResult.Stdout), 0o644); err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to write patch file: " + err.Error(),
-		})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to write patch file", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to write patch file: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to write patch file", err),
+		)
 	}
 
 	// Apply patch to integration tree
@@ -391,23 +430,25 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 		"apply", "--index", patchPath,
 	}, exec.RunOpts{})
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to apply patch: " + err.Error(),
-		})
 		// Reset integration tree on failure
 		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to apply patch", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to apply patch: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to apply patch", err),
+		)
 	}
 
 	if applyResult.ExitCode != 0 {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "patch apply failed: " + applyResult.Stderr,
-		})
 		// Reset integration tree on failure
 		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, errors.New(errors.ELandFailed, "patch apply failed: "+applyResult.Stderr)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"patch apply failed: "+applyResult.Stderr,
+			errors.New(errors.ELandFailed, "patch apply failed: "+applyResult.Stderr),
+		)
 	}
 
 	// Commit the changes
@@ -417,23 +458,25 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 		"commit", "-m", commitMsg,
 	}, exec.RunOpts{})
 	if err != nil {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "failed to commit: " + err.Error(),
-		})
 		// Reset integration tree on failure
 		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, errors.Wrap(errors.ELandFailed, "failed to commit applied changes", err)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to commit: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to commit applied changes", err),
+		)
 	}
 
 	if commitResult.ExitCode != 0 {
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_failed", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"reason":        "commit failed: " + commitResult.Stderr,
-		})
 		// Reset integration tree on failure
 		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, errors.New(errors.ELandFailed, "commit failed: "+commitResult.Stderr)
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"commit failed: "+commitResult.Stderr,
+			errors.New(errors.ELandFailed, "commit failed: "+commitResult.Stderr),
+		)
 	}
 
 	// Get new HEAD
@@ -479,7 +522,7 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 
 	// 4. Remove sandbox directory (but keep logs/checkpoints in invocation dir)
 	sandboxDir := s.store.SandboxDir(repoID, invocationID)
-	if err := os.RemoveAll(sandboxDir); err != nil {
+	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
 		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
 	}
 
@@ -550,18 +593,22 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 	}
 
 	// 3. Emit discard_started event
-	s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_started", map[string]any{
+	if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_started", map[string]any{
 		"invocation_id": opts.InvocationID,
-	})
+	}); err != nil {
+		return err
+	}
 
 	// 4. If running, stop first
 	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
 		if opts.StopCallback != nil {
 			if err := opts.StopCallback(ctx, opts.RepoID, opts.InvocationID); err != nil {
-				s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_stop_warning", map[string]any{
+				if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_stop_warning", map[string]any{
 					"invocation_id": opts.InvocationID,
 					"warning":       err.Error(),
-				})
+				}); emitErr != nil {
+					return emitErr
+				}
 				// Continue with discard anyway
 			}
 		}
@@ -569,11 +616,12 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 
 	// 5. Cleanup sandbox
 	if err := s.cleanupSandbox(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta); err != nil {
-		// Log but continue - best effort cleanup
-		s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_cleanup_warning", map[string]any{
+		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_cleanup_warning", map[string]any{
 			"invocation_id": opts.InvocationID,
 			"warning":       err.Error(),
-		})
+		}); emitErr != nil {
+			return emitErr
+		}
 	}
 
 	// 6. Update invocation meta
@@ -590,9 +638,11 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 	})
 
 	// 7. Emit success event
-	s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_succeeded", map[string]any{
+	if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_succeeded", map[string]any{
 		"invocation_id": opts.InvocationID,
-	})
+	}); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -630,7 +680,7 @@ func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repo
 
 	// 4. Remove sandbox directory
 	sandboxDir := s.store.SandboxDir(repoID, invocationID)
-	if err := os.RemoveAll(sandboxDir); err != nil {
+	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
 		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
 	}
 
@@ -715,31 +765,34 @@ func (s *Service) getConflictFiles(ctx context.Context, treePath string) ([]stri
 	return conflicts, nil
 }
 
-func (s *Service) emitEvent(repoID, invocationID, eventType string, data map[string]any) {
-	event := struct {
-		SchemaVersion string         `json:"schema_version"`
-		Timestamp     string         `json:"timestamp"`
-		Event         string         `json:"event"`
-		Data          map[string]any `json:"data"`
-	}{
-		SchemaVersion: "1.0",
-		Timestamp:     s.clock().UTC().Format(time.RFC3339),
-		Event:         eventType,
-		Data:          data,
+func (s *Service) emitLandFailure(repoID, invocationID, reason string, operationErr error) error {
+	if err := s.emitEvent(repoID, invocationID, "agency.land_failed", map[string]any{
+		"invocation_id": invocationID,
+		"reason":        reason,
+	}); err != nil {
+		return errors.WrapWithDetails(errors.ELandFailed, "failed to append invocation event", err, map[string]string{
+			"operation_error": operationErr.Error(),
+		})
+	}
+	return operationErr
+}
+
+func (s *Service) emitEvent(repoID, invocationID, eventType string, data map[string]any) error {
+	writer := s.eventWriter
+	if writer == nil {
+		writer = invocationevents.NewWriter(s.clock)
+		s.eventWriter = writer
 	}
 
-	eventData, err := json.Marshal(event)
+	_, err := writer.Append(
+		s.eventsPath(repoID, invocationID),
+		invocationID,
+		eventType,
+		data,
+		invocationevents.AppendOptions{},
+	)
 	if err != nil {
-		return
+		return errors.Wrap(errors.ELandFailed, "failed to append invocation event", err)
 	}
-	eventData = append(eventData, '\n')
-
-	eventsPath := s.eventsPath(repoID, invocationID)
-	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-
-	_, _ = f.Write(eventData)
+	return nil
 }

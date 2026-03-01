@@ -9,11 +9,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -30,14 +30,14 @@ type Engine struct {
 	config         Config
 
 	// Dependencies
-	runner exec.CommandRunner
-	fsys   fs.FS
-	clock  func() time.Time
+	runner      exec.CommandRunner
+	fsys        fs.FS
+	clock       func() time.Time
+	eventWriter invocationevents.Appender
 
 	// State
 	mu             sync.Mutex
 	lastCheckpoint time.Time
-	eventSeq       atomic.Uint64
 	watcher        *fsnotify.Watcher
 	watchedDirs    map[string]bool
 
@@ -54,6 +54,34 @@ func NewEngine(
 	fsys fs.FS,
 	clock func() time.Time,
 ) *Engine {
+	return NewEngineWithWriter(
+		invocationID,
+		repoID,
+		sandboxPath,
+		repoRoot,
+		checkpointsDir,
+		eventsPath,
+		config,
+		runner,
+		fsys,
+		clock,
+		invocationevents.NewWriter(clock),
+	)
+}
+
+// NewEngineWithWriter creates a checkpoint engine using a shared invocation
+// event writer.
+func NewEngineWithWriter(
+	invocationID, repoID, sandboxPath, repoRoot, checkpointsDir, eventsPath string,
+	config Config,
+	runner exec.CommandRunner,
+	fsys fs.FS,
+	clock func() time.Time,
+	eventWriter invocationevents.Appender,
+) *Engine {
+	if eventWriter == nil {
+		eventWriter = invocationevents.NewWriter(clock)
+	}
 	engine := &Engine{
 		invocationID:   invocationID,
 		repoID:         repoID,
@@ -65,13 +93,10 @@ func NewEngine(
 		runner:         runner,
 		fsys:           fsys,
 		clock:          clock,
+		eventWriter:    eventWriter,
 		watchedDirs:    make(map[string]bool),
 		done:           make(chan struct{}),
 	}
-
-	// Preserve durable monotonic ordering across daemon restarts by
-	// continuing from the highest sequence already persisted on disk.
-	engine.eventSeq.Store(loadMaxEventSeq(eventsPath))
 	return engine
 }
 
@@ -259,8 +284,10 @@ func (e *Engine) tryCheckpoint(ctx context.Context, trigger string) {
 	e.mu.Unlock()
 
 	if err := e.CreateCheckpoint(ctx); err != nil {
-		// Emit failure event but continue
-		e.emitCheckpointFailed(err.Error())
+		// Emit failure event but continue.
+		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
+			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
+		}
 	}
 }
 
@@ -280,7 +307,9 @@ func (e *Engine) tryCheckpointIfDirty(ctx context.Context) {
 	}
 
 	if err := e.CreateCheckpoint(ctx); err != nil {
-		e.emitCheckpointFailed(err.Error())
+		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
+			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
+		}
 	}
 }
 
@@ -325,7 +354,9 @@ func (e *Engine) doFinalCheckpoint(ctx context.Context) {
 
 	// Force create regardless of rate limit
 	if err := e.createCheckpointInternal(ctx); err != nil {
-		e.emitCheckpointFailed(err.Error())
+		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
+			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
+		}
 	}
 }
 
@@ -365,7 +396,9 @@ func (e *Engine) createCheckpointInternal(ctx context.Context) error {
 		if len(deniedFiles) > 0 {
 			// Degrade to tracked-only
 			includeUntracked = false
-			e.emitDenylistTriggered(deniedFiles)
+			if err := e.emitDenylistTriggered(deniedFiles); err != nil {
+				return fmt.Errorf("failed to append checkpoint_denylist_triggered event: %w", err)
+			}
 		}
 	}
 
@@ -521,7 +554,9 @@ func (e *Engine) createCheckpointInternal(ctx context.Context) error {
 	e.mu.Unlock()
 
 	// 15. Emit success event
-	e.emitCheckpointCreated(checkpointID, includeUntracked, sandboxHeadSHA)
+	if err := e.emitCheckpointCreated(checkpointID, includeUntracked, sandboxHeadSHA); err != nil {
+		return fmt.Errorf("failed to append checkpoint_created event: %w", err)
+	}
 
 	return nil
 }
@@ -691,55 +726,37 @@ func (e *Engine) saveCheckpoints(cpFile *CheckpointsFile) error {
 }
 
 // emitCheckpointCreated emits a checkpoint_created event.
-func (e *Engine) emitCheckpointCreated(checkpointID int, includesUntracked bool, sandboxHeadSHA string) {
-	seq := e.eventSeq.Add(1)
-	event := NewEvent(
-		e.invocationID, seq,
-		EventKindCheckpointCreated,
+func (e *Engine) emitCheckpointCreated(checkpointID int, includesUntracked bool, sandboxHeadSHA string) error {
+	_, err := e.eventWriter.Append(
+		e.eventsPath,
+		e.invocationID,
+		string(EventKindCheckpointCreated),
 		CheckpointCreatedData(checkpointID, includesUntracked, sandboxHeadSHA),
-		e.clock(),
+		invocationevents.AppendOptions{},
 	)
-	e.appendEvent(event)
+	return err
 }
 
 // emitCheckpointFailed emits a checkpoint_failed event.
-func (e *Engine) emitCheckpointFailed(reason string) {
-	seq := e.eventSeq.Add(1)
-	event := NewEvent(
-		e.invocationID, seq,
-		EventKindCheckpointFailed,
+func (e *Engine) emitCheckpointFailed(reason string) error {
+	_, err := e.eventWriter.Append(
+		e.eventsPath,
+		e.invocationID,
+		string(EventKindCheckpointFailed),
 		CheckpointFailedData(reason),
-		e.clock(),
+		invocationevents.AppendOptions{},
 	)
-	e.appendEvent(event)
+	return err
 }
 
 // emitDenylistTriggered emits a checkpoint_denylist_triggered event.
-func (e *Engine) emitDenylistTriggered(files []string) {
-	seq := e.eventSeq.Add(1)
-	event := NewEvent(
-		e.invocationID, seq,
-		EventKindCheckpointDenylistTriggered,
+func (e *Engine) emitDenylistTriggered(files []string) error {
+	_, err := e.eventWriter.Append(
+		e.eventsPath,
+		e.invocationID,
+		string(EventKindCheckpointDenylistTriggered),
 		CheckpointDenylistTriggeredData(files),
-		e.clock(),
+		invocationevents.AppendOptions{},
 	)
-	e.appendEvent(event)
-}
-
-// appendEvent appends an event to events.jsonl.
-func (e *Engine) appendEvent(event Event) {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return
-	}
-	data = append(data, '\n')
-
-	// Best-effort append
-	f, err := os.OpenFile(e.eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-
-	_, _ = f.Write(data)
+	return err
 }

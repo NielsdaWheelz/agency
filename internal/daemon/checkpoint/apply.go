@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -22,6 +23,7 @@ type Applier struct {
 	runner         exec.CommandRunner
 	fsys           fs.FS
 	clock          func() time.Time
+	eventWriter    invocationevents.Appender
 }
 
 // NewApplier creates a new checkpoint applier.
@@ -31,6 +33,30 @@ func NewApplier(
 	fsys fs.FS,
 	clock func() time.Time,
 ) *Applier {
+	return NewApplierWithWriter(
+		invocationID,
+		sandboxPath,
+		checkpointsDir,
+		eventsPath,
+		runner,
+		fsys,
+		clock,
+		invocationevents.NewWriter(clock),
+	)
+}
+
+// NewApplierWithWriter creates a checkpoint applier using a shared invocation
+// event writer.
+func NewApplierWithWriter(
+	invocationID, sandboxPath, checkpointsDir, eventsPath string,
+	runner exec.CommandRunner,
+	fsys fs.FS,
+	clock func() time.Time,
+	eventWriter invocationevents.Appender,
+) *Applier {
+	if eventWriter == nil {
+		eventWriter = invocationevents.NewWriter(clock)
+	}
 	return &Applier{
 		invocationID:   invocationID,
 		sandboxPath:    sandboxPath,
@@ -39,6 +65,7 @@ func NewApplier(
 		runner:         runner,
 		fsys:           fsys,
 		clock:          clock,
+		eventWriter:    eventWriter,
 	}
 }
 
@@ -132,32 +159,14 @@ func (a *Applier) loadCheckpoints() (*CheckpointsFile, error) {
 
 // emitCheckpointApplied emits a checkpoint_applied event.
 func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string) error {
-	event := Event{
-		SchemaVersion: "1.0",
-		Seq:           loadMaxEventSeq(a.eventsPath) + 1,
-		Timestamp:     a.clock().UTC().Format(time.RFC3339),
-		InvocationID:  a.invocationID,
-		Kind:          EventKindCheckpointApplied,
-		Data:          CheckpointAppliedData(checkpointID, snapshotCommit),
-	}
-
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-
-	// Append is strict: failure should fail the operation.
-	f, err := os.OpenFile(a.eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	return nil
+	_, err := a.eventWriter.Append(
+		a.eventsPath,
+		a.invocationID,
+		string(EventKindCheckpointApplied),
+		CheckpointAppliedData(checkpointID, snapshotCommit),
+		invocationevents.AppendOptions{},
+	)
+	return err
 }
 
 // LoadCheckpointsFile is a helper to load checkpoints.json from a path.

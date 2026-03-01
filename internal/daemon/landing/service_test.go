@@ -1,6 +1,7 @@
 package landing_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/daemon/landing"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -62,6 +64,14 @@ type testHarness struct {
 	runner          *testutil.FakeCommandRunner
 	sandboxPath     string
 	integrationPath string
+}
+
+type failingEventAppender struct {
+	err error
+}
+
+func (f failingEventAppender) Append(string, string, string, map[string]any, invocationevents.AppendOptions) (invocationevents.AppendResult, error) {
+	return invocationevents.AppendResult{}, f.err
 }
 
 // setupHarness creates a landing.Service backed by a real store and a fake
@@ -743,4 +753,104 @@ func TestLand_CherryPickConflict_AbortsOnConflict(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected cherry-pick --abort to be called")
+}
+
+func readInvocationEventsAsMaps(t *testing.T, eventsPath string) []map[string]any {
+	t.Helper()
+
+	f, err := os.Open(eventsPath)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+
+	var events []map[string]any
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var line map[string]any
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &line))
+		events = append(events, line)
+	}
+	require.NoError(t, scanner.Err())
+	return events
+}
+
+func TestLand_EventsUseMonotonicInvocationSequence(t *testing.T) {
+	t.Parallel()
+
+	h := setupHarness(t)
+	h.runner.Responses[fmt.Sprintf("git -C %s rev-parse HEAD", h.integrationPath)] = testutil.FakeResponse{
+		Stdout: "abc123\n",
+	}
+	h.runner.Responses["git -C /nonexistent rev-list --count abc123..agency/sandbox-test"] = testutil.FakeResponse{
+		Stdout: "1\n",
+	}
+	h.runner.Responses[fmt.Sprintf("git -C %s cherry-pick --no-edit abc123..agency/sandbox-test", h.integrationPath)] = testutil.FakeResponse{}
+
+	result, err := h.svc.Land(context.Background(), landing.LandOpts{
+		RepoID:       "test-repo",
+		InvocationID: "test-inv",
+		RepoRoot:     "/nonexistent",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	eventsPath := h.store.InvocationEventsPath("test-repo", "test-inv")
+	events := readInvocationEventsAsMaps(t, eventsPath)
+	require.Len(t, events, 2)
+
+	kind1, ok := events[0]["kind"].(string)
+	require.True(t, ok)
+	kind2, ok := events[1]["kind"].(string)
+	require.True(t, ok)
+	assert.Equal(t, "agency.land_started", kind1)
+	assert.Equal(t, "agency.land_succeeded", kind2)
+	assert.Equal(t, float64(1), events[0]["seq"])
+	assert.Equal(t, float64(2), events[1]["seq"])
+}
+
+func TestLand_EventAppendFailureStopsOperation(t *testing.T) {
+	t.Parallel()
+
+	h := setupHarness(t)
+	h.svc = landing.NewServiceWithWriter(
+		h.store,
+		h.runner,
+		fs.NewRealFS(),
+		time.Now,
+		failingEventAppender{err: fmt.Errorf("append failed")},
+	)
+
+	_, err := h.svc.Land(context.Background(), landing.LandOpts{
+		RepoID:       "test-repo",
+		InvocationID: "test-inv",
+		RepoRoot:     "/nonexistent",
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.ELandFailed, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "append invocation event")
+	assert.Len(t, h.runner.Calls, 0, "land should fail before any git command when event append fails")
+}
+
+func TestDiscard_EventsUseMonotonicInvocationSequence(t *testing.T) {
+	t.Parallel()
+
+	h := setupHarness(t)
+	err := h.svc.Discard(context.Background(), landing.DiscardOpts{
+		RepoID:       "test-repo",
+		InvocationID: "test-inv",
+		RepoRoot:     "/nonexistent",
+	})
+	require.NoError(t, err)
+
+	eventsPath := h.store.InvocationEventsPath("test-repo", "test-inv")
+	events := readInvocationEventsAsMaps(t, eventsPath)
+	require.Len(t, events, 2)
+
+	kind1, ok := events[0]["kind"].(string)
+	require.True(t, ok)
+	kind2, ok := events[1]["kind"].(string)
+	require.True(t, ok)
+	assert.Equal(t, "agency.discard_started", kind1)
+	assert.Equal(t, "agency.discard_succeeded", kind2)
+	assert.Equal(t, float64(1), events[0]["seq"])
+	assert.Equal(t, float64(2), events[1]["seq"])
 }

@@ -1378,7 +1378,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
 	}
 
-	cpEngine := checkpoint.NewEngine(
+	cpEngine := checkpoint.NewEngineWithWriter(
 		result.InvocationID,
 		repoID,
 		result.SandboxPath,
@@ -1389,6 +1389,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		s.Runner,
 		s.FS,
 		s.Clock,
+		s.InvocationEvents,
 	)
 
 	// Create supervised process record

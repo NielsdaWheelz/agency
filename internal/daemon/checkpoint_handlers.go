@@ -90,7 +90,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	eventsPath := s.Store.InvocationEventsPath(repoID, invocationID)
 
 	// Create applier and apply checkpoint
-	applier := checkpoint.NewApplier(
+	applier := checkpoint.NewApplierWithWriter(
 		invocationID,
 		sandboxPath,
 		checkpointsDir,
@@ -98,6 +98,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		s.Runner,
 		s.FS,
 		s.Clock,
+		s.InvocationEvents,
 	)
 
 	cp, err := applier.Apply(r.Context(), req.CheckpointID)

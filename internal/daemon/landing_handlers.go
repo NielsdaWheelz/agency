@@ -70,7 +70,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	defer func() { _ = unlock() }()
 
 	// Create landing service
-	landingSvc := landing.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	landingSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
 
 	// Execute land
 	result, err := landingSvc.Land(r.Context(), landing.LandOpts{
@@ -189,7 +189,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	defer func() { _ = unlock() }()
 
 	// Create landing service
-	landingSvc := landing.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	landingSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
 
 	// Execute discard with stop callback
 	err = landingSvc.Discard(r.Context(), landing.DiscardOpts{
