@@ -1445,6 +1445,10 @@ type AgentRestartOpts struct {
 	// CheckpointID is the explicit checkpoint to restore before restart.
 	CheckpointID int
 
+	// InteractiveHistory enables arrow-key timeline selection that maps deterministically
+	// to a checkpoint before executing canonical restart.
+	InteractiveHistory bool
+
 	// RunnerArgs are additional arguments for restarted runner execution.
 	RunnerArgs []string
 
@@ -1456,14 +1460,61 @@ type AgentRestartOpts struct {
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
+
+	// IsInteractive reports whether stdin/stderr are interactive terminals.
+	// If nil, defaults to terminal checks on os.Stdin/os.Stderr.
+	IsInteractive func() bool
+
+	// HistorySelector overrides the interactive selector implementation.
+	// Primarily for tests; nil uses the built-in selector.
+	HistorySelector historySelectorFunc
+
+	// HistorySelectorIn is the selector input stream. Defaults to os.Stdin.
+	HistorySelectorIn io.Reader
+
+	// HistorySelectorOut is the selector render output stream. Defaults to stderr.
+	HistorySelectorOut io.Writer
 }
 
-// AgentRestart performs invocation-scoped restart from an explicit checkpoint.
-func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestartOpts, stdout, stderr io.Writer) error {
-	_ = stderr
+type historySelectorItem struct {
+	Entry              daemon.TimelineEntryDTO
+	Summary            string
+	MappedCheckpointID int
+}
 
-	if opts.CheckpointID <= 0 {
+type historySelectorFunc func(items []historySelectorItem, input io.Reader, output io.Writer) (historySelectorItem, error)
+
+const (
+	maxHistorySelectorEntries = 5000
+	historySelectorWindowSize = 12
+)
+
+// AgentRestart performs invocation-scoped restart from an explicit checkpoint
+// or an interactively selected timeline point.
+func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestartOpts, stdout, stderr io.Writer) error {
+	if opts.CheckpointID < 0 {
 		return errors.New(errors.EUsage, "--checkpoint must be a positive integer")
+	}
+	if opts.InteractiveHistory && opts.CheckpointID > 0 {
+		return errors.New(errors.EUsage, "use either --checkpoint or --history, not both")
+	}
+	if !opts.InteractiveHistory && opts.CheckpointID <= 0 {
+		return errors.New(errors.EUsage, "--checkpoint must be a positive integer (or pass --history)")
+	}
+	if opts.InteractiveHistory {
+		isInteractiveFn := opts.IsInteractive
+		if isInteractiveFn == nil {
+			isInteractiveFn = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
+		}
+		if !isInteractiveFn() {
+			return errors.NewWithDetails(
+				errors.ENotInteractive,
+				"interactive history selection requires a terminal",
+				map[string]string{
+					"hint": "run this command in an interactive terminal or use --checkpoint <id>",
+				},
+			)
+		}
 	}
 
 	var dataDir string
@@ -1499,6 +1550,56 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
+	if opts.InteractiveHistory {
+		timelineEntries, err := fetchAllTimelineEntries(ctx, client, opts.InvocationRef, repoCtx.RepoID)
+		if err != nil {
+			return err
+		}
+		checkpoints, err := fetchAllCheckpoints(ctx, client, opts.InvocationRef, repoCtx.RepoID)
+		if err != nil {
+			return err
+		}
+		if len(timelineEntries) == 0 {
+			return errors.NewWithDetails(
+				errors.ECheckpointNotFound,
+				"interactive history selection requires timeline entries",
+				map[string]string{
+					"hint": "no history is available for this invocation; use --checkpoint <id>",
+				},
+			)
+		}
+
+		items := buildHistorySelectorItems(timelineEntries, checkpoints)
+		selectorInput := opts.HistorySelectorIn
+		if selectorInput == nil {
+			selectorInput = os.Stdin
+		}
+		selectorOutput := opts.HistorySelectorOut
+		if selectorOutput == nil {
+			selectorOutput = stderr
+		}
+
+		selector := opts.HistorySelector
+		if selector == nil {
+			if _, ok := selectorInput.(*os.File); ok && selectorInput == os.Stdin {
+				selector = runInteractiveHistorySelectorTTY
+			} else {
+				selector = runInteractiveHistorySelector
+			}
+		}
+
+		selected, err := selector(items, selectorInput, selectorOutput)
+		if err != nil {
+			return err
+		}
+
+		checkpointID, err := mapTimelineSelectionToCheckpoint(timelineEntries, checkpoints, selected.Entry.EntryID)
+		if err != nil {
+			return err
+		}
+		opts.CheckpointID = checkpointID
+	}
+
 	resp, err := client.RestartFromCheckpoint(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.RestartFromCheckpointOpts{
 		CheckpointID: opts.CheckpointID,
 		RunnerArgs:   opts.RunnerArgs,
@@ -1528,6 +1629,329 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	_, _ = fmt.Fprintf(stdout, "  restored_at:      %s\n", resp.RestoredAt)
 	_, _ = fmt.Fprintf(stdout, "  pid:              %d\n", resp.PID)
 	return nil
+}
+
+func fetchAllTimelineEntries(ctx context.Context, client *daemonclient.Client, invocationRef, repoID string) ([]daemon.TimelineEntryDTO, error) {
+	entries := make([]daemon.TimelineEntryDTO, 0, 128)
+	cursor := ""
+
+	for {
+		result, err := client.GetInvocationTimeline(ctx, invocationRef, repoID, daemonclient.GetInvocationTimelineOpts{
+			Limit:  500,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		entries = append(entries, result.Entries...)
+		if len(entries) > maxHistorySelectorEntries {
+			return nil, errors.NewWithDetails(
+				errors.EInvalidArgument,
+				fmt.Sprintf("interactive history selector supports at most %d timeline entries", maxHistorySelectorEntries),
+				map[string]string{
+					"hint": "narrow invocation scope or use explicit --checkpoint <id>",
+				},
+			)
+		}
+
+		if result.NextCursor == "" {
+			return entries, nil
+		}
+		if result.NextCursor == cursor {
+			return nil, errors.New(errors.EInternal, "timeline pagination cursor did not advance")
+		}
+		cursor = result.NextCursor
+	}
+}
+
+func fetchAllCheckpoints(ctx context.Context, client *daemonclient.Client, invocationRef, repoID string) ([]daemon.CheckpointDTO, error) {
+	checkpoints := make([]daemon.CheckpointDTO, 0, 32)
+	cursor := ""
+
+	for {
+		result, err := client.ListCheckpoints(ctx, invocationRef, repoID, daemonclient.ListCheckpointsOpts{
+			Limit:  500,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		checkpoints = append(checkpoints, result.Checkpoints...)
+		if len(checkpoints) > maxHistorySelectorEntries {
+			return nil, errors.NewWithDetails(
+				errors.EInvalidArgument,
+				fmt.Sprintf("interactive history selector supports at most %d checkpoints", maxHistorySelectorEntries),
+				map[string]string{
+					"hint": "use explicit --checkpoint <id> for very large histories",
+				},
+			)
+		}
+
+		if result.NextCursor == "" {
+			return checkpoints, nil
+		}
+		if result.NextCursor == cursor {
+			return nil, errors.New(errors.EInternal, "checkpoint pagination cursor did not advance")
+		}
+		cursor = result.NextCursor
+	}
+}
+
+// Deterministic mapping rule:
+// select the latest checkpoint_event (with checkpoint_id) at or before the chosen timeline entry.
+func mapTimelineSelectionToCheckpoint(entries []daemon.TimelineEntryDTO, checkpoints []daemon.CheckpointDTO, selectedEntryID string) (int, error) {
+	if selectedEntryID == "" {
+		return 0, errors.New(errors.EInvalidArgument, "selected timeline entry is required")
+	}
+
+	checkpointSet := make(map[int]struct{}, len(checkpoints))
+	for _, cp := range checkpoints {
+		checkpointSet[cp.ID] = struct{}{}
+	}
+
+	mappedCheckpointID := 0
+	foundSelection := false
+	for _, entry := range entries {
+		if checkpointID, ok := checkpointIDFromTimelineEntry(entry); ok {
+			mappedCheckpointID = checkpointID
+		}
+		if entry.EntryID == selectedEntryID {
+			foundSelection = true
+			break
+		}
+	}
+
+	if !foundSelection {
+		return 0, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"selected timeline entry was not found",
+			map[string]string{"entry_id": selectedEntryID},
+		)
+	}
+	if mappedCheckpointID <= 0 {
+		return 0, errors.NewWithDetails(
+			errors.ECheckpointNotFound,
+			"no checkpoint mapping exists at or before the selected history point",
+			map[string]string{
+				"entry_id": selectedEntryID,
+				"hint":     "select a later history entry or pass --checkpoint <id>",
+			},
+		)
+	}
+	if _, ok := checkpointSet[mappedCheckpointID]; !ok {
+		return 0, errors.NewWithDetails(
+			errors.ECheckpointNotFound,
+			fmt.Sprintf("mapped checkpoint %d is no longer available", mappedCheckpointID),
+			map[string]string{
+				"entry_id":      selectedEntryID,
+				"checkpoint_id": fmt.Sprintf("%d", mappedCheckpointID),
+				"hint":          "run 'agency checkpoint ls --invocation <id>' and retry with --checkpoint",
+			},
+		)
+	}
+	return mappedCheckpointID, nil
+}
+
+func checkpointIDFromTimelineEntry(entry daemon.TimelineEntryDTO) (int, bool) {
+	if entry.Kind != "checkpoint_event" {
+		return 0, false
+	}
+	value, ok := timelineInt(entry.Data, "checkpoint_id")
+	if !ok || value <= 0 {
+		return 0, false
+	}
+	return int(value), true
+}
+
+func buildHistorySelectorItems(entries []daemon.TimelineEntryDTO, checkpoints []daemon.CheckpointDTO) []historySelectorItem {
+	checkpointSet := make(map[int]struct{}, len(checkpoints))
+	for _, cp := range checkpoints {
+		checkpointSet[cp.ID] = struct{}{}
+	}
+
+	items := make([]historySelectorItem, 0, len(entries))
+	latestCheckpointID := 0
+	for _, entry := range entries {
+		if checkpointID, ok := checkpointIDFromTimelineEntry(entry); ok {
+			latestCheckpointID = checkpointID
+		}
+		mappedCheckpointID := 0
+		if latestCheckpointID > 0 {
+			if _, ok := checkpointSet[latestCheckpointID]; ok {
+				mappedCheckpointID = latestCheckpointID
+			}
+		}
+		items = append(items, historySelectorItem{
+			Entry:              entry,
+			Summary:            timelineEntrySummary(entry),
+			MappedCheckpointID: mappedCheckpointID,
+		})
+	}
+	return items
+}
+
+type historySelectorKey int
+
+const (
+	historySelectorKeyUnknown historySelectorKey = iota
+	historySelectorKeyUp
+	historySelectorKeyDown
+	historySelectorKeyConfirm
+	historySelectorKeyCancel
+)
+
+func readHistorySelectorKey(input io.Reader) (historySelectorKey, error) {
+	var b [1]byte
+	if _, err := io.ReadFull(input, b[:]); err != nil {
+		return historySelectorKeyUnknown, err
+	}
+
+	switch b[0] {
+	case '\r', '\n':
+		return historySelectorKeyConfirm, nil
+	case 'q', 'Q', 3:
+		return historySelectorKeyCancel, nil
+	case 'k', 'K':
+		return historySelectorKeyUp, nil
+	case 'j', 'J':
+		return historySelectorKeyDown, nil
+	case 0x1b:
+		var seq [2]byte
+		if _, err := io.ReadFull(input, seq[:]); err != nil {
+			// Partial escape sequence; ignore and continue.
+			return historySelectorKeyUnknown, nil
+		}
+		if seq[0] == '[' {
+			switch seq[1] {
+			case 'A':
+				return historySelectorKeyUp, nil
+			case 'B':
+				return historySelectorKeyDown, nil
+			}
+		}
+	}
+
+	return historySelectorKeyUnknown, nil
+}
+
+func runInteractiveHistorySelectorTTY(items []historySelectorItem, input io.Reader, output io.Writer) (historySelectorItem, error) {
+	fileInput, ok := input.(*os.File)
+	if !ok {
+		return runInteractiveHistorySelector(items, input, output)
+	}
+
+	oldState, err := term.MakeRaw(int(fileInput.Fd()))
+	if err != nil {
+		return historySelectorItem{}, errors.Wrap(errors.EInternal, "failed to enable terminal raw mode", err)
+	}
+	defer func() { _ = term.Restore(int(fileInput.Fd()), oldState) }()
+
+	_, _ = fmt.Fprint(output, "\x1b[?25l")
+	defer func() { _, _ = fmt.Fprint(output, "\x1b[?25h") }()
+
+	selected, err := runInteractiveHistorySelector(items, input, output)
+	_, _ = fmt.Fprint(output, "\x1b[2J\x1b[H")
+	return selected, err
+}
+
+func runInteractiveHistorySelector(items []historySelectorItem, input io.Reader, output io.Writer) (historySelectorItem, error) {
+	if len(items) == 0 {
+		return historySelectorItem{}, errors.New(errors.ECheckpointNotFound, "no timeline entries available for selection")
+	}
+
+	selectedIdx := len(items) - 1 // default to latest timeline entry
+	renderInteractiveHistorySelector(output, items, selectedIdx)
+
+	for {
+		key, err := readHistorySelectorKey(input)
+		if err != nil {
+			if err == io.EOF {
+				return historySelectorItem{}, errors.New(errors.EAborted, "history selection canceled")
+			}
+			return historySelectorItem{}, errors.Wrap(errors.EInternal, "failed to read selector input", err)
+		}
+
+		switch key {
+		case historySelectorKeyUp:
+			if selectedIdx > 0 {
+				selectedIdx--
+				renderInteractiveHistorySelector(output, items, selectedIdx)
+			}
+		case historySelectorKeyDown:
+			if selectedIdx < len(items)-1 {
+				selectedIdx++
+				renderInteractiveHistorySelector(output, items, selectedIdx)
+			}
+		case historySelectorKeyConfirm:
+			return items[selectedIdx], nil
+		case historySelectorKeyCancel:
+			return historySelectorItem{}, errors.New(errors.EAborted, "history selection canceled")
+		default:
+			// Ignore unsupported keys.
+		}
+	}
+}
+
+func renderInteractiveHistorySelector(output io.Writer, items []historySelectorItem, selectedIdx int) {
+	_, _ = fmt.Fprint(output, "\x1b[2J\x1b[H")
+	_, _ = fmt.Fprintln(output, "select history point to restart from")
+	_, _ = fmt.Fprintln(output, "controls: up/down arrows (or k/j), enter confirm, q cancel")
+	_, _ = fmt.Fprintln(output, "")
+
+	start, end := historySelectorWindow(len(items), selectedIdx, historySelectorWindowSize)
+	for i := start; i < end; i++ {
+		marker := " "
+		if i == selectedIdx {
+			marker = ">"
+		}
+		timestamp := items[i].Entry.Timestamp
+		if timestamp == "" {
+			timestamp = "-"
+		}
+		checkpointLabel := "-"
+		if items[i].MappedCheckpointID > 0 {
+			checkpointLabel = fmt.Sprintf("%d", items[i].MappedCheckpointID)
+		}
+		_, _ = fmt.Fprintf(
+			output,
+			"%s %s  cp:%-4s %-16s %s\n",
+			marker,
+			timestamp,
+			checkpointLabel,
+			items[i].Entry.Kind,
+			truncateTimelineText(items[i].Summary, 96),
+		)
+	}
+
+	if start > 0 || end < len(items) {
+		_, _ = fmt.Fprintf(output, "\nshowing %d-%d of %d entries\n", start+1, end, len(items))
+	}
+}
+
+func historySelectorWindow(total, selected, size int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if size <= 0 || size >= total {
+		return 0, total
+	}
+
+	half := size / 2
+	start := selected - half
+	if start < 0 {
+		start = 0
+	}
+	end := start + size
+	if end > total {
+		end = total
+		start = end - size
+		if start < 0 {
+			start = 0
+		}
+	}
+	return start, end
 }
 
 func resolveBoundedPromptInput(prompt, promptFile string, maxBytes int, missingPromptMessage, emptyPromptMessage string) (string, error) {

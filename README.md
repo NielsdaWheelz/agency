@@ -49,9 +49,11 @@ agency agent chat <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
 agency checkpoint ls --invocation <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
+agency agent restart <invocation-id> --history     # interactive history selector (tty only)
 ```
 
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
+for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
 
 ## how it works
 

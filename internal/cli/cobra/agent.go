@@ -716,26 +716,48 @@ Example:
 func newAgentRestartCmd() *cobra.Command {
 	var repoFlag string
 	var checkpointID int
+	var historySelector bool
 	var runnerArgs []string
 	var envAssignments []string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "restart <invocation_ref>",
-		Short: "Restart headless invocation from checkpoint",
-		Long: `Restart a headless invocation from an explicit checkpoint in one flow.
+		Short: "Restart headless invocation from checkpoint/history",
+		Long: `Restart a headless invocation in one flow.
 
 This command performs checkpoint restore and runner restart as a single
 invocation-scoped operation.
 
+Use either:
+  - --checkpoint <id> for explicit/scripted restart
+  - --history for interactive arrow-key selection over timeline history
+
+Deterministic mapping rule for --history:
+  the selected timeline entry resolves to the latest checkpoint_event at or before
+  that entry. If no valid checkpoint mapping exists, the command fails with a
+  deterministic error and guidance.
+
 Example:
   agency agent restart 20260131 --checkpoint 3
+  agency agent restart 20260131 --history
   agency agent restart --repo abc123 my-invocation --checkpoint 7
   agency agent restart 20260131 --checkpoint 3 --runner-arg "--model=sonnet"
   agency agent restart 20260131 --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
   agency agent restart --json 20260131 --checkpoint 3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			checkpointProvided := cmd.Flags().Changed("checkpoint")
+			if historySelector && checkpointProvided {
+				return errors.New(errors.EUsage, "use either --checkpoint or --history, not both")
+			}
+			if !historySelector && !checkpointProvided {
+				return errors.New(errors.EUsage, "either --checkpoint <id> or --history is required")
+			}
+			if checkpointProvided && checkpointID <= 0 {
+				return errors.New(errors.EUsage, "--checkpoint must be a positive integer")
+			}
+
 			envMap, err := parseEnvAssignments(envAssignments)
 			if err != nil {
 				return errors.New(errors.EUsage, err.Error())
@@ -751,22 +773,23 @@ Example:
 			ctx := context.Background()
 
 			return commands.AgentRestart(ctx, cr, fsys, cwd, commands.AgentRestartOpts{
-				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
-				CheckpointID:  checkpointID,
-				RunnerArgs:    runnerArgs,
-				Env:           envMap,
-				JSON:          jsonOut,
+				InvocationRef:      args[0],
+				RepoFlag:           repoFlag,
+				CheckpointID:       checkpointID,
+				InteractiveHistory: historySelector,
+				RunnerArgs:         runnerArgs,
+				Env:                envMap,
+				JSON:               jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore (required)")
+	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
+	cmd.Flags().BoolVar(&historySelector, "history", false, "Select timeline history interactively (arrow keys)")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to restarted runner (repeatable)")
 	cmd.Flags().StringArrayVar(&envAssignments, "env", nil, "Environment override KEY=VALUE for restart (repeatable)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
-	_ = cmd.MarkFlagRequired("checkpoint")
 
 	return cmd
 }
