@@ -28,6 +28,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -181,12 +182,14 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	// Validation Gate 6: runner is recognized
-	if req.Runner != "claude" && req.Runner != "codex" {
+	// Validation Gate 6: runner is recognized and canonicalized.
+	canonicalRunner, err := runners.Canonicalize(req.Runner)
+	if err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusBadRequest, string(errors.ERunnerNotFound), "unrecognized runner: "+req.Runner, "valid runners: claude, codex")
+		s.writeError(w, http.StatusBadRequest, string(errors.ERunnerNotFound), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
 		return
 	}
+	req.Runner = canonicalRunner
 
 	// Load user config for runner resolution
 	userCfg, err := s.LoadUserConfig()
@@ -199,12 +202,31 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
 	if err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured")
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.ERunnerNotConfigured
+		}
+		s.writeError(
+			w,
+			http.StatusBadRequest,
+			string(code),
+			"failed to resolve runner command: "+err.Error(),
+			"set explicit config.runners.<runner-id> mapping to an installed executable",
+		)
 		return
 	}
 
 	// Build command arguments
-	args := buildRunnerArgs(req.Runner, req.Prompt, req.RunnerArgs)
+	args, err := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, req.SandboxPath, req.RunnerArgs)
+	if err != nil {
+		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.ERunnerNotFound
+		}
+		s.writeError(w, http.StatusBadRequest, string(code), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
+		return
+	}
 
 	// Create logs directory
 	logsDir := s.Store.SandboxLogsDir(req.RepoID, req.InvocationID)
@@ -329,6 +351,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
 	err = s.Store.UpdateInvocationMeta(req.RepoID, req.InvocationID, func(m *store.InvocationMeta) {
 		m.Status = store.InvocationStatusRunning
+		m.Runner = req.Runner
 		m.PID = &pid
 		m.PGID = &pgid
 		m.DaemonPID = &daemonPID
@@ -777,31 +800,6 @@ func (s *Server) markInvocationFailed(repoID, invocationID, exitReason string) {
 	})
 }
 
-// buildRunnerArgs builds the command arguments for a runner.
-func buildRunnerArgs(runner, prompt string, extraArgs []string) []string {
-	var args []string
-
-	switch runner {
-	case "claude":
-		// claude -p --output-format stream-json --verbose "<prompt>"
-		args = append(args, "-p", "--output-format", "stream-json", "--verbose")
-		args = append(args, extraArgs...)
-		args = append(args, prompt)
-	case "codex":
-		// codex exec --json "<prompt>"
-		// Note: -C <dir> is handled via cmd.Dir
-		args = append(args, "exec", "--json")
-		args = append(args, extraArgs...)
-		args = append(args, prompt)
-	default:
-		// Unknown runner, just pass prompt as first arg
-		args = append(args, extraArgs...)
-		args = append(args, prompt)
-	}
-
-	return args
-}
-
 // safeIntPtr returns the int value of a pointer or 0 if nil.
 func safeIntPtr(p *int) int {
 	if p == nil {
@@ -932,17 +930,27 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// 3. Validate runner
-	if req.Runner != "claude" && req.Runner != "codex" {
+	// 3. Validate + canonicalize runner.
+	canonicalRunner, err := runners.Canonicalize(req.Runner)
+	if err != nil {
 		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.ERunnerNotFound),
-			"unrecognized runner: "+req.Runner, "valid runners: claude, codex", req.ClientRequestID)
+			err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "), req.ClientRequestID)
 		return
 	}
+	req.Runner = canonicalRunner
 
 	// 4. Validate reserved flags in runner args
 	if err := validateRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.ERunnerArgConflict),
-			err.Error(), "remove reserved flags from runner_args", req.ClientRequestID)
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.ERunnerArgConflict
+		}
+		hint := "remove reserved flags from runner_args"
+		if code == errors.ERunnerNotFound {
+			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+		}
+		s.writeControlPlaneError(w, http.StatusBadRequest, string(code),
+			err.Error(), hint, req.ClientRequestID)
 		return
 	}
 
@@ -1111,6 +1119,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	_ = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(m *store.InvocationMeta) {
 		m.Status = store.InvocationStatusRunning
+		m.Runner = req.Runner
 		m.PID = &pid
 		m.PGID = &pgid
 		m.DaemonPID = &daemonPID
@@ -1174,37 +1183,7 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 
 // validateRunnerArgs checks for reserved flags in runner args.
 func validateRunnerArgs(runner string, args []string) error {
-	reservedClaude := []string{
-		"--output-format", "-p", "--print", "--verbose",
-	}
-	reservedCodex := []string{
-		"exec", "--json", "-C", "--cd",
-	}
-
-	var reserved []string
-	switch runner {
-	case "claude":
-		reserved = reservedClaude
-	case "codex":
-		reserved = reservedCodex
-	default:
-		return nil
-	}
-
-	for _, arg := range args {
-		// Check exact match
-		for _, r := range reserved {
-			if arg == r {
-				return fmt.Errorf("reserved flag '%s' cannot be passed via runner_args", arg)
-			}
-			// Check prefix form (e.g., --output-format=json)
-			if strings.HasPrefix(arg, r+"=") {
-				return fmt.Errorf("reserved flag '%s' cannot be passed via runner_args", r)
-			}
-		}
-	}
-
-	return nil
+	return runners.ValidateArgs(runner, args)
 }
 
 // isInsideAgencyManagedWorktree checks if a path is inside an agency-managed worktree.
@@ -1297,7 +1276,10 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	}
 
 	// Build command arguments
-	args := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
+	args, err := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to build runner args: %w", err)
+	}
 
 	// Open log files
 	rawLogPath := s.Store.SandboxRawLogPath(repoID, result.InvocationID)
@@ -1433,27 +1415,8 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 }
 
 // buildRunnerArgsWithSandbox builds the command arguments for a runner, including sandbox path for codex.
-func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []string) []string {
-	var args []string
-
-	switch runner {
-	case "claude":
-		// claude -p --output-format stream-json --verbose "<prompt>"
-		args = append(args, "-p", "--output-format", "stream-json", "--verbose")
-		args = append(args, extraArgs...)
-		args = append(args, prompt)
-	case "codex":
-		// codex -C <sandbox_path> exec --json "<prompt>"
-		// PR-05 fix: include -C flag for codex
-		args = append(args, "-C", sandboxPath, "exec", "--json")
-		args = append(args, extraArgs...)
-		args = append(args, prompt)
-	default:
-		args = append(args, extraArgs...)
-		args = append(args, prompt)
-	}
-
-	return args
+func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []string) ([]string, error) {
+	return runners.BuildHeadlessArgs(runner, prompt, sandboxPath, extraArgs)
 }
 
 // cleanupFailedInvocation cleans up after a failed invocation start.
@@ -1601,12 +1564,14 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// 2. Validate runner
-	if req.Runner != "claude" && req.Runner != "codex" {
+	// 2. Validate + canonicalize runner.
+	canonicalRunner, err := runners.Canonicalize(req.Runner)
+	if err != nil {
 		s.writeHeadedError(w, http.StatusBadRequest, string(errors.ERunnerNotFound),
-			"unrecognized runner: "+req.Runner, "valid runners: claude, codex", req.ClientRequestID, requestID)
+			err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "), req.ClientRequestID, requestID)
 		return
 	}
+	req.Runner = canonicalRunner
 
 	// 3. Validate invocation name if provided
 	if req.InvocationName != "" {

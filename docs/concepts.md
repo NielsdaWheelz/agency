@@ -46,7 +46,9 @@ worktrees are independent of agents. you can have zero, one, or many agents runn
 
 ## agent invocations
 
-an **invocation** is a single execution of claude or codex. each invocation gets its own **sandbox** — a throwaway git worktree branched off the integration worktree. the agent works in the sandbox and can't touch the integration tree.
+an **invocation** is a single execution of a configured runner. each invocation gets its own **sandbox** — a throwaway git worktree branched off the integration worktree. the agent works in the sandbox and can't touch the integration tree.
+
+runner ids are capability-based (`claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`) and runner commands must be explicitly configured in user config (`config.runners`). legacy `claude` input aliases to `claude-code`.
 
 ### headed mode (interactive)
 

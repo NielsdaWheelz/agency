@@ -407,7 +407,12 @@ func TestGetAdapter(t *testing.T) {
 		wantNil bool
 	}{
 		{"claude", false},
+		{"claude-code", false},
 		{"codex", false},
+		{"amp", true},
+		{"opencode", true},
+		{"cursor-cli", true},
+		{"droid", true},
 		{"unknown", true},
 		{"", true},
 	}

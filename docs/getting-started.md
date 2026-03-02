@@ -4,7 +4,7 @@ this guide walks through agency from setup to merge.
 
 ## how agency works
 
-agency creates isolated git workspaces, launches AI agents (claude/codex) inside them via tmux, tracks their progress with automatic checkpoints, and helps you land and merge the results. a background daemon supervises everything.
+agency creates isolated git workspaces, launches AI agents (configured runners) inside them via tmux, tracks their progress with automatic checkpoints, and helps you land and merge the results. a background daemon supervises everything.
 
 ```
 YOUR REPO                        AGENCY (managed by daemon)
@@ -24,7 +24,7 @@ HIERARCHY:
 
   Repo ──► Worktree ──► Agent Invocation ──► Sandbox
   (yours)  (stable       (one run of         (isolated copy
-           branch)       claude/codex)        agent works in)
+           branch)       configured runner)   agent works in)
 
 LIFECYCLE:
 
@@ -34,7 +34,7 @@ LIFECYCLE:
         │                    │                   │                   │
         ▼                    ▼                   ▼                   ▼
     creates             launches            applies              pushes to
-    isolated            claude/codex        sandbox changes      GitHub +
+    isolated            configured runner   sandbox changes      GitHub +
     branch              in sandbox          to worktree          merges PR
 
   DETACH FROM TMUX: press Ctrl+b, then d (session keeps running)
@@ -47,7 +47,26 @@ agency requires:
 - `git`
 - `tmux`
 - `gh` (authenticated via `gh auth login`)
-- a runner on PATH (`claude` or `codex`)
+- explicit runner mappings in user config (`$AGENCY_CONFIG_DIR/config.json`; defaults to `~/Library/Preferences/agency/config.json` on macOS and `~/.config/agency/config.json` on Linux)
+
+example:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  },
+  "runners": {
+    "claude-code": "claude",
+    "codex": "codex"
+  }
+}
+```
+
+supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`.
+legacy `claude` input is accepted as an alias for `claude-code`.
 
 verify everything is set up:
 
@@ -129,7 +148,7 @@ cd $(agency worktree path add-user-auth)              # cd into it
 
 ## step 3: start an agent
 
-an **agent invocation** is one execution of claude or codex inside an isolated sandbox. the sandbox is branched off your worktree — the agent can't mess up your integration branch.
+an **agent invocation** is one execution of a configured runner inside an isolated sandbox. the sandbox is branched off your worktree — the agent can't mess up your integration branch.
 
 ### headed mode (interactive)
 
@@ -137,7 +156,7 @@ an **agent invocation** is one execution of claude or codex inside an isolated s
 agency agent start --worktree add-user-auth
 ```
 
-this creates a tmux session with claude running. you interact directly.
+this creates a tmux session with your configured default runner. you interact directly.
 
 - **detach** (keep running): press `Ctrl+b` then `d`
 - **re-attach**: `agency agent attach <invocation-id>`

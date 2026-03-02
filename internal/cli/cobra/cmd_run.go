@@ -60,7 +60,7 @@ By default, attaches to the tmux session after creation.`,
 
 	cmd.Flags().StringVar(&name, "name", "", "run name (required, 2-40 chars, lowercase alphanumeric with hyphens)")
 	cmd.Flags().StringVar(&repoPath, "repo", "", "target a specific repo (default: current directory)")
-	cmd.Flags().StringVar(&runner, "runner", "", "runner name: claude or codex (default: user config defaults.runner)")
+	cmd.Flags().StringVar(&runner, "runner", "", "runner name (claude-code, codex, amp, opencode, cursor-cli, droid; legacy 'claude' alias accepted)")
 	cmd.Flags().StringVar(&parent, "parent", "", "parent branch (default: current branch)")
 	cmd.Flags().BoolVar(&detached, "detached", false, "do not attach to tmux session after creation")
 

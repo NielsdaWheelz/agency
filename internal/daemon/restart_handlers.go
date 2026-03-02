@@ -16,6 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
@@ -98,12 +99,31 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		effectiveRunnerArgs = append([]string(nil), meta.RunnerArgs...)
 	}
 	if err := validateRunnerArgs(meta.Runner, effectiveRunnerArgs); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.ERunnerArgConflict
+		}
+		hint := "remove reserved flags from runner_args"
+		if code == errors.ERunnerNotFound {
+			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+		}
 		s.writeRestartError(
 			w,
 			http.StatusBadRequest,
-			string(errors.ERunnerArgConflict),
+			string(code),
 			err.Error(),
-			"remove reserved flags from runner_args",
+			hint,
+		)
+		return
+	}
+	canonicalRunner, err := runners.Canonicalize(meta.Runner)
+	if err != nil {
+		s.writeRestartError(
+			w,
+			http.StatusBadRequest,
+			string(errors.ERunnerNotFound),
+			err.Error(),
+			"valid runners: "+strings.Join(runners.CanonicalIDs(), ", "),
 		)
 		return
 	}
@@ -159,7 +179,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	}
 
 	startReq := ControlPlaneStartRequest{
-		Runner:             meta.Runner,
+		Runner:             canonicalRunner,
 		Prompt:             promptText,
 		RunnerArgs:         effectiveRunnerArgs,
 		Env:                effectiveEnv,
@@ -205,6 +225,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	restartedRunnerArgs := append([]string(nil), effectiveRunnerArgs...)
 	_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
 		m.Status = store.InvocationStatusRunning
+		m.Runner = canonicalRunner
 		m.PID = &pid
 		m.PGID = &pgid
 		m.DaemonPID = &daemonPID

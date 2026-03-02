@@ -41,8 +41,42 @@ the `agency.json` file configures agency for a repository. it is created by `age
 | `scripts.verify.timeout` | no | `30m` | verify script timeout |
 | `scripts.archive.path` | yes | - | path to archive script |
 | `scripts.archive.timeout` | no | `5m` | archive script timeout |
-| `defaults.runner` | no | `claude` | default runner (`claude` or `codex`) |
+| `defaults.runner` | no | `claude-code` | default runner id (for example `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`) |
 | `defaults.parent_branch` | no | `main` | default branch to branch from |
+
+`defaults.runner` selects the runner id, but runner execution still requires explicit command mapping in user config (`config.runners.<id>`).
+
+## user config (`config.json`)
+
+agency also uses user-level config at:
+- macOS: `~/Library/Preferences/agency/config.json`
+- Linux: `${XDG_CONFIG_HOME:-~/.config}/agency/config.json`
+- override: `$AGENCY_CONFIG_DIR/config.json`
+
+minimal example:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "parent_branch": "main"
+  },
+  "runners": {
+    "claude-code": "claude",
+    "codex": "codex"
+  },
+  "editors": {
+    "code": "code"
+  }
+}
+```
+
+runner policy:
+- runner ids are capability-based: `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`
+- `claude` is accepted as an input alias to `claude-code`
+- **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility key `runners.claude`) to an executable command
 
 ### timeout format
 
@@ -154,7 +188,7 @@ restart your shell after configuration.
 
 - **commands**: `agency <TAB>` shows all subcommands
 - **run references**: `agency show <TAB>` completes run names and ids
-- **runners**: `agency run --runner <TAB>` completes runner names (claude, codex)
+- **runners**: `agency run --runner <TAB>` completes configured runner names
 - **merge strategies**: `agency merge x --<TAB>` completes `--squash`, `--merge`, `--rebase`
 
 ## shell integration

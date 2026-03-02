@@ -28,8 +28,10 @@ func setupResumeTestEnv(t *testing.T, runID string, setupMeta, createWorktree bo
 	tempDir := t.TempDir()
 	repoDir := filepath.Join(tempDir, "repo")
 	dataDir := filepath.Join(tempDir, "data")
+	configDir := filepath.Join(tempDir, "config")
 
 	require.NoError(t, os.MkdirAll(repoDir, 0755))
+	require.NoError(t, os.MkdirAll(configDir, 0755))
 
 	// Initialize git repo
 	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".git"), 0755))
@@ -55,6 +57,20 @@ func setupResumeTestEnv(t *testing.T, runID string, setupMeta, createWorktree bo
 	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "agency.json"), []byte(agencyJSON), 0644))
 
 	originURL := "git@github.com:test/repo.git"
+
+	// Force explicit runner config for resume command paths.
+	userCfg := `{
+		"version": 1,
+		"defaults": {
+			"runner": "claude",
+			"editor": "code"
+		},
+		"runners": {
+			"claude": "claude"
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userCfg), 0o644))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	// Create fake command runner
 	cr := testutil.NewFakeCommandRunner()

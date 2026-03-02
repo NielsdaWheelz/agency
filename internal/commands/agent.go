@@ -24,6 +24,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
@@ -33,7 +34,7 @@ type AgentStartOpts struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the runner id (claude-code, codex, amp, opencode, cursor-cli, droid; claude alias supported).
 	Runner string
 
 	// Headless indicates whether to run in headless mode.
@@ -79,19 +80,9 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	// Validate runner
-	runner := opts.Runner
-	if runner == "" {
-		runner = "claude"
-	}
-	if runner != "claude" && runner != "codex" {
-		return errors.NewWithDetails(
-			errors.EUsage,
-			"invalid runner: "+runner,
-			map[string]string{
-				"runner": runner,
-				"valid":  "claude, codex",
-			},
-		)
+	runner, err := resolveAgentRunner(opts.Runner)
+	if err != nil {
+		return err
 	}
 
 	// For headless mode (PR-05): delegate everything to daemon control plane
@@ -102,6 +93,26 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	// PR-10: For headed mode: delegate to daemon control plane
 	// CLI never creates invocations, sandboxes, or tmux sessions directly
 	return agentStartHeadedControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr)
+}
+
+func resolveAgentRunner(input string) (string, error) {
+	runner := input
+	if runner == "" {
+		runner = runners.RunnerClaudeCode
+	}
+
+	canonicalRunner, err := runners.Canonicalize(runner)
+	if err != nil {
+		return "", errors.NewWithDetails(
+			errors.EUsage,
+			"invalid runner: "+runner,
+			map[string]string{
+				"runner": runner,
+				"valid":  strings.Join(runners.CanonicalIDs(), ", "),
+			},
+		)
+	}
+	return canonicalRunner, nil
 }
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane (PR-10).
