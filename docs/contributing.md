@@ -27,6 +27,9 @@ go test ./...
 # with race detector (recommended for daemon concurrency)
 make test-race
 
+# local black-box CLI e2e smoke tests
+make e2e-local
+
 # verbose, specific package
 go test ./internal/daemon/ -v -count=1
 
@@ -53,7 +56,9 @@ make lint
 
 ```bash
 make check         # fmt-check, lint, test, build
-make verify        # check + race detector + e2e
+make verify        # check + race detector + e2e (falls back to local smoke without GH token)
+make e2e-gh        # strict GitHub-backed e2e (requires GH_TOKEN or GITHUB_TOKEN)
+make e2e-local     # local CLI e2e matrix smoke tests
 ```
 
 ## project structure

@@ -75,8 +75,8 @@ minimal example:
 
 runner policy:
 - runner ids are capability-based: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`
-- `claude` is accepted as an input alias to `claude-code`
-- **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility key `runners.claude`) to an executable command
+- input aliases are accepted: `claude` -> `claude-code`, `cursor-cli` -> `cursor`
+- **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility keys like `runners.claude` / `runners.cursor-cli`) to an executable command
 
 ### timeout format
 

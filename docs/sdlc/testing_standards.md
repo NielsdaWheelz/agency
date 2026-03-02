@@ -409,14 +409,18 @@ make test        # go test ./...
 make test-race   # go test -race -count=1 ./...
 make lint        # golangci-lint run
 make fmt-check   # gofmt formatting check
-make e2e         # GitHub E2E (requires GH_TOKEN, AGENCY_GH_E2E=1)
+make e2e         # E2E entrypoint (GH-backed when token exists, else local smoke)
+make e2e-gh      # GitHub E2E only (requires GH_TOKEN or GITHUB_TOKEN)
+make e2e-local   # local black-box CLI E2E smoke tests
 ```
 
 Command semantics:
 
 - `make check`: fast local feedback loop for routine development (static checks + tests + build, no race detector, no E2E).
 - `make verify`: full verification before merge (everything including race detector, E2E, and completions).
-- `make e2e`: explicit GitHub-backed E2E (requires `GH_TOKEN`; used selectively, not in every CI run).
+- `make e2e`: E2E entrypoint; runs GitHub-backed E2E when token is present, otherwise runs local CLI smoke E2E.
+- `make e2e-gh`: explicit GitHub-backed E2E (requires `GH_TOKEN` or `GITHUB_TOKEN`; used selectively, not in every CI run).
+- `make e2e-local`: local black-box CLI E2E matrix coverage without GitHub dependency.
 
 ### CI Shape
 
