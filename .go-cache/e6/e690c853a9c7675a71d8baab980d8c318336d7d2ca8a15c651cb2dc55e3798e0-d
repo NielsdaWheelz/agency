@@ -1,0 +1,3 @@
+./invocation_resolve.go
+./resolve.go
+./worktree_resolve.go

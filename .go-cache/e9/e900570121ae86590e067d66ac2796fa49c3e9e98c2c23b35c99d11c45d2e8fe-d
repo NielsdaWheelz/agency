@@ -1,0 +1,10 @@
+./integration_worktree.go
+./integration_worktree_scan.go
+./invocation.go
+./invocation_scan.go
+./repo_index.go
+./repo_record.go
+./run_meta.go
+./scan.go
+./store.go
+./verify_record.go
