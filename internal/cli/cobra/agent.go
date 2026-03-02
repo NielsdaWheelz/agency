@@ -85,6 +85,7 @@ func newAgentStartCmd() *cobra.Command {
 	var promptFile string
 	var runnerArgs []string
 	var noIncludeUntracked bool
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -135,6 +136,7 @@ Example:
 				Prompt:             prompt,
 				PromptFile:         promptFile,
 				RunnerArgs:         runnerArgs,
+				JSON:               jsonOut,
 				NoIncludeUntracked: noIncludeUntracked,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -148,6 +150,7 @@ Example:
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from checkpoint snapshots")
 
 	return cmd
@@ -310,6 +313,7 @@ Example:
 
 func newAgentStopCmd() *cobra.Command {
 	var repoFlag string
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "stop <invocation_id|prefix>",
@@ -336,17 +340,20 @@ Example:
 			return commands.AgentStop(ctx, cr, fsys, cwd, commands.AgentStopOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
+				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }
 
 func newAgentKillCmd() *cobra.Command {
 	var repoFlag string
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "kill <invocation_id|prefix>",
@@ -374,11 +381,13 @@ Example:
 			return commands.AgentKill(ctx, cr, fsys, cwd, commands.AgentKillOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
+				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }
@@ -445,6 +454,7 @@ func newAgentLandCmd() *cobra.Command {
 	var repoFlag string
 	var apply bool
 	var requireBase bool
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "land <invocation_ref>",
@@ -474,6 +484,7 @@ Example:
 				RepoFlag:      repoFlag,
 				Apply:         apply,
 				RequireBase:   requireBase,
+				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -481,12 +492,14 @@ Example:
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Apply uncommitted changes (when no commits exist)")
 	cmd.Flags().BoolVar(&requireBase, "require-base", false, "Fail if integration has diverged from base_commit")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }
 
 func newAgentDiscardCmd() *cobra.Command {
 	var repoFlag string
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "discard <invocation_ref>",
@@ -513,11 +526,13 @@ Example:
 			return commands.AgentDiscard(ctx, cr, fsys, cwd, commands.AgentDiscardOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
+				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
 }

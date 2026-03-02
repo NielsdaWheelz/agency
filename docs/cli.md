@@ -256,7 +256,7 @@ starts a new agent invocation with its sandbox worktree.
 
 **usage:**
 ```bash
-agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--runner-arg <arg>]... [--no-include-untracked]
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--runner-arg <arg>]... [--no-include-untracked] [--json]
 ```
 
 **flags:**
@@ -269,6 +269,7 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 - `--prompt-file`: path to file containing prompt for headless mode
 - `--runner-arg`: additional argument to pass to the runner (repeatable)
 - `--no-include-untracked`: exclude untracked files from checkpoint snapshots (headless only)
+- `--json`: machine-readable mutation envelope output
 
 runner commands are resolved from user config (`config.runners`) and must be explicitly mapped.
 
@@ -314,6 +315,11 @@ Started agent invocation
 
 Attaching to tmux session... (detach with Ctrl+b, d)
 ```
+
+**json mutation envelope (`--json`):**
+- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`
+- command-specific success fields are additive (for example `invocation_id`, `sandbox_path`, `pid`, `pgid`)
+- failure responses are emitted to stdout as JSON (`ok=false`) so automation does not need stderr parsing
 
 **error codes:**
 - `E_NO_REPO` — not inside a git repository
@@ -425,11 +431,15 @@ sends a graceful stop signal (Ctrl-C / SIGINT) to a running invocation.
 
 **usage:**
 ```bash
-agency agent stop <invocation_id|name|prefix>
+agency agent stop <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--json`: machine-readable mutation envelope output
 
 **behavior (headed mode):**
 1. resolves invocation
@@ -462,11 +472,15 @@ forcefully terminates a running invocation.
 
 **usage:**
 ```bash
-agency agent kill <invocation_id|name|prefix>
+agency agent kill <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--json`: machine-readable mutation envelope output
 
 **behavior (headed mode):**
 1. resolves invocation
@@ -557,15 +571,17 @@ applies sandbox changes back to the integration worktree.
 
 **usage:**
 ```bash
-agency agent land <invocation_id|name|prefix> [--apply] [--require-base]
+agency agent land <invocation_id|name|prefix> [--repo <id|prefix>] [--apply] [--require-base] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
+- `--repo`: repo id or unique prefix
 - `--apply`: apply uncommitted changes as a patch (when sandbox has no commits)
 - `--require-base`: fail if integration branch has moved since sandbox was created
+- `--json`: machine-readable mutation envelope output
 
 **behavior:**
 - **cherry-pick mode (default)**: cherry-picks sandbox commits onto integration HEAD
@@ -579,11 +595,15 @@ discards a sandbox without landing changes.
 
 **usage:**
 ```bash
-agency agent discard <invocation_id|name|prefix>
+agency agent discard <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--json`: machine-readable mutation envelope output
 
 **behavior:**
 - stops running invocations (graceful, then forceful after 5s)

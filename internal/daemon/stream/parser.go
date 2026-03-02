@@ -2,6 +2,8 @@ package stream
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -20,6 +22,14 @@ const ParseErrorThrottleCount = 10
 
 // ParseErrorThrottleInterval is the minimum time between parse_error events.
 const ParseErrorThrottleInterval = 5 * time.Second
+
+var (
+	// ErrRawLogWriteFailed indicates raw.jsonl persistence failed.
+	ErrRawLogWriteFailed = errors.New("raw log write failed")
+
+	// ErrNormalizedStreamWriteFailed indicates stream.jsonl persistence failed.
+	ErrNormalizedStreamWriteFailed = errors.New("normalized stream write failed")
+)
 
 // Parser handles line-by-line parsing of runner output.
 type Parser struct {
@@ -127,18 +137,24 @@ func (p *Parser) StreamAndParse(reader io.Reader, rawFile, streamFile *os.File) 
 		// Read a line (including the newline)
 		line, err := p.readLine(bufReader)
 		if len(line) > 0 {
-			// Always write to raw.jsonl verbatim (best-effort)
-			_, _ = rawFile.Write(line)
+			// Raw log persistence is contract data; write failures are fatal.
+			if _, writeErr := rawFile.Write(line); writeErr != nil {
+				return fmt.Errorf("%w: %v", ErrRawLogWriteFailed, writeErr)
+			}
 
 			// Update last output timestamp
 			p.lastOutputAt.Store(p.Clock().UnixNano())
 
 			// Parse and write to stream.jsonl if line is not too large
 			if len(line) <= MaxLineSize {
-				p.parseAndWriteLine(line, streamFile)
+				if parseErr := p.parseAndWriteLine(line, streamFile); parseErr != nil {
+					return parseErr
+				}
 			} else {
 				// Line too large - emit parse_error event
-				p.emitParseError(streamFile, "line_too_large")
+				if parseErr := p.emitParseError(streamFile, "line_too_large"); parseErr != nil {
+					return parseErr
+				}
 			}
 		}
 
@@ -170,7 +186,7 @@ func (p *Parser) readLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 // parseAndWriteLine parses a single line and writes normalized events.
-func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) {
+func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 	// Strip trailing newline for parsing
 	trimmedLine := line
 	if len(trimmedLine) > 0 && trimmedLine[len(trimmedLine)-1] == '\n' {
@@ -181,33 +197,35 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) {
 	}
 
 	if len(trimmedLine) == 0 {
-		return
+		return nil
 	}
 
 	result, err := p.Adapter.ParseLine(trimmedLine)
 	if err != nil {
 		// Parse error - emit parse_error event
-		p.emitParseError(streamFile, "json_parse_error")
-		return
+		return p.emitParseError(streamFile, "json_parse_error")
 	}
 
 	if result == nil {
-		return
+		return nil
 	}
 
 	// Write normalized events
 	for _, event := range result.Events {
-		p.writeNormalizedEvent(event, streamFile)
+		if writeErr := p.writeNormalizedEvent(event, streamFile); writeErr != nil {
+			return writeErr
+		}
 	}
 
 	// Update semantic status if provided
 	if result.SemanticStatus != nil {
 		p.updateSemanticStatus(result.SemanticStatus)
 	}
+	return nil
 }
 
 // writeNormalizedEvent writes a normalized event to stream.jsonl.
-func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.File) {
+func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.File) error {
 	p.mu.Lock()
 	p.seq++
 	event.Seq = p.seq
@@ -219,10 +237,13 @@ func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.Fil
 
 	data, err := event.Marshal()
 	if err != nil {
-		return
+		return fmt.Errorf("marshal normalized event: %w", err)
 	}
 
-	_, _ = streamFile.Write(data)
+	if _, err := streamFile.Write(data); err != nil {
+		return fmt.Errorf("%w: %v", ErrNormalizedStreamWriteFailed, err)
+	}
+	return nil
 }
 
 // updateSemanticStatus updates the semantic status.
@@ -235,7 +256,7 @@ func (p *Parser) updateSemanticStatus(status *runnerstatus.Status) {
 }
 
 // emitParseError emits a parse_error event with throttling.
-func (p *Parser) emitParseError(streamFile *os.File, reason string) {
+func (p *Parser) emitParseError(streamFile *os.File, reason string) error {
 	p.mu.Lock()
 	p.parseErrorCount++
 	count := p.parseErrorCount
@@ -253,7 +274,7 @@ func (p *Parser) emitParseError(streamFile *os.File, reason string) {
 	p.mu.Unlock()
 
 	if !shouldEmit {
-		return
+		return nil
 	}
 
 	event := &NormalizedEvent{
@@ -264,7 +285,7 @@ func (p *Parser) emitParseError(streamFile *os.File, reason string) {
 		},
 	}
 
-	p.writeNormalizedEvent(event, streamFile)
+	return p.writeNormalizedEvent(event, streamFile)
 }
 
 // streamRawOnly streams data to rawFile without parsing.
@@ -281,7 +302,9 @@ func (p *Parser) streamRawOnly(reader io.Reader, rawFile *os.File) error {
 
 		n, err := reader.Read(buf)
 		if n > 0 {
-			_, _ = rawFile.Write(buf[:n])
+			if _, writeErr := rawFile.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("%w: %v", ErrRawLogWriteFailed, writeErr)
+			}
 			p.lastOutputAt.Store(p.Clock().UnixNano())
 		}
 		if err != nil {

@@ -2,6 +2,8 @@ package stream
 
 import (
 	"bytes"
+	"encoding/json"
+	stderrors "errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -400,6 +402,56 @@ func TestParser_SeqMonotonic(t *testing.T) {
 	}
 }
 
+func TestParser_StreamAndParse_OversizedLineEmitsParseErrorAndContinues(t *testing.T) {
+	t.Parallel()
+
+	parser := NewParser("test-invocation", "claude", fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	oversizedLine := strings.Repeat("x", MaxLineSize+1) + "\n"
+	validLine := `{"type":"system","subtype":"init","cwd":"/sandbox"}` + "\n"
+	reader := bytes.NewReader([]byte(oversizedLine + validLine))
+
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.NoError(t, err)
+
+	streamData, err := os.ReadFile(streamFile.Name())
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "expected parse_error + valid parsed event")
+
+	foundLineTooLarge := false
+	foundNonParseEvent := false
+	for _, line := range lines {
+		var event struct {
+			Kind string                 `json:"kind"`
+			Data map[string]interface{} `json:"data"`
+		}
+		if json.Unmarshal([]byte(line), &event) != nil {
+			continue
+		}
+		if event.Kind == string(EventKindParseError) {
+			if reason, ok := event.Data["reason"].(string); ok && reason == "line_too_large" {
+				foundLineTooLarge = true
+			}
+			continue
+		}
+		foundNonParseEvent = true
+	}
+
+	assert.True(t, foundLineTooLarge, "expected parse_error reason=line_too_large")
+	assert.True(t, foundNonParseEvent, "expected parser to continue and emit subsequent valid events")
+}
+
 func TestGetAdapter(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -429,4 +481,54 @@ func TestGetAdapter(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParser_StreamAndParse_RawWriteFailureReturnsError(t *testing.T) {
+	t.Parallel()
+
+	parser := NewParser("test-inv-raw-write-fail", "claude", fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-ro-*.jsonl")
+	require.NoError(t, err)
+	rawPath := rawFile.Name()
+	require.NoError(t, rawFile.Close())
+	rawFile, err = os.Open(rawPath) // read-only descriptor
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawPath) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-ok-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	reader := bytes.NewReader([]byte(`{"type":"system","subtype":"init","cwd":"/sandbox"}` + "\n"))
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.Error(t, err)
+	assert.True(t, stderrors.Is(err, ErrRawLogWriteFailed), "expected raw-log write failure classification")
+}
+
+func TestParser_StreamAndParse_StreamWriteFailureReturnsError(t *testing.T) {
+	t.Parallel()
+
+	parser := NewParser("test-inv-stream-write-fail", "claude", fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-ok-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-ro-*.jsonl")
+	require.NoError(t, err)
+	streamPath := streamFile.Name()
+	require.NoError(t, streamFile.Close())
+	streamFile, err = os.Open(streamPath) // read-only descriptor
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamPath) }()
+	defer func() { _ = streamFile.Close() }()
+
+	reader := bytes.NewReader([]byte(`{"type":"system","subtype":"init","cwd":"/sandbox"}` + "\n"))
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.Error(t, err)
+	assert.True(t, stderrors.Is(err, ErrNormalizedStreamWriteFailed), "expected normalized-stream write failure classification")
 }

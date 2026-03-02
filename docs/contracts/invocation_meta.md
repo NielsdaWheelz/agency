@@ -28,7 +28,7 @@ optional fields:
 - `tmux_session` (string)
 - `finished_at` (rfc3339 utc)
 - `exit_reason` (string, one of: `exited`, `killed`, `stopped`, `start_failed`, `unknown`)
-- `failure_reason` (string, one of: `start_incomplete`, `sandbox_missing`, `spawn_failed`, `runner_exit_nonzero`, `killed`, `stopped`, `daemon_shutdown`)
+- `failure_reason` (string, one of: `start_incomplete`, `sandbox_missing`, `spawn_failed`, `runner_exit_nonzero`, `killed`, `stopped`, `daemon_shutdown`, `stream_write_failed`)
 - `exit_code` (int)
 - `last_output_at` (rfc3339 utc)
 - `landing_status` (string, `pending|landed|discarded`)

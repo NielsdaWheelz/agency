@@ -322,8 +322,11 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	pid := cmd.Process.Pid
 	pgid := pid // With Setpgid=true, the child becomes its own process group leader
 
-	// PR-07: Create stream parser for normalized events
+	// PR-07/S4 PR-02: keep stream sequence monotonic across append boundaries
+	// even for legacy /start_headless path.
+	initialSeq := loadMaxStreamSeq(streamLogPath)
 	parser := stream.NewParser(req.InvocationID, req.Runner, s.Clock)
+	parser.SetInitialSeq(initialSeq)
 
 	// Create supervised process record
 	proc := &SupervisedProcess{
@@ -430,7 +433,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 	// Early return if invocation is already in a terminal state
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
-		resp := StopResponse{OK: true}
+		resp := StopResponse{
+			OK:              true,
+			InvocationID:    invocationID,
+			APIVersion:      APIVersion,
+			BuildVersion:    version.FullVersion(),
+			ClientRequestID: "",
+		}
 		s.writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -468,7 +477,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 					m.FinishedAt = finishedAt
 				})
 			}
-			resp := StopResponse{OK: true}
+			resp := StopResponse{
+				OK:              true,
+				InvocationID:    invocationID,
+				APIVersion:      APIVersion,
+				BuildVersion:    version.FullVersion(),
+				ClientRequestID: "",
+			}
 			s.writeJSON(w, http.StatusOK, resp)
 			return
 		}
@@ -480,7 +495,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 			fmt.Fprintf(os.Stderr, "warning: could not send C-c to tmux session: %v\n", err)
 		}
 
-		resp := StopResponse{OK: true}
+		resp := StopResponse{
+			OK:              true,
+			InvocationID:    invocationID,
+			APIVersion:      APIVersion,
+			BuildVersion:    version.FullVersion(),
+			ClientRequestID: "",
+		}
 		s.writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -507,7 +528,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	// SIGINT → wait 5s → SIGTERM → wait 2s → SIGKILL
 	go s.stopEscalation(repoID, invocationID, pgid, supervised, proc)
 
-	resp := StopResponse{OK: true}
+	resp := StopResponse{
+		OK:              true,
+		InvocationID:    invocationID,
+		APIVersion:      APIVersion,
+		BuildVersion:    version.FullVersion(),
+		ClientRequestID: "",
+	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
@@ -635,7 +662,13 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		}
 		s.mu.Unlock()
 
-		resp := KillResponse{OK: true}
+		resp := KillResponse{
+			OK:              true,
+			InvocationID:    invocationID,
+			APIVersion:      APIVersion,
+			BuildVersion:    version.FullVersion(),
+			ClientRequestID: "",
+		}
 		s.writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -679,7 +712,13 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		})
 	}
 
-	resp := KillResponse{OK: true}
+	resp := KillResponse{
+		OK:              true,
+		InvocationID:    invocationID,
+		APIVersion:      APIVersion,
+		BuildVersion:    version.FullVersion(),
+		ClientRequestID: "",
+	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
