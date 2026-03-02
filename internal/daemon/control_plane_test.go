@@ -118,22 +118,52 @@ func TestValidateRunnerArgs(t *testing.T) {
 			wantError: false,
 		},
 		{
+			name:      "amp: reserved -x",
+			runner:    "amp",
+			args:      []string{"-x"},
+			wantError: true,
+		},
+		{
 			name:      "opencode: no args",
 			runner:    "opencode",
 			args:      nil,
 			wantError: false,
 		},
 		{
-			name:      "cursor-cli: no args",
+			name:      "opencode: reserved run",
+			runner:    "opencode",
+			args:      []string{"run"},
+			wantError: true,
+		},
+		{
+			name:      "cursor: no args",
+			runner:    "cursor",
+			args:      nil,
+			wantError: false,
+		},
+		{
+			name:      "cursor-cli alias: no args",
 			runner:    "cursor-cli",
 			args:      nil,
 			wantError: false,
+		},
+		{
+			name:      "cursor: reserved -p",
+			runner:    "cursor",
+			args:      []string{"-p"},
+			wantError: true,
 		},
 		{
 			name:      "droid: no args",
 			runner:    "droid",
 			args:      nil,
 			wantError: false,
+		},
+		{
+			name:      "droid: reserved exec",
+			runner:    "droid",
+			args:      []string{"exec"},
+			wantError: true,
 		},
 		{
 			name:      "unknown runner: rejected",
@@ -260,12 +290,12 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--model", "opus", "fix the bug"},
 		},
 		{
-			name:        "codex basic - includes -C flag",
+			name:        "codex basic - includes --cd flag",
 			runner:      "codex",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"-C", "/sandbox/path", "exec", "--json", "fix the bug"},
+			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "fix the bug"},
 		},
 		{
 			name:        "codex with extra args",
@@ -273,7 +303,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "gpt-4"},
-			wantArgs:    []string{"-C", "/sandbox/path", "exec", "--json", "--model", "gpt-4", "fix the bug"},
+			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--model", "gpt-4", "fix the bug"},
 		},
 		{
 			name:        "amp basic",
@@ -281,7 +311,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "amp-fast"},
-			wantArgs:    []string{"--model", "amp-fast", "fix the bug"},
+			wantArgs:    []string{"-x", "--model", "amp-fast", "fix the bug"},
 		},
 		{
 			name:        "opencode basic",
@@ -289,15 +319,23 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--mode", "safe"},
-			wantArgs:    []string{"--mode", "safe", "fix the bug"},
+			wantArgs:    []string{"run", "--mode", "safe", "fix the bug"},
 		},
 		{
-			name:        "cursor-cli basic",
+			name:        "cursor basic",
+			runner:      "cursor",
+			prompt:      "fix the bug",
+			sandboxPath: "/sandbox/path",
+			extraArgs:   []string{"--profile", "default"},
+			wantArgs:    []string{"-p", "--profile", "default", "fix the bug"},
+		},
+		{
+			name:        "cursor-cli alias basic",
 			runner:      "cursor-cli",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--profile", "default"},
-			wantArgs:    []string{"--profile", "default", "fix the bug"},
+			wantArgs:    []string{"-p", "--profile", "default", "fix the bug"},
 		},
 		{
 			name:        "droid basic",
@@ -305,7 +343,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--agent", "android"},
-			wantArgs:    []string{"--agent", "android", "fix the bug"},
+			wantArgs:    []string{"exec", "--agent", "android", "fix the bug"},
 		},
 	}
 
@@ -319,6 +357,63 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			for i := range got {
 				assert.Equal(t, tt.wantArgs[i], got[i], "arg[%d]", i)
 			}
+		})
+	}
+}
+
+func TestBuildRunnerArgsForHeaded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		runner    string
+		extraArgs []string
+		wantArgs  []string
+	}{
+		{
+			name:      "claude headed",
+			runner:    "claude",
+			extraArgs: []string{"--model", "opus"},
+			wantArgs:  []string{"--model", "opus"},
+		},
+		{
+			name:      "codex headed",
+			runner:    "codex",
+			extraArgs: []string{"--model", "gpt-5"},
+			wantArgs:  []string{"--model", "gpt-5"},
+		},
+		{
+			name:      "amp headed",
+			runner:    "amp",
+			extraArgs: []string{"--model", "amp-fast"},
+			wantArgs:  []string{"--model", "amp-fast"},
+		},
+		{
+			name:      "opencode headed",
+			runner:    "opencode",
+			extraArgs: []string{"--model", "open"},
+			wantArgs:  []string{"--model", "open"},
+		},
+		{
+			name:      "cursor headed",
+			runner:    "cursor",
+			extraArgs: []string{"--model", "cursor-fast"},
+			wantArgs:  []string{"--model", "cursor-fast"},
+		},
+		{
+			name:      "droid headed",
+			runner:    "droid",
+			extraArgs: []string{"--model", "droid-1"},
+			wantArgs:  []string{"--model", "droid-1"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := buildRunnerArgsForHeaded(tt.runner, tt.extraArgs)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantArgs, got)
 		})
 	}
 }

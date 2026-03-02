@@ -35,7 +35,7 @@ type AgentStartOpts struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string
 
-	// Runner is the runner id (claude-code, codex, amp, opencode, cursor-cli, droid; claude alias supported).
+	// Runner is the runner id (claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases supported).
 	Runner string
 
 	// Headless indicates whether to run in headless mode.

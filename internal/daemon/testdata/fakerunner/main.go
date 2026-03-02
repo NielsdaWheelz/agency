@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,8 +11,38 @@ import (
 	"time"
 )
 
+type launchCapture struct {
+	Args []string `json:"args"`
+	CWD  string   `json:"cwd"`
+	Mode string   `json:"mode"`
+}
+
+func writeCapture(path, mode string) error {
+	if path == "" {
+		return nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(launchCapture{
+		Args: os.Args[1:],
+		CWD:  cwd,
+		Mode: mode,
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, payload, 0o644)
+}
+
 func main() {
 	mode := os.Getenv("FAKE_RUNNER_MODE")
+	if err := writeCapture(os.Getenv("FAKE_RUNNER_CAPTURE_PATH"), mode); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to write launch capture:", err)
+		os.Exit(2)
+	}
+
 	switch mode {
 	case "exit-ok":
 		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)

@@ -1458,6 +1458,11 @@ func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []
 	return runners.BuildHeadlessArgs(runner, prompt, sandboxPath, extraArgs)
 }
 
+// buildRunnerArgsForHeaded builds interactive launch args for headed mode.
+func buildRunnerArgsForHeaded(runner string, extraArgs []string) ([]string, error) {
+	return runners.BuildHeadedArgs(runner, extraArgs)
+}
+
 // cleanupFailedInvocation cleans up after a failed invocation start.
 func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string) {
 	// Mark invocation as failed
@@ -1611,6 +1616,45 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 	req.Runner = canonicalRunner
+
+	// 2b. Validate reserved flags in runner args.
+	if err := validateRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.ERunnerArgConflict
+		}
+		hint := "remove reserved flags from runner_args"
+		if code == errors.ERunnerNotFound {
+			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+		}
+		s.writeHeadedError(w, http.StatusBadRequest, string(code),
+			err.Error(), hint, req.ClientRequestID, requestID)
+		return
+	}
+
+	// 2c. Resolve capability-defined headed launch args.
+	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+
+		hint := ""
+		switch code {
+		case errors.ERunnerNotFound:
+			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+		case errors.EInvocationInvalidMode:
+			hint = "runner does not support headed mode"
+		}
+
+		status := http.StatusInternalServerError
+		if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
+			status = http.StatusBadRequest
+		}
+		s.writeHeadedError(w, status, string(code), err.Error(), hint, req.ClientRequestID, requestID)
+		return
+	}
 
 	// 3. Validate invocation name if provided
 	if req.InvocationName != "" {
@@ -1766,12 +1810,9 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// 16. Create tmux session with CWD = sandbox tree, argv = [runnerCmd]
+	// 16. Create tmux session with CWD = sandbox tree, argv from capability plan.
 	// Per spec: No shell wrapping, no prompt - headed mode gets prompt interactively
-	argv := []string{runnerCmd}
-	if len(req.RunnerArgs) > 0 {
-		argv = append(argv, req.RunnerArgs...)
-	}
+	argv := append([]string{runnerCmd}, headedRunnerArgs...)
 
 	err = s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv)
 	if err != nil {

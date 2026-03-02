@@ -69,7 +69,7 @@ func TestResolveRunnerCmd_TargetRunnerSet_RequiresExplicitConfig(t *testing.T) {
 		Runners:  map[string]string{},
 	}
 
-	for _, runner := range []string{"claude", "claude-code", "codex", "amp", "opencode", "cursor-cli", "droid"} {
+	for _, runner := range []string{"claude", "claude-code", "codex", "amp", "opencode", "cursor", "cursor-cli", "droid"} {
 		runner := runner
 		t.Run(runner, func(t *testing.T) {
 			t.Parallel()
@@ -93,12 +93,12 @@ func TestResolveRunnerCmd_TargetRunnerSet_ResolvesWhenExplicitlyConfigured(t *te
 			"codex":       "codex",
 			"amp":         "amp",
 			"opencode":    "opencode",
-			"cursor-cli":  "cursor-cli",
+			"cursor":      "cursor-agent",
 			"droid":       "droid",
 		},
 	}
 
-	for _, runner := range []string{"claude", "claude-code", "codex", "amp", "opencode", "cursor-cli", "droid"} {
+	for _, runner := range []string{"claude", "claude-code", "codex", "amp", "opencode", "cursor", "cursor-cli", "droid"} {
 		runner := runner
 		t.Run(runner, func(t *testing.T) {
 			t.Parallel()

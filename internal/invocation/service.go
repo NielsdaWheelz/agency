@@ -54,7 +54,7 @@ type CreateOpts struct {
 	// RepoID is the repo identifier.
 	RepoID string
 
-	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor-cli, droid; claude alias accepted).
+	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases accepted).
 	Runner string
 
 	// Mode is the execution mode (headed, headless).
