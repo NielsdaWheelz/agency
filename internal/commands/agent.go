@@ -140,10 +140,16 @@ type agentMutationEnvelope struct {
 	IntegrationWorktreeID   string             `json:"integration_worktree_id,omitempty"`
 	IntegrationWorktreeName string             `json:"integration_worktree_name,omitempty"`
 	SandboxPath             string             `json:"sandbox_path,omitempty"`
+	LogPaths                *daemon.LogPaths   `json:"log_paths,omitempty"`
 	PID                     int                `json:"pid,omitempty"`
 	PGID                    int                `json:"pgid,omitempty"`
 	DaemonInstanceID        string             `json:"daemon_instance_id,omitempty"`
 	AlreadyRunning          bool               `json:"already_running,omitempty"`
+	AlreadyApplied          bool               `json:"already_applied,omitempty"`
+	TimelineEntryID         string             `json:"timeline_entry_id,omitempty"`
+	CheckpointID            int                `json:"checkpoint_id,omitempty"`
+	SnapshotCommit          string             `json:"snapshot_commit,omitempty"`
+	RestoredAt              string             `json:"restored_at,omitempty"`
 	AppliedMode             daemon.LandingMode `json:"applied_mode,omitempty"`
 	IntegrationHeadBefore   string             `json:"integration_head_before,omitempty"`
 	IntegrationHeadAfter    string             `json:"integration_head_after,omitempty"`
@@ -192,6 +198,12 @@ func writeAgentMutationJSONError(w io.Writer, err error) error {
 		}
 	}
 	return writeAgentMutationJSON(w, envelope)
+}
+
+// WriteAgentMutationJSONError writes a stable mutation error envelope.
+// Exported for CLI preflight validation paths that occur before command dispatch.
+func WriteAgentMutationJSONError(w io.Writer, err error) error {
+	return writeAgentMutationJSONError(w, err)
 }
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane (PR-10).
@@ -1757,6 +1769,13 @@ type AgentChatOpts struct {
 
 // AgentChat submits a follow-up prompt to an existing headless invocation.
 func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChatOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	prompt, err := resolveBoundedPromptInput(
 		opts.Prompt,
 		opts.PromptFile,
@@ -1765,7 +1784,7 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		"follow-up prompt cannot be empty",
 	)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	var dataDir string
@@ -1774,7 +1793,7 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	} else {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 		}
 		dirs := paths.ResolveDirs(osEnv{}, homeDir)
 		dataDir = dirs.DataDir
@@ -1786,10 +1805,10 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
@@ -1798,27 +1817,36 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		CmdName:       "agent chat",
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	resp, err := client.SubmitFollowUpPrompt(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpPromptOpts{
 		Prompt: prompt,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	if !resp.OK {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
-		)
+		))
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(resp)
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.TimelineEntryID = resp.TimelineEntry
+			envelope.AlreadyApplied = resp.AlreadyApplied
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+			envelope.ClientRequestID = resp.ClientRequestID
+		})
 	}
 
 	_, _ = fmt.Fprintln(stdout, "accepted follow-up prompt")
@@ -1890,14 +1918,21 @@ const (
 // AgentRestart performs invocation-scoped restart from an explicit checkpoint
 // or an interactively selected timeline point.
 func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestartOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	if opts.CheckpointID < 0 {
-		return errors.New(errors.EUsage, "--checkpoint must be a positive integer")
+		return fail(errors.New(errors.EUsage, "--checkpoint must be a positive integer"))
 	}
 	if opts.InteractiveHistory && opts.CheckpointID > 0 {
-		return errors.New(errors.EUsage, "use either --checkpoint or --history, not both")
+		return fail(errors.New(errors.EUsage, "use either --checkpoint or --history, not both"))
 	}
 	if !opts.InteractiveHistory && opts.CheckpointID <= 0 {
-		return errors.New(errors.EUsage, "--checkpoint must be a positive integer (or pass --history)")
+		return fail(errors.New(errors.EUsage, "--checkpoint must be a positive integer (or pass --history)"))
 	}
 	if opts.InteractiveHistory {
 		isInteractiveFn := opts.IsInteractive
@@ -1905,13 +1940,13 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			isInteractiveFn = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
 		}
 		if !isInteractiveFn() {
-			return errors.NewWithDetails(
+			return fail(errors.NewWithDetails(
 				errors.ENotInteractive,
 				"interactive history selection requires a terminal",
 				map[string]string{
 					"hint": "run this command in an interactive terminal or use --checkpoint <id>",
 				},
-			)
+			))
 		}
 	}
 
@@ -1921,7 +1956,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	} else {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 		}
 		dirs := paths.ResolveDirs(osEnv{}, homeDir)
 		dataDir = dirs.DataDir
@@ -1933,10 +1968,10 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
@@ -1945,26 +1980,26 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		CmdName:       "agent restart",
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if opts.InteractiveHistory {
 		timelineEntries, err := fetchAllTimelineEntries(ctx, client, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
-			return err
+			return fail(err)
 		}
 		checkpoints, err := fetchAllCheckpoints(ctx, client, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
-			return err
+			return fail(err)
 		}
 		if len(timelineEntries) == 0 {
-			return errors.NewWithDetails(
+			return fail(errors.NewWithDetails(
 				errors.ECheckpointNotFound,
 				"interactive history selection requires timeline entries",
 				map[string]string{
 					"hint": "no history is available for this invocation; use --checkpoint <id>",
 				},
-			)
+			))
 		}
 
 		items := buildHistorySelectorItems(timelineEntries, checkpoints)
@@ -1988,12 +2023,12 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 		selected, err := selector(items, selectorInput, selectorOutput)
 		if err != nil {
-			return err
+			return fail(err)
 		}
 
 		checkpointID, err := mapTimelineSelectionToCheckpoint(timelineEntries, checkpoints, selected.Entry.EntryID)
 		if err != nil {
-			return err
+			return fail(err)
 		}
 		opts.CheckpointID = checkpointID
 	}
@@ -2004,20 +2039,33 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		Env:          opts.Env,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	if !resp.OK {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
-		)
+		))
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(resp)
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.CheckpointID = resp.CheckpointID
+			envelope.SnapshotCommit = resp.SnapshotCommit
+			envelope.RestoredAt = resp.RestoredAt
+			envelope.PID = resp.PID
+			envelope.PGID = resp.PGID
+			envelope.DaemonInstanceID = resp.DaemonInstanceID
+			envelope.LogPaths = resp.LogPaths
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+		})
 	}
 
 	_, _ = fmt.Fprintln(stdout, "restarted invocation from checkpoint")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,4 +148,113 @@ func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
+}
+
+func TestAgentChat_JSONFailurePromptRequiredEnvelope(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentChat(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentChatOpts{
+		InvocationRef: "missing",
+		JSON:          true,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json failure mode should not return a human-formatted error")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EPromptRequired), payload["error_code"])
+}
+
+func TestAgentChat_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "chat-json-daemon-fail")
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentChat(context.Background(), cr, fsys, repoDir, AgentChatOpts{
+		InvocationRef:   "does-not-exist",
+		Prompt:          "continue",
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json failure mode should not return a human-formatted error")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
+}
+
+func TestAgentChat_JSONFailureTransportEnvelope(t *testing.T) {
+	missingDataDir := filepath.Join(t.TempDir(), "missing")
+
+	var stdout, stderr bytes.Buffer
+	err := AgentChat(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentChatOpts{
+		InvocationRef:   "any",
+		Prompt:          "continue",
+		JSON:            true,
+		DataDirOverride: missingDataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json transport failures must remain machine-readable")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EDaemonStartFailed), payload["error_code"])
+}
+
+func TestAgentRestart_JSONFailureValidationEnvelope(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestartOpts{
+		InvocationRef: "inv-123",
+		CheckpointID:  0,
+		JSON:          true,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json validation failures should not return a human-formatted error")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EUsage), payload["error_code"])
+}
+
+func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "restart-json-daemon-fail")
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), cr, fsys, repoDir, AgentRestartOpts{
+		InvocationRef:   "does-not-exist",
+		CheckpointID:    1,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json failure mode should not return a human-formatted error")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
+}
+
+func TestAgentRestart_JSONFailureTransportEnvelope(t *testing.T) {
+	missingDataDir := filepath.Join(t.TempDir(), "missing")
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestartOpts{
+		InvocationRef:   "any",
+		CheckpointID:    1,
+		JSON:            true,
+		DataDirOverride: missingDataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json transport failures must remain machine-readable")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EDaemonStartFailed), payload["error_code"])
 }

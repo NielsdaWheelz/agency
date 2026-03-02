@@ -1556,6 +1556,7 @@ func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
 }
@@ -1670,6 +1671,7 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
 	assert.Equal(t, float64(1), payload["checkpoint_id"])

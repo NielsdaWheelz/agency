@@ -783,20 +783,27 @@ Example:
   agency agent restart --json 20260131 --checkpoint 3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			writeJSONValidationFailure := func(err error) error {
+				if err == nil || !jsonOut {
+					return err
+				}
+				return commands.WriteAgentMutationJSONError(cmd.OutOrStdout(), err)
+			}
+
 			checkpointProvided := cmd.Flags().Changed("checkpoint")
 			if historySelector && checkpointProvided {
-				return errors.New(errors.EUsage, "use either --checkpoint or --history, not both")
+				return writeJSONValidationFailure(errors.New(errors.EUsage, "use either --checkpoint or --history, not both"))
 			}
 			if !historySelector && !checkpointProvided {
-				return errors.New(errors.EUsage, "either --checkpoint <id> or --history is required")
+				return writeJSONValidationFailure(errors.New(errors.EUsage, "either --checkpoint <id> or --history is required"))
 			}
 			if checkpointProvided && checkpointID <= 0 {
-				return errors.New(errors.EUsage, "--checkpoint must be a positive integer")
+				return writeJSONValidationFailure(errors.New(errors.EUsage, "--checkpoint must be a positive integer"))
 			}
 
 			envMap, err := parseEnvAssignments(envAssignments)
 			if err != nil {
-				return errors.New(errors.EUsage, err.Error())
+				return writeJSONValidationFailure(errors.New(errors.EUsage, err.Error()))
 			}
 
 			cwd, err := os.Getwd()

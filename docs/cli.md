@@ -694,8 +694,13 @@ agency agent chat <invocation_ref> [--repo <id|prefix>] [--prompt <text> | --pro
 **flags:**
 - `--prompt`: inline follow-up prompt
 - `--prompt-file`: read follow-up prompt from file (bounded read, max 256KB)
-- `--json`: machine-readable response (includes `timeline_entry_id`, `already_applied`, `client_request_id`)
+- `--json`: machine-readable mutation envelope output
 - `--repo`: repo id or unique prefix
+
+**json mutation envelope (`--json`):**
+- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`
+- command-specific success fields are additive (for example `invocation_id`, `timeline_entry_id`, `already_applied`)
+- failure responses are emitted to stdout as JSON (`ok=false`) so automation does not need stderr parsing
 
 **behavior:**
 1. resolves invocation through daemon-first navigation
@@ -729,8 +734,13 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <i
 - `--history`: open interactive arrow-key selector over timeline history
 - `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
 - `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
-- `--json`: machine-readable response
+- `--json`: machine-readable mutation envelope output
 - `--repo`: repo id or unique prefix
+
+**json mutation envelope (`--json`):**
+- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`
+- command-specific success fields are additive (for example `invocation_id`, `checkpoint_id`, `snapshot_commit`, `restored_at`, `pid`, `pgid`, `log_paths`)
+- failure responses are emitted to stdout as JSON (`ok=false`) so automation does not need stderr parsing
 
 **behavior:**
 1. resolves invocation through daemon-first navigation

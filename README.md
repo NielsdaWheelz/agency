@@ -85,10 +85,14 @@ agency agent stop <invocation-id> --json
 agency agent kill <invocation-id> --json
 agency agent land <invocation-id> --json
 agency agent discard <invocation-id> --json
+agency agent chat <invocation-id> --prompt "continue" --json
+agency agent restart <invocation-id> --checkpoint 3 --json
 ```
 
 all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`.
+success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
+and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
 
 ## how it works
 
