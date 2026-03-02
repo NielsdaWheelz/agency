@@ -101,6 +101,7 @@ Repo ──► Worktree ──► Agent Invocation ──► Sandbox
 you register a repo, create worktrees (isolated branches), start agents inside sandboxed copies of those branches, then land the agent's changes back. a background daemon supervises everything — auto-starts on first use.
 
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
+for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
 
 ## documentation
 

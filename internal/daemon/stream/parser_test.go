@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	stderrors "errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,24 @@ import (
 
 func fixedClock() time.Time {
 	return time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+}
+
+type errorAfterPayloadReader struct {
+	payload []byte
+	offset  int
+	err     error
+}
+
+func (r *errorAfterPayloadReader) Read(p []byte) (int, error) {
+	if r.offset >= len(r.payload) {
+		return 0, r.err
+	}
+	n := copy(p, r.payload[r.offset:])
+	r.offset += n
+	if r.offset >= len(r.payload) {
+		return n, r.err
+	}
+	return n, nil
 }
 
 func TestClaudeAdapter_ParseLine(t *testing.T) {
@@ -450,6 +469,105 @@ func TestParser_StreamAndParse_OversizedLineEmitsParseErrorAndContinues(t *testi
 
 	assert.True(t, foundLineTooLarge, "expected parse_error reason=line_too_large")
 	assert.True(t, foundNonParseEvent, "expected parser to continue and emit subsequent valid events")
+}
+
+func TestParser_StreamAndParse_OversizedLinePersistsRawBeforeTerminator(t *testing.T) {
+	parser := NewParser("test-invocation-streaming", "claude", fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	inputReader, inputWriter := io.Pipe()
+	done := make(chan error, 1)
+	finished := false
+	go func() {
+		done <- parser.StreamAndParse(inputReader, rawFile, streamFile)
+	}()
+	t.Cleanup(func() {
+		_ = inputWriter.Close()
+		if finished {
+			return
+		}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	oversizedWithoutTerminator := bytes.Repeat([]byte("x"), MaxLineSize+4096)
+	_, err = inputWriter.Write(oversizedWithoutTerminator)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		info, statErr := rawFile.Stat()
+		if statErr != nil {
+			return false
+		}
+		return info.Size() > 0
+	}, 2*time.Second, 20*time.Millisecond, "expected raw log to receive bytes before newline terminator arrives")
+
+	validLine := `{"type":"system","subtype":"init","cwd":"/sandbox"}`
+	_, err = inputWriter.Write([]byte("\n" + validLine + "\n"))
+	require.NoError(t, err)
+	require.NoError(t, inputWriter.Close())
+
+	select {
+	case err = <-done:
+		finished = true
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("parser did not terminate after input close")
+	}
+
+	rawInfo, err := os.Stat(rawFile.Name())
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, rawInfo.Size(), int64(len(oversizedWithoutTerminator)+len(validLine)+2))
+
+	streamData, err := os.ReadFile(streamFile.Name())
+	require.NoError(t, err)
+	assert.Contains(t, string(streamData), `"kind":"parse_error"`)
+	assert.Contains(t, string(streamData), `"reason":"line_too_large"`)
+	assert.Contains(t, string(streamData), `"kind":"session_start"`)
+}
+
+func TestParser_StreamAndParse_OversizedLineWithReaderErrorStillEmitsParseError(t *testing.T) {
+	parser := NewParser("test-invocation-read-error", "claude", fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	oversizedPayload := bytes.Repeat([]byte("x"), MaxLineSize+1024)
+	reader := &errorAfterPayloadReader{
+		payload: oversizedPayload,
+		err:     io.ErrUnexpectedEOF,
+	}
+
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.Error(t, err)
+	assert.True(t, stderrors.Is(err, io.ErrUnexpectedEOF), "expected reader error to surface")
+
+	rawData, err := os.ReadFile(rawFile.Name())
+	require.NoError(t, err)
+	assert.Equal(t, oversizedPayload, rawData, "raw log should preserve oversized bytes even on reader error")
+
+	streamData, err := os.ReadFile(streamFile.Name())
+	require.NoError(t, err)
+	assert.Contains(t, string(streamData), `"kind":"parse_error"`)
+	assert.Contains(t, string(streamData), `"reason":"line_too_large"`)
 }
 
 func TestGetAdapter(t *testing.T) {

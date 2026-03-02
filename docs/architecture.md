@@ -175,7 +175,7 @@ each line in `stream.jsonl` contains a JSON event with a stable schema:
   "seq": 1,
   "timestamp": "2026-02-01T12:00:00Z",
   "invocation_id": "20260201-a1b2",
-  "runner": "claude",
+  "runner": "claude-code|codex|amp|opencode|cursor-cli|droid",
   "kind": "session_start|message|tool_start|tool_end|final|error|usage|parse_error",
   "data": { }
 }
@@ -193,6 +193,8 @@ status is written to `InvocationMeta.semantic_status`, throttled to 500ms update
 
 - parse errors do not crash the daemon or fail the invocation
 - malformed lines emit `kind=parse_error` events (throttled)
+- stdout ingestion is bounded: lines are read in chunks, parse buffering is capped at 8 MB per logical line, and oversized lines are drained without full-line allocation
+- oversized lines are preserved verbatim in `raw.jsonl`, emit `kind=parse_error` with reason `line_too_large`, and do not terminate invocation lifecycle
 - `raw.jsonl` always contains verbatim output regardless of parse success
 
 ## checkpoint engine
