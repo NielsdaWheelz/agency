@@ -170,6 +170,7 @@ func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
 		"codex",
 		"amp",
 		"opencode",
+		"cursor",
 		"cursor-cli",
 		"droid",
 	}
@@ -200,6 +201,70 @@ func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 			require.False(t, resp.OK, "request should fail later with non-repo path")
 			assert.NotEqual(t, string(errors.ERunnerNotFound), resp.ErrorCode)
+		})
+	}
+}
+
+func TestControlPlaneStartHeaded_RunnerValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		req      ControlPlaneStartHeadedRequest
+		wantCode string
+	}{
+		{
+			name: "unrecognized runner",
+			req: ControlPlaneStartHeadedRequest{
+				ClientRequestID: "test-uuid",
+				RepoRoot:        "/tmp/repo",
+				WorktreeRef:     "wt-1",
+				Runner:          "unknown",
+			},
+			wantCode: string(errors.ERunnerNotFound),
+		},
+		{
+			name: "reserved claude arg --output-format",
+			req: ControlPlaneStartHeadedRequest{
+				ClientRequestID: "test-uuid",
+				RepoRoot:        "/tmp/repo",
+				WorktreeRef:     "wt-1",
+				Runner:          "claude",
+				RunnerArgs:      []string{"--output-format"},
+			},
+			wantCode: string(errors.ERunnerArgConflict),
+		},
+		{
+			name: "reserved cursor arg -p",
+			req: ControlPlaneStartHeadedRequest{
+				ClientRequestID: "test-uuid",
+				RepoRoot:        "/tmp/repo",
+				WorktreeRef:     "wt-1",
+				Runner:          "cursor",
+				RunnerArgs:      []string{"-p"},
+			},
+			wantCode: string(errors.ERunnerArgConflict),
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpDir := t.TempDir()
+			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+			body, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/invocations/start_headed", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.handleControlPlaneStartHeaded(w, req)
+
+			var resp ControlPlaneStartHeadedResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+			assert.False(t, resp.OK, "expected OK=false")
+			assert.Equal(t, tc.wantCode, resp.ErrorCode)
 		})
 	}
 }

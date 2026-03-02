@@ -581,6 +581,7 @@ func TestGetAdapter(t *testing.T) {
 		{"codex", false},
 		{"amp", true},
 		{"opencode", true},
+		{"cursor", true},
 		{"cursor-cli", true},
 		{"droid", true},
 		{"unknown", true},

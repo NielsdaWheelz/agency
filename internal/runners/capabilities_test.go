@@ -12,7 +12,7 @@ import (
 func TestCanonicalIDs(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t,
-		[]string{"claude-code", "codex", "amp", "opencode", "cursor-cli", "droid"},
+		[]string{"claude-code", "codex", "amp", "opencode", "cursor", "droid"},
 		CanonicalIDs(),
 	)
 }
@@ -30,7 +30,8 @@ func TestResolve(t *testing.T) {
 		{name: "codex", input: "codex", wantID: "codex"},
 		{name: "amp", input: "amp", wantID: "amp"},
 		{name: "opencode", input: "opencode", wantID: "opencode"},
-		{name: "cursor-cli", input: "cursor-cli", wantID: "cursor-cli"},
+		{name: "cursor", input: "cursor", wantID: "cursor"},
+		{name: "legacy cursor-cli alias", input: "cursor-cli", wantID: "cursor"},
 		{name: "droid", input: "droid", wantID: "droid"},
 		{name: "unknown", input: "unknown", wantErr: true},
 		{name: "empty", input: "", wantErr: true},
@@ -58,6 +59,10 @@ func TestValidateArgs(t *testing.T) {
 	require.NoError(t, ValidateArgs("claude-code", []string{"--model", "opus"}))
 	require.Error(t, ValidateArgs("claude-code", []string{"--output-format", "json"}))
 	require.Error(t, ValidateArgs("codex", []string{"--json"}))
+	require.Error(t, ValidateArgs("amp", []string{"-x"}))
+	require.Error(t, ValidateArgs("opencode", []string{"run"}))
+	require.Error(t, ValidateArgs("cursor", []string{"-p"}))
+	require.Error(t, ValidateArgs("droid", []string{"exec"}))
 	require.NoError(t, ValidateArgs("amp", []string{"--model", "amp-fast"}))
 }
 
@@ -70,11 +75,51 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-C", "/sandbox", "exec", "--json", "--model", "gpt-5", "fix bug"}, codexArgs)
+	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--model", "gpt-5", "fix bug"}, codexArgs)
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--model", "amp-fast", "fix bug"}, ampArgs)
+	assert.Equal(t, []string{"-x", "--model", "amp-fast", "fix bug"}, ampArgs)
+
+	opencodeArgs, err := BuildHeadlessArgs("opencode", "fix bug", "/sandbox", []string{"--model", "open"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"run", "--model", "open", "fix bug"}, opencodeArgs)
+
+	cursorArgs, err := BuildHeadlessArgs("cursor", "fix bug", "/sandbox", []string{"--model", "cursor-fast"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--model", "cursor-fast", "fix bug"}, cursorArgs)
+
+	droidArgs, err := BuildHeadlessArgs("droid", "fix bug", "/sandbox", []string{"--model", "droid-1"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"exec", "--model", "droid-1", "fix bug"}, droidArgs)
+}
+
+func TestBuildHeadedArgs(t *testing.T) {
+	t.Parallel()
+
+	claudeArgs, err := BuildHeadedArgs("claude", []string{"--model", "opus"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "opus"}, claudeArgs)
+
+	codexArgs, err := BuildHeadedArgs("codex", []string{"--model", "gpt-5"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "gpt-5"}, codexArgs)
+
+	ampArgs, err := BuildHeadedArgs("amp", []string{"--model", "amp-fast"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "amp-fast"}, ampArgs)
+
+	opencodeArgs, err := BuildHeadedArgs("opencode", []string{"--model", "open"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "open"}, opencodeArgs)
+
+	cursorArgs, err := BuildHeadedArgs("cursor", []string{"--model", "cursor-fast"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "cursor-fast"}, cursorArgs)
+
+	droidArgs, err := BuildHeadedArgs("droid", []string{"--model", "droid-1"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "droid-1"}, droidArgs)
 }
 
 func TestHasSemanticAdapter(t *testing.T) {
@@ -85,6 +130,7 @@ func TestHasSemanticAdapter(t *testing.T) {
 	assert.True(t, HasSemanticAdapter("codex"))
 	assert.False(t, HasSemanticAdapter("amp"))
 	assert.False(t, HasSemanticAdapter("opencode"))
+	assert.False(t, HasSemanticAdapter("cursor"))
 	assert.False(t, HasSemanticAdapter("cursor-cli"))
 	assert.False(t, HasSemanticAdapter("droid"))
 }

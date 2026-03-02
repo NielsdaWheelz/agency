@@ -140,7 +140,7 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	repoRoot := setupTestGitRepo(t)
-	runners := []string{"claude-code", "codex", "amp", "opencode", "cursor-cli", "droid"}
+	runners := []string{"claude-code", "codex", "amp", "opencode", "cursor", "droid"}
 
 	for _, runner := range runners {
 		runner := runner
@@ -161,6 +161,150 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLifecycle(t *testing.T) {
 			meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
 			assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 			assert.Equal(t, runner, meta.Runner)
+		})
+	}
+}
+
+func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	tests := []struct {
+		name            string
+		inputRunner     string
+		canonicalRunner string
+		prompt          string
+		runnerArgs      []string
+	}{
+		{
+			name:            "claude alias",
+			inputRunner:     "claude",
+			canonicalRunner: "claude-code",
+			prompt:          "headless launch args claude alias",
+			runnerArgs:      []string{"--model", "opus"},
+		},
+		{
+			name:            "claude-code canonical",
+			inputRunner:     "claude-code",
+			canonicalRunner: "claude-code",
+			prompt:          "headless launch args claude",
+			runnerArgs:      []string{"--model", "opus"},
+		},
+		{
+			name:            "codex canonical",
+			inputRunner:     "codex",
+			canonicalRunner: "codex",
+			prompt:          "headless launch args codex",
+			runnerArgs:      []string{"--model", "gpt-5"},
+		},
+		{
+			name:            "amp canonical",
+			inputRunner:     "amp",
+			canonicalRunner: "amp",
+			prompt:          "headless launch args amp",
+			runnerArgs:      []string{"--model", "amp-fast"},
+		},
+		{
+			name:            "opencode canonical",
+			inputRunner:     "opencode",
+			canonicalRunner: "opencode",
+			prompt:          "headless launch args opencode",
+			runnerArgs:      []string{"--mode", "safe"},
+		},
+		{
+			name:            "cursor canonical",
+			inputRunner:     "cursor",
+			canonicalRunner: "cursor",
+			prompt:          "headless launch args cursor",
+			runnerArgs:      []string{"--profile", "default"},
+		},
+		{
+			name:            "cursor-cli alias",
+			inputRunner:     "cursor-cli",
+			canonicalRunner: "cursor",
+			prompt:          "headless launch args cursor alias",
+			runnerArgs:      []string{"--profile", "default"},
+		},
+		{
+			name:            "droid canonical",
+			inputRunner:     "droid",
+			canonicalRunner: "droid",
+			prompt:          "headless launch args droid",
+			runnerArgs:      []string{"--agent", "android"},
+		},
+	}
+
+	for i, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			wtName := fmt.Sprintf("start-launch-args-%02d", i)
+			wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, wtName)
+
+			capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
+			resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+				RepoRoot:    repoRoot,
+				WorktreeRef: wtID,
+				Runner:      tc.inputRunner,
+				Prompt:      tc.prompt,
+				RunnerArgs:  tc.runnerArgs,
+				Env: map[string]string{
+					"FAKE_RUNNER_MODE":         "exit-ok",
+					"FAKE_RUNNER_CAPTURE_PATH": capturePath,
+				},
+			})
+			require.NoError(t, err, "start")
+			require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+			meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+			assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+			assert.Equal(t, tc.canonicalRunner, meta.Runner)
+
+			capture := readFakeRunnerLaunchCapture(t, capturePath)
+			assert.Equal(t, "exit-ok", capture.Mode)
+			assert.Equal(t, normalizePathForAssert(t, resp.SandboxPath), normalizePathForAssert(t, capture.CWD))
+
+			var wantArgs []string
+			switch tc.canonicalRunner {
+			case "claude-code":
+				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--verbose")
+				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
+			case "codex":
+				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json")
+				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
+			case "amp":
+				wantArgs = append(wantArgs, "-x")
+				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
+			case "opencode":
+				wantArgs = append(wantArgs, "run")
+				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
+			case "cursor":
+				wantArgs = append(wantArgs, "-p")
+				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
+			case "droid":
+				wantArgs = append(wantArgs, "exec")
+				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
+			default:
+				t.Fatalf("unexpected canonical runner %q", tc.canonicalRunner)
+			}
+
+			if tc.canonicalRunner == "codex" {
+				require.GreaterOrEqual(t, len(capture.Args), 3)
+				assert.Equal(t, normalizePathForAssert(t, resp.SandboxPath), normalizePathForAssert(t, capture.Args[2]))
+				wantArgs[2] = capture.Args[2]
+			}
+
+			assert.Equal(t, wantArgs, capture.Args)
 		})
 	}
 }
@@ -1630,6 +1774,115 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 
 	// Cleanup
 	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := newFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	tests := []struct {
+		name            string
+		inputRunner     string
+		canonicalRunner string
+		runnerArgs      []string
+	}{
+		{
+			name:            "claude alias",
+			inputRunner:     "claude",
+			canonicalRunner: "claude-code",
+			runnerArgs:      []string{"--model", "opus"},
+		},
+		{
+			name:            "claude-code canonical",
+			inputRunner:     "claude-code",
+			canonicalRunner: "claude-code",
+			runnerArgs:      []string{"--model", "opus"},
+		},
+		{
+			name:            "codex canonical",
+			inputRunner:     "codex",
+			canonicalRunner: "codex",
+			runnerArgs:      []string{"--model", "gpt-5"},
+		},
+		{
+			name:            "amp canonical",
+			inputRunner:     "amp",
+			canonicalRunner: "amp",
+			runnerArgs:      []string{"--model", "amp-fast"},
+		},
+		{
+			name:            "opencode canonical",
+			inputRunner:     "opencode",
+			canonicalRunner: "opencode",
+			runnerArgs:      []string{"--mode", "safe"},
+		},
+		{
+			name:            "cursor canonical",
+			inputRunner:     "cursor",
+			canonicalRunner: "cursor",
+			runnerArgs:      []string{"--profile", "default"},
+		},
+		{
+			name:            "cursor-cli alias",
+			inputRunner:     "cursor-cli",
+			canonicalRunner: "cursor",
+			runnerArgs:      []string{"--profile", "default"},
+		},
+		{
+			name:            "droid canonical",
+			inputRunner:     "droid",
+			canonicalRunner: "droid",
+			runnerArgs:      []string{"--agent", "android"},
+		},
+	}
+
+	for i, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			wtName := fmt.Sprintf("headed-launch-args-%02d", i)
+			_, _, _ = createTestWorktree(t, env.Client, repoRoot, wtName)
+
+			fakeTmux.Mu.Lock()
+			callsBefore := len(fakeTmux.NewSessionCalls)
+			fakeTmux.Mu.Unlock()
+
+			resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+				RepoRoot:    repoRoot,
+				WorktreeRef: wtName,
+				Runner:      tc.inputRunner,
+				RunnerArgs:  tc.runnerArgs,
+				Env: map[string]string{
+					"FAKE_RUNNER_MODE": "sleep",
+				},
+			})
+			require.NoError(t, err, "start headed")
+			require.True(t, resp.OK, "start headed failed: %s - %s", resp.ErrorCode, resp.Message)
+
+			meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.canonicalRunner, meta.Runner)
+
+			fakeTmux.Mu.Lock()
+			require.GreaterOrEqual(t, len(fakeTmux.NewSessionCalls), callsBefore+1)
+			call := fakeTmux.NewSessionCalls[callsBefore]
+			fakeTmux.Mu.Unlock()
+
+			require.NotEmpty(t, call.Argv)
+			assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
+			assert.Equal(t, tc.runnerArgs, call.Argv[1:])
+			assert.Equal(t, normalizePathForAssert(t, resp.SandboxPath), normalizePathForAssert(t, call.CWD))
+
+			_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+		})
+	}
 }
 
 func TestDaemonHeadedStartIdempotent(t *testing.T) {

@@ -38,6 +38,12 @@ type testDaemonEnv struct {
 	SocketPath string
 }
 
+type fakeRunnerLaunchCapture struct {
+	Args []string `json:"args"`
+	CWD  string   `json:"cwd"`
+	Mode string   `json:"mode"`
+}
+
 // startTestDaemon boots a real daemon server on a temp Unix socket and
 // returns a connected client. The server and socket are cleaned up when
 // the test finishes.
@@ -63,6 +69,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 			"codex":       runnerPath,
 			"amp":         runnerPath,
 			"opencode":    runnerPath,
+			"cursor":      runnerPath,
 			"cursor-cli":  runnerPath,
 			"droid":       runnerPath,
 		},
@@ -284,4 +291,27 @@ func startTestHeadedInvocation(t *testing.T, client *daemonclient.Client, repoRo
 	require.True(t, resp.OK, "control plane start headed failed: %s - %s", resp.ErrorCode, resp.Message)
 
 	return resp
+}
+
+func readFakeRunnerLaunchCapture(t *testing.T, capturePath string) fakeRunnerLaunchCapture {
+	t.Helper()
+	var capture fakeRunnerLaunchCapture
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(capturePath)
+		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+			return false
+		}
+		return json.Unmarshal(data, &capture) == nil
+	}, 5*time.Second, 50*time.Millisecond, "launch capture was not written: %s", capturePath)
+	return capture
+}
+
+func normalizePathForAssert(t *testing.T, path string) string {
+	t.Helper()
+	clean := filepath.Clean(path)
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return clean
+	}
+	return filepath.Clean(resolved)
 }

@@ -24,7 +24,8 @@ func TestResolveAgentRunner(t *testing.T) {
 		{name: "codex", input: "codex", want: "codex"},
 		{name: "amp", input: "amp", want: "amp"},
 		{name: "opencode", input: "opencode", want: "opencode"},
-		{name: "cursor-cli", input: "cursor-cli", want: "cursor-cli"},
+		{name: "cursor canonical", input: "cursor", want: "cursor"},
+		{name: "cursor-cli compatibility alias", input: "cursor-cli", want: "cursor"},
 		{name: "droid", input: "droid", want: "droid"},
 		{name: "unknown rejected", input: "unknown", wantErr: true},
 	}

@@ -143,7 +143,7 @@ Example:
 	}
 
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Integration worktree to run against (required)")
-	cmd.Flags().StringVar(&runner, "runner", "claude-code", "Runner to use (claude-code, codex, amp, opencode, cursor-cli, droid; legacy 'claude' alias is accepted)")
+	cmd.Flags().StringVar(&runner, "runner", "claude-code", "Runner to use (claude-code, codex, amp, opencode, cursor, droid; legacy aliases: claude, cursor-cli)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional name for the invocation")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Start but do not attach (headed mode only)")
