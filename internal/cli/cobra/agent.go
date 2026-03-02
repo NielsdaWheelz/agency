@@ -43,7 +43,8 @@ Subcommands:
   restart   Restart invocation from checkpoint
   history   Show unified invocation timeline
   logs      View invocation logs
-  checks    Show checks/readiness surface`,
+  review    Show review/readiness surface
+  pr sync   Push branch and sync pull request`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
@@ -69,7 +70,8 @@ Subcommands:
 		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),
-		newAgentChecksCmd(),
+		newAgentReviewCmd(),
+		newAgentPRCmd(),
 	)
 
 	return cmd
@@ -958,22 +960,22 @@ Example:
 	return cmd
 }
 
-func newAgentChecksCmd() *cobra.Command {
+func newAgentReviewCmd() *cobra.Command {
 	var repoFlag string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "checks <invocation_ref>",
-		Short: "Show checks/readiness for review progression",
-		Long: `Show the checks-first readiness surface for an invocation.
+		Use:   "review <invocation_ref>",
+		Short: "Show review/readiness for progression",
+		Long: `Show the canonical review surface for an invocation.
 
-This command reports merge/review readiness state, blocking reasons, and
-navigation context back to invocation history and turn-aware diff.
+This command reports one deterministic review verdict, typed blocking reasons,
+PR sync eligibility, and navigation context back to history/diff.
 
 Example:
-  agency agent checks 20260131
-  agency agent checks --repo abc123 my-invocation
-  agency agent checks --json 20260131`,
+  agency agent review 20260131
+  agency agent review --repo abc123 my-invocation
+  agency agent review --json 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
@@ -985,7 +987,7 @@ Example:
 			fsys := fs.NewRealFS()
 			ctx := context.Background()
 
-			return commands.AgentChecks(ctx, cr, fsys, cwd, commands.AgentChecksOpts{
+			return commands.AgentReview(ctx, cr, fsys, cwd, commands.AgentReviewOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
 				JSON:          jsonOut,
@@ -995,6 +997,69 @@ Example:
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+
+	return cmd
+}
+
+func newAgentPRCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pr",
+		Short: "Invocation-scoped pull request operations",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Help()
+			return errors.New(errors.EUsage, "specify a subcommand: agency agent pr <sync>")
+		},
+	}
+	cmd.AddCommand(newAgentPRSyncCmd())
+	return cmd
+}
+
+func newAgentPRSyncCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+	var allowDirty bool
+	var forceWithLease bool
+
+	cmd := &cobra.Command{
+		Use:   "sync <invocation_ref>",
+		Short: "Push branch and create/update pull request",
+		Long: `Perform invocation-scoped PR synchronization.
+
+This command resolves invocation -> integration context, pushes the integration
+branch, then creates or updates the branch-scoped pull request.
+
+Example:
+  agency agent pr sync 20260131
+  agency agent pr sync --repo abc123 20260131
+  agency agent pr sync --allow-dirty 20260131
+  agency agent pr sync --force-with-lease 20260131
+  agency agent pr sync --json 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentPRSync(ctx, cr, fsys, cwd, commands.AgentPRSyncOpts{
+				InvocationRef:  args[0],
+				RepoFlag:       repoFlag,
+				AllowDirty:     allowDirty,
+				ForceWithLease: forceWithLease,
+				JSON:           jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
+	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
 
 	return cmd
 }

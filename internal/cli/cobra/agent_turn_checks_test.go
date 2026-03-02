@@ -8,21 +8,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgentCmd_ExposesChecksSubcommand(t *testing.T) {
+func TestAgentCmd_ExposesReviewAndHidesChecks(t *testing.T) {
 	t.Parallel()
 
 	cmd := newAgentCmd()
 	checks := cmd.Commands()
 
+	foundReview := false
 	foundChecks := false
 	for _, sub := range checks {
+		if sub.Name() == "review" {
+			foundReview = true
+		}
 		if sub.Name() == "checks" {
 			foundChecks = true
-			break
 		}
 	}
 
-	require.True(t, foundChecks, "agent command must expose checks-first readiness surface")
+	require.True(t, foundReview, "agent command must expose canonical review surface")
+	require.False(t, foundChecks, "agent command must not expose deprecated checks surface")
 }
 
 func TestAgentDiffCmd_AcceptsTurnFlagsAndJSON(t *testing.T) {
@@ -43,19 +47,50 @@ func TestAgentDiffCmd_AcceptsTurnFlagsAndJSON(t *testing.T) {
 	})
 }
 
-func TestAgentChecksCmd_AcceptsJSON(t *testing.T) {
+func TestAgentReviewCmd_AcceptsJSON(t *testing.T) {
 	t.Parallel()
 
 	cmd := newAgentCmd()
-	var checksCmd *spcobra.Command
+	var reviewCmd *spcobra.Command
 	for _, sub := range cmd.Commands() {
-		if sub.Name() == "checks" {
-			checksCmd = sub
+		if sub.Name() == "review" {
+			reviewCmd = sub
 			break
 		}
 	}
 
-	require.NotNil(t, checksCmd, "checks subcommand should be registered")
-	err := checksCmd.ParseFlags([]string{"--repo", "repo-1", "--json"})
+	require.NotNil(t, reviewCmd, "review subcommand should be registered")
+	err := reviewCmd.ParseFlags([]string{"--repo", "repo-1", "--json"})
+	assert.NoError(t, err)
+}
+
+func TestAgentPRSyncCmd_AcceptsPolicyFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newAgentCmd()
+	var prCmd *spcobra.Command
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "pr" {
+			prCmd = sub
+			break
+		}
+	}
+	require.NotNil(t, prCmd, "pr command should be registered")
+
+	var syncCmd *spcobra.Command
+	for _, sub := range prCmd.Commands() {
+		if sub.Name() == "sync" {
+			syncCmd = sub
+			break
+		}
+	}
+	require.NotNil(t, syncCmd, "pr sync subcommand should be registered")
+
+	err := syncCmd.ParseFlags([]string{
+		"--repo", "repo-1",
+		"--json",
+		"--allow-dirty",
+		"--force-with-lease",
+	})
 	assert.NoError(t, err)
 }

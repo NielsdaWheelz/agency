@@ -172,28 +172,30 @@ type InvocationDiffData struct {
 	TurnContext              *DiffTurnContext `json:"turn_context,omitempty"`
 }
 
-// InvocationCheckReason is one deterministic blocking reason in checks output.
-type InvocationCheckReason struct {
+// InvocationReviewReason is one deterministic blocking reason in review output.
+type InvocationReviewReason struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Hint    string `json:"hint,omitempty"`
 }
 
-// InvocationChecksNavigation links readiness findings back to invocation context.
-type InvocationChecksNavigation struct {
+// InvocationReviewNavigation links review findings back to invocation context.
+type InvocationReviewNavigation struct {
 	InvocationRef  string `json:"invocation_ref"`
 	RepoID         string `json:"repo_id"`
 	LatestTurnID   string `json:"latest_turn_id,omitempty"`
 	HistoryCommand string `json:"history_command"`
 	DiffCommand    string `json:"diff_command,omitempty"`
+	PRSyncCommand  string `json:"pr_sync_command,omitempty"`
 }
 
-// InvocationChecksData is the data payload for GET /invocations/{id}/checks.
-type InvocationChecksData struct {
+// InvocationReviewData is the data payload for GET /invocations/{id}/review.
+type InvocationReviewData struct {
 	InvocationID    string                     `json:"invocation_id"`
 	RepoID          string                     `json:"repo_id"`
 	Ready           bool                       `json:"ready"`
 	Readiness       string                     `json:"readiness"` // "ready" or "blocked"
+	PRSyncEligible  bool                       `json:"pr_sync_eligible"`
 	Status          string                     `json:"status"`
 	DisplayStatus   string                     `json:"display_status"`
 	SemanticStatus  string                     `json:"semantic_status,omitempty"`
@@ -202,9 +204,18 @@ type InvocationChecksData struct {
 	RunnerSummary   string                     `json:"runner_summary,omitempty"`
 	RunnerUpdatedAt string                     `json:"runner_updated_at,omitempty"`
 	HowToTest       string                     `json:"how_to_test,omitempty"`
-	BlockingReasons []InvocationCheckReason    `json:"blocking_reasons"`
-	Navigation      InvocationChecksNavigation `json:"navigation"`
+	BlockingReasons []InvocationReviewReason   `json:"blocking_reasons"`
+	Navigation      InvocationReviewNavigation `json:"navigation"`
 }
+
+// InvocationCheckReason is retained as a compatibility alias.
+type InvocationCheckReason = InvocationReviewReason
+
+// InvocationChecksNavigation is retained as a compatibility alias.
+type InvocationChecksNavigation = InvocationReviewNavigation
+
+// InvocationChecksData is retained as a compatibility alias.
+type InvocationChecksData = InvocationReviewData
 
 // ----- Logs Response Types -----
 

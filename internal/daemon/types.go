@@ -454,6 +454,36 @@ type DiscardResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
+// PRSyncRequest is the request body for POST /invocations/{id}/pr/sync.
+type PRSyncRequest struct {
+	// AllowDirty permits PR sync when integration worktree has uncommitted changes.
+	AllowDirty bool `json:"allow_dirty,omitempty"`
+
+	// ForceWithLease uses git push --force-with-lease.
+	ForceWithLease bool `json:"force_with_lease,omitempty"`
+}
+
+// PRSyncResponse is the response body for POST /invocations/{id}/pr/sync.
+type PRSyncResponse struct {
+	OK           bool   `json:"ok"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+
+	// Success fields
+	InvocationID          string `json:"invocation_id,omitempty"`
+	RepoID                string `json:"repo_id,omitempty"`
+	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
+	Branch                string `json:"branch,omitempty"`
+	PRNumber              int    `json:"pr_number,omitempty"`
+	PRURL                 string `json:"pr_url,omitempty"`
+	PRAction              string `json:"pr_action,omitempty"` // created|updated
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
 // ----- PR-10 Headed Invocation Types -----
 
 // ControlPlaneStartHeadedRequest is the request body for POST /invocations/start_headed (PR-10).

@@ -228,7 +228,7 @@ func TestHandleGetInvocationDiff_TurnSelectorUnknownTurnReturnsInvalidArgument(t
 	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
 }
 
-func TestHandleGetInvocationChecks_BlockedIncludesReasonsAndNavigation(t *testing.T) {
+func TestHandleGetInvocationReview_BlockedIncludesReasonsAndNavigation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -256,7 +256,7 @@ func TestHandleGetInvocationChecks_BlockedIncludesReasonsAndNavigation(t *testin
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"continue"}}`+"\n",
 	), 0o644))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checks?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -265,6 +265,7 @@ func TestHandleGetInvocationChecks_BlockedIncludesReasonsAndNavigation(t *testin
 	decodeData(t, resp, &data)
 	assert.Equal(t, "blocked", data["readiness"])
 	assert.Equal(t, false, data["ready"])
+	assert.Equal(t, false, data["pr_sync_eligible"])
 
 	codes := blockingReasonCodes(data)
 	assert.Contains(t, codes, "invocation_active")
@@ -277,7 +278,7 @@ func TestHandleGetInvocationChecks_BlockedIncludesReasonsAndNavigation(t *testin
 	assert.NotEmpty(t, nav["latest_turn_id"])
 }
 
-func TestHandleGetInvocationChecks_ReadyWhenFinishedAndReviewable(t *testing.T) {
+func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -299,7 +300,7 @@ func TestHandleGetInvocationChecks_ReadyWhenFinishedAndReviewable(t *testing.T) 
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusPending
+		meta.LandingStatus = store.LandingStatusLanded
 		meta.SemanticStatus = &ready
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 	}))
@@ -308,7 +309,7 @@ func TestHandleGetInvocationChecks_ReadyWhenFinishedAndReviewable(t *testing.T) 
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:58:20Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`+"\n",
 	), 0o644))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checks?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -317,6 +318,7 @@ func TestHandleGetInvocationChecks_ReadyWhenFinishedAndReviewable(t *testing.T) 
 	decodeData(t, resp, &data)
 	assert.Equal(t, "ready", data["readiness"])
 	assert.Equal(t, true, data["ready"])
+	assert.Equal(t, true, data["pr_sync_eligible"])
 	assert.Empty(t, blockingReasonCodes(data))
 
 	nav, ok := data["navigation"].(map[string]any)
@@ -325,11 +327,11 @@ func TestHandleGetInvocationChecks_ReadyWhenFinishedAndReviewable(t *testing.T) 
 	assert.NotEmpty(t, nav["history_command"])
 }
 
-func TestHandleGetInvocationChecks_AmbiguousInvocationRefReturnsConflict(t *testing.T) {
+func TestHandleGetInvocationReview_AmbiguousInvocationRefReturnsConflict(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-/checks?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-/review?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusConflict, w.Code)
 
 	resp := decodeAPIResponse(t, w)
@@ -344,7 +346,7 @@ func TestHandleGetInvocationChecks_AmbiguousInvocationRefReturnsConflict(t *test
 	assert.Len(t, details.Candidates, 3)
 }
 
-func TestHandleGetInvocationChecks_InvalidRunnerSchemaBlocksReadiness(t *testing.T) {
+func TestHandleGetInvocationReview_InvalidRunnerSchemaBlocksReadiness(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -371,7 +373,7 @@ func TestHandleGetInvocationChecks_InvalidRunnerSchemaBlocksReadiness(t *testing
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 	}))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checks?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)

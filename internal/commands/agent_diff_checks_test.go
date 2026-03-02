@@ -107,7 +107,7 @@ func TestAgentDiff_TurnAware_HumanAndJSONAligned(t *testing.T) {
 	assert.Equal(t, "2222222", payload.CommittedRange.To)
 }
 
-func TestAgentChecks_Blocked_HumanAndJSONAligned(t *testing.T) {
+func TestAgentReview_Blocked_HumanAndJSONAligned(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "checks-blocked")
 	invocationID := "20260201102020-chkb"
@@ -145,14 +145,14 @@ func TestAgentChecks_Blocked_HumanAndJSONAligned(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var humanOut, jsonOut, errOut bytes.Buffer
-	err = AgentChecks(context.Background(), cr2, fsys, repoDir, AgentChecksOpts{
+	err = AgentReview(context.Background(), cr2, fsys, repoDir, AgentReviewOpts{
 		InvocationRef:   invocationID,
 		RepoFlag:        repoID,
 		DataDirOverride: dataDir,
 	}, &humanOut, &errOut)
 	require.NoError(t, err)
 
-	err = AgentChecks(context.Background(), cr2, fsys, repoDir, AgentChecksOpts{
+	err = AgentReview(context.Background(), cr2, fsys, repoDir, AgentReviewOpts{
 		InvocationRef:   invocationID,
 		RepoFlag:        repoID,
 		JSON:            true,
@@ -160,16 +160,18 @@ func TestAgentChecks_Blocked_HumanAndJSONAligned(t *testing.T) {
 	}, &jsonOut, &errOut)
 	require.NoError(t, err)
 
-	assert.Contains(t, humanOut.String(), "Readiness:            BLOCKED")
+	assert.Contains(t, humanOut.String(), "Review verdict:       BLOCKED")
+	assert.Contains(t, humanOut.String(), "pr_sync_eligible:     no")
 	assert.Contains(t, humanOut.String(), "[invocation_active]")
 	assert.Contains(t, humanOut.String(), "[runner_blocked]")
 	assert.Contains(t, humanOut.String(), "history:")
 	assert.Contains(t, humanOut.String(), "diff:")
 
-	var payload daemon.InvocationChecksData
+	var payload daemon.InvocationReviewData
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
 	assert.False(t, payload.Ready)
 	assert.Equal(t, "blocked", payload.Readiness)
+	assert.False(t, payload.PRSyncEligible)
 	assert.NotEmpty(t, payload.Navigation.HistoryCommand)
 	assert.NotEmpty(t, payload.Navigation.DiffCommand)
 

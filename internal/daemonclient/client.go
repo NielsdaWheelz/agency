@@ -1078,9 +1078,15 @@ type GetInvocationChecksResult struct {
 	RequestID string
 }
 
-// GetInvocationChecks gets checks/readiness data for an invocation via the daemon.
-func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID string) (*GetInvocationChecksResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/checks", url.PathEscape(ref))
+// GetInvocationReviewResult wraps the invocation review response.
+type GetInvocationReviewResult struct {
+	Review    daemon.InvocationReviewData
+	RequestID string
+}
+
+// GetInvocationReview gets review/readiness data for an invocation via the daemon.
+func (c *Client) GetInvocationReview(ctx context.Context, ref string, repoID string) (*GetInvocationReviewResult, error) {
+	u := fmt.Sprintf("http://daemon/invocations/%s/review", url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
@@ -1109,15 +1115,67 @@ func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID str
 	if err != nil {
 		return nil, err
 	}
-	var checks daemon.InvocationChecksData
-	if err := json.Unmarshal(dataBytes, &checks); err != nil {
+	var review daemon.InvocationReviewData
+	if err := json.Unmarshal(dataBytes, &review); err != nil {
 		return nil, err
 	}
 
-	return &GetInvocationChecksResult{
-		Checks:    checks,
+	return &GetInvocationReviewResult{
+		Review:    review,
 		RequestID: apiResp.RequestID,
 	}, nil
+}
+
+// GetInvocationChecks gets checks/readiness data for an invocation via the daemon.
+func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID string) (*GetInvocationChecksResult, error) {
+	review, err := c.GetInvocationReview(ctx, ref, repoID)
+	if err != nil {
+		return nil, err
+	}
+	return &GetInvocationChecksResult{
+		Checks:    daemon.InvocationChecksData(review.Review),
+		RequestID: review.RequestID,
+	}, nil
+}
+
+// PRSyncOpts holds options for invocation-scoped PR sync.
+type PRSyncOpts struct {
+	AllowDirty     bool
+	ForceWithLease bool
+}
+
+// PRSync performs invocation-scoped branch push + PR create/update via daemon.
+func (c *Client) PRSync(ctx context.Context, invocationRef, repoID string, opts PRSyncOpts) (*daemon.PRSyncResponse, error) {
+	reqBody := daemon.PRSyncRequest{
+		AllowDirty:     opts.AllowDirty,
+		ForceWithLease: opts.ForceWithLease,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("http://daemon/invocations/%s/pr/sync", url.PathEscape(invocationRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.PRSyncResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // GetInvocationLogsOpts holds options for getting invocation logs.
