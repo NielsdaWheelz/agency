@@ -108,7 +108,7 @@ type InvocationMeta struct {
 	ExitReason string `json:"exit_reason,omitempty"`
 
 	// FailureReason provides detailed failure reason when status is "failed".
-	// Values: start_incomplete, sandbox_missing, spawn_failed, runner_exit_nonzero, killed, stopped, daemon_shutdown
+	// Values: start_incomplete, sandbox_missing, spawn_failed, runner_exit_nonzero, killed, stopped, daemon_shutdown, stream_write_failed
 	FailureReason string `json:"failure_reason,omitempty"`
 
 	// ExitCode is the process exit code (headless only, null for headed or if running).

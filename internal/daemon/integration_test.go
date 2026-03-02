@@ -1044,6 +1044,107 @@ func TestDaemonRestartFromCheckpoint_StreamSeqRemainsMonotonic(t *testing.T) {
 	}
 }
 
+// S4 PR-02: legacy /start_headless path must preserve stream seq monotonicity.
+func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoID := "repo-legacy-seq"
+	invocationID := "20260302160000-a1b2"
+	sandboxPath := env.Store.SandboxTreePath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Join(sandboxPath, ".agency"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, ".agency", "SANDBOX_MARKER"), []byte(""), 0o644))
+
+	streamPath := env.Store.SandboxStreamLogPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(streamPath), 0o700))
+	seededMaxSeq := uint64(7)
+	seededLine := fmt.Sprintf(
+		`{"ts":"%s","invocation_id":"%s","kind":"lifecycle","source":"runner_stdout","payload":{"message":"seed"},"seq":%d}`+"\n",
+		time.Now().UTC().Format(time.RFC3339Nano),
+		invocationID,
+		seededMaxSeq,
+	)
+	require.NoError(t, os.WriteFile(streamPath, []byte(seededLine), 0o644))
+
+	_, err := env.Store.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	meta := store.NewInvocationMeta(
+		invocationID,
+		"",
+		"wt-legacy-seq",
+		sandboxPath,
+		"agency/sandbox-"+invocationID,
+		"deadbeef",
+		"claude-code",
+		store.RunnerModeHeadless,
+		time.Now(),
+	)
+	require.NoError(t, env.Store.WriteInvocationMeta(repoID, invocationID, meta))
+
+	startResp, err := env.Client.StartHeadless(ctx, &daemon.StartHeadlessRequest{
+		RepoID:       repoID,
+		InvocationID: invocationID,
+		Runner:       "claude",
+		SandboxPath:  sandboxPath,
+		Prompt:       "legacy start monotonicity test",
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "exit-ok",
+		},
+	})
+	require.NoError(t, err, "legacy start transport error")
+	require.True(t, startResp.OK, "legacy start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	waitForInvocationTerminal(t, env.Store, repoID, invocationID, 5*time.Second)
+
+	var streamData []byte
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(streamPath)
+		if readErr != nil {
+			return false
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) < 2 {
+			return false
+		}
+		seqCount := 0
+		for _, line := range lines {
+			var event struct {
+				Seq uint64 `json:"seq"`
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Seq > 0 {
+				seqCount++
+			}
+		}
+		if seqCount < 2 {
+			return false
+		}
+		streamData = data
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "expected seeded + new sequence-bearing events")
+
+	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "expected seeded event + parser events")
+
+	var seqs []uint64
+	for _, line := range lines {
+		var event struct {
+			Seq uint64 `json:"seq"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil && event.Seq > 0 {
+			seqs = append(seqs, event.Seq)
+		}
+	}
+	require.GreaterOrEqual(t, len(seqs), 2, "expected at least two sequence-bearing events")
+	for i := 1; i < len(seqs); i++ {
+		assert.Greater(t, seqs[i], seqs[i-1], "stream seq must remain strictly increasing for legacy start")
+	}
+	assert.GreaterOrEqual(t, seqs[len(seqs)-1], seededMaxSeq+1, "new events should continue after preexisting max seq")
+}
+
 // ---------------------------------------------------------------------------
 // Landing Integration Tests (PR-09)
 // ---------------------------------------------------------------------------

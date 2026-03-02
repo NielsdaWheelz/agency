@@ -166,18 +166,26 @@ type LogPaths struct {
 
 // StopResponse is the response body for POST /invocations/{id}/stop.
 type StopResponse struct {
-	OK        bool   `json:"ok"`
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
+	OK              bool   `json:"ok"`
+	InvocationID    string `json:"invocation_id,omitempty"`
+	APIVersion      int    `json:"api_version"`
+	BuildVersion    string `json:"build_version,omitempty"`
+	ClientRequestID string `json:"client_request_id,omitempty"`
+	ErrorCode       string `json:"error_code,omitempty"`
+	Message         string `json:"message,omitempty"`
+	Hint            string `json:"hint,omitempty"`
 }
 
 // KillResponse is the response body for POST /invocations/{id}/kill.
 type KillResponse struct {
-	OK        bool   `json:"ok"`
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
+	OK              bool   `json:"ok"`
+	InvocationID    string `json:"invocation_id,omitempty"`
+	APIVersion      int    `json:"api_version"`
+	BuildVersion    string `json:"build_version,omitempty"`
+	ClientRequestID string `json:"client_request_id,omitempty"`
+	ErrorCode       string `json:"error_code,omitempty"`
+	Message         string `json:"message,omitempty"`
+	Hint            string `json:"hint,omitempty"`
 }
 
 // ShutdownResponse is the response body for POST /shutdown.

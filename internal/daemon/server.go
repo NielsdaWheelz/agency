@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -818,7 +820,27 @@ func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader,
 	}
 
 	// Use the parser to handle streaming and parsing
-	_ = proc.Parser.StreamAndParse(reader, rawFile, streamFile)
+	if err := proc.Parser.StreamAndParse(reader, rawFile, streamFile); err != nil {
+		if !stderrors.Is(err, stream.ErrRawLogWriteFailed) && !stderrors.Is(err, stream.ErrNormalizedStreamWriteFailed) {
+			// Reader-side errors can occur during normal shutdown races (e.g. pipe close).
+			// Only persistence failures should trigger lifecycle failure semantics.
+			return
+		}
+
+		// Stream persistence is contract-critical; surface failure deterministically
+		// and terminate the supervised process to prevent silent data loss.
+		proc.exitReason.Store("stream_write_failed")
+		proc.failureReason.Store("stream_write_failed")
+		_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Flags.NeedsAttention = true
+			meta.FailureReason = "stream_write_failed"
+		})
+		fmt.Fprintf(os.Stderr, "stream persistence failed for invocation %s: %v\n", proc.InvocationID, err)
+
+		if proc.PGID > 0 {
+			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+		}
+	}
 }
 
 // runSemanticStatusFlushLoop periodically flushes semantic status to meta.json (PR-07).
