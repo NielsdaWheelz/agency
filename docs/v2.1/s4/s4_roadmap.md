@@ -16,6 +16,6 @@
 - **acceptance**:
   - `agent chat --json` and `agent restart --json` return structured JSON for validation failures, daemon-declared failures, and transport failures.
   - automation does not need to parse human-formatted stderr/stdout to classify failure outcomes for these commands.
-  - success-path JSON remains backward compatible for existing scripts (or ships with explicit, documented transition rules).
+  - success-path JSON remains strictly backward compatible for existing scripts (additive-only changes; no removals or renames).
   - tests cover success/failure JSON behavior for all mutation commands (`start`, `stop`, `kill`, `land`, `discard`, `chat`, `restart`).
 - **non-goals**: no invocation-scoped `agent review`/`agent pr`/`agent merge` behavior (Slice S5); no reports-v2 scope (Slice S6).
