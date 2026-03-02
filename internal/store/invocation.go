@@ -79,7 +79,7 @@ type InvocationMeta struct {
 	// BaseCommit is the integration branch commit at invocation start.
 	BaseCommit string `json:"base_commit"`
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the canonical runner id for this invocation.
 	Runner string `json:"runner"`
 
 	// Mode is the execution mode (headed, headless).

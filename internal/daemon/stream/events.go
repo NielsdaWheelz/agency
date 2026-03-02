@@ -58,7 +58,7 @@ type NormalizedEvent struct {
 	// InvocationID is the invocation this event belongs to.
 	InvocationID string `json:"invocation_id"`
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the canonical runner id for this event stream.
 	Runner string `json:"runner"`
 
 	// Kind is the event type.

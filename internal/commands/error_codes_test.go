@@ -478,7 +478,7 @@ func TestDoctor_ScriptNotFound_ReturnsEScriptNotFound(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Write valid user config
-	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude", "editor": "code"}}`
+	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude", "editor": "code"}, "runners": {"claude": "claude"}}`
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userCfgJSON), 0644))
 
@@ -527,7 +527,7 @@ func TestDoctor_ScriptNotExecutable_ReturnsEScriptNotExecutable(t *testing.T) {
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
 
-	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude", "editor": "code"}}`
+	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude", "editor": "code"}, "runners": {"claude": "claude"}}`
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userCfgJSON), 0644))
 

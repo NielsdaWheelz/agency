@@ -9,23 +9,39 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
 // ResolveRunnerCmd resolves the runner command from user config and runner name.
 func ResolveRunnerCmd(cr agencyexec.CommandRunner, fsys fs.FS, configDir string, cfg UserConfig, runnerName string) (string, error) {
+	runnerKeys, capabilityErr := runners.ConfigLookupKeys(runnerName)
 	cmd := ""
-	if cfg.Runners != nil {
-		if val, ok := cfg.Runners[runnerName]; ok {
+
+	if capabilityErr == nil {
+		// For known runners, prefer canonical key first, then compatibility aliases.
+		if cfg.Runners != nil {
+			for _, key := range runnerKeys {
+				if val, ok := cfg.Runners[key]; ok && val != "" {
+					cmd = val
+					break
+				}
+			}
+		}
+	} else if cfg.Runners != nil {
+		// Preserve support for explicitly configured non-target custom runner names.
+		if val, ok := cfg.Runners[runnerName]; ok && val != "" {
 			cmd = val
 		}
 	}
+
 	if cmd == "" {
-		if runnerName == "claude" || runnerName == "codex" {
-			cmd = runnerName
-		} else {
+		if capabilityErr == nil {
 			return "", errors.New(errors.ERunnerNotConfigured,
-				"runner \""+runnerName+"\" not configured; set runners."+runnerName+" or choose claude/codex")
+				"runner \""+runnerName+"\" not configured; set runners."+runnerName+
+					" (explicit runner config is required; supported runners: "+strings.Join(runners.CanonicalIDs(), ", ")+")")
 		}
+		return "", errors.New(errors.ERunnerNotConfigured,
+			"runner \""+runnerName+"\" not configured; set runners."+runnerName+" (explicit runner config is required)")
 	}
 
 	return resolveCommand(cr, fsys, configDir, cmd, errors.ERunnerNotConfigured, "runner")

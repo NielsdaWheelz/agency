@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
@@ -27,10 +28,15 @@ type Adapter interface {
 
 // GetAdapter returns the appropriate adapter for a runner type.
 func GetAdapter(runner string) Adapter {
-	switch runner {
-	case "claude":
+	capability, err := runners.Resolve(runner)
+	if err != nil {
+		return nil
+	}
+
+	switch capability.ID {
+	case runners.RunnerClaudeCode:
 		return &ClaudeAdapter{}
-	case "codex":
+	case runners.RunnerCodex:
 		return &CodexAdapter{}
 	default:
 		return nil

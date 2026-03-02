@@ -36,7 +36,7 @@ type StartHeadlessRequest struct {
 	// InvocationID is the invocation identifier (created by CLI).
 	InvocationID string `json:"invocation_id"`
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor-cli, droid; claude alias accepted).
 	Runner string `json:"runner"`
 
 	// SandboxPath is the absolute path to the sandbox tree (runner CWD).
@@ -61,7 +61,7 @@ type ControlPlaneStartRequest struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string `json:"worktree_ref"`
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor-cli, droid; claude alias accepted).
 	Runner string `json:"runner"`
 
 	// Prompt is the full prompt text (max 256KB).
@@ -457,7 +457,7 @@ type ControlPlaneStartHeadedRequest struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string `json:"worktree_ref"`
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor-cli, droid; claude alias accepted).
 	Runner string `json:"runner"`
 
 	// InvocationName is an optional human-readable label.

@@ -1,6 +1,6 @@
 # agency
 
-local-first AI coding agent manager for Mac and Linux. creates isolated git workspaces, launches `claude`/`codex` in tmux, tracks progress with automatic checkpoints, and lands changes back via GitHub PRs.
+local-first AI coding agent manager for Mac and Linux. creates isolated git workspaces, launches configured AI runners in tmux, tracks progress with automatic checkpoints, and lands changes back via GitHub PRs.
 
 ## installation
 
@@ -26,7 +26,27 @@ go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 
 ## prerequisites
 
-`git`, `tmux`, `gh` (authenticated), and a runner (`claude` or `codex`) on PATH.
+`git`, `tmux`, `gh` (authenticated), plus explicit runner mappings in user config.
+
+runner commands must be configured in `config.json` under your agency config dir
+(`$AGENCY_CONFIG_DIR/config.json`; defaults to `~/Library/Preferences/agency/config.json` on macOS and `~/.config/agency/config.json` on Linux):
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  },
+  "runners": {
+    "claude-code": "claude",
+    "codex": "codex"
+  }
+}
+```
+
+supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`.
+legacy `claude` input is accepted as an alias for `claude-code`.
 
 ## quick start
 
@@ -34,7 +54,7 @@ go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 cd myrepo
 agency repo add                              # register this repo
 agency worktree create --name my-feature     # create an isolated branch
-agency agent start --worktree my-feature     # launch claude in a tmux session
+agency agent start --worktree my-feature     # launch claude-code in a tmux session
 # Ctrl+b, d to detach from tmux
 agency agent ls --watch                      # monitor your agents
 agency agent land <invocation-id> --apply    # land changes back to worktree
@@ -62,7 +82,7 @@ for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interact
 ```
 Repo ──► Worktree ──► Agent Invocation ──► Sandbox
 (yours)  (stable       (one run of         (isolated copy
-         branch)       claude/codex)        agent works in)
+         branch)       configured runner)    agent works in)
 ```
 
 you register a repo, create worktrees (isolated branches), start agents inside sandboxed copies of those branches, then land the agent's changes back. a background daemon supervises everything — auto-starts on first use.

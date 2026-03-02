@@ -131,6 +131,100 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 }
 
+func TestDaemonControlPlaneStart_TargetRunnerSetLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	runners := []string{"claude-code", "codex", "amp", "opencode", "cursor-cli", "droid"}
+
+	for _, runner := range runners {
+		runner := runner
+		t.Run(runner, func(t *testing.T) {
+			wtName := "start-" + runner
+			wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, wtName)
+
+			resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+				RepoRoot:    repoRoot,
+				WorktreeRef: wtID,
+				Runner:      runner,
+				Prompt:      "test prompt",
+				Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+			})
+			require.NoError(t, err, "start")
+			require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+			meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+			assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+			assert.Equal(t, runner, meta.Runner)
+		})
+	}
+}
+
+func TestDaemonControlPlaneStart_ClaudeAliasCanonicalizesRunnerIdentity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "start-claude-alias")
+
+	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "test prompt",
+		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Equal(t, "claude-code", meta.Runner)
+}
+
+func TestDaemonControlPlaneStart_RawLogFallback_NoSemanticAdapter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "start-raw-fallback")
+
+	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "amp",
+		Prompt:      "test prompt",
+		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Nil(t, meta.SemanticStatus)
+
+	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, resp.InvocationID))
+	require.NoError(t, readErr, "read raw log")
+	assert.NotEmpty(t, strings.TrimSpace(string(rawData)))
+
+	streamData, readErr := os.ReadFile(env.Store.SandboxStreamLogPath(repoID, resp.InvocationID))
+	require.NoError(t, readErr, "read stream log")
+	assert.Empty(t, strings.TrimSpace(string(streamData)))
+}
+
 func TestDaemonControlPlaneStart_PersistsRestartProfile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -686,6 +780,58 @@ func TestDaemonRestartFromCheckpoint_RequiresExplicitEnvReplay(t *testing.T) {
 	assert.Contains(t, restartResp.Hint, "FAKE_RUNNER_MODE")
 
 	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
+func TestDaemonRestartFromCheckpoint_UnknownRunnerFailsDeterministically(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-unknown-runner")
+	startResp := startTestInvocationWithRunner(t, env.Client, repoRoot, "restart-unknown-runner", "claude", "exit-ok")
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+
+	// Seed checkpoints.json so restart reaches runner validation/execution.
+	snapshotCommit := gitExec(t, startResp.SandboxPath, "rev-parse", "HEAD")
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       fmt.Sprintf("%s%s/%d", checkpoint.RefPrefix, startResp.InvocationID, 1),
+				SnapshotCommit:    snapshotCommit,
+				SandboxHeadSHA:    snapshotCommit,
+				CreatedAt:         time.Now().UTC().Format(time.RFC3339),
+				IncludesUntracked: true,
+				Diffstat:          "+0 -0 in 0 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err, "marshal checkpoint file")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(env.Store.SandboxDir(repoID, startResp.InvocationID), "checkpoints.json"),
+		cpBytes,
+		0o644,
+	))
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(repoID, startResp.InvocationID, func(meta *store.InvocationMeta) {
+		meta.Runner = "unknown-runner"
+	}))
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: 1,
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "exit-ok",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.False(t, restartResp.OK, "restart should reject unknown runners")
+	assert.Equal(t, "E_RUNNER_NOT_FOUND", restartResp.ErrorCode)
 }
 
 // S3 PR-03: restart from checkpoint in one invocation-scoped flow.

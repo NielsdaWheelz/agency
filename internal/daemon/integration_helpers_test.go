@@ -58,7 +58,13 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude": runnerPath,
+			"claude":      runnerPath,
+			"claude-code": runnerPath,
+			"codex":       runnerPath,
+			"amp":         runnerPath,
+			"opencode":    runnerPath,
+			"cursor-cli":  runnerPath,
+			"droid":       runnerPath,
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
@@ -208,12 +214,18 @@ func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, nam
 // startTestInvocation starts a headless invocation via the control plane.
 func startTestInvocation(t *testing.T, client *daemonclient.Client, repoRoot, worktreeRef, mode string) *daemon.ControlPlaneStartResponse {
 	t.Helper()
+	return startTestInvocationWithRunner(t, client, repoRoot, worktreeRef, "claude", mode)
+}
+
+// startTestInvocationWithRunner starts a headless invocation with an explicit runner.
+func startTestInvocationWithRunner(t *testing.T, client *daemonclient.Client, repoRoot, worktreeRef, runner, mode string) *daemon.ControlPlaneStartResponse {
+	t.Helper()
 	ctx := context.Background()
 
 	resp, err := client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: worktreeRef,
-		Runner:      "claude",
+		Runner:      runner,
 		Prompt:      "test prompt",
 		Env:         map[string]string{"FAKE_RUNNER_MODE": mode},
 	})

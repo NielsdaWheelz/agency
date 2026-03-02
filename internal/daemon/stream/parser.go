@@ -26,7 +26,7 @@ type Parser struct {
 	// InvocationID is the invocation being parsed.
 	InvocationID string
 
-	// Runner is the runner type (claude, codex).
+	// Runner is the runner id associated with this parser instance.
 	Runner string
 
 	// Adapter is the runner-specific parser.

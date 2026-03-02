@@ -161,6 +161,49 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
+	t.Parallel()
+
+	runners := []string{
+		"claude",
+		"claude-code",
+		"codex",
+		"amp",
+		"opencode",
+		"cursor-cli",
+		"droid",
+	}
+
+	for _, runner := range runners {
+		runner := runner
+		t.Run(runner, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+			reqPayload := ControlPlaneStartRequest{
+				ClientRequestID: "test-uuid",
+				RepoRoot:        "/tmp/repo",
+				WorktreeRef:     "wt-1",
+				Runner:          runner,
+				Prompt:          "test",
+			}
+			body, _ := json.Marshal(reqPayload)
+			req := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.handleControlPlaneStartHeadless(w, req)
+
+			var resp ControlPlaneStartResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+			require.False(t, resp.OK, "request should fail later with non-repo path")
+			assert.NotEqual(t, string(errors.ERunnerNotFound), resp.ErrorCode)
+		})
+	}
+}
+
 func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {

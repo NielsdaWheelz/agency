@@ -261,7 +261,7 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 
 **flags:**
 - `--worktree`: integration worktree to run against (required)
-- `--runner`: runner to use: `claude` or `codex` (default: `claude`)
+- `--runner`: runner id to use (`claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`; legacy `claude` alias accepted) (default: `claude-code`)
 - `--headless`: run in headless mode (non-interactive, via daemon)
 - `--name`: optional human-readable label for the invocation (unique among active invocations)
 - `--detached`: start but do not attach (headed mode only; no-op for headless)
@@ -269,6 +269,8 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 - `--prompt-file`: path to file containing prompt for headless mode
 - `--runner-arg`: additional argument to pass to the runner (repeatable)
 - `--no-include-untracked`: exclude untracked files from checkpoint snapshots (headless only)
+
+runner commands are resolved from user config (`config.runners`) and must be explicitly mapped.
 
 **behavior (headed mode, default):**
 1. resolves integration worktree
@@ -304,7 +306,7 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 ```
 Started agent invocation
   invocation_id:  20260131120500-b7c9
-  runner:         claude
+  runner:         claude-code
   mode:           headed
   worktree:       my-feature (20260131120000-a3f2)
   sandbox_path:   /path/to/sandboxes/20260131120500-b7c9/tree
@@ -1056,7 +1058,7 @@ verifies all prerequisites are met for running agency commands.
 - `agency.json` exists and is valid
 - required tools installed: `git`, `tmux`, `gh`
 - `gh` is authenticated (`gh auth status`)
-- runner command exists (e.g., `claude` or `codex` on PATH)
+- runner command exists for selected runner id (via explicit `config.runners` mapping)
 - scripts exist and are executable
 
 **on success:**
@@ -1080,7 +1082,7 @@ tmux_version: tmux 3.3a
 gh_version: gh version 2.40.0 (2024-01-15)
 gh_authenticated: true
 defaults_parent_branch: main
-defaults_runner: claude
+defaults_runner: claude-code
 runner_cmd: claude
 script_setup: /path/to/repo/scripts/agency_setup.sh
 script_verify: /path/to/repo/scripts/agency_verify.sh
@@ -1113,7 +1115,7 @@ agency run --name <name> [--runner <name>] [--parent <branch>] [--detached]
 
 **flags:**
 - `--name`: run name (required, 2-40 chars, lowercase alphanumeric with hyphens, must start with letter)
-- `--runner`: runner name: `claude` or `codex` (default: agency.json `defaults.runner`)
+- `--runner`: runner name (default: agency.json `defaults.runner`; command must be mapped in `config.runners`)
 - `--parent`: parent branch to branch from (default: agency.json `defaults.parent_branch`)
 - `--detached`: do not attach to tmux session after creation
 
@@ -1132,7 +1134,7 @@ agency run --name <name> [--runner <name>] [--parent <branch>] [--detached]
 ```
 run_id: 20260110120000-a3f2
 name: feature-x
-runner: claude
+runner: claude-code
 parent: main
 branch: agency/feature-x-a3f2
 worktree: ~/Library/Application Support/agency/repos/abc123/worktrees/20260110120000-a3f2
