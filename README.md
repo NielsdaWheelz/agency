@@ -77,6 +77,19 @@ agency agent restart <invocation-id> --history     # interactive history selecto
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
 
+automation-friendly mutation json:
+
+```bash
+agency agent start --worktree my-feature --headless --prompt "fix bug" --json
+agency agent stop <invocation-id> --json
+agency agent kill <invocation-id> --json
+agency agent land <invocation-id> --json
+agency agent discard <invocation-id> --json
+```
+
+all mutation `--json` responses use a stable envelope with deterministic fields:
+`ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`.
+
 ## how it works
 
 ```

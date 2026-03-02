@@ -27,6 +27,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // AgentStartOpts holds options for the agent start command.
@@ -55,6 +56,9 @@ type AgentStartOpts struct {
 	// RunnerArgs are additional arguments to pass to the runner.
 	RunnerArgs []string
 
+	// JSON outputs as JSON.
+	JSON bool
+
 	// NoIncludeUntracked excludes untracked files from checkpoint snapshots (PR-08).
 	NoIncludeUntracked bool
 
@@ -66,33 +70,40 @@ type AgentStartOpts struct {
 // PR-10: Both headed and headless modes now delegate to daemon control plane.
 // CLI never creates invocations, sandboxes, or tmux sessions directly.
 func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
 	// Get repo context
 	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return fail(errors.New(errors.ENoRepo, "not inside a git repository"))
 	}
 
 	// Validate runner
 	runner, err := resolveAgentRunner(opts.Runner)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	// For headless mode (PR-05): delegate everything to daemon control plane
 	if opts.Headless {
-		return agentStartHeadlessControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr)
+		return fail(agentStartHeadlessControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr))
 	}
 
 	// PR-10: For headed mode: delegate to daemon control plane
 	// CLI never creates invocations, sandboxes, or tmux sessions directly
-	return agentStartHeadedControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr)
+	return fail(agentStartHeadedControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr))
 }
 
 func resolveAgentRunner(input string) (string, error) {
@@ -113,6 +124,74 @@ func resolveAgentRunner(input string) (string, error) {
 		)
 	}
 	return canonicalRunner, nil
+}
+
+type agentMutationEnvelope struct {
+	OK              bool   `json:"ok"`
+	ErrorCode       string `json:"error_code"`
+	Message         string `json:"message"`
+	Hint            string `json:"hint"`
+	APIVersion      int    `json:"api_version"`
+	BuildVersion    string `json:"build_version"`
+	ClientRequestID string `json:"client_request_id"`
+
+	InvocationID            string             `json:"invocation_id,omitempty"`
+	RepoID                  string             `json:"repo_id,omitempty"`
+	IntegrationWorktreeID   string             `json:"integration_worktree_id,omitempty"`
+	IntegrationWorktreeName string             `json:"integration_worktree_name,omitempty"`
+	SandboxPath             string             `json:"sandbox_path,omitempty"`
+	PID                     int                `json:"pid,omitempty"`
+	PGID                    int                `json:"pgid,omitempty"`
+	DaemonInstanceID        string             `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning          bool               `json:"already_running,omitempty"`
+	AppliedMode             daemon.LandingMode `json:"applied_mode,omitempty"`
+	IntegrationHeadBefore   string             `json:"integration_head_before,omitempty"`
+	IntegrationHeadAfter    string             `json:"integration_head_after,omitempty"`
+	CommitsLanded           int                `json:"commits_landed,omitempty"`
+}
+
+func newAgentMutationEnvelope() agentMutationEnvelope {
+	return agentMutationEnvelope{
+		OK:              false,
+		ErrorCode:       "",
+		Message:         "",
+		Hint:            "",
+		APIVersion:      daemon.APIVersion,
+		BuildVersion:    version.FullVersion(),
+		ClientRequestID: "",
+	}
+}
+
+func writeAgentMutationJSON(w io.Writer, envelope agentMutationEnvelope) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(envelope)
+}
+
+func writeAgentMutationJSONSuccess(w io.Writer, mutate func(*agentMutationEnvelope)) error {
+	envelope := newAgentMutationEnvelope()
+	envelope.OK = true
+	if mutate != nil {
+		mutate(&envelope)
+	}
+	return writeAgentMutationJSON(w, envelope)
+}
+
+func writeAgentMutationJSONError(w io.Writer, err error) error {
+	envelope := newAgentMutationEnvelope()
+	code := errors.GetCode(err)
+	if code == "" {
+		code = errors.EInternal
+	}
+	envelope.ErrorCode = string(code)
+	envelope.Message = err.Error()
+	if ae, ok := errors.AsAgencyError(err); ok {
+		envelope.Message = ae.Msg
+		if ae.Details != nil {
+			envelope.Hint = ae.Details["hint"]
+		}
+	}
+	return writeAgentMutationJSON(w, envelope)
 }
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane (PR-10).
@@ -153,6 +232,25 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
 		)
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.RepoID = resp.RepoID
+			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
+			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
+			envelope.SandboxPath = resp.SandboxPath
+			envelope.DaemonInstanceID = resp.DaemonInstanceID
+			envelope.AlreadyRunning = resp.AlreadyRunning
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+			envelope.ClientRequestID = resp.ClientRequestID
+		})
 	}
 
 	// Output result
@@ -250,6 +348,27 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
 		)
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.RepoID = resp.RepoID
+			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
+			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
+			envelope.SandboxPath = resp.SandboxPath
+			envelope.PID = resp.PID
+			envelope.PGID = resp.PGID
+			envelope.DaemonInstanceID = resp.DaemonInstanceID
+			envelope.AlreadyRunning = resp.AlreadyRunning
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+			envelope.ClientRequestID = resp.ClientRequestID
+		})
 	}
 
 	// Output result
@@ -592,14 +711,24 @@ type AgentStopOpts struct {
 
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
+
+	// JSON outputs as JSON.
+	JSON bool
 }
 
 // AgentStop sends a graceful stop signal (Ctrl-C) to a running invocation.
 // PR-A: Supports --repo for CWD-less operation.
 func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStopOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
@@ -609,11 +738,11 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
@@ -622,7 +751,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		CmdName:       "agent stop",
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	// Resolve invocation
@@ -631,31 +760,44 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		IncludeFinished: false,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if record.Broken {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.EInvocationBroken,
 			"invocation exists but meta.json is unreadable or invalid",
 			map[string]string{
 				"invocation_id":  record.InvocationID,
 				"invocation_dir": record.InvocationDir,
 			},
-		)
+		))
 	}
 
 	resp, err := client.Stop(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if !resp.OK {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
-		)
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = record.InvocationID
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+			envelope.ClientRequestID = resp.ClientRequestID
+		})
 	}
 
 	modeStr := "headless"
@@ -679,6 +821,9 @@ type AgentKillOpts struct {
 
 	// TmuxClient is the tmux client to use (optional, uses real client if nil).
 	TmuxClient tmux.Client
+
+	// JSON outputs as JSON.
+	JSON bool
 }
 
 // AgentDiffOpts holds options for the agent diff command.
@@ -985,14 +1130,24 @@ type AgentLandOpts struct {
 
 	// RequireBase fails if integration has diverged from base_commit.
 	RequireBase bool
+
+	// JSON outputs as JSON.
+	JSON bool
 }
 
 // AgentLand lands sandbox changes to the integration worktree via daemon.
 // PR-A: Supports --repo for CWD-less operation.
 func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLandOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
@@ -1002,11 +1157,11 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
@@ -1015,7 +1170,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		CmdName:       "agent land",
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	// Resolve invocation
@@ -1024,18 +1179,18 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		IncludeFinished: true,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if record.Broken {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.EInvocationBroken,
 			"invocation exists but meta.json is unreadable or invalid",
 			map[string]string{
 				"invocation_id":  record.InvocationID,
 				"invocation_dir": record.InvocationDir,
 			},
-		)
+		))
 	}
 
 	// Call daemon to land
@@ -1046,23 +1201,39 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		RequireBase:  opts.RequireBase,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if !resp.OK {
 		// Handle specific error codes
 		hint := resp.Hint
-		if resp.ErrorCode == string(errors.ELandConflict) && len(resp.ConflictFiles) > 0 {
+		if !opts.JSON && resp.ErrorCode == string(errors.ELandConflict) && len(resp.ConflictFiles) > 0 {
 			_, _ = fmt.Fprintf(stderr, "Conflicting files:\n")
 			for _, f := range resp.ConflictFiles {
 				_, _ = fmt.Fprintf(stderr, "  - %s\n", f)
 			}
 		}
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{"hint": hint},
-		)
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = record.InvocationID
+			envelope.AppliedMode = resp.AppliedMode
+			envelope.IntegrationHeadBefore = resp.IntegrationHeadBefore
+			envelope.IntegrationHeadAfter = resp.IntegrationHeadAfter
+			envelope.CommitsLanded = resp.CommitsLanded
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+		})
 	}
 
 	// Success output
@@ -1082,14 +1253,24 @@ type AgentDiscardOpts struct {
 
 	// RepoFlag is the --repo flag value (PR-A).
 	RepoFlag string
+
+	// JSON outputs as JSON.
+	JSON bool
 }
 
 // AgentDiscard discards a sandbox without landing via daemon.
 // PR-A: Supports --repo for CWD-less operation.
 func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiscardOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
@@ -1099,11 +1280,11 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
@@ -1112,7 +1293,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		CmdName:       "agent discard",
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	// Resolve invocation
@@ -1121,32 +1302,44 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		IncludeFinished: true,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if record.Broken {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.EInvocationBroken,
 			"invocation exists but meta.json is unreadable or invalid",
 			map[string]string{
 				"invocation_id":  record.InvocationID,
 				"invocation_dir": record.InvocationDir,
 			},
-		)
+		))
 	}
 
 	// Call daemon to discard
 	resp, err := client.Discard(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if !resp.OK {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
-		)
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = record.InvocationID
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+		})
 	}
 
 	// Success output
@@ -2588,9 +2781,16 @@ func base64Decode(s string) ([]byte, error) {
 // AgentKill forcefully terminates a running invocation.
 // PR-A: Supports --repo for CWD-less operation.
 func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentKillOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
@@ -2600,11 +2800,11 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
@@ -2613,7 +2813,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		CmdName:       "agent kill",
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	// Resolve invocation
@@ -2622,31 +2822,44 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		IncludeFinished: true,
 	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if record.Broken {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.EInvocationBroken,
 			"invocation exists but meta.json is unreadable or invalid",
 			map[string]string{
 				"invocation_id":  record.InvocationID,
 				"invocation_dir": record.InvocationDir,
 			},
-		)
+		))
 	}
 
 	resp, err := client.Kill(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if !resp.OK {
-		return errors.NewWithDetails(
+		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{"hint": resp.Hint},
-		)
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = record.InvocationID
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+			envelope.ClientRequestID = resp.ClientRequestID
+		})
 	}
 
 	modeStr := "headless"
