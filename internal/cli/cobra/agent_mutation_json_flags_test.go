@@ -19,6 +19,8 @@ func TestAgentMutationCommandsAcceptJSONFlag(t *testing.T) {
 		{name: "kill", newCmd: newAgentKillCmd},
 		{name: "land", newCmd: newAgentLandCmd},
 		{name: "discard", newCmd: newAgentDiscardCmd},
+		{name: "chat", newCmd: newAgentChatCmd},
+		{name: "restart", newCmd: newAgentRestartCmd},
 	}
 
 	for _, tt := range tests {
