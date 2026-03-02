@@ -1,4 +1,4 @@
-.PHONY: build test test-v test-race lint vet fmt fmt-check mod-tidy-check e2e clean install run help check verify completions
+.PHONY: build test test-v test-race lint vet fmt fmt-check mod-tidy-check e2e e2e-gh e2e-local clean install run help check verify completions
 
 -include .env
 export
@@ -58,10 +58,29 @@ mod-tidy-check:
 	go mod tidy
 	git diff --exit-code -- go.mod go.sum
 
-# Run GH e2e test (requires env vars)
+# Run e2e checks. Uses GH-backed test when token is available; otherwise local CLI e2e smoke tests.
 e2e:
-	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN=$${GH_TOKEN:?} \
-		go test ./... -run TestGHE2EPushMerge -count=1
+	@if [ -n "$${GH_TOKEN:-}" ] || [ -n "$${GITHUB_TOKEN:-}" ]; then \
+		echo "running github-backed e2e"; \
+		$(MAKE) e2e-gh; \
+	else \
+		echo "GH_TOKEN/GITHUB_TOKEN not set; running local e2e smoke tests"; \
+		$(MAKE) e2e-local; \
+	fi
+
+# Run GH-backed e2e test only (requires token)
+e2e-gh:
+	@token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
+	if [ -z "$$token" ]; then \
+		echo "error: set GH_TOKEN or GITHUB_TOKEN for github-backed e2e"; \
+		exit 1; \
+	fi; \
+	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN="$$token" \
+		go test -tags=e2e ./... -run TestGHE2EPushMerge -count=1
+
+# Run local black-box CLI e2e smoke tests
+e2e-local:
+	AGENCY_LOCAL_E2E=1 go test -tags=e2e ./internal/commands -run TestAgentStartCLIE2E -count=1
 
 # Clean build artifacts
 clean:
@@ -100,7 +119,9 @@ help:
 	@echo "  test           - run tests"
 	@echo "  test-v         - run tests with verbose output"
 	@echo "  test-race      - run tests with race detector"
-	@echo "  e2e            - run GH e2e test (requires GH_TOKEN)"
+	@echo "  e2e            - run e2e (GH-backed with token; otherwise local smoke)"
+	@echo "  e2e-gh         - run GH-backed e2e only (requires GH_TOKEN/GITHUB_TOKEN)"
+	@echo "  e2e-local      - run local black-box CLI e2e smoke tests"
 	@echo "  clean          - clean build artifacts"
 	@echo "  install        - install to GOBIN"
 	@echo "  run            - run from source"
