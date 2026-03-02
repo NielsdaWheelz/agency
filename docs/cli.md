@@ -537,13 +537,13 @@ agency agent diff --turn inv_event:2:agency.followup_prompt 20260131
 agency agent diff --turn-range stream:4..stream:9 --json 20260131
 ```
 
-### `agency agent checks`
+### `agency agent review`
 
-shows checks-first readiness state for review/merge progression.
+shows canonical review/readiness state for invocation progression.
 
 **usage:**
 ```bash
-agency agent checks <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
+agency agent review <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 ```
 
 **arguments:**
@@ -554,15 +554,46 @@ agency agent checks <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 - `--json`: machine-readable output
 
 **behavior:**
-- reports readiness (`ready` or `blocked`) with deterministic blocking reason taxonomy
-- includes invocation-linked navigation commands for `agent history` and turn-aware `agent diff`
-- terminal and json modes share the same readiness truth (no dual semantics)
+- reports deterministic review verdict (`ready` or `blocked`) with typed blocking reasons
+- includes explicit `pr_sync_eligible` and invocation-linked navigation commands (`history`, `diff`, `pr sync`)
+- terminal and json modes share the same truth (no dual semantics)
 
 **examples:**
 ```bash
-agency agent checks 20260131
-agency agent checks --repo abc123 my-invocation
-agency agent checks --json 20260131
+agency agent review 20260131
+agency agent review --repo abc123 my-invocation
+agency agent review --json 20260131
+```
+
+### `agency agent pr sync`
+
+pushes the resolved integration branch and creates/updates the branch-scoped PR for an invocation.
+
+**usage:**
+```bash
+agency agent pr sync <invocation_id|name|prefix> [--repo <id|prefix>] [--allow-dirty] [--force-with-lease] [--json]
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--allow-dirty`: allow sync with uncommitted integration worktree changes
+- `--force-with-lease`: use `git push --force-with-lease`
+- `--json`: machine-readable mutation envelope output
+
+**behavior:**
+- resolves invocation -> integration worktree context deterministically
+- enforces dirty-worktree and push policy validation with typed errors/hints
+- creates or updates one PR identity per branch and returns stable outcome fields (`branch`, `pr_action`, `pr_url`)
+
+**examples:**
+```bash
+agency agent pr sync 20260131
+agency agent pr sync --repo abc123 my-invocation --allow-dirty
+agency agent pr sync --force-with-lease 20260131
+agency agent pr sync --json 20260131
 ```
 
 ### `agency agent land`

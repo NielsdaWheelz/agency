@@ -67,8 +67,10 @@ agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent logs <invocation-id> --follow
 agency agent chat <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
-agency agent checks <invocation-id>               # readiness + blocking reasons
+agency agent review <invocation-id>               # review verdict + blocking reasons
 agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
+agency agent land <invocation-id> --apply         # land sandbox into integration worktree
+agency agent pr sync <invocation-id>              # push branch + create/update PR
 agency checkpoint ls --invocation <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 agency agent restart <invocation-id> --history     # interactive history selector (tty only)
@@ -84,6 +86,7 @@ agency agent start --worktree my-feature --headless --prompt "fix bug" --json
 agency agent stop <invocation-id> --json
 agency agent kill <invocation-id> --json
 agency agent land <invocation-id> --json
+agency agent pr sync <invocation-id> --json
 agency agent discard <invocation-id> --json
 agency agent chat <invocation-id> --prompt "continue" --json
 agency agent restart <invocation-id> --checkpoint 3 --json

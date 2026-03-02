@@ -238,7 +238,7 @@ agency agent open <invocation-id>
 agency agent open <invocation-id> --editor cursor
 
 # check readiness blockers before landing/review
-agency agent checks <invocation-id>
+agency agent review <invocation-id>
 ```
 
 ## step 8: land changes into your worktree
@@ -270,29 +270,32 @@ agency agent kill <invocation-id>    # forceful (SIGKILL)
 
 sandbox is preserved after stop/kill for inspection.
 
-## step 10: push and create PR
+## step 10: sync PR for the invocation
 
-once changes are landed into your worktree, push and create a GitHub PR:
+once changes are landed, sync the integration branch and PR using the invocation id:
 
 ```bash
-agency push add-user-auth
-```
-
-output:
-```
-pr: https://github.com/owner/repo/pull/123
+agency agent pr sync <invocation-id>
 ```
 
 what happened:
-1. pushed the branch to origin
-2. created a GitHub PR with title `[agency] add-user-auth`
-3. synced `.agency/report.md` to PR body
+1. resolved invocation -> integration worktree branch
+2. pushed the branch to origin
+3. created or updated the branch-scoped GitHub PR
+4. synced `.agency/report.md` (or bounded fallback body) to PR body
 
-if you make more changes and push again, agency updates the existing PR.
+policy flags:
 
 ```bash
-agency push add-user-auth --allow-dirty          # push even with uncommitted changes
-agency push add-user-auth --force-with-lease      # safe force push after rebase
+agency agent pr sync <invocation-id> --allow-dirty      # allow dirty integration tree
+agency agent pr sync <invocation-id> --force-with-lease # safe force push after rebase
+agency agent pr sync <invocation-id> --json             # machine-readable outcome
+```
+
+legacy compatibility still exists:
+
+```bash
+agency push <worktree-name>
 ```
 
 ## step 11: merge and cleanup
@@ -384,8 +387,9 @@ agency agent land <id> --apply
 # 8. review manually
 agency worktree open auth-refactor --editor cursor
 
-# 9. push + PR
-agency push auth-refactor
+# 9. review + PR sync
+agency agent review <id>
+agency agent pr sync <id>
 
 # 10. merge
 agency merge auth-refactor --squash
@@ -422,7 +426,8 @@ AGENTS (AI executions in sandboxes)
   agency agent chat <ref> --prompt "..."    send follow-up prompt to headless run
   agency agent diff <ref>                   show sandbox changes
   agency agent diff <ref> --turn <entry_id> turn-aware diff context
-  agency agent checks <ref>                 readiness + blocking reasons
+  agency agent review <ref>                 review verdict + blocking reasons
+  agency agent pr sync <ref>                push branch + create/update PR
   agency agent open <ref>                   open sandbox in editor
   agency agent stop <ref>                   graceful stop
   agency agent kill <ref>                   forceful kill

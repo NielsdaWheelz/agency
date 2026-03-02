@@ -24,4 +24,4 @@
 
 ### Compatibility policy (applies across S5 PRs)
 - `agent review` is canonical for invocation readiness/progression assessment.
-- `agent checks` is a compatibility alias and should be deprecated in S5 messaging/help/tests without redefining S5 semantics.
+- `agent checks` is removed from the S5 command surface; compatibility may exist only in internal code paths during migration.
