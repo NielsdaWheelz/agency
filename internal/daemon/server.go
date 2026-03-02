@@ -497,6 +497,13 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationTimeline(w, r, invocationRef)
+	case "review":
+		// S5 PR-01: GET /invocations/{ref}/review
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleGetInvocationReview(w, r, invocationRef)
 	case "checks":
 		// S3 PR-05: GET /invocations/{ref}/checks
 		if r.Method != http.MethodGet {
@@ -504,6 +511,9 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationChecks(w, r, invocationRef)
+	case "pr":
+		// S5 PR-01: invocation-scoped PR routes.
+		s.handleInvocationPRRoute(w, r, invocationRef, action)
 	case "chat":
 		// S3 PR-02: POST /invocations/{ref}/chat
 		if r.Method != http.MethodPost {
@@ -513,6 +523,24 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		s.handleControlPlaneFollowUpPrompt(w, r, invocationRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
+	}
+}
+
+func (s *Server) handleInvocationPRRoute(w http.ResponseWriter, r *http.Request, invocationRef, action string) {
+	subAction := ""
+	if idx := strings.Index(action, "/"); idx != -1 {
+		subAction = action[idx+1:]
+	}
+
+	switch subAction {
+	case "sync":
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handlePRSync(w, r, invocationRef)
+	default:
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown pr action: "+subAction, "")
 	}
 }
 

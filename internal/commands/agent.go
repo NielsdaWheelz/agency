@@ -154,6 +154,10 @@ type agentMutationEnvelope struct {
 	IntegrationHeadBefore   string             `json:"integration_head_before,omitempty"`
 	IntegrationHeadAfter    string             `json:"integration_head_after,omitempty"`
 	CommitsLanded           int                `json:"commits_landed,omitempty"`
+	Branch                  string             `json:"branch,omitempty"`
+	PRNumber                int                `json:"pr_number,omitempty"`
+	PRURL                   string             `json:"pr_url,omitempty"`
+	PRAction                string             `json:"pr_action,omitempty"`
 }
 
 func newAgentMutationEnvelope() agentMutationEnvelope {
@@ -1012,8 +1016,8 @@ func parseTurnRange(turnRange string) (string, string, error) {
 	return start, end, nil
 }
 
-// AgentChecksOpts holds options for the agent checks command.
-type AgentChecksOpts struct {
+// AgentReviewOpts holds options for the agent review command.
+type AgentReviewOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
@@ -1027,8 +1031,8 @@ type AgentChecksOpts struct {
 	DataDirOverride string
 }
 
-// AgentChecks reports checks/readiness state for invocation review/merge progression.
-func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChecksOpts, stdout, stderr io.Writer) error {
+// AgentReview reports canonical review/readiness state for invocation progression.
+func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentReviewOpts, stdout, stderr io.Writer) error {
 	var dataDir string
 	if opts.DataDirOverride != "" {
 		dataDir = opts.DataDirOverride
@@ -1057,13 +1061,13 @@ func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
-		CmdName:       "agent checks",
+		CmdName:       "agent review",
 	})
 	if err != nil {
 		return err
 	}
 
-	result, err := client.GetInvocationChecks(ctx, opts.InvocationRef, repoCtx.RepoID)
+	result, err := client.GetInvocationReview(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -1071,46 +1075,51 @@ func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result.Checks)
+		return enc.Encode(result.Review)
 	}
-	return writeAgentChecksHumanFromDTO(stdout, &result.Checks)
+	return writeAgentReviewHumanFromDTO(stdout, &result.Review)
 }
 
-func writeAgentChecksHumanFromDTO(w io.Writer, checks *daemon.InvocationChecksData) error {
-	readiness := "BLOCKED"
-	if checks.Ready {
-		readiness = "READY"
+func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewData) error {
+	verdict := "BLOCKED"
+	if review.Ready {
+		verdict = "READY"
+	}
+	prSyncEligible := "no"
+	if review.PRSyncEligible {
+		prSyncEligible = "yes"
 	}
 
-	_, _ = fmt.Fprintf(w, "Readiness:            %s\n", readiness)
-	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", checks.InvocationID)
-	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", checks.RepoID)
-	_, _ = fmt.Fprintf(w, "status:               %s\n", checks.Status)
-	_, _ = fmt.Fprintf(w, "display_status:       %s\n", checks.DisplayStatus)
-	if checks.LandingStatus != "" {
-		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", checks.LandingStatus)
+	_, _ = fmt.Fprintf(w, "Review verdict:       %s\n", verdict)
+	_, _ = fmt.Fprintf(w, "pr_sync_eligible:     %s\n", prSyncEligible)
+	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", review.InvocationID)
+	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", review.RepoID)
+	_, _ = fmt.Fprintf(w, "status:               %s\n", review.Status)
+	_, _ = fmt.Fprintf(w, "display_status:       %s\n", review.DisplayStatus)
+	if review.LandingStatus != "" {
+		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", review.LandingStatus)
 	}
-	if checks.SemanticStatus != "" {
-		_, _ = fmt.Fprintf(w, "semantic_status:      %s\n", checks.SemanticStatus)
+	if review.SemanticStatus != "" {
+		_, _ = fmt.Fprintf(w, "semantic_status:      %s\n", review.SemanticStatus)
 	}
-	if checks.RunnerStatus != "" {
-		_, _ = fmt.Fprintf(w, "runner_status:        %s\n", checks.RunnerStatus)
+	if review.RunnerStatus != "" {
+		_, _ = fmt.Fprintf(w, "runner_status:        %s\n", review.RunnerStatus)
 	}
-	if checks.RunnerUpdatedAt != "" {
-		_, _ = fmt.Fprintf(w, "runner_updated_at:    %s\n", checks.RunnerUpdatedAt)
+	if review.RunnerUpdatedAt != "" {
+		_, _ = fmt.Fprintf(w, "runner_updated_at:    %s\n", review.RunnerUpdatedAt)
 	}
-	if checks.RunnerSummary != "" {
-		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", checks.RunnerSummary)
+	if review.RunnerSummary != "" {
+		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", review.RunnerSummary)
 	}
-	if checks.HowToTest != "" {
-		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", checks.HowToTest)
+	if review.HowToTest != "" {
+		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", review.HowToTest)
 	}
 
 	_, _ = fmt.Fprintf(w, "\nBlocking reasons:\n")
-	if len(checks.BlockingReasons) == 0 {
+	if len(review.BlockingReasons) == 0 {
 		_, _ = fmt.Fprintf(w, "  (none)\n")
 	} else {
-		for _, reason := range checks.BlockingReasons {
+		for _, reason := range review.BlockingReasons {
 			_, _ = fmt.Fprintf(w, "  - [%s] %s\n", reason.Code, reason.Message)
 			if strings.TrimSpace(reason.Hint) != "" {
 				_, _ = fmt.Fprintf(w, "      hint: %s\n", reason.Hint)
@@ -1119,13 +1128,117 @@ func writeAgentChecksHumanFromDTO(w io.Writer, checks *daemon.InvocationChecksDa
 	}
 
 	_, _ = fmt.Fprintf(w, "\nNavigation:\n")
-	_, _ = fmt.Fprintf(w, "  history: %s\n", checks.Navigation.HistoryCommand)
-	if checks.Navigation.DiffCommand != "" {
-		_, _ = fmt.Fprintf(w, "  diff:    %s\n", checks.Navigation.DiffCommand)
+	_, _ = fmt.Fprintf(w, "  history: %s\n", review.Navigation.HistoryCommand)
+	if review.Navigation.DiffCommand != "" {
+		_, _ = fmt.Fprintf(w, "  diff:    %s\n", review.Navigation.DiffCommand)
 	}
-	if checks.Navigation.LatestTurnID != "" {
-		_, _ = fmt.Fprintf(w, "  turn:    %s\n", checks.Navigation.LatestTurnID)
+	if review.Navigation.PRSyncCommand != "" {
+		_, _ = fmt.Fprintf(w, "  pr_sync: %s\n", review.Navigation.PRSyncCommand)
 	}
+	if review.Navigation.LatestTurnID != "" {
+		_, _ = fmt.Fprintf(w, "  turn:    %s\n", review.Navigation.LatestTurnID)
+	}
+	return nil
+}
+
+// AgentChecksOpts is retained as a compatibility alias.
+type AgentChecksOpts = AgentReviewOpts
+
+// AgentChecks is retained as a compatibility alias for AgentReview.
+func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChecksOpts, stdout, stderr io.Writer) error {
+	return AgentReview(ctx, cr, fsys, cwd, AgentReviewOpts(opts), stdout, stderr)
+}
+
+// AgentPRSyncOpts holds options for the agent pr sync command.
+type AgentPRSyncOpts struct {
+	InvocationRef   string
+	RepoFlag        string
+	AllowDirty      bool
+	ForceWithLease  bool
+	JSON            bool
+	DataDirOverride string
+}
+
+// AgentPRSync performs invocation-scoped branch push + PR create/update via daemon.
+func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentPRSyncOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return fail(err)
+	}
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return fail(err)
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent pr sync",
+	})
+	if err != nil {
+		return fail(err)
+	}
+
+	resp, err := client.PRSync(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.PRSyncOpts{
+		AllowDirty:     opts.AllowDirty,
+		ForceWithLease: opts.ForceWithLease,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if !resp.OK {
+		return fail(errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": resp.Hint},
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.RepoID = resp.RepoID
+			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
+			envelope.Branch = resp.Branch
+			envelope.PRNumber = resp.PRNumber
+			envelope.PRURL = resp.PRURL
+			envelope.PRAction = resp.PRAction
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+		})
+	}
+
+	_, _ = fmt.Fprintln(stdout, "PR sync complete")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  branch:         %s\n", resp.Branch)
+	_, _ = fmt.Fprintf(stdout, "  pr_action:      %s\n", resp.PRAction)
+	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)
 	return nil
 }
 
