@@ -7,7 +7,7 @@ Remove hard-coded runner assumptions and normalize automation outputs.
 ## Acceptance Criteria
 
 ### capability-driven runner selection replaces allowlists
-- **given**: a user starts an invocation through canonical `agent` start/control-plane surfaces with one of the v2.1 runner targets (`claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`)
+- **given**: a user starts an invocation through canonical `agent` start/control-plane surfaces with one of the v2.1 runner targets (`claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`)
 - **when**: runner validation and launch planning are evaluated
 - **then**: acceptance/rejection is driven by a shared runner capability contract (not hardcoded runner-name conditionals), and accepted requests resolve to one canonical runner identity
 
@@ -48,7 +48,7 @@ Remove hard-coded runner assumptions and normalize automation outputs.
 
 ## Key Decisions
 
-**Canonical runner identity uses v2.1 target IDs with explicit compatibility aliases**: canonical IDs are `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, and `droid`. Legacy `claude` remains a compatibility input alias to `claude-code` during v2.1 migration.
+**Canonical runner identity uses v2.1 target IDs with explicit compatibility aliases**: canonical IDs are `claude-code`, `codex`, `amp`, `opencode`, `cursor`, and `droid`. Legacy `claude` remains a compatibility input alias to `claude-code` during v2.1 migration.
 
 **Runner capabilities are a single source of truth across CLI + daemon**: validation, supported modes, reserved-flag policy, launch argument shaping, and semantic-adapter availability derive from one shared capability model to prevent drift between start/control-plane/restart paths.
 

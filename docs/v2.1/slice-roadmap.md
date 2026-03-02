@@ -59,7 +59,7 @@ S7 Full-Screen Watch/TUI Seed (Stretch)
 
 ### Slice S4: Runner Capability Model + Agent Mutation JSON
 - **Goal**: remove hard-coded runner assumptions and normalize automation outputs.
-- **Outcome**: runner support is capability-driven for `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, and `droid`, and mutation commands expose stable JSON responses.
+- **Outcome**: runner support is capability-driven for `claude-code`, `codex`, `amp`, `opencode`, `cursor`, and `droid`, and mutation commands expose stable JSON responses.
 - **Dependencies**: S3.
 - **Acceptance**: no hardcoded runner allowlist in start/control-plane paths; fallback behavior is explicit for unsupported semantic adapters.
 

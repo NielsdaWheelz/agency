@@ -18,7 +18,7 @@ v2.1 delivers functional Conductor parity at the daemon + CLI layer while preser
 3. Headless chat control plane with transcript visibility, follow-up prompting, and checkpoint restart continuity.
 4. Fleet-scale invocation/worktree operations (list/filter/sort/status/select flows).
 5. Invocation-scoped review/PR/merge command family with stable `--json` output contracts.
-6. Runner capability model for `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, and `droid`, including raw-log fallback where semantic adapters are unavailable.
+6. Runner capability model for `claude-code`, `codex`, `amp`, `opencode`, `cursor`, and `droid`, including raw-log fallback where semantic adapters are unavailable.
 7. Mutation-command JSON parity for v2 `agent` surfaces.
 8. Reports v2 transition (`report.json` optional artifact, markdown compatibility retained).
 9. Interactive history-driven checkpoint restore (arrow-key terminal navigation) for headless invocations.
@@ -77,7 +77,7 @@ Issue + release-gate evaluation services
 | Safety model | Sandbox-first execution is mandatory and non-negotiable. |
 | Authority model | Daemon is canonical read/write source for v2 `agent` + `worktree` lifecycle surfaces. |
 | Delivery model | CLI-first parity is required; GUI/full TUI is optional/deferred. |
-| Runner target set | `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid` must share one capability-driven model. |
+| Runner target set | `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid` must share one capability-driven model. |
 | Output contracts | Automation-facing mutation flows must support stable `--json` responses. |
 | Release policy | Gate A/B closure + parity baseline + contract/test compliance must all be satisfied before v2.1 RC. |
 
@@ -129,7 +129,7 @@ Issue + release-gate evaluation services
 3. Restart-from-checkpoint exists as a single invocation command path.
 4. Invocation-centric PR/review/merge command family exists with stable `--json` contracts.
 5. Runner capability model replaces hardcoded `claude|codex` gates.
-6. Runner targets `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, and `droid` are supported through one capability-driven invocation model.
+6. Runner targets `claude-code`, `codex`, `amp`, `opencode`, `cursor`, and `droid` are supported through one capability-driven invocation model.
 7. Checkpoint restore supports explicit checkpoint selection and interactive history-based selection.
 8. Daemon APIs remain read/write authority for v2 `agent` + `worktree` surfaces.
 9. Fleet workflows support efficient list/filter/status/selection over many worktrees/invocations.
@@ -170,7 +170,7 @@ The canonical v2.1 sequencing is maintained in `slice-roadmap.md`.
 16. `docs/issues/checkpoint-p1-02-checkpoint-apply-emits-seq1-unconditionally.md`
 17. `docs/issues/core-p1-tighten-file-permissions.md`
 18. `docs/issues/exec-p1-deterministic-env-merge.md`
-19. `docs/issues/spec-p1-07-runner-capability-target-set-claude-code-codex-amp-opencode-cursor-cli-droid.md`
+19. `docs/issues/spec-p1-07-runner-capability-target-set-claude-code-codex-amp-opencode-cursor-droid.md`
 20. `docs/issues/spec-p1-08-daemon-read-write-authority-for-v2-agent-and-worktree-surfaces.md`
 21. `docs/issues/spec-p1-09-detached-chat-transcript-and-session-reentry-contract.md`
 22. `docs/issues/spec-p1-10-fleet-management-for-many-worktrees-and-invocations.md`
@@ -221,7 +221,7 @@ The canonical v2.1 sequencing is maintained in `slice-roadmap.md`.
 3. `docs/issues/daemon-p1-14-stream-parser-can-allocate-unbounded-memory-on-huge.md`
 4. `docs/issues/stream-p1-01-normalized-event-seq-is-not-persisted.md`
 5. `docs/issues/stream-p1-02-writes-ignore-errors.md`
-6. `docs/issues/spec-p1-07-runner-capability-target-set-claude-code-codex-amp-opencode-cursor-cli-droid.md`
+6. `docs/issues/spec-p1-07-runner-capability-target-set-claude-code-codex-amp-opencode-cursor-droid.md`
 
 ### S5 Invocation-Centric Review + PR + Merge
 

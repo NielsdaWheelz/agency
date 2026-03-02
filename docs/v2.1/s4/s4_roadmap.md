@@ -19,3 +19,14 @@
   - success-path JSON remains strictly backward compatible for existing scripts (additive-only changes; no removals or renames).
   - tests cover success/failure JSON behavior for all mutation commands (`start`, `stop`, `kill`, `land`, `discard`, `chat`, `restart`).
 - **non-goals**: no invocation-scoped `agent review`/`agent pr`/`agent merge` behavior (Slice S5); no reports-v2 scope (Slice S6).
+
+### PR-05: runner launch matrix parity for headed/headless `agent start` (planned after PR-04 merges)
+- **goal**: make all v2.1 target runners launch reliably from one capability model across headed and headless start flows.
+- **builds on**: PR-04.
+- **acceptance**:
+  - canonical targets (`claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`) launch through capability-defined runner plans, not per-call ad hoc branching.
+  - compatibility aliases resolve deterministically to canonical runner IDs in metadata and automation-facing outputs.
+  - headless `agent start --prompt` applies runner-specific documented non-interactive subcommands/flags/parameters for each target runner.
+  - headed/headless launch paths enforce the same reserved-arg conflict policy and deterministic typed unknown-runner errors.
+  - tests cover runner identity resolution (including aliases), launch planning across all target runners, and deterministic failure contracts.
+- **non-goals**: no semantic-adapter expansion beyond existing raw-log fallback; no additional mutation `--json` surface changes beyond PR-04 parity.

@@ -175,7 +175,7 @@ each line in `stream.jsonl` contains a JSON event with a stable schema:
   "seq": 1,
   "timestamp": "2026-02-01T12:00:00Z",
   "invocation_id": "20260201-a1b2",
-  "runner": "claude-code|codex|amp|opencode|cursor-cli|droid",
+  "runner": "claude-code|codex|amp|opencode|cursor|droid",
   "kind": "session_start|message|tool_start|tool_end|final|error|usage|parse_error",
   "data": { }
 }

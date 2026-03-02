@@ -41,7 +41,7 @@ the `agency.json` file configures agency for a repository. it is created by `age
 | `scripts.verify.timeout` | no | `30m` | verify script timeout |
 | `scripts.archive.path` | yes | - | path to archive script |
 | `scripts.archive.timeout` | no | `5m` | archive script timeout |
-| `defaults.runner` | no | `claude-code` | default runner id (for example `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`) |
+| `defaults.runner` | no | `claude-code` | default runner id (for example `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`) |
 | `defaults.parent_branch` | no | `main` | default branch to branch from |
 
 `defaults.runner` selects the runner id, but runner execution still requires explicit command mapping in user config (`config.runners.<id>`).
@@ -74,7 +74,7 @@ minimal example:
 ```
 
 runner policy:
-- runner ids are capability-based: `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`
+- runner ids are capability-based: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`
 - `claude` is accepted as an input alias to `claude-code`
 - **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility key `runners.claude`) to an executable command
 

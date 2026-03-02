@@ -1,10 +1,10 @@
-# [p1][spec][design] runner capability target set: claude-code, codex, amp, opencode, cursor-cli, droid
+# [p1][spec][design] runner capability target set: claude-code, codex, amp, opencode, cursor, droid
 
 labels: `p1`, `type:design`, `area:spec`
 
 ## summary
 define and enforce the v2.1 runner capability target set:
-`claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`.
+`claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
 
 ## context
 - section: v2.1 parity additions

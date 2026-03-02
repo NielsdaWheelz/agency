@@ -261,7 +261,7 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 
 **flags:**
 - `--worktree`: integration worktree to run against (required)
-- `--runner`: runner id to use (`claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`; legacy `claude` alias accepted) (default: `claude-code`)
+- `--runner`: runner id to use (`claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`; legacy `claude` alias accepted) (default: `claude-code`)
 - `--headless`: run in headless mode (non-interactive, via daemon)
 - `--name`: optional human-readable label for the invocation (unique among active invocations)
 - `--detached`: start but do not attach (headed mode only; no-op for headless)

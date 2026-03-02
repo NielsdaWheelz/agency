@@ -74,7 +74,7 @@ Enable detached conversational continuation for headless invocations with CLI-fi
 
 ## Out of Scope
 
-- Runner capability expansion to `amp`, `opencode`, `cursor-cli`, and `droid` (-> Slice S4)
+- Runner capability expansion to `amp`, `opencode`, `cursor`, and `droid` (-> Slice S4)
 - Broad mutation-command `--json` parity outside S3 chat/restart surfaces (-> Slice S4)
 - Invocation-scoped review/PR/merge command family (-> Slice S5)
 - Reports v2 and global CLI ergonomics cleanup (-> Slice S6)

@@ -65,7 +65,7 @@ example:
 }
 ```
 
-supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor-cli`, `droid`.
+supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
 legacy `claude` input is accepted as an alias for `claude-code`.
 
 verify everything is set up:
