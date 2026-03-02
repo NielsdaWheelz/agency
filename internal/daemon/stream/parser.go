@@ -134,27 +134,19 @@ func (p *Parser) StreamAndParse(reader io.Reader, rawFile, streamFile *os.File) 
 			return nil
 		}
 
-		// Read a line (including the newline)
-		line, err := p.readLine(bufReader)
-		if len(line) > 0 {
-			// Raw log persistence is contract data; write failures are fatal.
-			if _, writeErr := rawFile.Write(line); writeErr != nil {
-				return fmt.Errorf("%w: %v", ErrRawLogWriteFailed, writeErr)
-			}
-
+		// Read one logical line while persisting raw bytes incrementally.
+		line, oversized, hasData, err := p.readAndPersistLine(bufReader, rawFile)
+		if hasData {
 			// Update last output timestamp
 			p.lastOutputAt.Store(p.Clock().UnixNano())
 
-			// Parse and write to stream.jsonl if line is not too large
-			if len(line) <= MaxLineSize {
-				if parseErr := p.parseAndWriteLine(line, streamFile); parseErr != nil {
-					return parseErr
-				}
-			} else {
+			if oversized {
 				// Line too large - emit parse_error event
 				if parseErr := p.emitParseError(streamFile, "line_too_large"); parseErr != nil {
 					return parseErr
 				}
+			} else if parseErr := p.parseAndWriteLine(line, streamFile); parseErr != nil {
+				return parseErr
 			}
 		}
 
@@ -167,22 +159,49 @@ func (p *Parser) StreamAndParse(reader io.Reader, rawFile, streamFile *os.File) 
 	}
 }
 
-// readLine reads a single line from the reader, handling the case where
-// the final line may not have a trailing newline.
-func (p *Parser) readLine(reader *bufio.Reader) ([]byte, error) {
-	line, err := reader.ReadBytes('\n')
-	if err == nil {
-		return line, nil
-	}
+// readAndPersistLine reads one logical line while writing every chunk directly
+// to rawFile. Parsing payload buffering is capped at MaxLineSize, and oversized
+// lines are drained without retaining full line bytes in memory.
+func (p *Parser) readAndPersistLine(reader *bufio.Reader, rawFile *os.File) ([]byte, bool, bool, error) {
+	line := make([]byte, 0, 4096)
+	oversized := false
+	hasData := false
 
-	if err == io.EOF {
-		if len(line) > 0 {
-			return line, io.EOF
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(chunk) > 0 {
+			hasData = true
+			if _, writeErr := rawFile.Write(chunk); writeErr != nil {
+				return nil, false, hasData, fmt.Errorf("%w: %v", ErrRawLogWriteFailed, writeErr)
+			}
+
+			if !oversized {
+				if len(line)+len(chunk) <= MaxLineSize {
+					line = append(line, chunk...)
+				} else {
+					oversized = true
+					line = nil
+				}
+			}
 		}
-		return nil, io.EOF
-	}
 
-	return line, err
+		if err == nil {
+			return line, oversized, hasData, nil
+		}
+
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+
+		if err == io.EOF {
+			if hasData {
+				return line, oversized, hasData, io.EOF
+			}
+			return nil, false, false, io.EOF
+		}
+
+		return line, oversized, hasData, err
+	}
 }
 
 // parseAndWriteLine parses a single line and writes normalized events.
