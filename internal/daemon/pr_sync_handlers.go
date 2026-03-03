@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
+	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/report"
@@ -26,7 +25,7 @@ const (
 	prSyncEventSucceeded = "agency.pr_sync_succeeded"
 	prSyncEventFailed    = "agency.pr_sync_failed"
 
-	prSyncMaxReportBytes = 256 * 1024
+	prSyncMaxReportBytes = report.MaxPRBodyReportBytes
 )
 
 type prSyncResult struct {
@@ -190,7 +189,7 @@ func (s *Server) runPRSync(
 	}
 
 	reportPath := filepath.Join(wtMeta.TreePath, ".agency", "report.md")
-	bodyPath, err := prSyncPrepareBody(reportPath, record.InvocationID)
+	bodyPath, err := prSyncPrepareBody(s.FS, reportPath, record.InvocationID)
 	if err != nil {
 		return nil, err
 	}
@@ -620,8 +619,8 @@ func prSyncEditPRBody(ctx context.Context, runner exec.CommandRunner, workDir st
 	return nil
 }
 
-func prSyncPrepareBody(reportPath, invocationID string) (string, error) {
-	content, exists, oversized, err := prSyncReadReportBounded(reportPath, prSyncMaxReportBytes)
+func prSyncPrepareBody(fsys agencyfs.FS, reportPath, invocationID string) (string, error) {
+	content, exists, oversized, err := prSyncReadReportBounded(fsys, reportPath, prSyncMaxReportBytes)
 	if err != nil {
 		return "", err
 	}
@@ -636,37 +635,32 @@ func prSyncPrepareBody(reportPath, invocationID string) (string, error) {
 	}
 
 	fallbackPath := filepath.Join(filepath.Dir(reportPath), "pr_sync_fallback.md")
-	if mkdirErr := os.MkdirAll(filepath.Dir(fallbackPath), 0o700); mkdirErr != nil {
+	fallbackDir := filepath.Dir(fallbackPath)
+	if mkdirErr := fsys.MkdirAll(fallbackDir, 0o700); mkdirErr != nil {
 		return "", errors.Wrap(errors.EInternal, "failed to create .agency directory for fallback PR body", mkdirErr)
+	}
+	if chmodErr := fsys.Chmod(fallbackDir, 0o700); chmodErr != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to set fallback PR body directory permissions", chmodErr)
 	}
 	fallback := fmt.Sprintf(
 		"## summary\nfallback PR body generated for invocation %s.\n\n## how to test\n- run project tests and manual verification for this branch.\n",
 		invocationID,
 	)
-	if writeErr := os.WriteFile(fallbackPath, []byte(fallback), 0o600); writeErr != nil {
+	if writeErr := fsys.WriteFile(fallbackPath, []byte(fallback), 0o600); writeErr != nil {
 		return "", errors.Wrap(errors.EInternal, "failed to write fallback PR body", writeErr)
+	}
+	if chmodErr := fsys.Chmod(fallbackPath, 0o600); chmodErr != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to set fallback PR body permissions", chmodErr)
 	}
 	return fallbackPath, nil
 }
 
-func prSyncReadReportBounded(path string, maxBytes int) ([]byte, bool, bool, error) {
-	f, err := os.Open(path)
+func prSyncReadReportBounded(fsys agencyfs.FS, path string, maxBytes int) ([]byte, bool, bool, error) {
+	data, exists, oversized, err := report.ReadFileBounded(fsys, path, maxBytes)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, false, nil
-		}
-		return nil, false, false, errors.Wrap(errors.EInternal, "failed to open report file", err)
+		return nil, exists, false, errors.Wrap(errors.EInternal, "failed to read report file", err)
 	}
-	defer func() { _ = f.Close() }()
-
-	data, readErr := io.ReadAll(io.LimitReader(f, int64(maxBytes)+1))
-	if readErr != nil {
-		return nil, true, false, errors.Wrap(errors.EInternal, "failed to read report file", readErr)
-	}
-	if len(data) > maxBytes {
-		return data[:maxBytes], true, true, nil
-	}
-	return data, true, false, nil
+	return data, exists, oversized, nil
 }
 
 func (s *Server) appendPRSyncEvent(repoID, invocationID, kind string, data map[string]any) error {

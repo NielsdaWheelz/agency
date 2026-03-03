@@ -188,20 +188,21 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 
 	// Step 7: Report check (non-blocking)
 	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
-	reportContent, reportReadErr := fsys.ReadFile(reportPath)
+	reportContent, reportExists, reportOversized, reportReadErr := report.ReadFileBounded(fsys, reportPath, report.MaxPRBodyReportBytes)
 
 	reportMissing := false
 	reportUnreadable := false
+	reportTooLarge := false
 	reportEmpty := false
 	reportIncomplete := false
 	var missingSections []string
 
 	if reportReadErr != nil {
-		if os.IsNotExist(reportReadErr) {
-			reportMissing = true
-		} else {
-			reportUnreadable = true
-		}
+		reportUnreadable = true
+	} else if !reportExists {
+		reportMissing = true
+	} else if reportOversized {
+		reportTooLarge = true
 	} else {
 		completeness := report.CheckCompleteness(string(reportContent))
 		reportIncomplete = !completeness.Complete
@@ -209,11 +210,13 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		reportEmpty = len(strings.TrimSpace(string(reportContent))) < 20
 	}
 
-	reportUsable := reportReadErr == nil && !reportEmpty && !reportIncomplete
+	reportUsable := reportReadErr == nil && !reportMissing && !reportTooLarge && !reportEmpty && !reportIncomplete
 	if reportMissing {
 		_, _ = fmt.Fprintln(stderr, "warning: report file missing; using auto-generated PR body")
 	} else if reportUnreadable {
 		_, _ = fmt.Fprintf(stderr, "warning: report unreadable (%v); using auto-generated PR body\n", reportReadErr)
+	} else if reportTooLarge {
+		_, _ = fmt.Fprintf(stderr, "warning: report exceeds %d bytes; using auto-generated PR body\n", report.MaxPRBodyReportBytes)
 	} else if reportEmpty {
 		_, _ = fmt.Fprintln(stderr, "warning: report empty (<20 chars); using auto-generated PR body")
 	} else if reportIncomplete {

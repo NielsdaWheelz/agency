@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -819,7 +820,7 @@ func TestExecuteGHMerge_DeleteBranch(t *testing.T) {
 				},
 			}
 
-			err := executeGHMerge(context.Background(), fakeCR, tmpDir, "owner/repo", 123, "--squash", mergeLogPath, tt.deleteBranch)
+			err := executeGHMerge(context.Background(), fakeCR, fs.NewRealFS(), tmpDir, "owner/repo", 123, "--squash", mergeLogPath, tt.deleteBranch)
 			require.NoError(t, err)
 
 			// Check if --delete-branch is in args
@@ -841,8 +842,57 @@ func TestExecuteGHMerge_DeleteBranch(t *testing.T) {
 			} else {
 				assert.NotContains(t, string(logContent), "--delete-branch", "merge log should not contain --delete-branch when disabled")
 			}
+			info, statErr := os.Stat(mergeLogPath)
+			require.NoError(t, statErr, "failed to stat merge log")
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "merge log should be private")
 		})
 	}
+}
+
+func TestExecuteGHMerge_LogWriteFailureReturnsPersistFailed(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	mergeLogPath := filepath.Join(tmpDir, "merge.log")
+	require.NoError(t, os.MkdirAll(mergeLogPath, 0o700), "precreate merge.log path as directory")
+
+	fakeCR := &mergeTestCommandRunner{
+		runFunc: func(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+			return exec.CmdResult{ExitCode: 0, Stdout: "merged"}, nil
+		},
+	}
+
+	err := executeGHMerge(context.Background(), fakeCR, fs.NewRealFS(), tmpDir, "owner/repo", 123, "--squash", mergeLogPath, true)
+	require.Error(t, err)
+	assert.Equal(t, errors.EPersistFailed, errors.GetCode(err))
+	assert.ErrorContains(t, err, "failed to persist merge log")
+}
+
+func TestBuildVerifyEnvForMerge_UsesRepoAndWorkspaceRoots(t *testing.T) {
+	t.Parallel()
+	meta := &store.RunMeta{
+		RunID:        "run-123",
+		Name:         "run-name",
+		Runner:       "claude",
+		Branch:       "agency/branch",
+		ParentBranch: "main",
+		PRURL:        "https://github.com/o/r/pull/1",
+		PRNumber:     1,
+	}
+	repoRoot := "/repo/root"
+	workspaceRoot := "/repo/worktrees/integration"
+	runDir := "/tmp/run-dir"
+
+	env := buildVerifyEnvForMerge(meta, repoRoot, workspaceRoot, runDir)
+	envMap := make(map[string]string)
+	for _, item := range env {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	assert.Equal(t, repoRoot, envMap["AGENCY_REPO_ROOT"])
+	assert.Equal(t, workspaceRoot, envMap["AGENCY_WORKSPACE_ROOT"])
 }
 
 // TestMergeOpts_NoDeleteBranch tests the NoDeleteBranch option default behavior.
@@ -1051,7 +1101,7 @@ func TestMergeErrorCode_EGHPRMergeFailed_NonZeroExit(t *testing.T) {
 		},
 	}
 
-	err := executeGHMerge(context.Background(), fakeCR, tmpDir, "owner/repo", 42, "--squash", mergeLogPath, true)
+	err := executeGHMerge(context.Background(), fakeCR, fs.NewRealFS(), tmpDir, "owner/repo", 42, "--squash", mergeLogPath, true)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EGHPRMergeFailed, errors.GetCode(err), "expected EGHPRMergeFailed error code")
@@ -1070,7 +1120,7 @@ func TestMergeErrorCode_EGHPRMergeFailed_ExecError(t *testing.T) {
 		},
 	}
 
-	err := executeGHMerge(context.Background(), fakeCR, tmpDir, "owner/repo", 42, "--squash", mergeLogPath, true)
+	err := executeGHMerge(context.Background(), fakeCR, fs.NewRealFS(), tmpDir, "owner/repo", 42, "--squash", mergeLogPath, true)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EGHPRMergeFailed, errors.GetCode(err), "expected EGHPRMergeFailed error code")

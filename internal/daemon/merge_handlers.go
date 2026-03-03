@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +16,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
+	"github.com/NielsdaWheelz/agency/internal/mergeflow"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/verify"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -661,44 +660,22 @@ func buildMergeVerifyEnv(
 		invocationName = record.InvocationID
 	}
 
-	agencyEnv := map[string]string{
-		"AGENCY_RUN_ID":         record.InvocationID,
-		"AGENCY_NAME":           invocationName,
-		"AGENCY_REPO_ROOT":      repoRoot,
-		"AGENCY_WORKSPACE_ROOT": wtMeta.TreePath,
-		"AGENCY_BRANCH":         wtMeta.Branch,
-		"AGENCY_PARENT_BRANCH":  wtMeta.ParentBranch,
-		"AGENCY_ORIGIN_NAME":    "origin",
-		"AGENCY_ORIGIN_URL":     "",
-		"AGENCY_RUNNER":         record.Meta.Runner,
-		"AGENCY_PR_URL":         pr.URL,
-		"AGENCY_PR_NUMBER":      strconv.Itoa(pr.Number),
-		"AGENCY_DOTAGENCY_DIR":  filepath.Join(wtMeta.TreePath, ".agency"),
-		"AGENCY_OUTPUT_DIR":     filepath.Join(wtMeta.TreePath, ".agency", "out"),
-		"AGENCY_LOG_DIR":        filepath.Join(invocationDir, "logs"),
-		"AGENCY_NONINTERACTIVE": "1",
-	}
-
-	return mergeEnvDeterministic(os.Environ(), nonInteractiveRunnerEnv(), agencyEnv)
+	return mergeflow.BuildVerifyEnv(os.Environ(), mergeflow.VerifyEnvInput{
+		RunID:         record.InvocationID,
+		Name:          invocationName,
+		RepoRoot:      repoRoot,
+		WorkspaceRoot: wtMeta.TreePath,
+		Branch:        wtMeta.Branch,
+		ParentBranch:  wtMeta.ParentBranch,
+		Runner:        record.Meta.Runner,
+		PRURL:         pr.URL,
+		PRNumber:      pr.Number,
+		InvocationDir: invocationDir,
+	})
 }
 
 func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot string) (string, error) {
-	repoRecord, exists, err := s.Store.LoadRepoRecord(repoID)
-	if err == nil && exists {
-		root := strings.TrimSpace(repoRecord.PreferredRoot)
-		if root == "" {
-			root = strings.TrimSpace(repoRecord.RepoRootLastSeen)
-		}
-		if root != "" {
-			return canonicalizePath(root), nil
-		}
-	}
-
-	root, err := git.GetRepoRoot(ctx, s.Runner, workspaceRoot)
-	if err != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to resolve repository root", err)
-	}
-	return canonicalizePath(root.Path), nil
+	return mergeflow.ResolveRepoRoot(ctx, s.Runner, s.Store, repoID, workspaceRoot)
 }
 
 func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string) (string, string, error) {
@@ -769,60 +746,11 @@ func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDi
 }
 
 func writeMergeLog(fsys agencyfs.FS, mergeLogPath, command string, result exec.CmdResult, runErr error) error {
-	logDir := filepath.Dir(mergeLogPath)
-	if err := fsys.MkdirAll(logDir, 0o700); err != nil {
-		return err
-	}
-	if err := fsys.Chmod(logDir, 0o700); err != nil {
-		return err
-	}
-
-	var builder strings.Builder
-	builder.WriteString("=== ")
-	builder.WriteString(command)
-	builder.WriteString(" ===\n")
-	builder.WriteString("Exit code: ")
-	builder.WriteString(strconv.Itoa(result.ExitCode))
-	builder.WriteString("\n")
-	if strings.TrimSpace(result.Stdout) != "" {
-		builder.WriteString("\n=== stdout ===\n")
-		builder.WriteString(result.Stdout)
-		if !strings.HasSuffix(result.Stdout, "\n") {
-			builder.WriteString("\n")
-		}
-	}
-	if strings.TrimSpace(result.Stderr) != "" {
-		builder.WriteString("\n=== stderr ===\n")
-		builder.WriteString(result.Stderr)
-		if !strings.HasSuffix(result.Stderr, "\n") {
-			builder.WriteString("\n")
-		}
-	}
-	if runErr != nil {
-		builder.WriteString("\n=== execution_error ===\n")
-		builder.WriteString(runErr.Error())
-		builder.WriteString("\n")
-	}
-
-	if err := agencyfs.WriteFileAtomic(fsys, mergeLogPath, []byte(builder.String()), 0o600); err != nil {
-		return err
-	}
-	if err := fsys.Chmod(mergeLogPath, 0o600); err != nil {
-		return err
-	}
-	return nil
+	return mergeflow.WriteMergeLog(fsys, mergeLogPath, command, result, runErr)
 }
 
 func canonicalizePath(path string) string {
-	clean := filepath.Clean(path)
-	abs, err := filepath.Abs(clean)
-	if err == nil {
-		clean = abs
-	}
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		return resolved
-	}
-	return clean
+	return mergeflow.CanonicalizePath(path)
 }
 
 func (s *Server) appendMergeEvent(repoID, invocationID, kind string, data map[string]any) error {

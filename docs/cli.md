@@ -1700,7 +1700,7 @@ pushes the run branch to origin and creates/updates a GitHub PR.
 
 **usage:**
 ```bash
-agency push <run_id> [--allow-dirty] [--force]
+agency push <run_id> [--allow-dirty] [--force] [--force-with-lease]
 ```
 
 **arguments:**
@@ -1709,6 +1709,7 @@ agency push <run_id> [--allow-dirty] [--force]
 **flags:**
 - `--allow-dirty`: proceed even if worktree has uncommitted changes
 - `--force`: retained for compatibility (no-op for report checks)
+- `--force-with-lease`: use `git push --force-with-lease` when branch history was rewritten
 
 **preflight checks (in order):**
 1. resolve run_id and load metadata
@@ -1717,7 +1718,7 @@ agency push <run_id> [--allow-dirty] [--force]
 4. fail if worktree has uncommitted changes (unless `--allow-dirty`)
 5. verify `origin` remote exists
 6. verify origin host is exactly `github.com`
-7. check report completeness to decide PR body source (warnings only)
+7. read report via bounded input contract (max 256 KiB), then decide PR body source (warnings/degrade only)
 8. verify `gh auth status` succeeds
 
 **git operations (after preflight passes):**
@@ -1734,7 +1735,7 @@ agency push <run_id> [--allow-dirty] [--force]
 2. if PR exists but not OPEN (CLOSED or MERGED): fail with `E_PR_NOT_OPEN`
 3. if no PR exists: create via `gh pr create`
    - title: `[agency] <run_name>`
-   - body: `.agency/report.md` when complete, otherwise auto-generated PR body
+   - body: `.agency/report.md` when complete and within size limit, otherwise auto-generated PR body
 4. sync PR body:
    - compute sha256 hash of the body file used
    - if hash unchanged from `last_report_hash`: skip sync
@@ -1783,7 +1784,10 @@ pr: https://github.com/owner/repo/pull/123
 - PR creation uses `--body-file` to preserve markdown formatting
 - PR title is NOT updated after creation (v1)
 - report completeness only affects PR body source; push does not block on report state
-- auto-generated PR bodies include commit subjects, diffstat, files, and meta
+- report/body processing is bounded for safety:
+  - report reads capped at 256 KiB
+  - fallback generation caps commit/file sections (10 commits, 20 files) with deterministic truncation indicators
+- auto-generated PR bodies include commit subjects, bounded diffstat/files, and meta
 - `--force` does NOT bypass `E_EMPTY_DIFF` (must have commits)
 - `--allow-dirty` prints a warning and dirty context
 - `--force-with-lease` uses `git push --force-with-lease` for safe force push after rebase
@@ -1970,6 +1974,7 @@ log: /path/to/logs/archive.log
 - `E_SCRIPT_TIMEOUT` — verify script timed out
 - `E_ABORTED` — user declined confirmation or typed wrong token
 - `E_GH_PR_MERGE_FAILED` — gh pr merge failed
+- `E_PERSIST_FAILED` — failed to persist merge log
 - `E_ARCHIVE_FAILED` — archive step failed
 
 **notes:**
@@ -1978,6 +1983,8 @@ log: /path/to/logs/archive.log
 - if already merged (idempotent): skips verify/mergeability checks, prompts for confirmation, archives workspace
 - PR must exist before merge; agency does NOT call `push` implicitly
 - gh merge output is captured to `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/merge.log`
+- merge-log persistence is correctness-critical: write failures return typed `E_PERSIST_FAILED`
+- merge logs are persisted with private permissions (`0700` directory, `0600` file)
 - post-merge confirmation: agency verifies PR reached `MERGED` state with retries (250ms, 750ms, 1500ms backoff)
 - by default, the remote branch is deleted after merge; use `--no-delete-branch` to preserve it
 
