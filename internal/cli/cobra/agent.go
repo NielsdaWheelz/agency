@@ -44,7 +44,8 @@ Subcommands:
   history   Show unified invocation timeline
   logs      View invocation logs
   review    Show review/readiness surface
-  pr sync   Push branch and sync pull request`,
+  pr sync   Push branch and sync pull request
+  merge     Verify and merge pull request`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
@@ -72,6 +73,7 @@ Subcommands:
 		newAgentLogsCmd(),
 		newAgentReviewCmd(),
 		newAgentPRCmd(),
+		newAgentMergeCmd(),
 	)
 
 	return cmd
@@ -1060,6 +1062,66 @@ Example:
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
 	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
+
+	return cmd
+}
+
+func newAgentMergeCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+	var squash bool
+	var merge bool
+	var rebase bool
+	var noDeleteBranch bool
+	var yes bool
+
+	cmd := &cobra.Command{
+		Use:   "merge <invocation_ref>",
+		Short: "Verify and merge pull request",
+		Long: `Perform invocation-scoped merge.
+
+This command resolves invocation -> integration context, runs verify, merges the
+branch-scoped pull request, and persists merge logs.
+
+Non-interactive executions must pass --yes.
+
+Example:
+  agency agent merge 20260131
+  agency agent merge --repo abc123 20260131
+  agency agent merge --yes --json 20260131
+  agency agent merge --merge 20260131
+  agency agent merge --rebase --no-delete-branch 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.AgentMerge(ctx, cr, fsys, cwd, commands.AgentMergeOpts{
+				InvocationRef:  args[0],
+				RepoFlag:       repoFlag,
+				Squash:         squash,
+				Merge:          merge,
+				Rebase:         rebase,
+				NoDeleteBranch: noDeleteBranch,
+				Yes:            yes,
+				JSON:           jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
+	cmd.Flags().BoolVar(&merge, "merge", false, "Use regular merge strategy")
+	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase merge strategy")
+	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm merge in non-interactive mode")
 
 	return cmd
 }

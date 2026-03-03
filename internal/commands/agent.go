@@ -158,6 +158,10 @@ type agentMutationEnvelope struct {
 	PRNumber                int                `json:"pr_number,omitempty"`
 	PRURL                   string             `json:"pr_url,omitempty"`
 	PRAction                string             `json:"pr_action,omitempty"`
+	Strategy                string             `json:"strategy,omitempty"`
+	DeleteBranch            bool               `json:"delete_branch,omitempty"`
+	MergeLogPath            string             `json:"merge_log_path,omitempty"`
+	VerifyLogPath           string             `json:"verify_log_path,omitempty"`
 }
 
 func newAgentMutationEnvelope() agentMutationEnvelope {
@@ -1240,6 +1244,200 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	_, _ = fmt.Fprintf(stdout, "  pr_action:      %s\n", resp.PRAction)
 	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)
 	return nil
+}
+
+// AgentMergeOpts holds options for the agent merge command.
+type AgentMergeOpts struct {
+	InvocationRef  string
+	RepoFlag       string
+	Squash         bool
+	Merge          bool
+	Rebase         bool
+	NoDeleteBranch bool
+	Yes            bool
+	JSON           bool
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
+
+	// IsInteractive reports whether stdin/stderr are interactive terminals.
+	// If nil, defaults to checking os.Stdin + os.Stderr.
+	IsInteractive func() bool
+
+	// ConfirmationIn provides interactive confirmation input.
+	// If nil, defaults to os.Stdin.
+	ConfirmationIn io.Reader
+}
+
+const maxMergeConfirmationBytes = 64
+
+// AgentMerge performs invocation-scoped verify + merge via daemon.
+func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentMergeOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
+	strategyCount := 0
+	strategy := "squash"
+	if opts.Squash {
+		strategyCount++
+		strategy = "squash"
+	}
+	if opts.Merge {
+		strategyCount++
+		strategy = "merge"
+	}
+	if opts.Rebase {
+		strategyCount++
+		strategy = "rebase"
+	}
+	if strategyCount > 1 {
+		return fail(errors.New(errors.EUsage, "at most one of --squash, --merge, --rebase may be specified"))
+	}
+
+	confirmationMode := "yes"
+	confirmed := true
+	if !opts.Yes {
+		isInteractive := opts.IsInteractive
+		if isInteractive == nil {
+			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
+		}
+		if !isInteractive() {
+			return fail(errors.NewWithDetails(
+				errors.EConfirmationRequired,
+				"non-interactive merge requires explicit confirmation",
+				map[string]string{
+					"hint": "re-run with --yes",
+				},
+			))
+		}
+
+		_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+		confirmationIn := opts.ConfirmationIn
+		if confirmationIn == nil {
+			confirmationIn = os.Stdin
+		}
+		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
+		if err != nil {
+			return fail(err)
+		}
+		if token != "merge" {
+			return fail(errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'"))
+		}
+		confirmationMode = "typed"
+		confirmed = true
+	}
+
+	var dataDir string
+	if opts.DataDirOverride != "" {
+		dataDir = opts.DataDirOverride
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
+		}
+		dirs := paths.ResolveDirs(osEnv{}, homeDir)
+		dataDir = dirs.DataDir
+	}
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return fail(err)
+	}
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return fail(err)
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent merge",
+	})
+	if err != nil {
+		return fail(err)
+	}
+
+	resp, err := client.Merge(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.MergeOpts{
+		Strategy:         strategy,
+		ConfirmationMode: confirmationMode,
+		Confirmed:        confirmed,
+		NoDeleteBranch:   opts.NoDeleteBranch,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if !resp.OK {
+		return fail(errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{"hint": resp.Hint},
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.RepoID = resp.RepoID
+			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
+			envelope.Branch = resp.Branch
+			envelope.PRNumber = resp.PRNumber
+			envelope.PRURL = resp.PRURL
+			envelope.Strategy = resp.Strategy
+			envelope.DeleteBranch = resp.DeleteBranch
+			envelope.MergeLogPath = resp.MergeLogPath
+			envelope.VerifyLogPath = resp.VerifyLogPath
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+		})
+	}
+
+	_, _ = fmt.Fprintln(stdout, "merge complete")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  branch:         %s\n", resp.Branch)
+	_, _ = fmt.Fprintf(stdout, "  strategy:       %s\n", resp.Strategy)
+	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)
+	_, _ = fmt.Fprintf(stdout, "  merge_log:      %s\n", resp.MergeLogPath)
+	return nil
+}
+
+func readBoundedMergeConfirmationToken(r io.Reader, maxBytes int) (string, error) {
+	if r == nil {
+		return "", errors.New(errors.EInvalidArgument, "confirmation input is required")
+	}
+	if maxBytes <= 0 {
+		maxBytes = maxMergeConfirmationBytes
+	}
+
+	data, err := io.ReadAll(io.LimitReader(r, int64(maxBytes)+1))
+	if err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to read merge confirmation input", err)
+	}
+	if len(data) > maxBytes {
+		return "", errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"confirmation input exceeds maximum length",
+			map[string]string{
+				"hint": "type 'merge' exactly",
+			},
+		)
+	}
+
+	token := string(data)
+	if nl := strings.IndexAny(token, "\r\n"); nl >= 0 {
+		token = token[:nl]
+	}
+	return strings.TrimSpace(token), nil
 }
 
 // AgentLandOpts holds options for the agent land command.

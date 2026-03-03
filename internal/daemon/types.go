@@ -484,6 +484,45 @@ type PRSyncResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
+// MergeRequest is the request body for POST /invocations/{id}/merge.
+type MergeRequest struct {
+	// Strategy selects merge strategy: squash|merge|rebase (default: squash).
+	Strategy string `json:"strategy,omitempty"`
+
+	// ConfirmationMode is the explicit confirmation contract: yes|typed.
+	ConfirmationMode string `json:"confirmation_mode,omitempty"`
+
+	// Confirmed indicates caller has already satisfied the selected confirmation mode.
+	Confirmed bool `json:"confirmed,omitempty"`
+
+	// NoDeleteBranch preserves the remote branch after merge.
+	NoDeleteBranch bool `json:"no_delete_branch,omitempty"`
+}
+
+// MergeResponse is the response body for POST /invocations/{id}/merge.
+type MergeResponse struct {
+	OK           bool   `json:"ok"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+
+	// Success fields
+	InvocationID          string `json:"invocation_id,omitempty"`
+	RepoID                string `json:"repo_id,omitempty"`
+	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
+	Branch                string `json:"branch,omitempty"`
+	PRNumber              int    `json:"pr_number,omitempty"`
+	PRURL                 string `json:"pr_url,omitempty"`
+	Strategy              string `json:"strategy,omitempty"`
+	DeleteBranch          bool   `json:"delete_branch,omitempty"`
+	MergeLogPath          string `json:"merge_log_path,omitempty"`
+	VerifyLogPath         string `json:"verify_log_path,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
 // ----- PR-10 Headed Invocation Types -----
 
 // ControlPlaneStartHeadedRequest is the request body for POST /invocations/start_headed (PR-10).

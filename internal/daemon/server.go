@@ -514,6 +514,13 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	case "pr":
 		// S5 PR-01: invocation-scoped PR routes.
 		s.handleInvocationPRRoute(w, r, invocationRef, action)
+	case "merge":
+		// S5 PR-02: invocation-scoped merge route.
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleMerge(w, r, invocationRef)
 	case "chat":
 		// S3 PR-02: POST /invocations/{ref}/chat
 		if r.Method != http.MethodPost {

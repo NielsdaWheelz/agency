@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,17 +15,18 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/core"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
-	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGHE2EPushMerge(t *testing.T) {
+func TestGHE2EAgentPRSyncMerge(t *testing.T) {
 	if os.Getenv("AGENCY_GH_E2E") == "" {
 		t.Skip("set AGENCY_GH_E2E=1 to enable GH e2e")
 	}
@@ -48,7 +50,10 @@ func TestGHE2EPushMerge(t *testing.T) {
 	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 
-	tmpDir := t.TempDir()
+	// Keep this path short: macOS unix sockets fail around ~104 bytes.
+	tmpDir, err := os.MkdirTemp("", "age2e")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dataDir := filepath.Join(tmpDir, "data")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(tmpDir, "config"))
@@ -113,7 +118,7 @@ func TestGHE2EPushMerge(t *testing.T) {
 	report := `# e2e test
 
 ## summary
-e2e report: verifying push/merge works
+e2e report: verifying agent pr sync + merge works
 
 ## how to test
 This is an automated e2e test - no manual testing required.
@@ -157,17 +162,92 @@ This is an automated e2e test - no manual testing required.
 	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	_, err = st.EnsureRunDir(repoIdentity.RepoID, runID)
-	require.NoError(t, err, "EnsureRunDir")
-	meta := store.NewRunMeta(runID, repoIdentity.RepoID, "e2e", "claude", "claude", defaultBranch, branch, worktreePath, time.Now())
-	require.NoError(t, st.WriteInitialMeta(repoIdentity.RepoID, runID, meta), "WriteInitialMeta")
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	repoRecord := store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoIdentity.RepoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    true,
+		OriginURL:        originInfo.URL,
+		OriginHost:       originInfo.Host,
+		Capabilities: store.Capabilities{
+			GitHubOrigin: repoIdentity.GitHubFlowAvailable,
+			OriginHost:   originInfo.Host,
+			GhAuthed:     true,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	require.NoError(t, st.SaveRepoRecord(repoRecord), "SaveRepoRecord")
 
-	var pushStdout, pushStderr bytes.Buffer
-	require.NoError(t, Push(ctx, cr, fsys, worktreePath, PushOpts{RunID: runID}, &pushStdout, &pushStderr), "push failed\nstderr:\n%s", pushStderr.String())
+	worktreeID := runID
+	_, err = st.EnsureIntegrationWorktreeDir(repoIdentity.RepoID, worktreeID)
+	require.NoError(t, err, "EnsureIntegrationWorktreeDir")
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoIdentity.RepoID, worktreeID, &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0",
+		WorktreeID:    worktreeID,
+		Name:          "e2e-" + runID,
+		RepoID:        repoIdentity.RepoID,
+		Branch:        branch,
+		ParentBranch:  defaultBranch,
+		TreePath:      worktreePath,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+		State:         store.WorktreeStatePresent,
+	}), "WriteIntegrationWorktreeMeta")
 
-	meta, err = st.ReadMeta(repoIdentity.RepoID, runID)
-	require.NoError(t, err, "ReadMeta")
-	prNumber := meta.PRNumber
+	invocationID := runID
+	_, err = st.EnsureInvocationDir(repoIdentity.RepoID, invocationID)
+	require.NoError(t, err, "EnsureInvocationDir")
+	require.NoError(t, st.WriteInvocationMeta(repoIdentity.RepoID, invocationID, &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          invocationID,
+		InvocationName:        "e2e-" + runID,
+		IntegrationWorktreeID: worktreeID,
+		SandboxPath:           worktreePath,
+		SandboxBranch:         "agency/sandbox-" + runID,
+		BaseCommit:            "",
+		Runner:                "claude-code",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             time.Now().UTC().Format(time.RFC3339),
+		FinishedAt:            time.Now().UTC().Format(time.RFC3339),
+		Status:                store.InvocationStatusFinished,
+		ExitReason:            "exited",
+		LandingStatus:         store.LandingStatusLanded,
+	}), "WriteInvocationMeta")
+
+	configDir := filepath.Join(tmpDir, "config")
+	srv := daemon.NewServer(st, cr, fsys, configDir)
+	listener, err := net.Listen("unix", st.DaemonSocketPath())
+	require.NoError(t, err, "listen daemon socket")
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(st.DaemonSocketPath())
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
+
+	var prSyncStdout, prSyncStderr bytes.Buffer
+	require.NoError(t, AgentPRSync(ctx, cr, fsys, repoRoot, AgentPRSyncOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoIdentity.RepoID,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &prSyncStdout, &prSyncStderr), "agent pr sync failed\nstderr:\n%s", prSyncStderr.String())
+
+	var prSyncPayload struct {
+		PRNumber int `json:"pr_number"`
+	}
+	require.NoError(t, json.Unmarshal(prSyncStdout.Bytes(), &prSyncPayload), "decode pr sync JSON")
+	prNumber := prSyncPayload.PRNumber
 	require.NotZero(t, prNumber, "pr_number not recorded")
 
 	merged := false
@@ -182,16 +262,13 @@ This is an automated e2e test - no manual testing required.
 		})
 	})
 
-	origInteractive := isInteractive
-	isInteractive = func() bool { return true }
-	t.Cleanup(func() { isInteractive = origInteractive })
-
 	var mergeStdout, mergeStderr bytes.Buffer
-	mergeOpts := MergeOpts{
-		RunID:      runID,
-		TmuxClient: noopTmuxClient{},
-	}
-	require.NoError(t, Merge(ctx, cr, fsys, worktreePath, mergeOpts, strings.NewReader("merge\n"), &mergeStdout, &mergeStderr), "merge failed\nstderr:\n%s", mergeStderr.String())
+	require.NoError(t, AgentMerge(ctx, cr, fsys, repoRoot, AgentMergeOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoIdentity.RepoID,
+		Yes:             true,
+		DataDirOverride: dataDir,
+	}, &mergeStdout, &mergeStderr), "agent merge failed\nstderr:\n%s", mergeStderr.String())
 
 	merged = true
 	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)
@@ -335,18 +412,4 @@ func pickDefaultBranch(branches []string) string {
 		return branches[0]
 	}
 	return ""
-}
-
-type noopTmuxClient struct{}
-
-func (noopTmuxClient) HasSession(context.Context, string) (bool, error) { return false, nil }
-func (noopTmuxClient) NewSession(context.Context, string, string, []string) error {
-	return nil
-}
-func (noopTmuxClient) Attach(context.Context, string) error { return nil }
-func (noopTmuxClient) KillSession(context.Context, string) error {
-	return nil
-}
-func (noopTmuxClient) SendKeys(context.Context, string, []tmux.Key) error {
-	return nil
 }

@@ -1178,6 +1178,50 @@ func (c *Client) PRSync(ctx context.Context, invocationRef, repoID string, opts 
 	return &result, nil
 }
 
+// MergeOpts holds options for invocation-scoped merge.
+type MergeOpts struct {
+	Strategy         string
+	ConfirmationMode string
+	Confirmed        bool
+	NoDeleteBranch   bool
+}
+
+// Merge performs invocation-scoped verify + merge via daemon.
+func (c *Client) Merge(ctx context.Context, invocationRef, repoID string, opts MergeOpts) (*daemon.MergeResponse, error) {
+	reqBody := daemon.MergeRequest{
+		Strategy:         opts.Strategy,
+		ConfirmationMode: opts.ConfirmationMode,
+		Confirmed:        opts.Confirmed,
+		NoDeleteBranch:   opts.NoDeleteBranch,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("http://daemon/invocations/%s/merge", url.PathEscape(invocationRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.MergeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // GetInvocationLogsOpts holds options for getting invocation logs.
 type GetInvocationLogsOpts struct {
 	Kind      string // raw, stderr, stream (default: raw)
