@@ -77,6 +77,11 @@ agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 agency agent restart <invocation-id> --history     # interactive history selector (tty only)
 ```
 
+short alias parity for high-traffic s6 navigation/progression surfaces:
+- `agent review`: `-r/--repo`, `-j/--json`
+- `agent path|open|attach|enter`: `-r/--repo`
+- compatibility `path|open|attach`: `-r/--repo`
+
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
 

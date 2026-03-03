@@ -310,7 +310,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 
 	return cmd
 }
@@ -570,7 +570,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 
 	return cmd
 }
@@ -607,7 +607,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 
 	return cmd
 }
@@ -680,7 +680,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 
 	return cmd
 }
@@ -997,8 +997,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -245,6 +246,141 @@ func TestOpenCreatedWorkspace_EditorExitNonZero(t *testing.T) {
 	err := openCreatedWorkspace(context.Background(), agencyexec.NewRealRunner(), agencyfs.NewRealFS(), worktreePath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "editor exited with code 17")
+}
+
+func TestRunWithDeps_OpenFailureSignalsFailedAndSkipsAttach(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	attachCalled := false
+	openCalled := false
+
+	opts := RunOpts{
+		Name:   "demo",
+		Attach: true,
+		Open:   true,
+	}
+
+	err := runWithDeps(context.Background(), nil, nil, "/repo", opts, &stdout, &stderr, runExecutionDeps{
+		executePipeline: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string, _ RunOpts) (string, error) {
+			return "run-1", nil
+		},
+		loadResult: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string, _ string) (*RunResult, error) {
+			return &RunResult{
+				RunID:           "run-1",
+				Name:            "demo",
+				Runner:          "claude",
+				Parent:          "main",
+				Branch:          "agency/demo",
+				WorktreePath:    "/tmp/worktree",
+				TmuxSessionName: "agency_run-1",
+			}, nil
+		},
+		openWorkspace: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string) error {
+			openCalled = true
+			return errors.New("editor exited with code 17")
+		},
+		attachSession: func(_ context.Context, _ string) error {
+			attachCalled = true
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, openCalled, "open dispatch should be attempted when --open is requested")
+	assert.False(t, attachCalled, "open-on-create path must skip auto-attach")
+	assert.Contains(t, stdout.String(), "open_status: failed\n")
+	assert.Contains(t, stderr.String(), "warning: workspace created but open dispatch failed: editor exited with code 17")
+}
+
+func TestRunWithDeps_OpenSuccessSignalsOpenedAndSkipsAttach(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	attachCalled := false
+	openCalled := false
+
+	opts := RunOpts{
+		Name:   "demo",
+		Attach: true,
+		Open:   true,
+	}
+
+	err := runWithDeps(context.Background(), nil, nil, "/repo", opts, &stdout, &stderr, runExecutionDeps{
+		executePipeline: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string, _ RunOpts) (string, error) {
+			return "run-1", nil
+		},
+		loadResult: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string, _ string) (*RunResult, error) {
+			return &RunResult{
+				RunID:           "run-1",
+				Name:            "demo",
+				Runner:          "claude",
+				Parent:          "main",
+				Branch:          "agency/demo",
+				WorktreePath:    "/tmp/worktree",
+				TmuxSessionName: "agency_run-1",
+			}, nil
+		},
+		openWorkspace: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string) error {
+			openCalled = true
+			return nil
+		},
+		attachSession: func(_ context.Context, _ string) error {
+			attachCalled = true
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, openCalled, "open dispatch should be attempted when --open is requested")
+	assert.False(t, attachCalled, "open-on-create path must skip auto-attach")
+	assert.Contains(t, stdout.String(), "open_status: opened\n")
+	assert.Empty(t, stderr.String())
+}
+
+func TestRunWithDeps_NoOpenAttachesWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	attachCalled := false
+	openCalled := false
+
+	opts := RunOpts{
+		Name:   "demo",
+		Attach: true,
+		Open:   false,
+	}
+
+	err := runWithDeps(context.Background(), nil, nil, "/repo", opts, &stdout, &stderr, runExecutionDeps{
+		executePipeline: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string, _ RunOpts) (string, error) {
+			return "run-1", nil
+		},
+		loadResult: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string, _ string) (*RunResult, error) {
+			return &RunResult{
+				RunID:           "run-1",
+				Name:            "demo",
+				Runner:          "claude",
+				Parent:          "main",
+				Branch:          "agency/demo",
+				WorktreePath:    "/tmp/worktree",
+				TmuxSessionName: "agency_run-1",
+			}, nil
+		},
+		openWorkspace: func(_ context.Context, _ agencyexec.CommandRunner, _ agencyfs.FS, _ string) error {
+			openCalled = true
+			return nil
+		},
+		attachSession: func(_ context.Context, _ string) error {
+			attachCalled = true
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.False(t, openCalled, "open dispatch should not run when --open is disabled")
+	assert.True(t, attachCalled, "default attach path should remain unchanged")
+	assert.NotContains(t, stdout.String(), "open_status:")
+	assert.Empty(t, stderr.String())
 }
 
 func writeUserConfigForEditorTest(t *testing.T, homeDir, editorName, editorCmd string) {

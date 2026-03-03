@@ -104,43 +104,41 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 	// Open in editor if requested
 	if opts.Open {
-		editorName := opts.Editor
-		userCfg, _, cfgErr := config.LoadUserConfig(fsys, dirs.ConfigDir)
-		if cfgErr != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", cfgErr)
-			_, _ = fmt.Fprintln(stdout, "open_status: failed")
-			return nil
-		}
-		if editorName == "" {
-			editorName = userCfg.Defaults.Editor
-		}
-		if editorName == "" {
-			editorName = os.Getenv("EDITOR")
-		}
-
-		editorCmd, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, editorName)
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", err)
-			_, _ = fmt.Fprintln(stdout, "open_status: failed")
-		} else {
-			runResult, runErr := exec.RunAttached(ctx, editorCmd, []string{result.TreePath}, exec.AttachedRunOpts{
-				Dir:    result.TreePath,
-				Stdin:  os.Stdin,
-				Stdout: os.Stdout,
-				Stderr: os.Stderr,
-			})
-			if runErr != nil {
-				_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", runErr)
-				_, _ = fmt.Fprintln(stdout, "open_status: failed")
-			} else if runResult.ExitCode != 0 {
-				_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: editor exited with code %d\n", runResult.ExitCode)
-				_, _ = fmt.Fprintln(stdout, "open_status: failed")
-			} else {
-				_, _ = fmt.Fprintln(stdout, "open_status: opened")
-			}
-		}
+		openErr := openCreatedWorktree(ctx, cr, fsys, dirs.ConfigDir, result.TreePath, opts.Editor)
+		emitOpenOnCreateStatus(stdout, stderr, openErr)
 	}
 
+	return nil
+}
+
+func openCreatedWorktree(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, configDir, treePath, editorName string) error {
+	userCfg, _, err := config.LoadUserConfig(fsys, configDir)
+	if err != nil {
+		return err
+	}
+	if editorName == "" {
+		editorName = userCfg.Defaults.Editor
+	}
+	if editorName == "" {
+		editorName = os.Getenv("EDITOR")
+	}
+
+	editorCmd, err := config.ResolveEditorCmd(cr, fsys, configDir, userCfg, editorName)
+	if err != nil {
+		return err
+	}
+	runResult, runErr := exec.RunAttached(ctx, editorCmd, []string{treePath}, exec.AttachedRunOpts{
+		Dir:    treePath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if runErr != nil {
+		return runErr
+	}
+	if runResult.ExitCode != 0 {
+		return fmt.Errorf("editor exited with code %d", runResult.ExitCode)
+	}
 	return nil
 }
 
