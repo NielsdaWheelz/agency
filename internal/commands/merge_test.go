@@ -1331,8 +1331,6 @@ func TestMergeErrorCode_ENoPR_ByStoredPRNumber(t *testing.T) {
 }
 
 func TestMerge_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.T) {
-	t.Parallel()
-
 	originalIsInteractive := isInteractive
 	isInteractive = func() bool { return false }
 	t.Cleanup(func() { isInteractive = originalIsInteractive })
@@ -1345,8 +1343,6 @@ func TestMerge_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.
 }
 
 func TestMerge_NonInteractiveWithYes_DoesNotFailAtConfirmationGate(t *testing.T) {
-	t.Parallel()
-
 	originalIsInteractive := isInteractive
 	isInteractive = func() bool { return false }
 	t.Cleanup(func() { isInteractive = originalIsInteractive })
