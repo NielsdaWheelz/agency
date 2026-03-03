@@ -163,11 +163,8 @@ func IsPIDAlive(pid int) bool {
 func (s *Server) Serve(listener net.Listener) error {
 	s.startedAt = s.Clock()
 
-	mux := http.NewServeMux()
-	s.registerRoutes(mux)
-
 	s.server = &http.Server{
-		Handler: mux,
+		Handler: s.newHTTPHandler(),
 	}
 
 	// Run recovery scan before serving
@@ -222,6 +219,20 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/repos/", s.handleRepos)                    // PR-A: repo registry
 	mux.HandleFunc("/repos", s.handleRepos)                     // PR-A: repo registry (no trailing slash)
 	mux.HandleFunc("/spec/v2.1/s1/release/", s.handleS1Release) // PR-05: S1 release gates
+}
+
+func (s *Server) newHTTPHandler() http.Handler {
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return s.withRequestID(mux)
+}
+
+func (s *Server) withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := resolveOrGenerateRequestID(r.Header.Get("X-Request-ID"))
+		setRequestIDHeader(w, requestID)
+		next.ServeHTTP(w, r.WithContext(withRequestIDContext(r.Context(), requestID)))
+	})
 }
 
 // handleHealth handles GET /health.
@@ -587,18 +598,32 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func setRequestIDHeader(w http.ResponseWriter, requestID string) {
-	if strings.TrimSpace(requestID) == "" {
+	normalized := normalizeRequestID(requestID)
+	if normalized == "" {
 		return
 	}
-	w.Header().Set("X-Request-ID", requestID)
+	w.Header().Set("X-Request-ID", normalized)
+}
+
+func requestIDForResponse(w http.ResponseWriter) string {
+	if w == nil {
+		return newRequestID()
+	}
+	if requestID := normalizeRequestID(w.Header().Get("X-Request-ID")); requestID != "" {
+		return requestID
+	}
+	requestID := newRequestID()
+	setRequestIDHeader(w, requestID)
+	return requestID
 }
 
 // writeError writes an error response.
 func (s *Server) writeError(w http.ResponseWriter, status int, code, message, hint string) {
-	s.writeErrorWithRequestID(w, status, uuid.New().String(), code, message, hint)
+	s.writeErrorWithRequestID(w, status, requestIDForResponse(w), code, message, hint)
 }
 
 func (s *Server) writeErrorWithRequestID(w http.ResponseWriter, status int, requestID, code, message, hint string) {
+	requestID = resolveOrGenerateRequestID(requestID)
 	setRequestIDHeader(w, requestID)
 	resp := ErrorResponse{
 		OK:        false,

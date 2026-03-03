@@ -14,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -28,16 +26,20 @@ import (
 
 // getOrCreateRequestID extracts or generates a request ID.
 func getOrCreateRequestID(r *http.Request) string {
-	if reqID := r.Header.Get("X-Request-ID"); reqID != "" {
+	if r == nil {
+		return newRequestID()
+	}
+	if reqID := requestIDFromContext(r.Context()); reqID != "" {
 		return reqID
 	}
-	return uuid.New().String()
+	return resolveOrGenerateRequestID(r.Header.Get("X-Request-ID"))
 }
 
 // ----- Response Helpers -----
 
 // writeAPIResponse writes a successful API response with the envelope.
 func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data interface{}) {
+	requestID = resolveOrGenerateRequestID(requestID)
 	setRequestIDHeader(w, requestID)
 	resp := APIResponse{
 		OK:           true,
@@ -52,6 +54,7 @@ func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data 
 
 // writeAPIError writes an error API response with the envelope.
 func (s *Server) writeAPIError(w http.ResponseWriter, status int, requestID, code, message, hint string, details interface{}) {
+	requestID = resolveOrGenerateRequestID(requestID)
 	setRequestIDHeader(w, requestID)
 	resp := APIResponse{
 		OK:           false,

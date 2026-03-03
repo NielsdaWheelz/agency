@@ -8,6 +8,7 @@ this file defines the daemon http api. it is normative.
 - protocol: http/1.1 over unix domain socket
 - all requests and responses are json
 - endpoints that emit `request_id` in the body must also emit matching `X-Request-ID` response header
+- inbound `X-Request-ID` values are accepted only if they are non-empty, <=128 chars, and match `[A-Za-z0-9][A-Za-z0-9._:-]*`; invalid values are replaced with a daemon-generated id
 
 ## versioning
 
