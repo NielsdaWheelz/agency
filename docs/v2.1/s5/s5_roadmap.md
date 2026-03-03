@@ -1,13 +1,13 @@
 # Slice S5: Invocation-Centric Review + PR + Merge — PR Roadmap
 
-Current status: **near-complete** (updated 2026-03-03).
+Current status: **complete** (updated 2026-03-03).
 
-S5 canonical flows are shipped (`agent review`, `agent pr sync`, `agent merge`), legacy safety parity landed, and S5 happy/failure e2e suites are wired in CI. One contract-closure gap remains before calling S5 fully complete: `POST /invocations/{ref}/pr/sync` request decoding is still permissive vs the strict JSON contract in `docs/contracts/daemon_api.md` (`all request bodies are strict json`).
+S5 canonical flows are shipped (`agent review`, `agent pr sync`, `agent merge`), legacy safety parity landed, and S5 happy/failure e2e suites are wired in CI. `POST /invocations/{ref}/pr/sync` now enforces strict JSON request decoding (`unknown` fields and trailing/multi-object payloads reject with deterministic `E_INVALID_ARGUMENT`), aligning with `docs/contracts/daemon_api.md`.
 
 ### PR-05: PR Sync Strict-Decode Contract Closure
 - **goal**: enforce strict request decoding and deterministic error behavior for `POST /invocations/{ref}/pr/sync` so S5 contracts are internally consistent.
 - **builds on**: S5 PR-04 merged state.
-- **acceptance**:
+- **acceptance** (completed):
   - PR sync rejects unknown JSON fields and trailing/multi-object payloads with deterministic typed errors (`E_INVALID_ARGUMENT`) and stable hints.
   - strict-decode normalization is scoped to JSON body parsing; missing required query params (including `repo_id`) remain `E_INVALID_REQUEST` in this PR for compatibility.
   - PR sync parses request bodies consistently for known-length and unknown-length/chunked requests; no silent option drops based on `Content-Length`.
@@ -16,4 +16,4 @@ S5 canonical flows are shipped (`agent review`, `agent pr sync`, `agent merge`),
 - **non-goals**: no change to branch-scoped PR identity rules, merge flow behavior, or S6 reports-v2 scope.
 
 ### Next PRs
-- if PR-05 merges cleanly with no new drift, mark S5 complete and continue planning in Slice S6 roadmap.
+- continue planning and execution in Slice S6 roadmap.

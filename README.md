@@ -100,6 +100,7 @@ success payloads include additive command-specific fields (for example `timeline
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
+daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed `E_INVALID_ARGUMENT` errors.
 
 ## how it works
 
