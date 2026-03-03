@@ -9,6 +9,7 @@ S5 canonical flows are shipped (`agent review`, `agent pr sync`, `agent merge`),
 - **builds on**: S5 PR-04 merged state.
 - **acceptance**:
   - PR sync rejects unknown JSON fields and trailing/multi-object payloads with deterministic typed errors (`E_INVALID_ARGUMENT`) and stable hints.
+  - strict-decode normalization is scoped to JSON body parsing; missing required query params (including `repo_id`) remain `E_INVALID_REQUEST` in this PR for compatibility.
   - PR sync parses request bodies consistently for known-length and unknown-length/chunked requests; no silent option drops based on `Content-Length`.
   - response correlation remains stable (`request_id` in payload + matching `X-Request-ID` header) across success and failure paths.
   - unit/integration tests cover strict-decode failure matrix and preserve existing `allow_dirty` / `force_with_lease` behavior.
