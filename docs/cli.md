@@ -596,6 +596,41 @@ agency agent pr sync --force-with-lease 20260131
 agency agent pr sync --json 20260131
 ```
 
+### `agency agent merge`
+
+runs invocation-scoped verify + pull-request merge for the resolved integration branch.
+
+**usage:**
+```bash
+agency agent merge <invocation_id|name|prefix> [--repo <id|prefix>] [--squash|--merge|--rebase] [--no-delete-branch] [--yes] [--json]
+```
+
+**arguments:**
+- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
+
+**flags:**
+- `--repo`: repo id or unique prefix
+- `--squash`: squash merge strategy (default)
+- `--merge`: regular merge strategy
+- `--rebase`: rebase merge strategy
+- `--no-delete-branch`: keep remote branch after merge
+- `--yes`: required for non-interactive/scripted runs
+- `--json`: machine-readable mutation envelope output
+
+**behavior:**
+- resolves invocation context deterministically and requires landed + finished lifecycle state
+- enforces explicit confirmation contract (`--yes` non-interactive, typed token in interactive mode)
+- runs verify script with invocation-scoped environment, merges via `gh pr merge`, and writes private merge logs
+- emits typed failure codes for prechecks, verify failure, mergeability conflicts, and durability failures
+
+**examples:**
+```bash
+agency agent merge 20260131 --yes
+agency agent merge --repo abc123 my-invocation --merge --yes
+agency agent merge --rebase --no-delete-branch --yes 20260131
+agency agent merge --json --yes 20260131
+```
+
 ### `agency agent land`
 
 applies sandbox changes back to the integration worktree.

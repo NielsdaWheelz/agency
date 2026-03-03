@@ -301,31 +301,30 @@ agency push <worktree-name>
 ## step 11: merge and cleanup
 
 ```bash
-agency merge add-user-auth
-```
-
-prompts:
-```
-verify failed. continue anyway? [y/N] y
-confirm: type 'merge' to proceed: merge
+agency agent merge <invocation-id> --yes
 ```
 
 what happened:
-1. ran `scripts/agency_verify.sh` (tests, lint)
-2. prompted for confirmation
-3. merged the PR via `gh pr merge --squash --delete-branch`
-4. deleted the remote branch
-5. ran `scripts/agency_archive.sh`
-6. killed the tmux session
-7. deleted the worktree
+1. resolved invocation -> integration worktree -> branch -> PR identity
+2. ran `scripts/agency_verify.sh` in invocation-scoped non-interactive mode
+3. merged the PR via `gh pr merge` with your selected strategy
+4. persisted verify/merge logs under invocation state for auditability
+5. appended merge lifecycle events to invocation event history
 
 merge options:
 ```bash
-agency merge add-user-auth --squash            # squash merge (default)
-agency merge add-user-auth --merge             # regular merge
-agency merge add-user-auth --rebase            # rebase merge
-agency merge add-user-auth --no-delete-branch  # keep remote branch
-agency merge add-user-auth --force             # skip verify-failed prompt
+agency agent merge <invocation-id> --yes                     # script-safe confirmation
+agency agent merge <invocation-id> --squash --yes            # squash merge (default)
+agency agent merge <invocation-id> --merge --yes             # regular merge
+agency agent merge <invocation-id> --rebase --yes            # rebase merge
+agency agent merge <invocation-id> --no-delete-branch --yes  # keep remote branch
+agency agent merge <invocation-id> --json --yes              # machine-readable outcome
+```
+
+legacy compatibility command still exists:
+
+```bash
+agency merge <worktree-ref>
 ```
 
 ## alternative: abandon a run
@@ -392,7 +391,7 @@ agency agent review <id>
 agency agent pr sync <id>
 
 # 10. merge
-agency merge auth-refactor --squash
+agency agent merge <id> --yes --squash
 ```
 
 ## command quick reference
@@ -428,6 +427,7 @@ AGENTS (AI executions in sandboxes)
   agency agent diff <ref> --turn <entry_id> turn-aware diff context
   agency agent review <ref>                 review verdict + blocking reasons
   agency agent pr sync <ref>                push branch + create/update PR
+  agency agent merge <ref> --yes            verify + merge invocation PR
   agency agent open <ref>                   open sandbox in editor
   agency agent stop <ref>                   graceful stop
   agency agent kill <ref>                   forceful kill

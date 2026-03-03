@@ -426,7 +426,7 @@ Command semantics:
 
 1. `go test ./...` on every push and PR.
 2. E2E job runs conditionally when `AGENCY_GH_TOKEN` secret is configured.
-3. E2E runs a single targeted test (`TestGHE2EPushMerge`) with `-count=1`.
+3. E2E runs a single targeted test (`TestGHE2EAgentPRSyncMerge`) with `-count=1` under `-tags=e2e`.
 
 ## 13. Golden File / Snapshot Tests
 

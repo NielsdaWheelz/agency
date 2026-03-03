@@ -76,7 +76,7 @@ e2e-gh:
 		exit 1; \
 	fi; \
 	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN="$$token" \
-		go test -tags=e2e ./... -run TestGHE2EPushMerge -count=1
+		go test -tags=e2e ./internal/commands -run TestGHE2EAgentPRSyncMerge -count=1
 
 # Run local black-box CLI e2e smoke tests
 e2e-local:

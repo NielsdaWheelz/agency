@@ -44,4 +44,4 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENCY_GH_TOKEN }}
           AGENCY_GH_E2E: "1"
           AGENCY_GH_REPO: "NielsdaWheelz/agency-test"
-        run: go test ./... -run TestGHE2EPushMerge -count=1
+        run: go test -tags=e2e ./internal/commands -run TestGHE2EAgentPRSyncMerge -count=1
