@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +16,189 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
+
+func TestHandlePRSync_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	w := env.doInvocationRequestWithBody(
+		t,
+		http.MethodPost,
+		"/invocations/inv-1/pr/sync",
+		[]byte(`{}`),
+	)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp PRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
+	assert.Equal(t, "repo_id query parameter is required", resp.Message)
+}
+
+func TestHandlePRSync_StrictDecodeFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		body            []byte
+		expectedMessage string
+	}{
+		{
+			name:            "unknown field",
+			body:            []byte(`{"allow_dirty":true,"unknown":1}`),
+			expectedMessage: `invalid request body: unknown field "unknown"`,
+		},
+		{
+			name:            "trailing data",
+			body:            []byte(`{"allow_dirty":true} trailing`),
+			expectedMessage: "invalid request body: expected a single JSON object",
+		},
+		{
+			name:            "multiple objects",
+			body:            []byte(`{"allow_dirty":true}{"force_with_lease":true}`),
+			expectedMessage: "invalid request body: expected a single JSON object",
+		},
+		{
+			name:            "malformed json",
+			body:            []byte(`{"allow_dirty":`),
+			expectedMessage: "invalid request body: malformed JSON",
+		},
+		{
+			name:            "type mismatch",
+			body:            []byte(`{"allow_dirty":"yes"}`),
+			expectedMessage: `invalid request body: field "allow_dirty" must be bool`,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := setupReadTestEnv(t)
+			w := env.doInvocationRequestWithBody(
+				t,
+				http.MethodPost,
+				"/invocations/inv-1/pr/sync?repo_id="+env.RepoID,
+				tc.body,
+			)
+			require.Equal(t, http.StatusBadRequest, w.Code)
+
+			var resp PRSyncResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.False(t, resp.OK)
+			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+			assert.Equal(t, tc.expectedMessage, resp.Message)
+			assert.Empty(t, resp.Hint)
+			assert.NotEmpty(t, resp.RequestID)
+			assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
+		})
+	}
+}
+
+func TestHandlePRSync_ParsesBodyWhenContentLengthUnknown(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	_, _ = setupPRSyncReadyInvocation(t, env)
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout: " M README.md\n",
+	}
+	fakeRunner.Responses["gh --version"] = testutil.FakeResponse{
+		ExitCode: 1,
+		Stderr:   "gh: not found",
+	}
+
+	body := []byte(`{"allow_dirty":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/invocations/inv-1/pr/sync?repo_id="+env.RepoID, bytes.NewReader(body))
+	req.ContentLength = -1 // chunked/unknown length should still parse options
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.Server.handleInvocations(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp PRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EGhNotInstalled), resp.ErrorCode)
+	assert.Contains(t, fakeRunner.Calls, "gh --version")
+}
+
+func TestHandlePRSync_EmptyBodyRemainsValidWithDefaultOptions(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	_, _ = setupPRSyncReadyInvocation(t, env)
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout: " M README.md\n",
+	}
+
+	w := env.doInvocationRequest(
+		t,
+		http.MethodPost,
+		"/invocations/inv-1/pr/sync?repo_id="+env.RepoID,
+	)
+	require.Equal(t, http.StatusConflict, w.Code)
+
+	var resp PRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EDirtyWorktree), resp.ErrorCode)
+}
+
+func TestHandlePRSync_ParsesForceWithLeaseWhenContentLengthUnknown(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	_, _ = setupPRSyncReadyInvocation(t, env)
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout:   "",
+		ExitCode: 0,
+	}
+	fakeRunner.Responses["gh --version"] = testutil.FakeResponse{
+		Stdout:   "gh version 2.0.0\n",
+		ExitCode: 0,
+	}
+	fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{
+		Stdout:   "ok\n",
+		ExitCode: 0,
+	}
+	fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
+	fakeRunner.Responses["git show-ref --verify --quiet refs/heads/main"] = testutil.FakeResponse{ExitCode: 0}
+	fakeRunner.Responses["git rev-list --count main..agency/alpha"] = testutil.FakeResponse{
+		Stdout:   "1\n",
+		ExitCode: 0,
+	}
+	fakeRunner.Responses["git push --force-with-lease -u origin agency/alpha"] = testutil.FakeResponse{
+		ExitCode: 1,
+		Stderr:   "fatal: push rejected",
+	}
+
+	body := []byte(`{"force_with_lease":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/invocations/inv-1/pr/sync?repo_id="+env.RepoID, bytes.NewReader(body))
+	req.ContentLength = -1 // chunked/unknown length should still parse options
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.Server.handleInvocations(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var resp PRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EGitPushFailed), resp.ErrorCode)
+	assert.Contains(t, fakeRunner.Calls, "git push --force-with-lease -u origin agency/alpha")
+	assert.NotContains(t, fakeRunner.Calls, "git push -u origin agency/alpha")
+}
 
 func TestHandlePRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 	t.Parallel()

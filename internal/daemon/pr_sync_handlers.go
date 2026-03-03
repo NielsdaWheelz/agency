@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -51,12 +52,17 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 		return
 	}
 
-	var req PRSyncRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
-			return
-		}
+	req, decodeErr := decodePRSyncRequest(r.Body)
+	if decodeErr != "" {
+		s.writePRSyncError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			decodeErr,
+			"",
+		)
+		return
 	}
 
 	record, err := s.resolveInvocationRef(invocationRef, repoID)
@@ -703,6 +709,57 @@ func prSyncHintFromError(err error) string {
 	return ""
 }
 
+func decodePRSyncRequest(body io.Reader) (PRSyncRequest, string) {
+	var req PRSyncRequest
+	dec := json.NewDecoder(body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		if err == io.EOF {
+			return req, ""
+		}
+		return PRSyncRequest{}, prSyncDecodeErrorMessage(err)
+	}
+
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return PRSyncRequest{}, "invalid request body: expected a single JSON object"
+	}
+
+	return req, ""
+}
+
+func prSyncDecodeErrorMessage(err error) string {
+	if unknownField, ok := prSyncUnknownFieldName(err); ok {
+		return fmt.Sprintf("invalid request body: unknown field %q", unknownField)
+	}
+
+	if _, ok := err.(*json.SyntaxError); ok || err == io.ErrUnexpectedEOF {
+		return "invalid request body: malformed JSON"
+	}
+
+	if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
+		if field := strings.TrimSpace(typeErr.Field); field != "" {
+			return fmt.Sprintf("invalid request body: field %q must be %s", field, typeErr.Type.String())
+		}
+		return "invalid request body: invalid value type"
+	}
+
+	return "invalid request body: malformed JSON"
+}
+
+func prSyncUnknownFieldName(err error) (string, bool) {
+	const prefix = "json: unknown field "
+	msg := strings.TrimSpace(err.Error())
+	if !strings.HasPrefix(msg, prefix) {
+		return "", false
+	}
+	field := strings.TrimSpace(strings.Trim(strings.TrimPrefix(msg, prefix), `"`))
+	if field == "" {
+		return "", false
+	}
+	return field, true
+}
+
 func prSyncHTTPStatusForCode(code errors.Code) int {
 	switch code {
 	case errors.EInvocationNotFound:
@@ -724,6 +781,8 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 	case errors.EGHRepoParseFailed:
 		return http.StatusBadRequest
 	case errors.EGhNotInstalled, errors.EGhNotAuthenticated:
+		return http.StatusBadRequest
+	case errors.EInvalidArgument:
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
