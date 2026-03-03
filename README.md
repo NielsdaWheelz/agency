@@ -111,6 +111,7 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
+legacy compatibility commands (`agency push` / `agency merge`) are retained, but their report/body handling and merge-log persistence follow the same bounded-input + durable-write safety posture as canonical v2.1 flows.
 
 ## documentation
 

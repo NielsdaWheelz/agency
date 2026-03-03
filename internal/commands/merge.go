@@ -21,6 +21,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/lock"
+	"github.com/NielsdaWheelz/agency/internal/mergeflow"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -308,7 +309,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	})
 
 	// === Run verify ===
-	verifyResult, verifyErr := runVerifyForMerge(ctx, fsys, st, meta, repoID, eventsPath, stderr)
+	verifyResult, verifyErr := runVerifyForMerge(ctx, cr, fsys, st, meta, repoID, eventsPath, stderr)
 
 	// Update meta with verify results
 	if verifyResult != nil {
@@ -387,7 +388,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 
 	// Capture merge output to logs/merge.log
 	mergeLogPath := filepath.Join(st.RunLogsDir(repoID, meta.RunID), "merge.log")
-	mergeErr := executeGHMerge(ctx, cr, meta.WorktreePath, ghRepo, pr.Number, strategyFlag, mergeLogPath, deleteBranch)
+	mergeErr := executeGHMerge(ctx, cr, fsys, meta.WorktreePath, ghRepo, pr.Number, strategyFlag, mergeLogPath, deleteBranch)
 
 	if mergeErr != nil {
 		appendMergeEvent(eventsPath, repoID, meta.RunID, "gh_merge_finished", events.GHMergeFinishedData(false, pr.Number, pr.URL))
@@ -464,11 +465,7 @@ func handleAlreadyMergedPR(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 
 // executeGHMerge runs gh pr merge and captures output to merge.log.
 // If deleteBranch is true, passes --delete-branch to gh pr merge.
-func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo string, prNumber int, strategyFlag, mergeLogPath string, deleteBranch bool) error {
-	// Ensure logs directory exists (non-fatal; continue anyway)
-	logsDir := filepath.Dir(mergeLogPath)
-	_ = os.MkdirAll(logsDir, 0o700)
-
+func executeGHMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, workDir, ghRepo string, prNumber int, strategyFlag, mergeLogPath string, deleteBranch bool) error {
 	args := []string{
 		"pr", "merge", fmt.Sprintf("%d", prNumber),
 		"-R", ghRepo,
@@ -490,16 +487,17 @@ func executeGHMerge(ctx context.Context, cr exec.CommandRunner, workDir, ghRepo 
 		Env: nonInteractiveEnv(),
 	})
 
-	// Write output to merge.log regardless of result
-	logContent := fmt.Sprintf("=== %s ===\n", command)
-	logContent += fmt.Sprintf("Exit code: %d\n", result.ExitCode)
-	if result.Stdout != "" {
-		logContent += fmt.Sprintf("\n=== stdout ===\n%s", result.Stdout)
+	if logErr := mergeflow.WriteMergeLog(fsys, mergeLogPath, command, result, err); logErr != nil {
+		return errors.WrapWithDetails(
+			errors.EPersistFailed,
+			"failed to persist merge log",
+			logErr,
+			map[string]string{
+				"merge_log_path": mergeLogPath,
+				"hint":           "merge may have completed; inspect PR state and retry if needed",
+			},
+		)
 	}
-	if result.Stderr != "" {
-		logContent += fmt.Sprintf("\n=== stderr ===\n%s", result.Stderr)
-	}
-	_ = os.WriteFile(mergeLogPath, []byte(logContent), 0o644)
 
 	if err != nil {
 		return errors.WrapWithDetails(errors.EGHPRMergeFailed, "gh pr merge failed", err,
@@ -1222,7 +1220,7 @@ func checkRemoteHeadUpToDate(ctx context.Context, cr exec.CommandRunner, workDir
 }
 
 // runVerifyForMerge runs the verify script and returns the result.
-func runVerifyForMerge(ctx context.Context, fsys fs.FS, st *store.Store, meta *store.RunMeta, repoID, eventsPath string, stderr io.Writer) (*store.VerifyRecord, error) {
+func runVerifyForMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, st *store.Store, meta *store.RunMeta, repoID, eventsPath string, stderr io.Writer) (*store.VerifyRecord, error) {
 	worktreePath := meta.WorktreePath
 	runDir := st.RunDir(repoID, meta.RunID)
 	logPath := filepath.Join(st.RunLogsDir(repoID, meta.RunID), "verify.log")
@@ -1243,8 +1241,13 @@ func runVerifyForMerge(ctx context.Context, fsys fs.FS, st *store.Store, meta *s
 		"timeout_ms": timeout.Milliseconds(),
 	})
 
+	repoRoot, err := mergeflow.ResolveRepoRoot(ctx, cr, st, repoID, worktreePath)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build environment
-	env := buildVerifyEnvForMerge(meta, worktreePath, runDir)
+	env := buildVerifyEnvForMerge(meta, repoRoot, worktreePath, runDir)
 
 	// Run verify
 	runCfg := verify.RunConfig{
@@ -1280,37 +1283,19 @@ func runVerifyForMerge(ctx context.Context, fsys fs.FS, st *store.Store, meta *s
 }
 
 // buildVerifyEnvForMerge builds environment for verify script.
-func buildVerifyEnvForMerge(meta *store.RunMeta, worktreePath, runDir string) []string {
-	env := os.Environ()
-
-	agencyEnv := map[string]string{
-		"AGENCY_RUN_ID":         meta.RunID,
-		"AGENCY_NAME":           meta.Name,
-		"AGENCY_REPO_ROOT":      worktreePath,
-		"AGENCY_WORKSPACE_ROOT": worktreePath,
-		"AGENCY_BRANCH":         meta.Branch,
-		"AGENCY_PARENT_BRANCH":  meta.ParentBranch,
-		"AGENCY_ORIGIN_NAME":    "origin",
-		"AGENCY_ORIGIN_URL":     "",
-		"AGENCY_RUNNER":         meta.Runner,
-		"AGENCY_PR_URL":         meta.PRURL,
-		"AGENCY_PR_NUMBER":      "",
-		"AGENCY_DOTAGENCY_DIR":  filepath.Join(worktreePath, ".agency"),
-		"AGENCY_OUTPUT_DIR":     filepath.Join(worktreePath, ".agency", "out"),
-		"AGENCY_LOG_DIR":        filepath.Join(runDir, "logs"),
-		"AGENCY_NONINTERACTIVE": "1",
-		"CI":                    "1",
-	}
-
-	if meta.PRNumber != 0 {
-		agencyEnv["AGENCY_PR_NUMBER"] = fmt.Sprintf("%d", meta.PRNumber)
-	}
-
-	for k, v := range agencyEnv {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	return env
+func buildVerifyEnvForMerge(meta *store.RunMeta, repoRoot, worktreePath, runDir string) []string {
+	return mergeflow.BuildVerifyEnv(os.Environ(), mergeflow.VerifyEnvInput{
+		RunID:         meta.RunID,
+		Name:          meta.Name,
+		RepoRoot:      repoRoot,
+		WorkspaceRoot: worktreePath,
+		Branch:        meta.Branch,
+		ParentBranch:  meta.ParentBranch,
+		Runner:        meta.Runner,
+		PRURL:         meta.PRURL,
+		PRNumber:      meta.PRNumber,
+		InvocationDir: runDir,
+	})
 }
 
 // appendMergeEvent appends an event to events.jsonl.
