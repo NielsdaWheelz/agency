@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
@@ -81,28 +80,21 @@ func AttachWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 	}
 
 	// Attach to the tmux session
-	// We need to use exec.Command directly for interactive attach (bypass tmuxClient)
-	return attachToTmuxSession(sessionName, stdout, stderr)
+	return attachToTmuxSession(ctx, sessionName)
 }
 
 // attachToTmuxSession attaches to a tmux session interactively.
-// This replaces the current process with tmux attach.
-func attachToTmuxSession(sessionName string, stdout, stderr io.Writer) error {
-	// For interactive attach, we need to run tmux attach with proper terminal handling
-	cmd := exec.Command("tmux", "attach", "-t", sessionName)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err := cmd.Run()
+func attachToTmuxSession(ctx context.Context, sessionName string) error {
+	result, err := agencyexec.RunAttached(ctx, "tmux", []string{"attach", "-t", sessionName}, agencyexec.AttachedRunOpts{
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Non-zero exit from tmux is fine (user detached)
-			if exitErr.ExitCode() == 0 {
-				return nil
-			}
-		}
 		return errors.Wrap(errors.ETmuxFailed, "tmux attach failed", err)
+	}
+	if result.ExitCode != 0 {
+		return errors.New(errors.ETmuxFailed, fmt.Sprintf("tmux attach failed with exit code %d", result.ExitCode))
 	}
 	return nil
 }

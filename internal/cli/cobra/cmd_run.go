@@ -12,12 +12,15 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
+var runCommand = commands.Run
+
 func newRunCmd() *cobra.Command {
 	var name string
 	var repoPath string
 	var runner string
 	var parent string
 	var detached bool
+	var open bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -25,7 +28,8 @@ func newRunCmd() *cobra.Command {
 		Long: `Create workspace, run setup, and start tmux runner session.
 Defaults to current directory; use --repo to target a different repo.
 Requires the target repo to have agency.json.
-By default, attaches to the tmux session after creation.`,
+By default, attaches to the tmux session after creation.
+Use --open to open the created workspace and skip auto-attach.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stdout := cmd.OutOrStdout()
@@ -51,18 +55,20 @@ By default, attaches to the tmux session after creation.`,
 				RepoPath: repoPath,
 				Runner:   runner,
 				Parent:   parent,
-				Attach:   !detached,
+				Attach:   !detached && !open,
+				Open:     open,
 			}
 
-			return commands.Run(ctx, cr, fsys, cwd, opts, stdout, stderr)
+			return runCommand(ctx, cr, fsys, cwd, opts, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "run name (required, 2-40 chars, lowercase alphanumeric with hyphens)")
-	cmd.Flags().StringVar(&repoPath, "repo", "", "target a specific repo (default: current directory)")
+	cmd.Flags().StringVarP(&repoPath, "repo", "r", "", "target a specific repo (default: current directory)")
 	cmd.Flags().StringVar(&runner, "runner", "", "runner name (claude-code, codex, amp, opencode, cursor, droid; legacy aliases: claude, cursor-cli)")
 	cmd.Flags().StringVar(&parent, "parent", "", "parent branch (default: current branch)")
 	cmd.Flags().BoolVar(&detached, "detached", false, "do not attach to tmux session after creation")
+	cmd.Flags().BoolVarP(&open, "open", "o", false, "open created workspace and skip auto-attach")
 
 	return cmd
 }

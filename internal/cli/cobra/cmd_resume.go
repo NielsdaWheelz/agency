@@ -58,10 +58,10 @@ Notes:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoPath, "repo", "", "scope name resolution to a specific repo")
+	cmd.Flags().StringVarP(&repoPath, "repo", "r", "", "scope name resolution to a specific repo")
 	cmd.Flags().BoolVar(&detached, "detached", false, "do not attach; return after ensuring session exists")
 	cmd.Flags().BoolVar(&restart, "restart", false, "kill existing session (if any) and recreate")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip confirmation prompt for --restart")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt for --restart")
 
 	return cmd
 }

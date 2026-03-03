@@ -2,15 +2,14 @@ package verify
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -111,13 +110,6 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, timeout)
 	defer cancelTimeout()
 
-	// Build command: sh -lc <script>
-	cmd := osexec.CommandContext(timeoutCtx, "sh", "-lc", cfg.Script)
-	cmd.Dir = cfg.WorkDir
-	cmd.Env = cfg.Env
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
 	// Open /dev/null for stdin
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -129,13 +121,16 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		writeRecordBestEffort(cfg.RecordPath, record)
 		return record, fmt.Errorf("failed to open /dev/null: %w", err)
 	}
-	cmd.Stdin = devnull
-
-	// Start process in its own process group for clean signal handling
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	// Start the command
-	if err := cmd.Start(); err != nil {
+	// Start process in its own process group for clean signal handling.
+	proc, err := exec.StartProcess(timeoutCtx, "sh", []string{"-lc", cfg.Script}, exec.StartOpts{
+		Dir:     cfg.WorkDir,
+		EnvList: cfg.Env,
+		Stdin:   devnull,
+		Stdout:  logFile,
+		Stderr:  logFile,
+		Setpgid: true,
+	})
+	if err != nil {
 		_ = devnull.Close() // Best-effort cleanup; returning start error
 		_ = logFile.Close()
 		errStr := fmt.Sprintf("failed to start verify script: %v", err)
@@ -146,20 +141,28 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		return record, fmt.Errorf("failed to start verify script: %w", err)
 	}
 
-	pgid := cmd.Process.Pid
+	pgid := proc.PGID
 
 	// Wait for command completion or context cancellation
-	waitDone := make(chan error, 1)
+	type waitOutcome struct {
+		exit exec.ProcessExit
+		err  error
+	}
+	waitDone := make(chan waitOutcome, 1)
 	go func() {
-		waitDone <- cmd.Wait()
+		exit, waitErr := proc.WaitExit()
+		waitDone <- waitOutcome{exit: exit, err: waitErr}
 	}()
 
 	var runErr error
+	var runExit exec.ProcessExit
 	var timedOut, cancelled bool
 
 	select {
-	case runErr = <-waitDone:
+	case outcome := <-waitDone:
 		// Command completed normally or with error
+		runErr = outcome.err
+		runExit = outcome.exit
 	case <-timeoutCtx.Done():
 		// Check if it was timeout or parent cancellation
 		if ctx.Err() != nil {
@@ -172,7 +175,9 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		// Kill the process group
 		killProcessGroup(pgid)
 		// Wait for the command to finish
-		runErr = <-waitDone
+		outcome := <-waitDone
+		runErr = outcome.err
+		runExit = outcome.exit
 	}
 
 	// Close resources (best-effort cleanup; process results take priority)
@@ -186,35 +191,24 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	record.TimedOut = timedOut
 	record.Cancelled = cancelled
 
-	// Extract exit code and signal
-	if runErr == nil {
-		exitCode := 0
+	// Preserve non-cancellation internal wait failures for diagnostics.
+	if runErr != nil && !cancelled {
+		errStr := runErr.Error()
+		record.Error = &errStr
+	}
+
+	// Extract exit code and signal.
+	// timeouts/cancellations are represented as SIGKILL in this contract.
+	if runExit.Signal != "" {
+		sig := runExit.Signal
+		record.Signal = &sig
+	} else if !timedOut && !cancelled {
+		exitCode := runExit.ExitCode
 		record.ExitCode = &exitCode
-	} else {
-		var exitErr *osexec.ExitError
-		if stderrors.As(runErr, &exitErr) {
-			if exitErr.ProcessState != nil {
-				// Check if terminated by signal
-				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-					if status.Signaled() {
-						sig := status.Signal().String()
-						record.Signal = &sig
-						// No exit code when signaled
-					} else {
-						exitCode := exitErr.ExitCode()
-						record.ExitCode = &exitCode
-					}
-				} else {
-					exitCode := exitErr.ExitCode()
-					record.ExitCode = &exitCode
-				}
-			}
-		}
-		// If timed out or cancelled, record SIGKILL as the signal
-		if timedOut || cancelled {
-			sig := "SIGKILL"
-			record.Signal = &sig
-		}
+	}
+	if timedOut || cancelled {
+		sig := "SIGKILL"
+		record.Signal = &sig
 	}
 
 	// Read verify.json (optional structured output)

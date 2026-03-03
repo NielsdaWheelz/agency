@@ -6,10 +6,8 @@ package runservice
 import (
 	"context"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,6 +31,10 @@ type Service struct {
 	cr      exec.CommandRunner
 	fsys    fs.FS
 	nowFunc func() time.Time
+
+	// WorkingDirOverride, if set, is used by CheckRepoSafe instead of os.Getwd().
+	// This keeps command flows free of process-global cwd mutation.
+	WorkingDirOverride string
 
 	// DataDirOverride, if set, is used instead of resolving AGENCY_DATA_DIR from env.
 	// This enables tests to use t.TempDir() without t.Setenv.
@@ -72,12 +74,21 @@ func (s *Service) SetNowFunc(fn func() time.Time) {
 	s.nowFunc = fn
 }
 
+// SetWorkingDir sets an explicit working directory for repo checks.
+func (s *Service) SetWorkingDir(path string) {
+	s.WorkingDirOverride = path
+}
+
 // CheckRepoSafe verifies repo safety (clean working tree, parent branch exists, etc.).
 func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState) error {
 	// Get current working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get current directory", err)
+	cwd := s.WorkingDirOverride
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get current directory", err)
+		}
 	}
 
 	// Determine parent branch: use from opts if provided, otherwise will be resolved from config later
@@ -545,31 +556,13 @@ func executeSetupScript(ctx context.Context, script, workDir string, env map[str
 		defer cancel()
 	}
 
-	// Build command: sh -lc <script>
-	cmd := osexec.CommandContext(ctx, "sh", "-lc", script)
-	cmd.Dir = workDir
-
-	// Set stdout/stderr to log file
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	// Open /dev/null for stdin
-	devnull, err := os.Open(os.DevNull)
-	if err != nil {
-		_ = logFile.Close() // Best-effort cleanup; returning early
-		return setupResult{ExitCode: -1, Failed: true}
-	}
-	cmd.Stdin = devnull
-	defer func() { _ = devnull.Close() }()
-
-	// Build environment: inherit + overlay AGENCY_* vars
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = setEnvVar(cmd.Env, k, v)
-	}
-
-	// Run command
-	runErr := cmd.Run()
+	// Run command with explicit stdio targets.
+	cmdResult, runErr := exec.RunAttached(ctx, "sh", []string{"-lc", script}, exec.AttachedRunOpts{
+		Dir:    workDir,
+		Env:    env,
+		Stdout: logFile,
+		Stderr: logFile,
+	})
 	duration := time.Since(start)
 	durationMs := duration.Milliseconds()
 
@@ -581,24 +574,20 @@ func executeSetupScript(ctx context.Context, script, workDir string, env map[str
 	}
 
 	if runErr != nil {
-		// Check for timeout
-		if ctx.Err() == context.DeadlineExceeded {
-			result.ExitCode = -1
-			result.TimedOut = true
-			result.Failed = true
-			return result
-		}
-
-		// Check for exit error
-		var exitErr *osexec.ExitError
-		if stderrors.As(runErr, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-			result.Failed = true
-			return result
-		}
-
-		// Other error (failed to start)
+		// Failed to start/cancel path.
 		result.ExitCode = -1
+		result.Failed = true
+		return result
+	}
+
+	if cmdResult.ExitCode == exec.ExitTimeout {
+		result.ExitCode = -1
+		result.TimedOut = true
+		result.Failed = true
+		return result
+	}
+	if cmdResult.ExitCode != 0 {
+		result.ExitCode = cmdResult.ExitCode
 		result.Failed = true
 		return result
 	}
@@ -606,18 +595,6 @@ func executeSetupScript(ctx context.Context, script, workDir string, env map[str
 	result.ExitCode = 0
 	result.Failed = false
 	return result
-}
-
-// setEnvVar sets or replaces an environment variable in the env slice.
-func setEnvVar(env []string, key, value string) []string {
-	prefix := key + "="
-	for i, e := range env {
-		if len(e) > len(prefix) && e[:len(prefix)] == prefix {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
 }
 
 // buildSetupEnv builds the environment variables for the setup script.

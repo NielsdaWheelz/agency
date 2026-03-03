@@ -16,13 +16,14 @@ func newCleanCmd() *cobra.Command {
 	var repoPath string
 	var allowDirty bool
 	var deleteBranch bool
+	var yes bool
 
 	cmd := &cobra.Command{
 		Use:   "clean <run>",
 		Short: "Archive without merging (abandon run)",
 		Long: `Archive a run without merging (abandon).
 Works from any directory; resolves runs globally.
-Requires an interactive terminal for confirmation.
+Non-interactive usage requires explicit confirmation via --yes.
 
 Arguments:
   run    run name, run_id, or unique run_id prefix
@@ -40,7 +41,7 @@ Behavior:
   - closes PR (if exists)
 
 Confirmation:
-  you must type 'clean' to confirm the operation.`,
+  you must type 'clean' to confirm the operation unless --yes.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stdout := cmd.OutOrStdout()
@@ -60,15 +61,17 @@ Confirmation:
 				RepoPath:     repoPath,
 				AllowDirty:   allowDirty,
 				DeleteBranch: deleteBranch,
+				Yes:          yes,
 			}
 
 			return commands.Clean(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&repoPath, "repo", "", "scope name resolution to a specific repo")
+	cmd.Flags().StringVarP(&repoPath, "repo", "r", "", "scope name resolution to a specific repo")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "allow clean even if worktree has uncommitted changes")
 	cmd.Flags().BoolVar(&deleteBranch, "delete-branch", false, "delete local/remote branch and close PR")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm clean in non-interactive mode")
 
 	return cmd
 }

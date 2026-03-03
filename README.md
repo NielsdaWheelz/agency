@@ -80,6 +80,21 @@ agency agent restart <invocation-id> --history     # interactive history selecto
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
 
+legacy `run` surface supports open-on-create:
+
+```bash
+agency run --name feature-x --open
+```
+
+non-interactive destructive flows require explicit confirmation via `--yes`:
+
+```bash
+agency clean <run-id> --yes
+agency merge <run-id> --yes
+agency worktree rm <name|id|prefix> --yes
+agency agent merge <invocation-id> --yes
+```
+
 automation-friendly mutation json:
 
 ```bash

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -141,26 +140,26 @@ func runArchiveScript(ctx context.Context, cfg Config, deps Deps, logPath string
 	scriptCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	// Run script via sh -lc (like setup/verify)
-	cmd := exec.CommandContext(scriptCtx, "sh", "-lc", cfg.ArchiveScript)
-	cmd.Dir = worktreePath
-	cmd.Env = env
-	cmd.Stdin = nil // /dev/null
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
 	startTime := time.Now()
-	runErr := cmd.Run()
+	runResult, runErr := agencyexec.RunAttached(scriptCtx, "sh", []string{"-lc", cfg.ArchiveScript}, agencyexec.AttachedRunOpts{
+		Dir:    worktreePath,
+		Env:    env,
+		Stdout: logFile,
+		Stderr: logFile,
+	})
 	duration := time.Since(startTime)
 
 	// Write duration to log (best-effort diagnostic output)
 	_, _ = fmt.Fprintf(logFile, "\n--- archive script finished in %v ---\n", duration)
 
 	if runErr != nil {
-		if scriptCtx.Err() == context.DeadlineExceeded {
-			return false, fmt.Sprintf("timed out after %v", cfg.Timeout)
-		}
-		return false, fmt.Sprintf("exit %d", cmd.ProcessState.ExitCode())
+		return false, fmt.Sprintf("failed to run archive script: %v", runErr)
+	}
+	if runResult.ExitCode == agencyexec.ExitTimeout {
+		return false, fmt.Sprintf("timed out after %v", cfg.Timeout)
+	}
+	if runResult.ExitCode != 0 {
+		return false, fmt.Sprintf("exit %d", runResult.ExitCode)
 	}
 
 	return true, ""
@@ -168,10 +167,7 @@ func runArchiveScript(ctx context.Context, cfg Config, deps Deps, logPath string
 
 // buildArchiveEnv builds the environment variables for the archive script.
 // Per L0 contract, mirrors setup/verify env.
-func buildArchiveEnv(meta *store.RunMeta, repoRoot, dataDir string) []string {
-	// Start with current environment
-	env := os.Environ()
-
+func buildArchiveEnv(meta *store.RunMeta, repoRoot, dataDir string) map[string]string {
 	runDir := filepath.Join(dataDir, "repos", meta.RepoID, "runs", meta.RunID)
 	worktreePath := meta.WorktreePath
 
@@ -200,11 +196,7 @@ func buildArchiveEnv(meta *store.RunMeta, repoRoot, dataDir string) []string {
 		agencyEnv["AGENCY_PR_NUMBER"] = fmt.Sprintf("%d", meta.PRNumber)
 	}
 
-	for k, v := range agencyEnv {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	return env
+	return agencyEnv
 }
 
 // killTmuxSession kills the tmux session for a run.

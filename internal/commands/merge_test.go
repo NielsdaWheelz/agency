@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1326,4 +1328,30 @@ func TestMergeErrorCode_ENoPR_ByStoredPRNumber(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENoPR, errors.GetCode(err), "expected ENoPR error code")
+}
+
+func TestMerge_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.T) {
+	originalIsInteractive := isInteractive
+	isInteractive = func() bool { return false }
+	t.Cleanup(func() { isInteractive = originalIsInteractive })
+
+	err := Merge(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), t.TempDir(), MergeOpts{
+		RunID: "20260303-merge-ni",
+	}, strings.NewReader(""), io.Discard, io.Discard)
+	require.Error(t, err)
+	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+}
+
+func TestMerge_NonInteractiveWithYes_DoesNotFailAtConfirmationGate(t *testing.T) {
+	originalIsInteractive := isInteractive
+	isInteractive = func() bool { return false }
+	t.Cleanup(func() { isInteractive = originalIsInteractive })
+
+	err := Merge(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), t.TempDir(), MergeOpts{
+		RunID: "20260303-merge-yes",
+		Yes:   true,
+	}, strings.NewReader(""), io.Discard, io.Discard)
+	require.Error(t, err)
+	assert.NotEqual(t, errors.EConfirmationRequired, errors.GetCode(err))
+	assert.NotEqual(t, errors.ENotInteractive, errors.GetCode(err))
 }

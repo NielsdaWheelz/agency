@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -35,6 +35,9 @@ type RunOpts struct {
 
 	// Attach indicates whether to attach after tmux creation.
 	Attach bool
+
+	// Open opens the created workspace after creation and skips auto-attach.
+	Open bool
 }
 
 // RunResult holds the result of a successful run for output formatting.
@@ -87,17 +90,9 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		targetCwd = repoRoot.Path
 	}
 
-	// Change working directory for pipeline if --repo was specified
-	origWd, _ := os.Getwd()
-	if targetCwd != cwd {
-		if err := os.Chdir(targetCwd); err != nil {
-			return errors.Wrap(errors.EInternal, "failed to change directory", err)
-		}
-		defer func() { _ = os.Chdir(origWd) }()
-	}
-
-	// Create the run service with production dependencies
-	svc := runservice.New()
+	// Create the run service with explicit dependencies and working directory.
+	svc := runservice.NewWithDeps(cr, fsys)
+	svc.SetWorkingDir(targetCwd)
 
 	// Create the pipeline
 	p := pipeline.NewPipeline(svc)
@@ -113,7 +108,7 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 	runID, err := p.Run(ctx, pipelineOpts)
 	if err != nil {
 		// Print error details for failures after worktree creation
-		printRunError(stderr, err, runID, targetCwd, fsys)
+		printRunError(ctx, cr, stderr, err, runID, targetCwd, fsys)
 		return err
 	}
 
@@ -124,17 +119,29 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		return errors.Wrap(errors.EInternal, "failed to read run result", err)
 	}
 
-	// Print success output (show "next:" hint only when detached)
-	printRunSuccess(stdout, result, !opts.Attach)
+	attachAfterCreate := opts.Attach && !opts.Open
+
+	// Print success output (show "next:" hint whenever we are not auto-attaching).
+	printRunSuccess(stdout, result, !attachAfterCreate)
 
 	// Print warnings to stderr
 	for _, w := range result.Warnings {
 		_, _ = fmt.Fprintf(stderr, "warning: %s\n", w.Message)
 	}
 
+	if opts.Open {
+		openErr := openCreatedWorkspace(ctx, cr, fsys, result.WorktreePath)
+		if openErr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", openErr)
+			_, _ = fmt.Fprintln(stdout, "open_status: failed")
+		} else {
+			_, _ = fmt.Fprintln(stdout, "open_status: opened")
+		}
+	}
+
 	// Handle attach (default) - skip if --detached was specified
-	if opts.Attach && result.TmuxSessionName != "" {
-		return attachToTmuxSessionRun(result.TmuxSessionName)
+	if attachAfterCreate && result.TmuxSessionName != "" {
+		return attachToTmuxSessionRun(ctx, result.TmuxSessionName)
 	}
 
 	return nil
@@ -201,7 +208,7 @@ func printRunSuccess(w io.Writer, result *RunResult, detached bool) {
 // printRunError prints error details for run failures.
 // All writes use explicit error ignoring since this is informational output
 // where write failures cannot be meaningfully handled.
-func printRunError(w io.Writer, err error, runID string, cwd string, fsys fs.FS) {
+func printRunError(ctx context.Context, cr agencyexec.CommandRunner, w io.Writer, err error, runID string, cwd string, fsys fs.FS) {
 	ae, ok := errors.AsAgencyError(err)
 	if !ok {
 		_, _ = fmt.Fprintf(w, "error: %s\n", err.Error())
@@ -228,36 +235,23 @@ func printRunError(w io.Writer, err error, runID string, cwd string, fsys fs.FS)
 
 	// Try to get worktree path from meta if we have a run_id
 	if runID != "" && ae.Details["worktree_path"] == "" {
-		if result, err := tryGetRunMeta(cwd, runID, fsys); err == nil {
+		if result, err := tryGetRunMeta(ctx, cr, cwd, runID, fsys); err == nil {
 			_, _ = fmt.Fprintf(w, "worktree: %s\n", result.WorktreePath)
 		}
 	}
 }
 
 // tryGetRunMeta attempts to read run metadata for error reporting.
-func tryGetRunMeta(cwd, runID string, fsys fs.FS) (*store.RunMeta, error) {
-	// Get repo root using direct git command (simpler path for error handling)
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	cmd.Dir = cwd
-	out, err := cmd.Output()
+func tryGetRunMeta(ctx context.Context, cr agencyexec.CommandRunner, cwd, runID string, fsys fs.FS) (*store.RunMeta, error) {
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
 	if err != nil {
 		return nil, err
 	}
-	repoRoot := string(out)
-	if len(repoRoot) > 0 && repoRoot[len(repoRoot)-1] == '\n' {
-		repoRoot = repoRoot[:len(repoRoot)-1]
-	}
 
-	// Get origin URL
-	cmd = exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin")
-	out, _ = cmd.Output()
-	originURL := string(out)
-	if len(originURL) > 0 && originURL[len(originURL)-1] == '\n' {
-		originURL = originURL[:len(originURL)-1]
-	}
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 
 	// Compute repo identity
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originURL)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoID := repoIdentity.RepoID
 
 	// Resolve data directory
@@ -274,21 +268,54 @@ func tryGetRunMeta(cwd, runID string, fsys fs.FS) (*store.RunMeta, error) {
 }
 
 // attachToTmuxSessionRun attaches to a tmux session for the run command.
-func attachToTmuxSessionRun(sessionName string) error {
-	cmd := exec.Command("tmux", "attach", "-t", sessionName)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err := cmd.Run()
+func attachToTmuxSessionRun(ctx context.Context, sessionName string) error {
+	result, err := agencyexec.RunAttached(ctx, "tmux", []string{"attach", "-t", sessionName}, agencyexec.AttachedRunOpts{
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			// User detached - this is normal (exit code 0 means success)
-			if exitErr.ExitCode() == 0 {
-				return nil
-			}
-		}
 		return errors.Wrap(errors.ETmuxAttachFailed, "tmux attach failed", err)
+	}
+	if result.ExitCode != 0 {
+		return errors.New(errors.ETmuxAttachFailed, fmt.Sprintf("tmux attach failed with exit code %d", result.ExitCode))
+	}
+	return nil
+}
+
+func openCreatedWorkspace(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, worktreePath string) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+
+	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	if err != nil {
+		return err
+	}
+
+	editorName := userCfg.Defaults.Editor
+	if editorName == "" {
+		editorName = os.Getenv("EDITOR")
+	}
+
+	editorCmd, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, editorName)
+	if err != nil {
+		return err
+	}
+
+	result, runErr := agencyexec.RunAttached(ctx, editorCmd, []string{worktreePath}, agencyexec.AttachedRunOpts{
+		Dir:    worktreePath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if runErr != nil {
+		return errors.Wrap(errors.EInternal, "failed to run editor command", runErr)
+	}
+	if result.ExitCode != 0 {
+		return errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", result.ExitCode))
 	}
 	return nil
 }

@@ -42,6 +42,12 @@ v2 commands (slice 8+):
   watch       interactive TUI for monitoring (not yet implemented)
 ```
 
+high-traffic flags use consistent short aliases where available:
+- `-r` for `--repo`
+- `-j` for `--json`
+- `-y` for `--yes`
+- `-o` for `--open`
+
 ## `agency repo` (v2)
 
 manages the repository registry. repos must be registered before creating worktrees or starting agents. repos are auto-registered on first use, but can be managed explicitly.
@@ -230,16 +236,19 @@ removes an integration worktree.
 
 **usage:**
 ```bash
-agency worktree rm <name|id|prefix> [--force]
+agency worktree rm <name|id|prefix> [--force] [--yes]
 ```
 
 **flags:**
 - `--force`: remove even if worktree has uncommitted changes
+- `--yes`: skip interactive confirmation (required in non-interactive mode)
 
 **behavior:**
-1. runs `git worktree remove` (fails if dirty without `--force`)
-2. sets `state = archived` in `meta.json`
-3. preserves the record directory and metadata
+1. in interactive mode, prompts for confirmation token (`rm`) unless `--yes` is passed
+2. in non-interactive mode, fails with `E_CONFIRMATION_REQUIRED` unless `--yes` is passed
+3. runs `git worktree remove` (fails if dirty without `--force`)
+4. sets `state = archived` in `meta.json`
+5. preserves the record directory and metadata
 
 **error codes:**
 - `E_WORKTREE_NOT_FOUND` — worktree not found
@@ -1213,14 +1222,16 @@ by default, attaches to the tmux session after creation.
 
 **usage:**
 ```bash
-agency run --name <name> [--runner <name>] [--parent <branch>] [--detached]
+agency run --name <name> [--runner <name>] [--parent <branch>] [--repo <path>] [--detached] [--open]
 ```
 
 **flags:**
 - `--name`: run name (required, 2-40 chars, lowercase alphanumeric with hyphens, must start with letter)
 - `--runner`: runner name (default: agency.json `defaults.runner`; command must be mapped in `config.runners`)
 - `--parent`: parent branch to branch from (default: agency.json `defaults.parent_branch`)
+- `--repo`: target a specific repo path instead of current directory
 - `--detached`: do not attach to tmux session after creation
+- `--open`: open the created workspace and skip auto-attach
 
 **behavior:**
 1. validates parent working tree is clean (`git status --porcelain`)
@@ -1231,7 +1242,7 @@ agency run --name <name> [--runner <name>] [--parent <branch>] [--detached]
 6. runs `scripts.setup` with injected environment variables (timeout: 10 minutes)
 7. creates tmux session `agency_<run_id>` running the runner command
 8. writes `meta.json` with run metadata
-9. attaches to tmux session (unless `--detached`)
+9. attaches to tmux session (unless `--detached` or `--open`)
 
 **success output (with `--detached`):**
 ```
@@ -1245,7 +1256,7 @@ tmux: agency_20260110120000-a3f2
 next: agency attach feature-x
 ```
 
-note: the `next:` line is only shown with `--detached`. when attached (default), you are placed directly into the tmux session.
+note: the `next:` line is shown whenever auto-attach is skipped (`--detached` or `--open`). with `--open`, output also includes `open_status: opened|failed` and open dispatch failure is warning-only (workspace creation still succeeds).
 
 **error codes:**
 - `E_NO_REPO` — not inside a git repository
@@ -1906,11 +1917,11 @@ agency verify my-feature --timeout 10m  # custom timeout
 
 verifies, confirms, merges a GitHub PR, and archives the workspace.
 requires cwd to be inside the target repo.
-requires an interactive terminal for confirmation.
+interactive mode prompts for confirmation by default; non-interactive mode requires `--yes`.
 
 **usage:**
 ```bash
-agency merge <run_id> [--squash|--merge|--rebase] [--no-delete-branch] [--force]
+agency merge <run_id> [--squash|--merge|--rebase] [--no-delete-branch] [--force] [--yes]
 ```
 
 **arguments:**
@@ -1922,6 +1933,7 @@ agency merge <run_id> [--squash|--merge|--rebase] [--no-delete-branch] [--force]
 - `--rebase`: use rebase merge strategy
 - `--no-delete-branch`: preserve the remote branch after merge (default: delete)
 - `--force`: bypass verify-failed prompt (still runs verify, still records failure)
+- `--yes`: bypass interactive prompts (required in non-interactive mode)
 
 **behavior:**
 1. runs prechecks:
@@ -1933,12 +1945,12 @@ agency merge <run_id> [--squash|--merge|--rebase] [--no-delete-branch] [--force]
    - PR is mergeable (not conflicting)
    - local head matches origin (up-to-date)
 2. runs `scripts.verify` (timeout: 30 minutes)
-3. if verify fails and no `--force`: prompts to continue (`[y/N]`)
-4. prompts for typed confirmation (must type `merge`)
+3. if verify fails and no `--force` and no `--yes`: prompts to continue (`[y/N]`)
+4. prompts for typed confirmation (must type `merge`) unless `--yes` is passed
 5. merges PR via `gh pr merge --delete-branch` (deletes remote branch by default)
 6. archives workspace (runs archive script, kills tmux, deletes worktree)
 
-**confirmation prompts:**
+**confirmation prompts (interactive mode without `--yes`):**
 ```
 verify failed. continue anyway? [y/N]
 confirm: type 'merge' to proceed:
@@ -1964,7 +1976,7 @@ log: /path/to/logs/archive.log
 - `E_RUN_NOT_FOUND` — run not found
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_REPO_LOCKED` — another agency process holds the lock
-- `E_NOT_INTERACTIVE` — not running in an interactive terminal
+- `E_CONFIRMATION_REQUIRED` — non-interactive merge requires `--yes`
 - `E_NO_ORIGIN` — no origin remote configured
 - `E_UNSUPPORTED_ORIGIN_HOST` — origin is not github.com
 - `E_GH_NOT_AUTHENTICATED` — gh not authenticated
@@ -1987,8 +1999,9 @@ log: /path/to/logs/archive.log
 
 **notes:**
 - `--force` does NOT bypass: missing PR, non-mergeable PR, gh auth failure, remote out-of-date
+- `--yes` bypasses interactive prompts only; it does not bypass prechecks or verify execution
 - at most one of `--squash`/`--merge`/`--rebase` may be specified
-- if already merged (idempotent): skips verify/mergeability checks, prompts for confirmation, archives workspace
+- if already merged (idempotent): skips verify/mergeability checks, still requires confirmation unless `--yes`, then archives workspace
 - PR must exist before merge; agency does NOT call `push` implicitly
 - gh merge output is captured to `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/logs/merge.log`
 - merge-log persistence is correctness-critical: write failures return typed `E_PERSIST_FAILED`
@@ -2029,6 +2042,7 @@ agency merge my-feature --merge               # regular merge, delete branch
 agency merge my-feature --rebase              # rebase merge, delete branch
 agency merge my-feature --no-delete-branch    # squash merge, preserve branch
 agency merge my-feature --force               # skip verify-fail prompt
+agency merge my-feature --yes                 # non-interactive/script-safe confirmation
 ```
 
 ## `agency resolve`
@@ -2090,26 +2104,29 @@ agency resolve my-feature
 
 archives a run without merging (abandons the run).
 requires cwd to be inside the target repo.
-requires an interactive terminal for confirmation.
+interactive mode prompts for confirmation by default; non-interactive mode requires `--yes`.
 
 **usage:**
 ```bash
-agency clean <run_id>
+agency clean <run_id> [--yes]
 ```
 
 **arguments:**
 - `run_id`: the run identifier or name
 
+**flags:**
+- `--yes`: bypass interactive confirmation (required in non-interactive mode)
+
 **behavior:**
 1. acquires repo lock
-2. prompts for confirmation (must type `clean`)
+2. prompts for confirmation (must type `clean`) unless `--yes` is passed
 3. runs `scripts.archive` (timeout: 5 minutes)
 4. kills tmux session if exists
 5. deletes worktree (git worktree remove, fallback to safe rm -rf)
 6. retains metadata and logs in `${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/`
 7. marks run as abandoned (`flags.abandoned=true`, `archive.archived_at` set)
 
-**confirmation prompt:**
+**confirmation prompt (interactive mode without `--yes`):**
 ```
 confirm: type 'clean' to proceed:
 ```
@@ -2138,7 +2155,7 @@ log: /path/to/logs/archive.log
 - `E_RUN_NOT_FOUND` — run not found
 - `E_WORKTREE_MISSING` — run worktree path is missing on disk
 - `E_REPO_LOCKED` — another agency process holds the lock
-- `E_NOT_INTERACTIVE` — not running in an interactive terminal
+- `E_CONFIRMATION_REQUIRED` — non-interactive clean requires `--yes`
 - `E_ABORTED` — user declined confirmation or typed wrong token
 - `E_ARCHIVE_FAILED` — archive step failed (script, tmux, or delete failure)
 
@@ -2150,6 +2167,7 @@ log: /path/to/logs/archive.log
 **examples:**
 ```bash
 agency clean my-feature    # archive without merging
+agency clean my-feature --yes  # non-interactive/script-safe confirmation
 ```
 
 ## error output

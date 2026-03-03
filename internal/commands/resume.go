@@ -179,7 +179,7 @@ func ResumeWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS
 			_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 			return nil
 		}
-		return attachToTmuxSession(sessionName, stdout, stderr)
+		return attachToTmuxSession(ctx, sessionName)
 	}
 
 	// Session missing - need to create (requires lock)
@@ -274,7 +274,7 @@ func handleRestart(
 		_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 		return nil
 	}
-	return attachToTmuxSession(sessionName, stdout, stderr)
+	return attachToTmuxSession(ctx, sessionName)
 }
 
 // handleCreateSession handles the create-missing-session path.
@@ -329,7 +329,7 @@ func handleCreateSession(
 			_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 			return nil
 		}
-		return attachToTmuxSession(sessionName, stdout, stderr)
+		return attachToTmuxSession(ctx, sessionName)
 	}
 
 	// Create new session
@@ -352,5 +352,5 @@ func handleCreateSession(
 		_, _ = fmt.Fprintf(stdout, "ok: session %s ready\n", sessionName)
 		return nil
 	}
-	return attachToTmuxSession(sessionName, stdout, stderr)
+	return attachToTmuxSession(ctx, sessionName)
 }

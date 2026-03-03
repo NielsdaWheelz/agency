@@ -38,13 +38,15 @@ type CleanOpts struct {
 	// Also closes any associated PR.
 	DeleteBranch bool
 
+	// Yes bypasses interactive confirmation prompts.
+	Yes bool
+
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
 }
 
 // Clean archives a run without merging.
 // Works from any directory; resolves runs globally.
-// Requires an interactive TTY for confirmation.
 func Clean(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts CleanOpts, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Create real tmux client
 	tmuxClient := tmux.NewExecClient(cr)
@@ -56,11 +58,6 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	// Validate run_id provided
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
-	}
-
-	// Check for interactive TTY (stdin and stderr must be TTYs)
-	if !isInteractive() {
-		return errors.New(errors.ENotInteractive, "clean requires an interactive terminal; stdin and stderr must be TTYs")
 	}
 
 	// Build resolution context using the new global resolver
@@ -201,16 +198,28 @@ func CleanWithTmux(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS,
 	// Print lock acquisition message (per spec)
 	_, _ = fmt.Fprintln(stderr, "lock: acquired repo lock (held during clean/archive)")
 
-	// Prompt for confirmation
-	_, _ = fmt.Fprint(stderr, "confirm: type 'clean' to proceed: ")
-	reader := bufio.NewReader(stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return errors.Wrap(errors.EAborted, "failed to read confirmation", err)
-	}
+	// Prompt for confirmation unless explicitly bypassed.
+	if !opts.Yes {
+		if !isInteractive() {
+			return errors.NewWithDetails(
+				errors.EConfirmationRequired,
+				"non-interactive clean requires explicit confirmation",
+				map[string]string{
+					"hint": "re-run with --yes",
+				},
+			)
+		}
 
-	if strings.TrimSpace(input) != "clean" {
-		return errors.New(errors.EAborted, "confirmation failed; expected 'clean'")
+		_, _ = fmt.Fprint(stderr, "confirm: type 'clean' to proceed: ")
+		reader := bufio.NewReader(stdin)
+		input, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return errors.Wrap(errors.EAborted, "failed to read confirmation", readErr)
+		}
+
+		if strings.TrimSpace(input) != "clean" {
+			return errors.New(errors.EAborted, "confirmation failed; expected 'clean'")
+		}
 	}
 
 	// Append clean_started event

@@ -431,3 +431,42 @@ func TestClean_ConfirmationRequired(t *testing.T) {
 
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
+
+func TestClean_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.T) {
+	runID := "20260110120000-a3f2"
+	repoDir, dataDir, _, cr, fsys, _ := setupCleanTestEnv(t, runID, true, true)
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+
+	origIsInteractive := isInteractive
+	isInteractive = func() bool { return false }
+	t.Cleanup(func() { isInteractive = origIsInteractive })
+
+	var stdout, stderr bytes.Buffer
+	err := CleanWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, CleanOpts{
+		RunID:           runID,
+		DataDirOverride: dataDir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+}
+
+func TestClean_NonInteractiveWithYes_ProceedsWithoutPrompt(t *testing.T) {
+	runID := "20260110120000-a3f2"
+	repoDir, dataDir, _, cr, fsys, _ := setupCleanTestEnv(t, runID, true, true)
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+
+	origIsInteractive := isInteractive
+	isInteractive = func() bool { return false }
+	t.Cleanup(func() { isInteractive = origIsInteractive })
+
+	var stdout, stderr bytes.Buffer
+	err := CleanWithTmux(context.Background(), cr, fsys, fakeTmux, repoDir, CleanOpts{
+		RunID:           runID,
+		DataDirOverride: dataDir,
+		Yes:             true,
+	}, strings.NewReader(""), &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "cleaned:")
+}
