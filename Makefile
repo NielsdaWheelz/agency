@@ -58,15 +58,21 @@ mod-tidy-check:
 	go mod tidy
 	git diff --exit-code -- go.mod go.sum
 
-# Run e2e checks. Always runs S5 failure matrix; GH happy path requires token.
+# Run e2e checks. Always runs S5 failure matrix.
+# GH happy path is opt-in via AGENCY_GH_E2E=1 and requires token.
 e2e:
 	@echo "running s5 failure-matrix e2e"; \
 	$(MAKE) e2e-s5-failure-matrix; \
-	if [ -n "$${GH_TOKEN:-}" ] || [ -n "$${GITHUB_TOKEN:-}" ]; then \
+	if [ "$${AGENCY_GH_E2E:-}" = "1" ]; then \
+		token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
+		if [ -z "$$token" ]; then \
+			echo "error: AGENCY_GH_E2E=1 requires GH_TOKEN or GITHUB_TOKEN"; \
+			exit 1; \
+		fi; \
 		echo "running github-backed s5 happy-path e2e"; \
 		$(MAKE) e2e-s5-happy; \
 	else \
-		echo "GH_TOKEN/GITHUB_TOKEN not set; running local e2e smoke tests instead of gh happy path"; \
+		echo "AGENCY_GH_E2E not set; running local e2e smoke tests (set AGENCY_GH_E2E=1 for github-backed happy path)"; \
 		$(MAKE) e2e-local; \
 	fi
 
@@ -135,7 +141,7 @@ help:
 	@echo "  test           - run tests"
 	@echo "  test-v         - run tests with verbose output"
 	@echo "  test-race      - run tests with race detector"
-	@echo "  e2e            - run e2e (GH-backed with token; otherwise local smoke)"
+	@echo "  e2e            - run e2e (failure-matrix + local smoke by default; set AGENCY_GH_E2E=1 for GH happy path)"
 	@echo "  e2e-gh         - run both S5 e2e suites (requires GH_TOKEN/GITHUB_TOKEN)"
 	@echo "  e2e-s5-happy   - run GH-backed S5 happy-path e2e (requires GH_TOKEN/GITHUB_TOKEN)"
 	@echo "  e2e-s5-failure-matrix - run S5 failure-matrix e2e (no GH token)"

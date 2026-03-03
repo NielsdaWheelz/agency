@@ -191,21 +191,23 @@ type InvocationReviewNavigation struct {
 
 // InvocationReviewData is the data payload for GET /invocations/{id}/review.
 type InvocationReviewData struct {
-	InvocationID    string                     `json:"invocation_id"`
-	RepoID          string                     `json:"repo_id"`
-	Ready           bool                       `json:"ready"`
-	Readiness       string                     `json:"readiness"` // "ready" or "blocked"
-	PRSyncEligible  bool                       `json:"pr_sync_eligible"`
-	Status          string                     `json:"status"`
-	DisplayStatus   string                     `json:"display_status"`
-	SemanticStatus  string                     `json:"semantic_status,omitempty"`
-	LandingStatus   string                     `json:"landing_status,omitempty"`
-	RunnerStatus    string                     `json:"runner_status,omitempty"`
-	RunnerSummary   string                     `json:"runner_summary,omitempty"`
-	RunnerUpdatedAt string                     `json:"runner_updated_at,omitempty"`
-	HowToTest       string                     `json:"how_to_test,omitempty"`
-	BlockingReasons []InvocationReviewReason   `json:"blocking_reasons"`
-	Navigation      InvocationReviewNavigation `json:"navigation"`
+	InvocationID      string                     `json:"invocation_id"`
+	RepoID            string                     `json:"repo_id"`
+	Ready             bool                       `json:"ready"`
+	Readiness         string                     `json:"readiness"` // "ready" or "blocked"
+	PRSyncEligible    bool                       `json:"pr_sync_eligible"`
+	ReportSource      string                     `json:"report_source,omitempty"`
+	Status            string                     `json:"status"`
+	DisplayStatus     string                     `json:"display_status"`
+	SemanticStatus    string                     `json:"semantic_status,omitempty"`
+	LandingStatus     string                     `json:"landing_status,omitempty"`
+	RunnerStatus      string                     `json:"runner_status,omitempty"`
+	RunnerSummary     string                     `json:"runner_summary,omitempty"`
+	RunnerUpdatedAt   string                     `json:"runner_updated_at,omitempty"`
+	HowToTest         string                     `json:"how_to_test,omitempty"`
+	ReportDiagnostics []ReportDiagnostic         `json:"report_diagnostics,omitempty"`
+	BlockingReasons   []InvocationReviewReason   `json:"blocking_reasons"`
+	Navigation        InvocationReviewNavigation `json:"navigation"`
 }
 
 // InvocationCheckReason is retained as a compatibility alias.

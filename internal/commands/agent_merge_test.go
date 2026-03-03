@@ -199,6 +199,11 @@ func writeAgentMergeScriptsAndConfig(t *testing.T, integrationTree string) {
 
 	scriptsDir := filepath.Join(integrationTree, "scripts")
 	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	agencyDir := filepath.Join(integrationTree, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(
+		"## summary\nmerge-ready report\n\n## how to test\ngo test ./...\n",
+	), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "setup.sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "verify.sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "archive.sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755))

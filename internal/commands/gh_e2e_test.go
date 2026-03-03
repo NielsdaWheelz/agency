@@ -60,7 +60,7 @@ func TestGHE2EAgentPRSyncMerge(t *testing.T) {
 	t.Setenv("AGENCY_CACHE_DIR", filepath.Join(tmpDir, "cache"))
 
 	repoRoot := filepath.Join(tmpDir, "repo")
-	runCmd(t, ctx, cr, "", "gh", "auth", "status")
+	requireGHAuth(t, ctx, cr)
 	runCmd(t, ctx, cr, "", "gh", "auth", "setup-git")
 	runCmd(t, ctx, cr, "", "gh", "repo", "clone", repo, repoRoot)
 
@@ -282,6 +282,35 @@ func runCmd(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name 
 	})
 	require.NoError(t, err, "%s %s", name, strings.Join(args, " "))
 	require.Equal(t, 0, result.ExitCode, "%s %s exited %d: %s", name, strings.Join(args, " "), result.ExitCode, result.Stderr)
+}
+
+func requireGHAuth(t *testing.T, ctx context.Context, cr exec.CommandRunner) {
+	t.Helper()
+
+	statusResult, err := cr.Run(ctx, "gh", []string{"auth", "status"}, exec.RunOpts{
+		Env: nonInteractiveEnv(),
+	})
+	require.NoError(t, err, "gh auth status")
+	if statusResult.ExitCode == 0 {
+		return
+	}
+
+	combined := strings.ToLower(statusResult.Stdout + "\n" + statusResult.Stderr)
+	if strings.Contains(combined, "active account: true") && strings.Contains(combined, "logged in to github.com") {
+		t.Logf("gh auth status exited %d but reports active account; continuing", statusResult.ExitCode)
+		return
+	}
+
+	tokenResult, tokenErr := cr.Run(ctx, "gh", []string{"auth", "token"}, exec.RunOpts{
+		Env: nonInteractiveEnv(),
+	})
+	require.NoError(t, tokenErr, "gh auth token")
+	if tokenResult.ExitCode == 0 && strings.TrimSpace(tokenResult.Stdout) != "" {
+		t.Logf("gh auth status exited %d but gh auth token succeeded; continuing", statusResult.ExitCode)
+		return
+	}
+
+	require.Equal(t, 0, statusResult.ExitCode, "gh auth status exited %d: %s", statusResult.ExitCode, statusResult.Stderr)
 }
 
 func runCmdAllowMissingRemoteRef(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name string, args ...string) {

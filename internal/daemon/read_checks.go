@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -206,6 +207,35 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 				Message: "runner status is not review-ready",
 				Hint:    fmt.Sprintf("current status: %s", effectiveSemantic),
 			})
+		}
+	}
+
+	if meta.Mode == store.RunnerModeHeadless &&
+		meta.Status == store.InvocationStatusFinished &&
+		meta.LandingStatus == store.LandingStatusLanded {
+		wtMeta, wtErr := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, meta.IntegrationWorktreeID)
+		if wtErr != nil {
+			data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+				Code:    string(report.ViolationMalformed),
+				Message: "report contract could not be evaluated",
+				Hint:    "integration worktree metadata is missing or unreadable",
+			})
+		} else {
+			resolution, violation, resolveErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
+				MaxBytes: report.MaxPRBodyReportBytes,
+			})
+			if resolveErr != nil {
+				data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+					Code:    string(report.ViolationMalformed),
+					Message: "report contract could not be evaluated",
+					Hint:    "failed to read report artifacts",
+				})
+			} else if violation != nil {
+				data.BlockingReasons = append(data.BlockingReasons, reportViolationToReviewReason(violation))
+			} else if resolution != nil {
+				data.ReportSource = string(resolution.Source)
+				data.ReportDiagnostics = reportDiagnosticsToReview(resolution.Diagnostics)
+			}
 		}
 	}
 

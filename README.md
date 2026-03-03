@@ -98,6 +98,8 @@ all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
+for `agent pr sync` and `agent merge`, additive report fields include
+`report_source`, `report_fallback_used`, and `report_diagnostics`.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
 daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed `E_INVALID_ARGUMENT` errors.
@@ -115,6 +117,7 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
 legacy compatibility commands (`agency push` / `agency merge`) are retained, but their report/body handling and merge-log persistence follow the same bounded-input + durable-write safety posture as canonical v2.1 flows.
+reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is strict and typed; headed/compatibility paths stay progression-capable with explicit diagnostics and deterministic fallback behavior.
 
 ## documentation
 

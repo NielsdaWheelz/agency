@@ -296,6 +296,19 @@ func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) 
 	}
 	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
 
+	integrationTree := filepath.Join(t.TempDir(), "checks-ready-integration-tree")
+	agencyDir := filepath.Join(integrationTree, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(`## summary
+ready summary
+
+## how to test
+go test ./...
+`), 0o644))
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
+		meta.TreePath = integrationTree
+	}))
+
 	ready := runnerstatus.StatusReadyForReview
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
@@ -325,6 +338,117 @@ func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) 
 	require.True(t, ok, "expected navigation context")
 	assert.Equal(t, "inv-1", nav["invocation_ref"])
 	assert.NotEmpty(t, nav["history_command"])
+}
+
+func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxPath := filepath.Join(t.TempDir(), "checks-ready-sandbox-with-missing-report")
+	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
+	readyStatus := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReadyForReview,
+		UpdatedAt:     "2026-02-05T12:00:00Z",
+		Summary:       "ready for review",
+		HowToTest:     "go test ./...",
+		Questions:     []string{},
+		Blockers:      []string{},
+		Risks:         []string{},
+	}
+	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+
+	integrationTree := filepath.Join(t.TempDir(), "integration-tree-missing-report")
+	require.NoError(t, os.MkdirAll(integrationTree, 0o755))
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
+		meta.TreePath = integrationTree
+	}))
+
+	ready := runnerstatus.StatusReadyForReview
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.SandboxPath = sandboxPath
+		meta.Status = store.InvocationStatusFinished
+		meta.LandingStatus = store.LandingStatusLanded
+		meta.SemanticStatus = &ready
+		meta.FinishedAt = "2026-02-05T11:59:00Z"
+		meta.Mode = store.RunnerModeHeadless
+	}))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+	assert.Equal(t, "blocked", data["readiness"])
+	assert.Equal(t, false, data["ready"])
+	assert.Contains(t, blockingReasonCodes(data), "report_missing")
+}
+
+func TestHandleGetInvocationReview_HeadlessIncludesReportSourceAndDiagnostics(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxPath := filepath.Join(t.TempDir(), "checks-ready-sandbox-report-source")
+	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
+	readyStatus := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReadyForReview,
+		UpdatedAt:     "2026-02-05T12:00:00Z",
+		Summary:       "ready for review",
+		HowToTest:     "go test ./...",
+		Questions:     []string{},
+		Blockers:      []string{},
+		Risks:         []string{},
+	}
+	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+
+	integrationTree := filepath.Join(t.TempDir(), "integration-tree-report-source")
+	agencyDir := filepath.Join(integrationTree, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.json"), []byte(`{
+  "schema_version": "1.0",
+  "summary": "json summary",
+  "how_to_test": "go test ./..."
+}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(`## summary
+markdown summary
+
+## how to test
+go test ./internal/...
+`), 0o644))
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
+		meta.TreePath = integrationTree
+	}))
+
+	ready := runnerstatus.StatusReadyForReview
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.SandboxPath = sandboxPath
+		meta.Status = store.InvocationStatusFinished
+		meta.LandingStatus = store.LandingStatusLanded
+		meta.SemanticStatus = &ready
+		meta.FinishedAt = "2026-02-05T11:59:00Z"
+		meta.Mode = store.RunnerModeHeadless
+	}))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+	assert.Equal(t, "ready", data["readiness"])
+	assert.Equal(t, true, data["ready"])
+	assert.Equal(t, "report_json", data["report_source"])
+
+	rawDiagnostics, ok := data["report_diagnostics"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, rawDiagnostics)
+	firstDiagnostic, ok := rawDiagnostics[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "report_conflict_json_precedence", firstDiagnostic["code"])
 }
 
 func TestHandleGetInvocationReview_AmbiguousInvocationRefReturnsConflict(t *testing.T) {

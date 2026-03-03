@@ -31,7 +31,8 @@ Notes:
   - requires gh to be authenticated
   - does NOT bypass E_EMPTY_DIFF (at least one commit required)
   - fails if worktree has uncommitted changes unless --allow-dirty
-  - uses report as PR body when complete; otherwise auto-generates a PR body
+  - uses canonical reports-v2 body when valid (report.json takes precedence over report.md)
+  - falls back to auto-generated PR body with deterministic warnings in compatibility mode
   - use --force-with-lease after rebasing to update an existing branch safely`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

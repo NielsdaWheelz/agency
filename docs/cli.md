@@ -556,6 +556,7 @@ agency agent review <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 **behavior:**
 - reports deterministic review verdict (`ready` or `blocked`) with typed blocking reasons
 - includes explicit `pr_sync_eligible` and invocation-linked navigation commands (`history`, `diff`, `pr sync`)
+- in headless strict mode, includes report-contract metadata (`report_source`, `report_diagnostics`) when available
 - terminal and json modes share the same truth (no dual semantics)
 
 **examples:**
@@ -587,6 +588,8 @@ agency agent pr sync <invocation_id|name|prefix> [--repo <id|prefix>] [--allow-d
 - resolves invocation -> integration worktree context deterministically
 - enforces dirty-worktree and push policy validation with typed errors/hints
 - creates or updates one PR identity per branch and returns stable outcome fields (`branch`, `pr_action`, `pr_url`)
+- evaluates reports-v2 canonically (`report.json` authoritative over `report.md`) and returns `report_source` plus report diagnostics in json mode
+- headless mode is strict (typed report contract failures); headed mode remains compatibility-first with deterministic fallback body and diagnostics
 - `--json` mutation envelopes include daemon `request_id` correlation for both success and daemon-declared failures
 
 **examples:**
@@ -622,6 +625,8 @@ agency agent merge <invocation_id|name|prefix> [--repo <id|prefix>] [--squash|--
 - resolves invocation context deterministically and requires landed + finished lifecycle state
 - enforces explicit confirmation contract (`--yes` non-interactive, typed token in interactive mode)
 - runs verify script with invocation-scoped environment, merges via `gh pr merge`, and writes private merge logs
+- evaluates report contract using the same canonical resolver as `agent pr sync`; success payload includes `report_source` and diagnostics
+- headless mode is strict (typed report contract failures); headed mode remains compatibility-first and progression-capable with diagnostics
 - emits typed failure codes for prechecks, verify failure, mergeability conflicts, and durability failures
 - `--json` mutation envelopes include daemon `request_id` correlation for both success and daemon-declared failures
 
@@ -1737,7 +1742,7 @@ agency push <run_id> [--allow-dirty] [--force] [--force-with-lease]
 2. if PR exists but not OPEN (CLOSED or MERGED): fail with `E_PR_NOT_OPEN`
 3. if no PR exists: create via `gh pr create`
    - title: `[agency] <run_name>`
-   - body: `.agency/report.md` when complete and within size limit, otherwise auto-generated PR body
+   - body: canonical reports-v2 body when valid (`.agency/report.json` takes precedence over `.agency/report.md`), otherwise auto-generated PR body
 4. sync PR body:
    - compute sha256 hash of the body file used
    - if hash unchanged from `last_report_hash`: skip sync
@@ -1785,7 +1790,8 @@ pr: https://github.com/owner/repo/pull/123
   - `CI=1`
 - PR creation uses `--body-file` to preserve markdown formatting
 - PR title is NOT updated after creation (v1)
-- report completeness only affects PR body source; push does not block on report state
+- push remains compatibility-first for report contract outcomes (warnings + deterministic fallback body, no progression block)
+- when both report artifacts exist, `.agency/report.json` is authoritative and `.agency/report.md` is only used for diagnostics/conflict detection
 - report/body processing is bounded for safety:
   - report reads capped at 256 KiB
   - fallback generation caps commit/file sections (10 commits, 20 files) with deterministic truncation indicators

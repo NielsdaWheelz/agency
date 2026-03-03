@@ -56,7 +56,8 @@ make lint
 
 ```bash
 make check         # fmt-check, lint, test, build
-make verify        # check + race detector + e2e (always runs S5 failure matrix; GH happy path when token exists)
+make verify        # check + race detector + e2e (failure matrix + local smoke by default)
+AGENCY_GH_E2E=1 make verify   # include GH-backed happy path (requires GH_TOKEN/GITHUB_TOKEN)
 make e2e-gh        # run both S5 e2e suites (requires GH_TOKEN or GITHUB_TOKEN)
 make e2e-s5-happy  # GH-backed S5 happy-path e2e (requires GH_TOKEN or GITHUB_TOKEN)
 make e2e-s5-failure-matrix # deterministic S5 failure-matrix e2e

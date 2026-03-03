@@ -20,19 +20,22 @@ import (
 )
 
 type mergeTestResponse struct {
-	OK                    bool   `json:"ok"`
-	RequestID             string `json:"request_id,omitempty"`
-	ErrorCode             string `json:"error_code,omitempty"`
-	Message               string `json:"message,omitempty"`
-	Hint                  string `json:"hint,omitempty"`
-	InvocationID          string `json:"invocation_id,omitempty"`
-	RepoID                string `json:"repo_id,omitempty"`
-	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
-	Branch                string `json:"branch,omitempty"`
-	PRNumber              int    `json:"pr_number,omitempty"`
-	PRURL                 string `json:"pr_url,omitempty"`
-	Strategy              string `json:"strategy,omitempty"`
-	MergeLogPath          string `json:"merge_log_path,omitempty"`
+	OK                    bool               `json:"ok"`
+	RequestID             string             `json:"request_id,omitempty"`
+	ErrorCode             string             `json:"error_code,omitempty"`
+	Message               string             `json:"message,omitempty"`
+	Hint                  string             `json:"hint,omitempty"`
+	InvocationID          string             `json:"invocation_id,omitempty"`
+	RepoID                string             `json:"repo_id,omitempty"`
+	IntegrationWorktreeID string             `json:"integration_worktree_id,omitempty"`
+	Branch                string             `json:"branch,omitempty"`
+	PRNumber              int                `json:"pr_number,omitempty"`
+	PRURL                 string             `json:"pr_url,omitempty"`
+	Strategy              string             `json:"strategy,omitempty"`
+	MergeLogPath          string             `json:"merge_log_path,omitempty"`
+	ReportSource          string             `json:"report_source,omitempty"`
+	ReportFallbackUsed    bool               `json:"report_fallback_used,omitempty"`
+	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
 }
 
 func TestHandleMerge_RejectsMultipleJSONObjects(t *testing.T) {
@@ -176,9 +179,13 @@ func TestHandleMerge_FallbacksToUnqualifiedHeadLookup(t *testing.T) {
 		"/invocations/inv-1/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	if w.Code != http.StatusOK {
-		t.Fatalf("unexpected status %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp mergeTestResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.OK)
+	assert.Equal(t, "report_markdown", resp.ReportSource)
+	assert.False(t, resp.ReportFallbackUsed)
 }
 
 func TestHandleMerge_ClosedPRReturnsTypedError(t *testing.T) {
@@ -301,6 +308,67 @@ func TestHandleMerge_LogWriteFailureReturnsPersistFailed(t *testing.T) {
 	assert.Equal(t, string(errors.EPersistFailed), resp.ErrorCode)
 }
 
+func TestHandleMerge_HeadlessStrictReportContractFailure(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, _, _ := setupMergeReadyInvocation(t, env, "")
+	_ = os.Remove(filepath.Join(workspaceRoot, ".agency", "report.md"))
+	_ = os.Remove(filepath.Join(workspaceRoot, ".agency", "report.json"))
+
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+	fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+
+	w := env.doInvocationRequestWithBody(
+		t,
+		http.MethodPost,
+		"/invocations/inv-1/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	require.Equal(t, http.StatusConflict, w.Code)
+
+	var resp mergeTestResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EReportMissing), resp.ErrorCode)
+}
+
+func TestHandleMerge_HeadedCompatibilityAllowsInvalidReport(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, _, _ := setupMergeReadyInvocation(t, env, "")
+	require.NoError(t, os.WriteFile(filepath.Join(workspaceRoot, ".agency", "report.json"), []byte(`{"schema_version":"1.0","summary":`), 0o644))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Mode = store.RunnerModeHeaded
+	}))
+
+	setMergeHappyRunnerResponses(fakeRunner, "agency/alpha")
+
+	w := env.doInvocationRequestWithBody(
+		t,
+		http.MethodPost,
+		"/invocations/inv-1/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp mergeTestResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.OK)
+	assert.Equal(t, "fallback", resp.ReportSource)
+	assert.True(t, resp.ReportFallbackUsed)
+	require.NotEmpty(t, resp.ReportDiagnostics)
+	assert.Equal(t, "report_malformed", resp.ReportDiagnostics[0].Code)
+}
+
 func TestHandleMerge_ResponseIncludesRequestIDOnSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 
@@ -407,6 +475,11 @@ func setupMergeReadyInvocation(t *testing.T, env *readTestEnv, verifyScriptBody 
 		verifyScriptBody = "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
 	}
 	writeMergeScriptsAndConfig(t, workspaceRoot, verifyScriptBody)
+	agencyDir := filepath.Join(workspaceRoot, ".agency")
+	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(
+		"## summary\nmerge-ready report\n\n## how to test\ngo test ./...\n",
+	), 0o644))
 	writeMergeRepoRecord(t, env, repoRoot)
 
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {

@@ -175,7 +175,6 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(oversized), 0o644))
 
 		branch := "agency/s5-bounded-input-abcd"
-		fallbackPath := filepath.Join(reportDir, "pr_sync_fallback.md")
 
 		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
@@ -189,7 +188,6 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 			Stdout:   `[{"number":81,"url":"https://github.com/test/agent-repo/pull/81","state":"OPEN"}]`,
 			ExitCode: 0,
 		}
-		daemonRunner.Responses["gh pr edit 81 --body-file "+fallbackPath] = testutil.FakeResponse{ExitCode: 0}
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
@@ -202,10 +200,10 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 		require.NoError(t, err)
 
 		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
-		assert.Equal(t, true, payload["ok"])
-		assert.Equal(t, "updated", payload["pr_action"])
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.EReportOversized), payload["error_code"])
 		assertS5E2EHasRequestID(t, payload)
-		assert.Contains(t, daemonRunner.Calls, "gh pr edit 81 --body-file "+fallbackPath)
+		assert.NotContains(t, daemonRunner.Calls, "gh pr edit 81 --body-file")
 	})
 
 	t.Run("merge_log_persistence_failure", func(t *testing.T) {
@@ -262,6 +260,11 @@ func setupS5E2EMergeReadyInvocation(
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
+	reportDir := filepath.Join(integrationTree, ".agency")
+	require.NoError(t, os.MkdirAll(reportDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(
+		"## summary\nmerge-ready report\n\n## how to test\ngo test ./...\n",
+	), 0o644))
 	writeAgentMergeScriptsAndConfig(t, integrationTree)
 	writeAgentMergeRepoRecord(t, dataDir, repoID, repoDir)
 
