@@ -131,6 +131,7 @@ type agentMutationEnvelope struct {
 	ErrorCode       string `json:"error_code"`
 	Message         string `json:"message"`
 	Hint            string `json:"hint"`
+	RequestID       string `json:"request_id"`
 	APIVersion      int    `json:"api_version"`
 	BuildVersion    string `json:"build_version"`
 	ClientRequestID string `json:"client_request_id"`
@@ -170,6 +171,7 @@ func newAgentMutationEnvelope() agentMutationEnvelope {
 		ErrorCode:       "",
 		Message:         "",
 		Hint:            "",
+		RequestID:       "",
 		APIVersion:      daemon.APIVersion,
 		BuildVersion:    version.FullVersion(),
 		ClientRequestID: "",
@@ -203,6 +205,7 @@ func writeAgentMutationJSONError(w io.Writer, err error) error {
 		envelope.Message = ae.Msg
 		if ae.Details != nil {
 			envelope.Hint = ae.Details["hint"]
+			envelope.RequestID = ae.Details["request_id"]
 		}
 	}
 	return writeAgentMutationJSON(w, envelope)
@@ -250,7 +253,10 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 		return errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		)
 	}
 
@@ -270,6 +276,7 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 				envelope.BuildVersion = resp.BuildVersion
 			}
 			envelope.ClientRequestID = resp.ClientRequestID
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -366,7 +373,10 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 		return errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		)
 	}
 
@@ -388,6 +398,7 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 				envelope.BuildVersion = resp.BuildVersion
 			}
 			envelope.ClientRequestID = resp.ClientRequestID
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -803,7 +814,10 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -817,6 +831,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 				envelope.BuildVersion = resp.BuildVersion
 			}
 			envelope.ClientRequestID = resp.ClientRequestID
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -1216,7 +1231,10 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -1235,6 +1253,7 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -1377,7 +1396,10 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -1399,6 +1421,7 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -1539,7 +1562,10 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": hint},
+			map[string]string{
+				"hint":       hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -1556,6 +1582,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -1649,7 +1676,10 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -1662,6 +1692,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -2141,7 +2172,10 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -2157,6 +2191,7 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 				envelope.BuildVersion = resp.BuildVersion
 			}
 			envelope.ClientRequestID = resp.ClientRequestID
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -2356,7 +2391,10 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -2376,6 +2414,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
+			envelope.RequestID = resp.RequestID
 		})
 	}
 
@@ -3204,7 +3243,10 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
-			map[string]string{"hint": resp.Hint},
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
 		))
 	}
 
@@ -3218,6 +3260,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 				envelope.BuildVersion = resp.BuildVersion
 			}
 			envelope.ClientRequestID = resp.ClientRequestID
+			envelope.RequestID = resp.RequestID
 		})
 	}
 

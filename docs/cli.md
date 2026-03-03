@@ -317,7 +317,7 @@ Attaching to tmux session... (detach with Ctrl+b, d)
 ```
 
 **json mutation envelope (`--json`):**
-- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`
+- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`
 - command-specific success fields are additive (for example `invocation_id`, `sandbox_path`, `pid`, `pgid`)
 - failure responses are emitted to stdout as JSON (`ok=false`) so automation does not need stderr parsing
 
@@ -587,6 +587,7 @@ agency agent pr sync <invocation_id|name|prefix> [--repo <id|prefix>] [--allow-d
 - resolves invocation -> integration worktree context deterministically
 - enforces dirty-worktree and push policy validation with typed errors/hints
 - creates or updates one PR identity per branch and returns stable outcome fields (`branch`, `pr_action`, `pr_url`)
+- `--json` mutation envelopes include daemon `request_id` correlation for both success and daemon-declared failures
 
 **examples:**
 ```bash
@@ -622,6 +623,7 @@ agency agent merge <invocation_id|name|prefix> [--repo <id|prefix>] [--squash|--
 - enforces explicit confirmation contract (`--yes` non-interactive, typed token in interactive mode)
 - runs verify script with invocation-scoped environment, merges via `gh pr merge`, and writes private merge logs
 - emits typed failure codes for prechecks, verify failure, mergeability conflicts, and durability failures
+- `--json` mutation envelopes include daemon `request_id` correlation for both success and daemon-declared failures
 
 **examples:**
 ```bash
@@ -764,7 +766,7 @@ agency agent chat <invocation_ref> [--repo <id|prefix>] [--prompt <text> | --pro
 - `--repo`: repo id or unique prefix
 
 **json mutation envelope (`--json`):**
-- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`
+- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`
 - command-specific success fields are additive (for example `invocation_id`, `timeline_entry_id`, `already_applied`)
 - failure responses are emitted to stdout as JSON (`ok=false`) so automation does not need stderr parsing
 
@@ -804,7 +806,7 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <i
 - `--repo`: repo id or unique prefix
 
 **json mutation envelope (`--json`):**
-- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`
+- stable top-level fields: `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`
 - command-specific success fields are additive (for example `invocation_id`, `checkpoint_id`, `snapshot_commit`, `restored_at`, `pid`, `pgid`, `log_paths`)
 - failure responses are emitted to stdout as JSON (`ok=false`) so automation does not need stderr parsing
 

@@ -72,6 +72,7 @@ func TestAgentPRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	assert.Equal(t, "agency/prsync-json-abcd", payload["branch"])
 	assert.Equal(t, "created", payload["pr_action"])
 	assert.Equal(t, "https://github.com/test/agent-repo/pull/42", payload["pr_url"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentPRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
@@ -102,6 +103,43 @@ func TestAgentPRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 	}, ioDiscard{}, ioDiscard{})
 	require.Error(t, err)
 	assert.Equal(t, errors.EDirtyWorktree, errors.GetCode(err))
+}
+
+func TestAgentPRSync_JSONFailureIncludesDaemonRequestID(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-json-failure")
+	invocationID := "20260302191500-prsync-json-failure"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFinished
+		meta.LandingStatus = store.LandingStatusLanded
+	}))
+
+	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout: " M README.md\n",
+	}
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentPRSync(context.Background(), cr, fsys, repoDir, AgentPRSyncOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json mode should emit deterministic envelope for daemon-declared failure")
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.EDirtyWorktree), payload["error_code"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentPRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {

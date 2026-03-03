@@ -95,9 +95,11 @@ agency agent restart <invocation-id> --checkpoint 3 --json
 ```
 
 all mutation `--json` responses use a stable envelope with deterministic fields:
-`ok`, `error_code`, `message`, `hint`, `api_version`, `build_version`, `client_request_id`.
+`ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
+
+for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
 
 ## how it works
 

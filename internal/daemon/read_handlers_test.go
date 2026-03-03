@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,8 +31,16 @@ import (
 
 type readTestEnv struct {
 	Server *Server
+	API    http.Handler
 	Store  *store.Store
 	RepoID string
+}
+
+func (env *readTestEnv) apiHandler() http.Handler {
+	if env.API == nil {
+		env.API = env.Server.newHTTPHandler()
+	}
+	return env.API
 }
 
 // setupReadTestEnv creates a minimal server with seeded data for read handler tests.
@@ -163,6 +172,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 
 	return &readTestEnv{
 		Server: srv,
+		API:    srv.newHTTPHandler(),
 		Store:  st,
 		RepoID: repoID,
 	}
@@ -173,7 +183,7 @@ func (env *readTestEnv) doWorktreeRequest(t *testing.T, method, path string) *ht
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
 	w := httptest.NewRecorder()
-	env.Server.handleWorktrees(w, req)
+	env.apiHandler().ServeHTTP(w, req)
 	return w
 }
 
@@ -185,7 +195,7 @@ func (env *readTestEnv) doWorktreeRequestWithHeaders(t *testing.T, method, path 
 		req.Header.Set(k, v)
 	}
 	w := httptest.NewRecorder()
-	env.Server.handleWorktrees(w, req)
+	env.apiHandler().ServeHTTP(w, req)
 	return w
 }
 
@@ -194,17 +204,42 @@ func (env *readTestEnv) doInvocationRequest(t *testing.T, method, path string) *
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
 	w := httptest.NewRecorder()
-	env.Server.handleInvocations(w, req)
+	env.apiHandler().ServeHTTP(w, req)
 	return w
+}
+
+// doInvocationRequestWithHeaders makes a request to the invocations handler with custom headers.
+func (env *readTestEnv) doInvocationRequestWithHeaders(t *testing.T, method, path string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := env.newInvocationRequestWithHeaders(t, method, path, nil, headers)
+	w := httptest.NewRecorder()
+	env.apiHandler().ServeHTTP(w, req)
+	return w
+}
+
+func (env *readTestEnv) newInvocationRequestWithHeaders(t *testing.T, method, path string, body []byte, headers map[string]string) *http.Request {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return req
 }
 
 // doInvocationRequestWithBody makes a request to the invocations handler with a JSON body.
 func (env *readTestEnv) doInvocationRequestWithBody(t *testing.T, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := env.newInvocationRequestWithHeaders(t, method, path, body, nil)
 	w := httptest.NewRecorder()
-	env.Server.handleInvocations(w, req)
+	env.apiHandler().ServeHTTP(w, req)
 	return w
 }
 
@@ -539,6 +574,7 @@ func TestResponseEnvelope_RequestID(t *testing.T) {
 
 		resp := decodeAPIResponse(t, w)
 		assert.Equal(t, "custom-id", resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
 	})
 
 	t.Run("generated_request_id", func(t *testing.T) {
@@ -551,6 +587,42 @@ func TestResponseEnvelope_RequestID(t *testing.T) {
 		assert.NotEmpty(t, resp.RequestID)
 		// UUID format: 8-4-4-4-12
 		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
+	})
+
+	t.Run("invalid_request_id_header_regenerated", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		invalid := "bad id with spaces"
+		w := env.doWorktreeRequestWithHeaders(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID,
+			map[string]string{"X-Request-ID": invalid})
+
+		resp := decodeAPIResponse(t, w)
+		assert.NotEqual(t, invalid, resp.RequestID)
+		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
+	})
+
+	t.Run("unknown_invocation_action_echoes_custom_request_id", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		const custom = "trace-id-abc123"
+		w := env.doInvocationRequestWithHeaders(
+			t,
+			http.MethodGet,
+			"/invocations/inv-1/unknown?repo_id="+env.RepoID,
+			map[string]string{"X-Request-ID": custom},
+		)
+		require.Equal(t, http.StatusNotFound, w.Code)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
+		requestID, ok := payload["request_id"].(string)
+		require.True(t, ok, "request_id must be present in error payload")
+		assert.Equal(t, custom, requestID)
+		assert.Equal(t, custom, w.Header().Get("X-Request-ID"))
 	})
 }
 

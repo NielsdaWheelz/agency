@@ -16,10 +16,13 @@ import (
 
 // handleLand handles POST /invocations/{id}/land.
 func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeLandError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "", nil)
+		s.writeLandError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "", nil)
 		return
 	}
 
@@ -27,7 +30,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	var req LandRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writeLandError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", nil)
+			s.writeLandError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", nil)
 			return
 		}
 	}
@@ -36,17 +39,17 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeLandError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "", nil)
+			s.writeLandError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "", nil)
 			return
 		}
-		s.writeLandError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", nil)
+		s.writeLandError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", nil)
 		return
 	}
 
 	// Get repo root from integration worktree meta
 	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.IntegrationWorktreeID)
 	if err != nil {
-		s.writeLandError(w, http.StatusInternalServerError, string(errors.ELandFailed),
+		s.writeLandError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
 			"failed to read integration worktree meta: "+err.Error(), "", nil)
 		return
 	}
@@ -54,7 +57,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	// Derive repo root from the integration tree path
 	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath)
 	if err != nil {
-		s.writeLandError(w, http.StatusInternalServerError, string(errors.ELandFailed),
+		s.writeLandError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
 			"failed to get repo root: "+err.Error(), "", nil)
 		return
 	}
@@ -62,7 +65,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	// Acquire repo lock
 	unlock, err := s.repoLock.Lock(repoID, "land")
 	if err != nil {
-		s.writeLandError(w, http.StatusConflict, string(errors.ERepoLocked),
+		s.writeLandError(w, http.StatusConflict, requestID, string(errors.ERepoLocked),
 			"repository is locked by another operation",
 			"wait for the other operation to complete", nil)
 		return
@@ -115,7 +118,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 			httpStatus = http.StatusConflict
 		}
 
-		s.writeLandError(w, httpStatus, string(code), err.Error(), hint, conflictFiles)
+		s.writeLandError(w, httpStatus, requestID, string(code), err.Error(), hint, conflictFiles)
 		return
 	}
 
@@ -124,6 +127,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		OK:                    true,
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
+		RequestID:             requestID,
 		InvocationID:          invocationID,
 		AppliedMode:           LandingMode(result.Mode),
 		IntegrationHeadBefore: result.IntegrationHeadBefore,
@@ -135,10 +139,13 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 
 // handleDiscard handles POST /invocations/{id}/discard.
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocationID string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeDiscardError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
@@ -146,7 +153,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	if r.ContentLength > 0 {
 		var req DiscardRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writeDiscardError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+			s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 			return
 		}
 	}
@@ -155,17 +162,17 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeDiscardError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
+			s.writeDiscardError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeDiscardError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		s.writeDiscardError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
 	// Get repo root from integration worktree meta
 	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.IntegrationWorktreeID)
 	if err != nil {
-		s.writeDiscardError(w, http.StatusInternalServerError, string(errors.ELandFailed),
+		s.writeDiscardError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
 			"failed to read integration worktree meta: "+err.Error(), "")
 		return
 	}
@@ -173,7 +180,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	// Derive repo root from the integration tree path
 	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath)
 	if err != nil {
-		s.writeDiscardError(w, http.StatusInternalServerError, string(errors.ELandFailed),
+		s.writeDiscardError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
 			"failed to get repo root: "+err.Error(), "")
 		return
 	}
@@ -181,7 +188,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	// Acquire repo lock
 	unlock, err := s.repoLock.Lock(repoID, "discard")
 	if err != nil {
-		s.writeDiscardError(w, http.StatusConflict, string(errors.ERepoLocked),
+		s.writeDiscardError(w, http.StatusConflict, requestID, string(errors.ERepoLocked),
 			"repository is locked by another operation",
 			"wait for the other operation to complete")
 		return
@@ -212,7 +219,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 			httpStatus = http.StatusConflict
 		}
 
-		s.writeDiscardError(w, httpStatus, string(code), err.Error(), "")
+		s.writeDiscardError(w, httpStatus, requestID, string(code), err.Error(), "")
 		return
 	}
 
@@ -221,6 +228,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		OK:           true,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
 		InvocationID: invocationID,
 	}
 	s.writeJSON(w, http.StatusOK, resp)
@@ -307,11 +315,12 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 }
 
 // writeLandError writes an error response for land endpoints.
-func (s *Server) writeLandError(w http.ResponseWriter, status int, code, message, hint string, conflictFiles []string) {
+func (s *Server) writeLandError(w http.ResponseWriter, status int, requestID, code, message, hint string, conflictFiles []string) {
 	resp := LandResponse{
 		OK:            false,
 		APIVersion:    APIVersion,
 		BuildVersion:  version.FullVersion(),
+		RequestID:     requestID,
 		ErrorCode:     code,
 		Message:       message,
 		Hint:          hint,
@@ -321,11 +330,12 @@ func (s *Server) writeLandError(w http.ResponseWriter, status int, code, message
 }
 
 // writeDiscardError writes an error response for discard endpoints.
-func (s *Server) writeDiscardError(w http.ResponseWriter, status int, code, message, hint string) {
+func (s *Server) writeDiscardError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	resp := DiscardResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
 		ErrorCode:    code,
 		Message:      message,
 		Hint:         hint,

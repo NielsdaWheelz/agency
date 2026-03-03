@@ -205,6 +205,61 @@ func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
 	}
 }
 
+func TestControlPlaneStartHeadless_ErrorResponseIncludesRequestID(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	reqPayload := ControlPlaneStartRequest{
+		RepoRoot:    "/tmp/repo",
+		WorktreeRef: "wt-1",
+		Runner:      "claude",
+		Prompt:      "test",
+		// intentionally missing client_request_id
+	}
+	body, _ := json.Marshal(reqPayload)
+	req := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleControlPlaneStartHeadless(w, req)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&payload), "failed to decode response")
+	requestID, ok := payload["request_id"].(string)
+	require.True(t, ok, "request_id must be present")
+	assert.NotEmpty(t, requestID)
+	assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+}
+
+func TestControlPlaneStartHeaded_ErrorResponseIncludesRequestID(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	reqPayload := ControlPlaneStartHeadedRequest{
+		RepoRoot:    "/tmp/repo",
+		WorktreeRef: "wt-1",
+		Runner:      "claude",
+		// intentionally missing client_request_id
+	}
+	body, _ := json.Marshal(reqPayload)
+	req := httptest.NewRequest(http.MethodPost, "/invocations/start_headed", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleControlPlaneStartHeaded(w, req)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&payload), "failed to decode response")
+	requestID, ok := payload["request_id"].(string)
+	require.True(t, ok, "request_id must be present")
+	assert.NotEmpty(t, requestID)
+	assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+}
+
 func TestControlPlaneStartHeaded_RunnerValidationErrors(t *testing.T) {
 	t.Parallel()
 

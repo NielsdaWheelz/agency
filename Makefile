@@ -1,4 +1,4 @@
-.PHONY: build test test-v test-race lint vet fmt fmt-check mod-tidy-check e2e e2e-gh e2e-local clean install run help check verify completions
+.PHONY: build test test-v test-race lint vet fmt fmt-check mod-tidy-check e2e e2e-gh e2e-s5-happy e2e-s5-failure-matrix e2e-local clean install run help check verify completions
 
 -include .env
 export
@@ -58,21 +58,37 @@ mod-tidy-check:
 	go mod tidy
 	git diff --exit-code -- go.mod go.sum
 
-# Run e2e checks. Uses GH-backed test when token is available; otherwise local CLI e2e smoke tests.
+# Run e2e checks. Always runs S5 failure matrix; GH happy path requires token.
 e2e:
-	@if [ -n "$${GH_TOKEN:-}" ] || [ -n "$${GITHUB_TOKEN:-}" ]; then \
-		echo "running github-backed e2e"; \
-		$(MAKE) e2e-gh; \
+	@echo "running s5 failure-matrix e2e"; \
+	$(MAKE) e2e-s5-failure-matrix; \
+	if [ -n "$${GH_TOKEN:-}" ] || [ -n "$${GITHUB_TOKEN:-}" ]; then \
+		echo "running github-backed s5 happy-path e2e"; \
+		$(MAKE) e2e-s5-happy; \
 	else \
-		echo "GH_TOKEN/GITHUB_TOKEN not set; running local e2e smoke tests"; \
+		echo "GH_TOKEN/GITHUB_TOKEN not set; running local e2e smoke tests instead of gh happy path"; \
 		$(MAKE) e2e-local; \
 	fi
 
-# Run GH-backed e2e test only (requires token)
+# Run both S5 e2e suites; happy path requires token.
 e2e-gh:
 	@token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
 	if [ -z "$$token" ]; then \
 		echo "error: set GH_TOKEN or GITHUB_TOKEN for github-backed e2e"; \
+		exit 1; \
+	fi; \
+	$(MAKE) e2e-s5-failure-matrix; \
+	$(MAKE) e2e-s5-happy
+
+# Run S5 failure-matrix e2e suite (no GH token required)
+e2e-s5-failure-matrix:
+	go test -tags=e2e ./internal/commands -run TestS5E2EAgentPRSyncMergeFailureMatrix -count=1
+
+# Run GH-backed S5 happy-path e2e suite (requires token)
+e2e-s5-happy:
+	@token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
+	if [ -z "$$token" ]; then \
+		echo "error: set GH_TOKEN or GITHUB_TOKEN for github-backed e2e happy path"; \
 		exit 1; \
 	fi; \
 	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN="$$token" \
@@ -120,7 +136,9 @@ help:
 	@echo "  test-v         - run tests with verbose output"
 	@echo "  test-race      - run tests with race detector"
 	@echo "  e2e            - run e2e (GH-backed with token; otherwise local smoke)"
-	@echo "  e2e-gh         - run GH-backed e2e only (requires GH_TOKEN/GITHUB_TOKEN)"
+	@echo "  e2e-gh         - run both S5 e2e suites (requires GH_TOKEN/GITHUB_TOKEN)"
+	@echo "  e2e-s5-happy   - run GH-backed S5 happy-path e2e (requires GH_TOKEN/GITHUB_TOKEN)"
+	@echo "  e2e-s5-failure-matrix - run S5 failure-matrix e2e (no GH token)"
 	@echo "  e2e-local      - run local black-box CLI e2e smoke tests"
 	@echo "  clean          - clean build artifacts"
 	@echo "  install        - install to GOBIN"

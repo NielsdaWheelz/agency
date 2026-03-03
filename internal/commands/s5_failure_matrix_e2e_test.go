@@ -1,0 +1,298 @@
+//go:build e2e
+
+package commands
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
+	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
+)
+
+func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("not_ready_invocation", func(t *testing.T) {
+		repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "s5-not-ready")
+		invocationID := "20260303071000-s5-not-ready"
+		createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+		cr := newS5E2ECommandRunner(repoDir)
+		var stdout, stderr bytes.Buffer
+		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			Yes:             true,
+			JSON:            true,
+			DataDirOverride: dataDir,
+		}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.EInvocationStillRunning), payload["error_code"])
+		assertS5E2EHasRequestID(t, payload)
+	})
+
+	t.Run("missing_pr", func(t *testing.T) {
+		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-missing-pr")
+		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[]`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr list --head "+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[]`,
+			ExitCode: 0,
+		}
+
+		cr := newS5E2ECommandRunner(repoDir)
+		var stdout, stderr bytes.Buffer
+		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			Yes:             true,
+			JSON:            true,
+			DataDirOverride: dataDir,
+		}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.ENoPR), payload["error_code"])
+		assertS5E2EHasRequestID(t, payload)
+	})
+
+	t.Run("closed_pr", func(t *testing.T) {
+		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-closed-pr")
+		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"OPEN"}]`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr view 77 -R test/agent-repo --json number,url,state,isDraft,mergeable,headRefName"] = testutil.FakeResponse{
+			Stdout:   `{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"CLOSED","isDraft":false,"mergeable":"MERGEABLE","headRefName":"` + branch + `"}`,
+			ExitCode: 0,
+		}
+
+		cr := newS5E2ECommandRunner(repoDir)
+		var stdout, stderr bytes.Buffer
+		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			Yes:             true,
+			JSON:            true,
+			DataDirOverride: dataDir,
+		}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.EPRNotOpen), payload["error_code"])
+		assertS5E2EHasRequestID(t, payload)
+	})
+
+	t.Run("mergeability_failure", func(t *testing.T) {
+		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-mergeability")
+		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"OPEN"}]`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr view 77 -R test/agent-repo --json number,url,state,isDraft,mergeable,headRefName"] = testutil.FakeResponse{
+			Stdout:   `{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"OPEN","isDraft":false,"mergeable":"CONFLICTING","headRefName":"` + branch + `"}`,
+			ExitCode: 0,
+		}
+
+		cr := newS5E2ECommandRunner(repoDir)
+		var stdout, stderr bytes.Buffer
+		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			Yes:             true,
+			JSON:            true,
+			DataDirOverride: dataDir,
+		}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.EPRNotMergeable), payload["error_code"])
+		assertS5E2EHasRequestID(t, payload)
+	})
+
+	t.Run("confirmation_failure", func(t *testing.T) {
+		_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "s5-confirmation")
+		st := store.NewStore(fsys, dataDir, time.Now)
+		client := daemonclient.NewClient(st.DaemonSocketPath())
+
+		resp, err := client.Merge(ctx, "inv-any", repoID, daemonclient.MergeOpts{
+			Strategy:         "squash",
+			ConfirmationMode: "yes",
+			Confirmed:        false,
+		})
+		require.NoError(t, err)
+		assert.False(t, resp.OK)
+		assert.Equal(t, string(errors.EConfirmationRequired), resp.ErrorCode)
+		assert.NotEmpty(t, resp.RequestID)
+	})
+
+	t.Run("bounded_input_handling", func(t *testing.T) {
+		repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "s5-bounded-input")
+		invocationID := "20260303071000-s5-bounded"
+		createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+		st := store.NewStore(fsys, dataDir, time.Now)
+		require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFinished
+			meta.LandingStatus = store.LandingStatusLanded
+			meta.IntegrationWorktreeID = worktreeID
+		}))
+
+		integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
+		reportDir := filepath.Join(integrationTree, ".agency")
+		require.NoError(t, os.MkdirAll(reportDir, 0o755))
+		oversized := "## summary\n" + strings.Repeat("x", 2*1024*1024) + "\n\n## how to test\n- go test ./...\n"
+		require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(oversized), 0o644))
+
+		branch := "agency/s5-bounded-input-abcd"
+		fallbackPath := filepath.Join(reportDir, "pr_sync_fallback.md")
+
+		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		daemonRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
+		daemonRunner.Responses["git show-ref --verify --quiet refs/heads/main"] = testutil.FakeResponse{ExitCode: 0}
+		daemonRunner.Responses["git rev-list --count main.."+branch] = testutil.FakeResponse{Stdout: "1\n", ExitCode: 0}
+		daemonRunner.Responses["git push -u origin "+branch] = testutil.FakeResponse{ExitCode: 0}
+		daemonRunner.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n", ExitCode: 0}
+		daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[{"number":81,"url":"https://github.com/test/agent-repo/pull/81","state":"OPEN"}]`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr edit 81 --body-file "+fallbackPath] = testutil.FakeResponse{ExitCode: 0}
+
+		cr := newS5E2ECommandRunner(repoDir)
+		var stdout, stderr bytes.Buffer
+		err := AgentPRSync(ctx, cr, fsys, repoDir, AgentPRSyncOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			JSON:            true,
+			DataDirOverride: dataDir,
+		}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, true, payload["ok"])
+		assert.Equal(t, "updated", payload["pr_action"])
+		assertS5E2EHasRequestID(t, payload)
+		assert.Contains(t, daemonRunner.Calls, "gh pr edit 81 --body-file "+fallbackPath)
+	})
+
+	t.Run("merge_log_persistence_failure", func(t *testing.T) {
+		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-merge-log-failure")
+		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"OPEN"}]`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr view 77 -R test/agent-repo --json number,url,state,isDraft,mergeable,headRefName"] = testutil.FakeResponse{
+			Stdout:   `{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","headRefName":"` + branch + `"}`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr merge 77 -R test/agent-repo --squash --delete-branch"] = testutil.FakeResponse{
+			Stdout:   "merged",
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr view 77 -R test/agent-repo --json state"] = testutil.FakeResponse{
+			Stdout:   `{"state":"MERGED"}`,
+			ExitCode: 0,
+		}
+
+		mergeLogPath := filepath.Join(dataDir, "repos", repoID, "invocations", invocationID, "merge.log")
+		require.NoError(t, os.MkdirAll(mergeLogPath, 0o700))
+
+		cr := newS5E2ECommandRunner(repoDir)
+		var stdout, stderr bytes.Buffer
+		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			Yes:             true,
+			JSON:            true,
+			DataDirOverride: dataDir,
+		}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.EPersistFailed), payload["error_code"])
+		assertS5E2EHasRequestID(t, payload)
+	})
+}
+
+func setupS5E2EMergeReadyInvocation(
+	t *testing.T,
+	worktreeName string,
+) (repoDir, dataDir, repoID, worktreeID, invocationID, branch string, daemonRunner *testutil.FakeCommandRunner, fsys fs.FS) {
+	t.Helper()
+
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys = setupAgentTestEnvShort(t, worktreeName)
+	invocationID = "20260303070000-" + worktreeName
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
+	writeAgentMergeScriptsAndConfig(t, integrationTree)
+	writeAgentMergeRepoRecord(t, dataDir, repoID, repoDir)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFinished
+		meta.LandingStatus = store.LandingStatusLanded
+		meta.IntegrationWorktreeID = worktreeID
+	}))
+
+	branch = "agency/" + worktreeName + "-abcd"
+	return repoDir, dataDir, repoID, worktreeID, invocationID, branch, daemonRunner, fsys
+}
+
+func newS5E2ECommandRunner(repoDir string) *testutil.FakeCommandRunner {
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+	return cr
+}
+
+func decodeS5E2EMutationPayload(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	return payload
+}
+
+func assertS5E2EHasRequestID(t *testing.T, payload map[string]any) {
+	t.Helper()
+	requestID, ok := payload["request_id"].(string)
+	require.True(t, ok, "request_id must be present")
+	assert.NotEmpty(t, strings.TrimSpace(requestID))
+}

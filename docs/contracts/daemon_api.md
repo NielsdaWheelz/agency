@@ -7,6 +7,8 @@ this file defines the daemon http api. it is normative.
 - unix socket: `${AGENCY_DATA_DIR}/agencyd.sock`
 - protocol: http/1.1 over unix domain socket
 - all requests and responses are json
+- endpoints that emit `request_id` in the body must also emit matching `X-Request-ID` response header
+- inbound `X-Request-ID` values are accepted only if they are non-empty, <=128 chars, and match `[A-Za-z0-9][A-Za-z0-9._:-]*`; invalid values are replaced with a daemon-generated id
 
 ## versioning
 
@@ -19,6 +21,8 @@ errors return `ok=false` and must include:
 - `error_code` (string)
 - `message` (string)
 - `hint` (string, optional)
+
+for invocation-scoped mutation endpoints and review (`POST /invocations/start_headless`, `POST /invocations/start_headed`, `POST /invocations/{id}/start_headless`, `POST /invocations/{id}/stop`, `POST /invocations/{id}/kill`, `POST /invocations/{id}/checkpoints/apply`, `POST /invocations/{id}/land`, `POST /invocations/{id}/discard`, `POST /invocations/{ref}/chat`, `POST /invocations/{ref}/restart`, `POST /invocations/{ref}/pr/sync`, `POST /invocations/{ref}/merge`, `GET /invocations/{ref}/review`), responses must include daemon-issued `request_id` in both success and failure payloads.
 
 ## endpoints
 
@@ -39,7 +43,8 @@ request: `ControlPlaneStartRequest`
 - optional: `invocation_name`, `runner_args`, `env`, `no_include_untracked`
 
 response: `ControlPlaneStartResponse`
-- `ok`, `invocation_id`, `sandbox_path`, `repo_id`, `integration_worktree_id`, `integration_worktree_name`, `pid`, `pgid`, `daemon_instance_id`, `already_running`, `log_paths`, `api_version`, `build_version`, `client_request_id`
+- success fields: `ok`, `request_id`, `invocation_id`, `sandbox_path`, `repo_id`, `integration_worktree_id`, `integration_worktree_name`, `pid`, `pgid`, `daemon_instance_id`, `already_running`, `log_paths`, `api_version`, `build_version`, `client_request_id`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`, `client_request_id`
 
 ### POST /invocations/start_headed (control plane)
 
@@ -48,13 +53,16 @@ request: `ControlPlaneStartHeadedRequest`
 - optional: `invocation_name`, `runner_args`, `env`, `no_include_untracked`
 
 response: `ControlPlaneStartHeadedResponse`
-- `ok`, `invocation_id`, `sandbox_path`, `repo_id`, `integration_worktree_id`, `integration_worktree_name`, `tmux_session`, `daemon_instance_id`, `already_running`, `api_version`, `build_version`, `git_sha`, `client_request_id`
+- success fields: `ok`, `request_id`, `invocation_id`, `sandbox_path`, `repo_id`, `integration_worktree_id`, `integration_worktree_name`, `tmux_session`, `daemon_instance_id`, `already_running`, `api_version`, `build_version`, `git_sha`, `client_request_id`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `git_sha`, `error_code`, `message`, `hint`, `client_request_id`
 
 ### POST /invocations/{id}/start_headless (legacy)
 
 deprecated. no new features. remove in v2.
 request: `StartHeadlessRequest`
 response: `StartHeadlessResponse`
+- success fields: `ok`, `request_id`, `pid`, `pgid`, `daemon_instance_id`, `already_running`, `orphaned`, `log_paths`
+- error fields: `ok=false`, `request_id`, `error_code`, `message`, `hint`
 
 ### POST /invocations/{id}/stop
 
@@ -62,6 +70,8 @@ query:
 - `repo_id` (required)
 
 response: `StopResponse`
+- success fields: `ok`, `request_id`, `invocation_id`, `api_version`, `build_version`, `client_request_id`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `client_request_id`, `error_code`, `message`, `hint`
 
 ### POST /invocations/{id}/kill
 
@@ -69,6 +79,8 @@ query:
 - `repo_id` (required)
 
 response: `KillResponse`
+- success fields: `ok`, `request_id`, `invocation_id`, `api_version`, `build_version`, `client_request_id`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `client_request_id`, `error_code`, `message`, `hint`
 
 ### POST /invocations/{id}/checkpoints/apply
 
@@ -77,6 +89,8 @@ query:
 
 request: `CheckpointApplyRequest`
 response: `CheckpointApplyResponse`
+- success fields: `ok`, `request_id`, `api_version`, `build_version`, `checkpoint_id`, `snapshot_commit`, `restored_at`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`
 
 ### POST /invocations/{id}/land
 
@@ -85,6 +99,8 @@ query:
 
 request: `LandRequest`
 response: `LandResponse`
+- success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`, `applied_mode`, `integration_head_before`, `integration_head_after`, `commits_landed`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`, optional `conflict_files[]`
 
 ### POST /invocations/{id}/discard
 
@@ -93,6 +109,71 @@ query:
 
 request: `DiscardRequest`
 response: `DiscardResponse`
+- success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`
+
+### POST /invocations/{ref}/chat
+
+query:
+- `repo_id` (required)
+
+request: `ControlPlaneFollowUpPromptRequest`
+- required: `prompt`, `client_request_id`
+
+response: `ControlPlaneFollowUpPromptResponse`
+- success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`, `timeline_entry_id`, `already_applied`, `client_request_id`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`, `client_request_id`
+
+### POST /invocations/{ref}/restart
+
+query:
+- `repo_id` (required)
+
+request: `RestartFromCheckpointRequest`
+- required: `checkpoint_id`
+- optional: `runner_args`, `env`
+
+response: `RestartFromCheckpointResponse`
+- success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`, `checkpoint_id`, `snapshot_commit`, `restored_at`, `pid`, `pgid`, `daemon_instance_id`, `log_paths`
+- error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`
+
+### GET /invocations/{ref}/review
+
+query:
+- `repo_id` (optional)
+
+response envelope: `APIResponse` with:
+- `ok`, `api_version`, `build_version`, `git_sha`, `request_id`, `data`
+- `data` is `InvocationReviewData`
+- required review data fields: `invocation_id`, `repo_id`, `status`, `display_status`, `landing_status`, `readiness`, `ready`, `pr_sync_eligible`, `blocking_reasons[]`, `navigation`
+
+error envelope:
+- `ok=false`, `request_id`, `error_code`, `message`, `hint`, optional `details`
+
+### POST /invocations/{ref}/pr/sync
+
+query:
+- `repo_id` (required)
+
+request: `PRSyncRequest`
+- optional: `allow_dirty`, `force_with_lease`
+
+response: `PRSyncResponse`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `pr_action`
+- error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
+
+### POST /invocations/{ref}/merge
+
+query:
+- `repo_id` (required)
+
+request: `MergeRequest`
+- required: `confirmation_mode` (`yes` or `typed`), `confirmed=true`
+- optional: `strategy` (`squash` default, `merge`, `rebase`), `no_delete_branch`
+
+response: `MergeResponse`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `strategy`, `delete_branch`, `merge_log_path`, `verify_log_path`
+- error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
 
 ### POST /worktrees/create
 

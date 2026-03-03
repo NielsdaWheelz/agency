@@ -13,12 +13,15 @@ import (
 
 // handleCheckpoints handles requests to /invocations/{id}/checkpoints/...
 func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request, invocationID string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+
 	// Parse path: /invocations/{id}/checkpoints/{action}
 	path := r.URL.Path
 	checkpointsPrefix := "/invocations/" + invocationID + "/checkpoints/"
 
 	if !strings.HasPrefix(path, checkpointsPrefix) {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "endpoint not found", "use /invocations/{id}/checkpoints/apply")
+		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, "E_NOT_FOUND", "endpoint not found", "use /invocations/{id}/checkpoints/apply")
 		return
 	}
 
@@ -27,33 +30,36 @@ func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request, invoc
 	switch action {
 	case "apply":
 		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			s.writeErrorWithRequestID(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 			return
 		}
 		s.handleCheckpointApply(w, r, invocationID)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: apply")
+		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, "E_NOT_FOUND", "unknown action: "+action, "supported actions: apply")
 	}
 }
 
 // handleCheckpointApply handles POST /invocations/{id}/checkpoints/apply.
 func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, invocationID string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeCheckpointError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
 	// Parse request body
 	var req CheckpointApplyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeCheckpointError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	if req.CheckpointID <= 0 {
-		s.writeCheckpointError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "checkpoint_id must be positive", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "checkpoint_id must be positive", "")
 		return
 	}
 
@@ -61,16 +67,16 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeCheckpointError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
+			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeCheckpointError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		s.writeCheckpointError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
 	// Only for headless invocations
 	if meta.Mode != store.RunnerModeHeadless {
-		s.writeCheckpointError(w, http.StatusBadRequest, string(errors.EInvocationInvalidMode),
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvocationInvalidMode),
 			"checkpoint apply is only supported for headless invocations",
 			"headed invocations do not have automated checkpoints")
 		return
@@ -78,7 +84,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	// Precondition: invocation must be finished or failed
 	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
-		s.writeCheckpointError(w, http.StatusConflict, string(errors.EInvocationStillRunning),
+		s.writeCheckpointError(w, http.StatusConflict, requestID, string(errors.EInvocationStillRunning),
 			"invocation is still running",
 			"stop the invocation first with 'agency agent stop' or 'agency agent kill'")
 		return
@@ -105,13 +111,13 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if err != nil {
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:
-			s.writeCheckpointError(w, http.StatusNotFound, string(errors.ECheckpointNotFound),
+			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.ECheckpointNotFound),
 				err.Error(), "run 'agency checkpoint ls' to see available checkpoints")
 		case errors.ERollbackFailed:
-			s.writeCheckpointError(w, http.StatusInternalServerError, string(errors.ERollbackFailed),
+			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
 				err.Error(), "")
 		default:
-			s.writeCheckpointError(w, http.StatusInternalServerError, string(errors.ECheckpointFailed),
+			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ECheckpointFailed),
 				err.Error(), "")
 		}
 		return
@@ -122,6 +128,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		OK:             true,
 		APIVersion:     APIVersion,
 		BuildVersion:   version.FullVersion(),
+		RequestID:      requestID,
 		CheckpointID:   cp.ID,
 		SnapshotCommit: cp.SnapshotCommit,
 		RestoredAt:     s.Clock().UTC().Format("2006-01-02T15:04:05Z"),
@@ -130,11 +137,12 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 }
 
 // writeCheckpointError writes an error response for checkpoint endpoints.
-func (s *Server) writeCheckpointError(w http.ResponseWriter, status int, code, message, hint string) {
+func (s *Server) writeCheckpointError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	resp := CheckpointApplyResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
 		ErrorCode:    code,
 		Message:      message,
 		Hint:         hint,
