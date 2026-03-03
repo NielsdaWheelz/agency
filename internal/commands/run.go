@@ -52,9 +52,40 @@ type RunResult struct {
 	Warnings        []pipeline.Warning
 }
 
+type runExecutionDeps struct {
+	executePipeline func(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, targetCwd string, opts RunOpts) (string, error)
+	loadResult      func(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, runID string) (*RunResult, error)
+	openWorkspace   func(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, worktreePath string) error
+	attachSession   func(ctx context.Context, sessionName string) error
+}
+
+func (d runExecutionDeps) withDefaults() runExecutionDeps {
+	if d.executePipeline == nil {
+		d.executePipeline = executeRunPipeline
+	}
+	if d.loadResult == nil {
+		d.loadResult = getRunResult
+	}
+	if d.openWorkspace == nil {
+		d.openWorkspace = openCreatedWorkspace
+	}
+	if d.attachSession == nil {
+		d.attachSession = attachToTmuxSessionRun
+	}
+	return d
+}
+
 // Run executes the agency run command.
 // Creates a workspace, runs setup, starts tmux session.
 func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts RunOpts, stdout, stderr io.Writer) error {
+	targetCwd, err := resolveRunTargetCwd(ctx, cr, cwd, opts)
+	if err != nil {
+		return err
+	}
+	return runWithDeps(ctx, cr, fsys, targetCwd, opts, stdout, stderr, runExecutionDeps{})
+}
+
+func resolveRunTargetCwd(ctx context.Context, cr agencyexec.CommandRunner, cwd string, opts RunOpts) (string, error) {
 	// Handle --repo path: if provided, use it instead of cwd
 	targetCwd := cwd
 	if opts.RepoPath != "" {
@@ -62,16 +93,16 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		info, err := os.Stat(opts.RepoPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return errors.NewWithDetails(
+				return "", errors.NewWithDetails(
 					errors.EInvalidRepoPath,
 					fmt.Sprintf("--repo path does not exist: %s", opts.RepoPath),
 					map[string]string{"path": opts.RepoPath},
 				)
 			}
-			return errors.Wrap(errors.EInvalidRepoPath, "failed to stat --repo path", err)
+			return "", errors.Wrap(errors.EInvalidRepoPath, "failed to stat --repo path", err)
 		}
 		if !info.IsDir() {
-			return errors.NewWithDetails(
+			return "", errors.NewWithDetails(
 				errors.EInvalidRepoPath,
 				fmt.Sprintf("--repo path is not a directory: %s", opts.RepoPath),
 				map[string]string{"path": opts.RepoPath},
@@ -81,7 +112,7 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		// Verify it's inside a git repo
 		repoRoot, err := git.GetRepoRoot(ctx, cr, opts.RepoPath)
 		if err != nil {
-			return errors.NewWithDetails(
+			return "", errors.NewWithDetails(
 				errors.EInvalidRepoPath,
 				fmt.Sprintf("--repo path is not inside a git repository: %s", opts.RepoPath),
 				map[string]string{"path": opts.RepoPath},
@@ -89,7 +120,10 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		}
 		targetCwd = repoRoot.Path
 	}
+	return targetCwd, nil
+}
 
+func executeRunPipeline(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, targetCwd string, opts RunOpts) (string, error) {
 	// Create the run service with explicit dependencies and working directory.
 	svc := runservice.NewWithDeps(cr, fsys)
 	svc.SetWorkingDir(targetCwd)
@@ -105,7 +139,13 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 		Attach: opts.Attach,
 	}
 
-	runID, err := p.Run(ctx, pipelineOpts)
+	return p.Run(ctx, pipelineOpts)
+}
+
+func runWithDeps(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, targetCwd string, opts RunOpts, stdout, stderr io.Writer, deps runExecutionDeps) error {
+	deps = deps.withDefaults()
+
+	runID, err := deps.executePipeline(ctx, cr, fsys, targetCwd, opts)
 	if err != nil {
 		// Print error details for failures after worktree creation
 		printRunError(ctx, cr, stderr, err, runID, targetCwd, fsys)
@@ -113,7 +153,7 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	// Get final state from metadata
-	result, err := getRunResult(ctx, cr, fsys, targetCwd, runID)
+	result, err := deps.loadResult(ctx, cr, fsys, targetCwd, runID)
 	if err != nil {
 		// Pipeline succeeded but couldn't read result - internal error
 		return errors.Wrap(errors.EInternal, "failed to read run result", err)
@@ -130,18 +170,13 @@ func Run(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	if opts.Open {
-		openErr := openCreatedWorkspace(ctx, cr, fsys, result.WorktreePath)
-		if openErr != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", openErr)
-			_, _ = fmt.Fprintln(stdout, "open_status: failed")
-		} else {
-			_, _ = fmt.Fprintln(stdout, "open_status: opened")
-		}
+		openErr := deps.openWorkspace(ctx, cr, fsys, result.WorktreePath)
+		emitOpenOnCreateStatus(stdout, stderr, openErr)
 	}
 
 	// Handle attach (default) - skip if --detached was specified
 	if attachAfterCreate && result.TmuxSessionName != "" {
-		return attachToTmuxSessionRun(ctx, result.TmuxSessionName)
+		return deps.attachSession(ctx, result.TmuxSessionName)
 	}
 
 	return nil
