@@ -1,6 +1,6 @@
 # Agency v2.1 Constitution
 
-Last updated: 2026-03-01
+Last updated: 2026-03-03
 Status: active
 Owners: `@nnandal` + `Codex`
 
@@ -20,7 +20,7 @@ v2.1 delivers functional Conductor parity at the daemon + CLI layer while preser
 5. Invocation-scoped review/PR/merge command family with stable `--json` output contracts.
 6. Runner capability model for `claude-code`, `codex`, `amp`, `opencode`, `cursor`, and `droid`, including raw-log fallback where semantic adapters are unavailable.
 7. Mutation-command JSON parity for v2 `agent` surfaces.
-8. Reports v2 transition (`report.json` optional artifact, markdown compatibility retained).
+8. Reports v2 transition (`report.json` optional artifact with deterministic precedence, markdown compatibility retained).
 9. Interactive history-driven checkpoint restore (arrow-key terminal navigation) for headless invocations.
 10. Durable package boundaries for release-gating and contract enforcement (no temporary slice-scoped namespaces).
 
@@ -79,6 +79,8 @@ Issue + release-gate evaluation services
 | Delivery model | CLI-first parity is required; GUI/full TUI is optional/deferred. |
 | Runner target set | `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid` must share one capability-driven model. |
 | Output contracts | Automation-facing mutation flows must support stable `--json` responses. |
+| Report contract | `report.json` is authoritative when present; markdown remains deterministic compatibility fallback. |
+| Confirmation contract | `--yes` is the canonical non-interactive primitive for destructive/irreversible confirmation flows. |
 | Release policy | Gate A/B closure + parity baseline + contract/test compliance must all be satisfied before v2.1 RC. |
 
 ## 5. Conventions
@@ -86,10 +88,13 @@ Issue + release-gate evaluation services
 ### Command Surface
 - Invocation-scoped lifecycle, chat, review, PR, and merge behaviors are expressed under `agent` command family.
 - Compatibility aliases may exist but must not redefine canonical semantics.
+- High-traffic additive short aliases are canonicalized as: `-r/--repo`, `-j/--json`, `-y/--yes`, `-o/--open`.
+- Non-interactive destructive/irreversible confirmation flows must use `--yes` with deterministic confirmation-required failures when omitted.
 
 ### Contract Discipline
 - Behavior-changing daemon endpoints require `docs/contracts/*` updates.
 - Error and event semantics for critical mutation paths must be deterministic and test asserted.
+- Reports-v2 progression surfaces resolve through one canonical report model with mode-aware strictness (headless fail-closed; headed/compatibility fallback with explicit diagnostics).
 
 ### Evidence and Closure
 - Gate-item closure requires implementation references and test evidence recorded in issue artifacts.
@@ -97,7 +102,7 @@ Issue + release-gate evaluation services
 
 ### Documentation Layering
 - This file is the v2.1 L0 source of truth.
-- `slice-roadmap.md` is L1 sequencing.
+- `roadmap.md` is L1 sequencing.
 - `docs/v2.1/s*/s*_spec.md` files are L2 contracts per slice.
 
 ## 6. Invariants
@@ -114,6 +119,9 @@ Issue + release-gate evaluation services
 10. Sandbox-first boundaries must not be bypassed by parity features.
 11. v2.1 scope must not expand into GUI/full TUI requirements.
 12. Code + tests are the proof gate; docs are the direction gate.
+13. Reports-v2 precedence is deterministic: `report.json` takes priority when present; markdown remains compatibility input.
+14. Headless progression paths (`review`/`pr sync`/`merge`) fail closed on report contract violations; headed/compatibility paths fail open with explicit diagnostics.
+15. Destructive/irreversible non-interactive flows must use the `--yes` confirmation contract.
 
 ## 7. Release Policy
 
@@ -133,6 +141,8 @@ Issue + release-gate evaluation services
 7. Checkpoint restore supports explicit checkpoint selection and interactive history-based selection.
 8. Daemon APIs remain read/write authority for v2 `agent` + `worktree` surfaces.
 9. Fleet workflows support efficient list/filter/status/selection over many worktrees/invocations.
+10. Reports-v2 progression resolves through one canonical model with deterministic `report.json` precedence and markdown compatibility.
+11. High-traffic confirmation/flag ergonomics are standardized with `--yes` and canonical short aliases (`-r`, `-j`, `-y`, `-o`).
 
 ### Gate D: contract and test compliance
 1. `docs/contracts/*` is updated for new daemon endpoints or data-contract changes.
@@ -142,7 +152,7 @@ Issue + release-gate evaluation services
 
 ## 8. L1 Slice Ordering
 
-The canonical v2.1 sequencing is maintained in `slice-roadmap.md`.
+The canonical v2.1 sequencing is maintained in `roadmap.md`.
 
 ## Gate A
 

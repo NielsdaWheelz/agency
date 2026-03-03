@@ -1,6 +1,6 @@
 # v2.1 Slice Roadmap
 
-Last updated: 2026-02-28
+Last updated: 2026-03-03
 Status: active
 Mode: L1-style product slice sequencing
 
@@ -71,9 +71,9 @@ S7 Full-Screen Watch/TUI Seed (Stretch)
 
 ### Slice S6: Reports v2 + CLI Ergonomics Cleanup
 - **Goal**: reduce friction in report and confirmation/flag ergonomics.
-- **Outcome**: JSON report compatibility is available and CLI consistency is improved.
+- **Outcome**: one canonical reports-v2 model is available (`report.json` precedence with markdown compatibility), and high-traffic CLI confirmation/flag ergonomics are standardized.
 - **Dependencies**: S5.
-- **Acceptance**: report strictness is mode-aware and ergonomics targets (`--yes`, high-traffic flags) are complete.
+- **Acceptance**: headless `review`/`pr sync`/`merge` report consumption is strict and machine-parseable, headed/compatibility paths are deterministic fallback-with-diagnostics, and ergonomics targets (`--yes`, canonical high-traffic flags/aliases, open-on-create) are complete.
 
 ### Slice S7: Full-Screen Watch/TUI Seed (Stretch)
 - **Goal**: provide a full-screen watch/TUI shell that builds on S3 checks-first terminal contracts.
