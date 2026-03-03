@@ -67,11 +67,14 @@ type mergePRView struct {
 
 // handleMerge handles POST /invocations/{ref}/merge.
 func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationRef string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
 		s.writeMergeError(
 			w,
 			http.StatusBadRequest,
+			requestID,
 			string(errors.EInvalidArgument),
 			"repo_id query parameter is required",
 			"pass ?repo_id=<repo_id>",
@@ -87,6 +90,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 			s.writeMergeError(
 				w,
 				http.StatusBadRequest,
+				requestID,
 				string(errors.EInvalidArgument),
 				"invalid request body: "+err.Error(),
 				"",
@@ -99,6 +103,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 			s.writeMergeError(
 				w,
 				http.StatusBadRequest,
+				requestID,
 				string(errors.EInvalidArgument),
 				"invalid request body: expected a single JSON object",
 				"",
@@ -113,14 +118,14 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		if code == "" {
 			code = errors.EInvalidArgument
 		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), string(code), err.Error(), mergeHintFromError(err))
+		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
 		return
 	}
 
 	record, err := s.resolveInvocationRef(invocationRef, repoID)
 	if err != nil {
 		code := errors.GetCode(err)
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), string(code), err.Error(), "use 'agency agent ls' to list invocations")
+		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "use 'agency agent ls' to list invocations")
 		return
 	}
 
@@ -128,6 +133,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		s.writeMergeError(
 			w,
 			http.StatusConflict,
+			requestID,
 			string(errors.EInvocationStillRunning),
 			"invocation is still running; wait for completion before merge",
 			"run 'agency agent review <invocation_ref>' to check readiness",
@@ -138,6 +144,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		s.writeMergeError(
 			w,
 			http.StatusConflict,
+			requestID,
 			string(errors.EInvalidArgument),
 			"invocation is not in a mergeable lifecycle state",
 			"run 'agency agent review <invocation_ref>' for blocking reasons",
@@ -148,6 +155,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		s.writeMergeError(
 			w,
 			http.StatusConflict,
+			requestID,
 			string(errors.EInvalidArgument),
 			"invocation must be landed before merge",
 			"run 'agency agent land <invocation_ref>' first",
@@ -157,7 +165,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 
 	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
 	if err != nil {
-		s.writeMergeError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to read integration worktree metadata", "")
+		s.writeMergeError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read integration worktree metadata", "")
 		return
 	}
 
@@ -166,6 +174,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		s.writeMergeError(
 			w,
 			http.StatusConflict,
+			requestID,
 			string(errors.ERepoLocked),
 			"repository is locked by another operation",
 			"wait for the other operation to complete",
@@ -184,7 +193,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		if code == "" {
 			code = errors.EPersistFailed
 		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), string(code), err.Error(), "")
+		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
 		return
 	}
 
@@ -202,10 +211,10 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 			if appendCode == "" {
 				appendCode = errors.EPersistFailed
 			}
-			s.writeMergeError(w, mergeHTTPStatusForCode(appendCode), string(appendCode), appendErr.Error(), "")
+			s.writeMergeError(w, mergeHTTPStatusForCode(appendCode), requestID, string(appendCode), appendErr.Error(), "")
 			return
 		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), string(code), err.Error(), mergeHintFromError(err))
+		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
 		return
 	}
 
@@ -221,7 +230,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		if code == "" {
 			code = errors.EPersistFailed
 		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), string(code), err.Error(), "")
+		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
 		return
 	}
 
@@ -229,6 +238,7 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		OK:                    true,
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
+		RequestID:             requestID,
 		InvocationID:          record.InvocationID,
 		RepoID:                record.RepoID,
 		IntegrationWorktreeID: record.Meta.IntegrationWorktreeID,
@@ -809,11 +819,12 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 	}
 }
 
-func (s *Server) writeMergeError(w http.ResponseWriter, status int, code, message, hint string) {
+func (s *Server) writeMergeError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	resp := MergeResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
 		ErrorCode:    code,
 		Message:      message,
 		Hint:         hint,

@@ -25,19 +25,22 @@ import (
 // S3 PR-03 canonical flow: stop running headless process (if needed), apply checkpoint,
 // and restart runner in one invocation-scoped operation.
 func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Request, invocationRef string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeRestartError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeRestartError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
 	var req RestartFromCheckpointRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeRestartError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeRestartError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 		return
 	}
 	if req.CheckpointID <= 0 {
-		s.writeRestartError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "checkpoint_id must be positive", "")
+		s.writeRestartError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "checkpoint_id must be positive", "")
 		return
 	}
 
@@ -47,17 +50,18 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		if code == "" {
 			code = errors.EInvocationNotFound
 		}
-		s.writeRestartError(w, http.StatusNotFound, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		s.writeRestartError(w, http.StatusNotFound, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}
 	if record.Meta == nil {
-		s.writeRestartError(w, http.StatusInternalServerError, string(errors.EInvocationBroken), "invocation exists but meta.json is unreadable", "")
+		s.writeRestartError(w, http.StatusInternalServerError, requestID, string(errors.EInvocationBroken), "invocation exists but meta.json is unreadable", "")
 		return
 	}
 	if record.Meta.Mode != store.RunnerModeHeadless {
 		s.writeRestartError(
 			w,
 			http.StatusBadRequest,
+			requestID,
 			string(errors.EInvocationInvalidMode),
 			"restart is only supported for headless invocations",
 			"headed invocations should use 'agency agent enter' instead",
@@ -67,7 +71,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	// Repo-scoped lock serializes checkpoint apply and runner lifecycle mutations.
 	unlock, err := s.repoLock.Lock(record.RepoID, "restart")
 	if err != nil {
-		s.writeRestartError(w, http.StatusConflict, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete")
+		s.writeRestartError(w, http.StatusConflict, requestID, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete")
 		return
 	}
 	defer func() { _ = unlock() }()
@@ -75,10 +79,10 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeRestartError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
+			s.writeRestartError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeRestartError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		s.writeRestartError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -87,6 +91,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		s.writeRestartError(
 			w,
 			http.StatusBadRequest,
+			requestID,
 			string(errors.EPromptRequired),
 			err.Error(),
 			"restart requires a stored prompt from initial invocation start",
@@ -110,6 +115,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		s.writeRestartError(
 			w,
 			http.StatusBadRequest,
+			requestID,
 			string(code),
 			err.Error(),
 			hint,
@@ -121,6 +127,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		s.writeRestartError(
 			w,
 			http.StatusBadRequest,
+			requestID,
 			string(errors.ERunnerNotFound),
 			err.Error(),
 			"valid runners: "+strings.Join(runners.CanonicalIDs(), ", "),
@@ -130,14 +137,14 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 
 	effectiveEnv := req.Env
 	if message, hint := validateRestartEnvReplay(meta.CustomEnvKeys, req.Env); message != "" {
-		s.writeRestartError(w, http.StatusBadRequest, "E_INVALID_REQUEST", message, hint)
+		s.writeRestartError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", message, hint)
 		return
 	}
 
 	// If running, stop first and wait for terminalization before apply/start.
 	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
 		if err := s.stopHeadlessForRestart(r.Context(), record.RepoID, record.InvocationID, meta); err != nil {
-			s.writeRestartError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to stop running invocation: "+err.Error(), "")
+			s.writeRestartError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to stop running invocation: "+err.Error(), "")
 			return
 		}
 	}
@@ -145,7 +152,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	// Re-read after stop to ensure latest persisted state.
 	meta, err = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
-		s.writeRestartError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to refresh invocation meta: "+err.Error(), "")
+		s.writeRestartError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to refresh invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -166,14 +173,15 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 			s.writeRestartError(
 				w,
 				http.StatusNotFound,
+				requestID,
 				string(errors.ECheckpointNotFound),
 				err.Error(),
 				"run 'agency checkpoint ls' to see available checkpoints",
 			)
 		case errors.ERollbackFailed:
-			s.writeRestartError(w, http.StatusInternalServerError, string(errors.ERollbackFailed), err.Error(), "")
+			s.writeRestartError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed), err.Error(), "")
 		default:
-			s.writeRestartError(w, http.StatusInternalServerError, string(errors.ECheckpointFailed), err.Error(), "")
+			s.writeRestartError(w, http.StatusInternalServerError, requestID, string(errors.ECheckpointFailed), err.Error(), "")
 		}
 		return
 	}
@@ -213,7 +221,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		if code == "" {
 			code = errors.ERunnerStartFailed
 		}
-		s.writeRestartError(w, http.StatusInternalServerError, string(code), err.Error(), "")
+		s.writeRestartError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "")
 		return
 	}
 
@@ -248,6 +256,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		OK:               true,
 		APIVersion:       APIVersion,
 		BuildVersion:     version.FullVersion(),
+		RequestID:        requestID,
 		InvocationID:     record.InvocationID,
 		CheckpointID:     cp.ID,
 		SnapshotCommit:   cp.SnapshotCommit,
@@ -363,11 +372,12 @@ func (s *Server) stopHeadlessForRestart(ctx context.Context, repoID, invocationI
 	return nil
 }
 
-func (s *Server) writeRestartError(w http.ResponseWriter, status int, code, message, hint string) {
+func (s *Server) writeRestartError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	resp := RestartFromCheckpointResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
 		ErrorCode:    code,
 		Message:      message,
 		Hint:         hint,

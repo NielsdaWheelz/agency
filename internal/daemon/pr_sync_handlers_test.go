@@ -114,6 +114,68 @@ func TestHandlePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	assert.Contains(t, fakeRunner.Calls, "git push --force-with-lease -u origin agency/alpha")
 }
 
+func TestHandlePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+
+	t.Run("failure", func(t *testing.T) {
+		t.Parallel()
+
+		env := setupReadTestEnv(t)
+		w := env.doInvocationRequestWithBody(
+			t,
+			http.MethodPost,
+			"/invocations/inv-1/pr/sync?repo_id="+env.RepoID,
+			[]byte(`{}`),
+		)
+		require.Equal(t, http.StatusConflict, w.Code)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
+		requestID, ok := payload["request_id"].(string)
+		require.True(t, ok, "request_id must be present in failure payload")
+		assert.NotEmpty(t, requestID)
+		assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+	})
+
+	t.Run("success", func(t *testing.T) {
+		t.Parallel()
+
+		env := setupReadTestEnv(t)
+		fakeRunner := testutil.NewFakeCommandRunner()
+		env.Server.Runner = fakeRunner
+
+		_, reportPath := setupPRSyncReadyInvocation(t, env)
+		fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
+		fakeRunner.Responses["git show-ref --verify --quiet refs/heads/main"] = testutil.FakeResponse{ExitCode: 0}
+		fakeRunner.Responses["git rev-list --count main..agency/alpha"] = testutil.FakeResponse{Stdout: "1\n", ExitCode: 0}
+		fakeRunner.Responses["git push -u origin agency/alpha"] = testutil.FakeResponse{ExitCode: 0}
+		fakeRunner.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n", ExitCode: 0}
+		fakeRunner.Responses["gh pr list --head test:agency/alpha --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[{"number":88,"url":"https://github.com/test/agent-repo/pull/88","state":"OPEN"}]`,
+			ExitCode: 0,
+		}
+		fakeRunner.Responses["gh pr edit 88 --body-file "+reportPath] = testutil.FakeResponse{ExitCode: 0}
+
+		w := env.doInvocationRequestWithBody(
+			t,
+			http.MethodPost,
+			"/invocations/inv-1/pr/sync?repo_id="+env.RepoID,
+			[]byte(`{}`),
+		)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
+		requestID, ok := payload["request_id"].(string)
+		require.True(t, ok, "request_id must be present in success payload")
+		assert.NotEmpty(t, requestID)
+		assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+	})
+}
+
 func setupPRSyncReadyInvocation(t *testing.T, env *readTestEnv) (string, string) {
 	t.Helper()
 

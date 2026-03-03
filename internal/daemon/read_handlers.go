@@ -38,6 +38,7 @@ func getOrCreateRequestID(r *http.Request) string {
 
 // writeAPIResponse writes a successful API response with the envelope.
 func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data interface{}) {
+	setRequestIDHeader(w, requestID)
 	resp := APIResponse{
 		OK:           true,
 		APIVersion:   APIVersion,
@@ -51,6 +52,7 @@ func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data 
 
 // writeAPIError writes an error API response with the envelope.
 func (s *Server) writeAPIError(w http.ResponseWriter, status int, requestID, code, message, hint string, details interface{}) {
+	setRequestIDHeader(w, requestID)
 	resp := APIResponse{
 		OK:           false,
 		APIVersion:   APIVersion,

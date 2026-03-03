@@ -539,6 +539,7 @@ func TestResponseEnvelope_RequestID(t *testing.T) {
 
 		resp := decodeAPIResponse(t, w)
 		assert.Equal(t, "custom-id", resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
 	})
 
 	t.Run("generated_request_id", func(t *testing.T) {
@@ -551,6 +552,7 @@ func TestResponseEnvelope_RequestID(t *testing.T) {
 		assert.NotEmpty(t, resp.RequestID)
 		// UUID format: 8-4-4-4-12
 		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
 	})
 }
 

@@ -97,6 +97,7 @@ type ControlPlaneStartResponse struct {
 	DaemonInstanceID        string    `json:"daemon_instance_id,omitempty"`
 	AlreadyRunning          bool      `json:"already_running,omitempty"`
 	LogPaths                *LogPaths `json:"log_paths,omitempty"`
+	RequestID               string    `json:"request_id,omitempty"`
 
 	// Standard response fields
 	APIVersion      int    `json:"api_version"`
@@ -124,6 +125,7 @@ type ControlPlaneFollowUpPromptResponse struct {
 	InvocationID   string `json:"invocation_id,omitempty"`
 	TimelineEntry  string `json:"timeline_entry_id,omitempty"`
 	AlreadyApplied bool   `json:"already_applied,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
 
 	// Standard response fields
 	APIVersion      int    `json:"api_version"`
@@ -151,6 +153,7 @@ type StartHeadlessResponse struct {
 	AlreadyRunning   bool      `json:"already_running,omitempty"`
 	Orphaned         bool      `json:"orphaned,omitempty"`
 	LogPaths         *LogPaths `json:"log_paths,omitempty"`
+	RequestID        string    `json:"request_id,omitempty"`
 
 	// Error fields (only set when OK is false)
 	ErrorCode string `json:"error_code,omitempty"`
@@ -168,6 +171,7 @@ type LogPaths struct {
 type StopResponse struct {
 	OK              bool   `json:"ok"`
 	InvocationID    string `json:"invocation_id,omitempty"`
+	RequestID       string `json:"request_id,omitempty"`
 	APIVersion      int    `json:"api_version"`
 	BuildVersion    string `json:"build_version,omitempty"`
 	ClientRequestID string `json:"client_request_id,omitempty"`
@@ -180,6 +184,7 @@ type StopResponse struct {
 type KillResponse struct {
 	OK              bool   `json:"ok"`
 	InvocationID    string `json:"invocation_id,omitempty"`
+	RequestID       string `json:"request_id,omitempty"`
 	APIVersion      int    `json:"api_version"`
 	BuildVersion    string `json:"build_version,omitempty"`
 	ClientRequestID string `json:"client_request_id,omitempty"`
@@ -212,6 +217,7 @@ type HealthResponse struct {
 // ErrorResponse is a generic error response.
 type ErrorResponse struct {
 	OK        bool   `json:"ok"`
+	RequestID string `json:"request_id,omitempty"`
 	ErrorCode string `json:"error_code"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint,omitempty"`
@@ -342,6 +348,7 @@ type CheckpointApplyResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
 	CheckpointID   int    `json:"checkpoint_id,omitempty"`
@@ -372,6 +379,7 @@ type RestartFromCheckpointResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
 	InvocationID     string    `json:"invocation_id,omitempty"`
@@ -418,6 +426,7 @@ type LandResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
 	InvocationID          string      `json:"invocation_id,omitempty"`
@@ -444,6 +453,7 @@ type DiscardResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
 	InvocationID string `json:"invocation_id,omitempty"`
@@ -468,6 +478,7 @@ type PRSyncResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
 	InvocationID          string `json:"invocation_id,omitempty"`
@@ -504,6 +515,7 @@ type MergeResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
 	InvocationID          string `json:"invocation_id,omitempty"`

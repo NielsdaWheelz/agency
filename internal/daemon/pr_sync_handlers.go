@@ -43,16 +43,18 @@ type prSyncPR struct {
 
 // handlePRSync handles POST /invocations/{ref}/pr/sync.
 func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocationRef string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writePRSyncError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
 	var req PRSyncRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writePRSyncError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+			s.writePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 			return
 		}
 	}
@@ -61,13 +63,14 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 	if err != nil {
 		code := errors.GetCode(err)
 		status := prSyncHTTPStatusForCode(code)
-		s.writePRSyncError(w, status, string(code), err.Error(), "use 'agency agent ls' to list invocations")
+		s.writePRSyncError(w, status, requestID, string(code), err.Error(), "use 'agency agent ls' to list invocations")
 		return
 	}
 	if record.Meta.LandingStatus != store.LandingStatusLanded {
 		s.writePRSyncError(
 			w,
 			http.StatusConflict,
+			requestID,
 			"E_INVALID_REQUEST",
 			"invocation must be landed before PR sync",
 			"run 'agency agent land <invocation_ref>' first",
@@ -77,7 +80,7 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 
 	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
 	if err != nil {
-		s.writePRSyncError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to read integration worktree metadata", "")
+		s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read integration worktree metadata", "")
 		return
 	}
 
@@ -86,6 +89,7 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 		s.writePRSyncError(
 			w,
 			http.StatusConflict,
+			requestID,
 			string(errors.ERepoLocked),
 			"repository is locked by another operation",
 			"wait for the other operation to complete",
@@ -99,7 +103,7 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 		"force_with_lease": req.ForceWithLease,
 		"branch":           wtMeta.Branch,
 	}); err != nil {
-		s.writePRSyncError(w, http.StatusInternalServerError, string(errors.EInternal), err.Error(), "")
+		s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "")
 		return
 	}
 
@@ -115,11 +119,11 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 			"error_code": string(code),
 			"message":    err.Error(),
 		}); appendErr != nil {
-			s.writePRSyncError(w, http.StatusInternalServerError, string(errors.EInternal), appendErr.Error(), "")
+			s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), appendErr.Error(), "")
 			return
 		}
 
-		s.writePRSyncError(w, prSyncHTTPStatusForCode(code), string(code), err.Error(), hint)
+		s.writePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), hint)
 		return
 	}
 
@@ -129,7 +133,7 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 		"pr_url":    result.PRURL,
 		"pr_action": result.PRAction,
 	}); err != nil {
-		s.writePRSyncError(w, http.StatusInternalServerError, string(errors.EInternal), err.Error(), "")
+		s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "")
 		return
 	}
 
@@ -137,6 +141,7 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 		OK:                    true,
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
+		RequestID:             requestID,
 		InvocationID:          record.InvocationID,
 		RepoID:                record.RepoID,
 		IntegrationWorktreeID: record.Meta.IntegrationWorktreeID,
@@ -725,11 +730,12 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 	}
 }
 
-func (s *Server) writePRSyncError(w http.ResponseWriter, status int, code, message, hint string) {
+func (s *Server) writePRSyncError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	resp := PRSyncResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
 		ErrorCode:    code,
 		Message:      message,
 		Hint:         hint,

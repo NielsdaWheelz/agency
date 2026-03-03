@@ -16,8 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
@@ -37,10 +35,16 @@ import (
 
 // handleStartHeadless handles POST /invocations/{id}/start_headless.
 func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, invocationID string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+	writeErr := func(status int, code, message, hint string) {
+		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
+	}
+
 	// Parse request body
 	var req StartHeadlessRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 		return
 	}
 
@@ -49,19 +53,19 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 
 	// Validate required fields
 	if req.RepoID == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id is required", "")
+		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id is required", "")
 		return
 	}
 	if req.Runner == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "")
+		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "")
 		return
 	}
 	if req.SandboxPath == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "sandbox_path is required", "")
+		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "sandbox_path is required", "")
 		return
 	}
 	if req.Prompt == "" {
-		s.writeError(w, http.StatusBadRequest, string(errors.EPromptRequired), "prompt is required for headless invocation", "")
+		writeErr(http.StatusBadRequest, string(errors.EPromptRequired), "prompt is required for headless invocation", "")
 		return
 	}
 
@@ -70,20 +74,20 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-			s.writeError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "ensure invocation was created before calling start_headless")
+			writeErr(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "ensure invocation was created before calling start_headless")
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
 	// Validation Gate 2: Meta cross-validation
 	if meta.Mode != store.RunnerModeHeadless {
-		s.writeError(w, http.StatusBadRequest, string(errors.ESandboxValidationFailed), "invocation mode is not headless", "this endpoint is only for headless invocations")
+		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "invocation mode is not headless", "this endpoint is only for headless invocations")
 		return
 	}
 	if meta.SandboxPath != req.SandboxPath {
-		s.writeError(w, http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox_path in request does not match invocation meta", "verify sandbox was created correctly")
+		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox_path in request does not match invocation meta", "verify sandbox was created correctly")
 		return
 	}
 
@@ -98,6 +102,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 				// Idempotent hit - we're already supervising this
 				resp := StartHeadlessResponse{
 					OK:               true,
+					RequestID:        requestID,
 					PID:              pid,
 					PGID:             safeIntPtr(meta.PGID),
 					DaemonInstanceID: s.InstanceID,
@@ -121,6 +126,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 
 			resp := StartHeadlessResponse{
 				OK:               true,
+				RequestID:        requestID,
 				PID:              pid,
 				PGID:             safeIntPtr(meta.PGID),
 				DaemonInstanceID: s.InstanceID,
@@ -147,20 +153,20 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 			m.LifecycleOwner = ""
 		})
 
-		s.writeError(w, http.StatusConflict, string(errors.EInvocationOrphaned), "invocation was running but PID is dead", "process exited without daemon observing; start a new invocation")
+		writeErr(http.StatusConflict, string(errors.EInvocationOrphaned), "invocation was running but PID is dead", "process exited without daemon observing; start a new invocation")
 		return
 	}
 
 	// Check for terminal status
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
-		s.writeError(w, http.StatusConflict, string(errors.EInvocationTerminal), "invocation already in terminal state: "+string(meta.Status), "start a new invocation instead")
+		writeErr(http.StatusConflict, string(errors.EInvocationTerminal), "invocation already in terminal state: "+string(meta.Status), "start a new invocation instead")
 		return
 	}
 
 	// Validation Gate 3: sandbox_path contains SANDBOX_MARKER
 	if !invocation.HasSandboxMarker(req.SandboxPath) {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox does not contain SANDBOX_MARKER", "verify sandbox was created correctly via agent start")
+		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox does not contain SANDBOX_MARKER", "verify sandbox was created correctly via agent start")
 		return
 	}
 
@@ -168,7 +174,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	integrationMarkerPath := filepath.Join(req.SandboxPath, ".agency", "INTEGRATION_MARKER")
 	if _, err := os.Stat(integrationMarkerPath); err == nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox contains INTEGRATION_MARKER - refusing to run in integration tree", "this is a bug - sandbox path resolved to integration tree")
+		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox contains INTEGRATION_MARKER - refusing to run in integration tree", "this is a bug - sandbox path resolved to integration tree")
 		return
 	}
 
@@ -176,7 +182,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	expectedSandboxPath := s.Store.SandboxTreePath(req.RepoID, req.InvocationID)
 	if req.SandboxPath != expectedSandboxPath {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusBadRequest, string(errors.ESandboxValidationFailed),
+		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed),
 			fmt.Sprintf("sandbox_path does not match expected path: got %s, expected %s", req.SandboxPath, expectedSandboxPath),
 			"verify sandbox was created correctly")
 		return
@@ -186,7 +192,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	canonicalRunner, err := runners.Canonicalize(req.Runner)
 	if err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusBadRequest, string(errors.ERunnerNotFound), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
+		writeErr(http.StatusBadRequest, string(errors.ERunnerNotFound), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
 		return
 	}
 	req.Runner = canonicalRunner
@@ -206,8 +212,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		if code == "" {
 			code = errors.ERunnerNotConfigured
 		}
-		s.writeError(
-			w,
+		writeErr(
 			http.StatusBadRequest,
 			string(code),
 			"failed to resolve runner command: "+err.Error(),
@@ -224,7 +229,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		if code == "" {
 			code = errors.ERunnerNotFound
 		}
-		s.writeError(w, http.StatusBadRequest, string(code), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
+		writeErr(http.StatusBadRequest, string(code), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
 		return
 	}
 
@@ -232,7 +237,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	logsDir := s.Store.SandboxLogsDir(req.RepoID, req.InvocationID)
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to create logs directory: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to create logs directory: "+err.Error(), "")
 		return
 	}
 
@@ -243,7 +248,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 
 	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to write prompt file: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to write prompt file: "+err.Error(), "")
 		return
 	}
 
@@ -255,7 +260,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	rawFile, err := os.OpenFile(rawLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to open raw log file: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open raw log file: "+err.Error(), "")
 		return
 	}
 
@@ -263,7 +268,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	if err != nil {
 		_ = rawFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to open stderr log file: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open stderr log file: "+err.Error(), "")
 		return
 	}
 
@@ -273,7 +278,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to open stream log file: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open stream log file: "+err.Error(), "")
 		return
 	}
 
@@ -295,7 +300,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stdout pipe: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stdout pipe: "+err.Error(), "")
 		return
 	}
 
@@ -305,7 +310,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stderr pipe: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stderr pipe: "+err.Error(), "")
 		return
 	}
 
@@ -315,7 +320,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		s.writeError(w, http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to start runner: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to start runner: "+err.Error(), "")
 		return
 	}
 
@@ -375,7 +380,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		s.mu.Lock()
 		delete(s.processes, req.InvocationID)
 		s.mu.Unlock()
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -394,6 +399,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	// Return success
 	resp := StartHeadlessResponse{
 		OK:               true,
+		RequestID:        requestID,
 		PID:              pid,
 		PGID:             pgid,
 		DaemonInstanceID: s.InstanceID,
@@ -412,11 +418,16 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 // PR-10 headed: tmux send-keys C-c (does not mark as finished; reconcile handles that)
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+	writeStopError := func(status int, code, message, hint string) {
+		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
+	}
 
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		writeStopError(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
@@ -424,10 +435,10 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
+			writeStopError(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		writeStopError(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -436,6 +447,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		resp := StopResponse{
 			OK:              true,
 			InvocationID:    invocationID,
+			RequestID:       requestID,
 			APIVersion:      APIVersion,
 			BuildVersion:    version.FullVersion(),
 			ClientRequestID: "",
@@ -480,6 +492,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 			resp := StopResponse{
 				OK:              true,
 				InvocationID:    invocationID,
+				RequestID:       requestID,
 				APIVersion:      APIVersion,
 				BuildVersion:    version.FullVersion(),
 				ClientRequestID: "",
@@ -498,6 +511,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		resp := StopResponse{
 			OK:              true,
 			InvocationID:    invocationID,
+			RequestID:       requestID,
 			APIVersion:      APIVersion,
 			BuildVersion:    version.FullVersion(),
 			ClientRequestID: "",
@@ -515,7 +529,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	}
 
 	if pgid <= 0 {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
+		writeStopError(http.StatusBadRequest, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
 		return
 	}
 
@@ -531,6 +545,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	resp := StopResponse{
 		OK:              true,
 		InvocationID:    invocationID,
+		RequestID:       requestID,
 		APIVersion:      APIVersion,
 		BuildVersion:    version.FullVersion(),
 		ClientRequestID: "",
@@ -613,11 +628,16 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 // PR-10: Now supports both headless (SIGKILL) and headed (tmux kill-session) invocations.
 func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+	writeKillError := func(status int, code, message, hint string) {
+		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
+	}
 
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		writeKillError(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
@@ -625,10 +645,10 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
+			writeKillError(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		writeKillError(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -665,6 +685,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		resp := KillResponse{
 			OK:              true,
 			InvocationID:    invocationID,
+			RequestID:       requestID,
 			APIVersion:      APIVersion,
 			BuildVersion:    version.FullVersion(),
 			ClientRequestID: "",
@@ -715,6 +736,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	resp := KillResponse{
 		OK:              true,
 		InvocationID:    invocationID,
+		RequestID:       requestID,
 		APIVersion:      APIVersion,
 		BuildVersion:    version.FullVersion(),
 		ClientRequestID: "",
@@ -931,39 +953,44 @@ func loadMaxStreamSeq(path string) uint64 {
 // This is the new endpoint where daemon creates everything: invocation, sandbox, and starts runner.
 func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+	writeControlPlaneErr := func(status int, code, message, hint, clientRequestID string) {
+		s.writeControlPlaneError(w, status, requestID, code, message, hint, clientRequestID)
+	}
 
 	// Parse request body
 	var req ControlPlaneStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
 		return
 	}
 
 	// 1. Validate required fields
 	if req.ClientRequestID == "" {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "client_request_id is required", "provide a UUID for idempotency", "")
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST", "client_request_id is required", "provide a UUID for idempotency", "")
 		return
 	}
 	if req.RepoRoot == "" {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_root is required", "", req.ClientRequestID)
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_root is required", "", req.ClientRequestID)
 		return
 	}
 	if req.WorktreeRef == "" {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree_ref is required", "", req.ClientRequestID)
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST", "worktree_ref is required", "", req.ClientRequestID)
 		return
 	}
 	if req.Runner == "" {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "", req.ClientRequestID)
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "", req.ClientRequestID)
 		return
 	}
 	if req.Prompt == "" {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.EPromptRequired), "prompt is required for headless invocation", "", req.ClientRequestID)
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.EPromptRequired), "prompt is required for headless invocation", "", req.ClientRequestID)
 		return
 	}
 
 	// 2. Validate prompt size (max 256KB)
 	if len(req.Prompt) > MaxPromptSize {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.EPromptTooLarge),
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.EPromptTooLarge),
 			fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", MaxPromptSize, len(req.Prompt)),
 			"reduce prompt size or split into smaller chunks", req.ClientRequestID)
 		return
@@ -972,7 +999,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	// 3. Validate + canonicalize runner.
 	canonicalRunner, err := runners.Canonicalize(req.Runner)
 	if err != nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.ERunnerNotFound),
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.ERunnerNotFound),
 			err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "), req.ClientRequestID)
 		return
 	}
@@ -988,7 +1015,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		if code == errors.ERunnerNotFound {
 			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
 		}
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(code),
+		writeControlPlaneErr(http.StatusBadRequest, string(code),
 			err.Error(), hint, req.ClientRequestID)
 		return
 	}
@@ -996,7 +1023,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	// 5. Validate invocation name if provided
 	if req.InvocationName != "" {
 		if err := core.ValidateName(req.InvocationName); err != nil {
-			s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.EInvalidName),
+			writeControlPlaneErr(http.StatusBadRequest, string(errors.EInvalidName),
 				"invalid invocation name: "+err.Error(),
 				"names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID)
 			return
@@ -1006,20 +1033,20 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	// 6. Resolve repo_root to canonical absolute path
 	repoRoot, err := filepath.Abs(req.RepoRoot)
 	if err != nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST",
 			"failed to resolve repo_root: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 	repoRoot, err = filepath.EvalSymlinks(repoRoot)
 	if err != nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST",
 			"failed to resolve repo_root symlinks: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 
 	// 7. Recursion guard: reject if repo_root is inside agency-managed worktree
 	if isInsideAgencyManagedWorktree(repoRoot, s.Store.DataDir) {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
 			"repo_root is inside an agency-managed worktree",
 			"use the original repository, not a sandbox or integration worktree", req.ClientRequestID)
 		return
@@ -1028,7 +1055,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	// 8. Derive git root via git rev-parse --show-toplevel
 	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
 	if err != nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.ENoRepo),
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.ENoRepo),
 			"repo_root is not inside a git repository: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
@@ -1043,7 +1070,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		// Return the existing invocation
 		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, existingID)
 		if err == nil {
-			s.writeControlPlaneSuccess(w, existingID, meta, repoIdentity.RepoID, req.ClientRequestID, true)
+			s.writeControlPlaneSuccess(w, existingID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 			return
 		}
 		// If we can't read meta, fall through to create new (idempotency entry may be stale)
@@ -1051,7 +1078,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	// 11. Self-register repo if needed
 	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
-		s.writeControlPlaneError(w, http.StatusInternalServerError, "E_INTERNAL",
+		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
 			"failed to register repo: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
@@ -1064,20 +1091,20 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeControlPlaneError(w, http.StatusNotFound, string(code),
+		writeControlPlaneErr(http.StatusNotFound, string(code),
 			err.Error(), "run 'agency worktree ls' to see available worktrees", req.ClientRequestID)
 		return
 	}
 
 	if wtRecord.Broken || wtRecord.Meta == nil {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.EWorktreeBroken),
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.EWorktreeBroken),
 			"integration worktree exists but meta.json is unreadable",
 			"inspect or recreate the worktree", req.ClientRequestID)
 		return
 	}
 
 	if wtRecord.Meta.State != store.WorktreeStatePresent {
-		s.writeControlPlaneError(w, http.StatusBadRequest, string(errors.EWorktreeNotFound),
+		writeControlPlaneErr(http.StatusBadRequest, string(errors.EWorktreeNotFound),
 			"integration worktree is archived", "use a present (non-archived) integration worktree", req.ClientRequestID)
 		return
 	}
@@ -1085,7 +1112,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	// 13. Check invocation name uniqueness if name provided
 	if req.InvocationName != "" {
 		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
-			s.writeControlPlaneError(w, http.StatusConflict, string(errors.EInvocationNameExists),
+			writeControlPlaneErr(http.StatusConflict, string(errors.EInvocationNameExists),
 				err.Error(), "use a different name or wait for the existing invocation to complete", req.ClientRequestID)
 			return
 		}
@@ -1108,7 +1135,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeControlPlaneError(w, http.StatusInternalServerError, string(code),
+		writeControlPlaneErr(http.StatusInternalServerError, string(code),
 			err.Error(), "", req.ClientRequestID)
 		return
 	}
@@ -1117,7 +1144,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	logsDir := s.Store.SandboxLogsDir(repoIdentity.RepoID, createResult.InvocationID)
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
-		s.writeControlPlaneError(w, http.StatusInternalServerError, "E_INTERNAL",
+		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
 			"failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
@@ -1126,7 +1153,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	promptPath := s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
 	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
-		s.writeControlPlaneError(w, http.StatusInternalServerError, "E_INTERNAL",
+		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
 			"failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
@@ -1140,7 +1167,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		if code == "" {
 			code = errors.ERunnerStartFailed
 		}
-		s.writeControlPlaneError(w, http.StatusInternalServerError, string(code),
+		writeControlPlaneErr(http.StatusInternalServerError, string(code),
 			err.Error(), "", req.ClientRequestID)
 		return
 	}
@@ -1173,16 +1200,17 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	// 18. Read final meta and return success
 	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
-	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, false)
+	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
 }
 
 // writeControlPlaneError writes an error response for control plane endpoints.
-func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, code, message, hint, clientRequestID string) {
+func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
 	resp := ControlPlaneStartResponse{
 		OK:              false,
 		ErrorCode:       code,
 		Message:         message,
 		Hint:            hint,
+		RequestID:       requestID,
 		APIVersion:      APIVersion,
 		BuildVersion:    version.FullVersion(),
 		ClientRequestID: clientRequestID,
@@ -1191,7 +1219,7 @@ func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, code,
 }
 
 // writeControlPlaneSuccess writes a success response for control plane endpoints.
-func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID string, alreadyRunning bool) {
+func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
 	resp := ControlPlaneStartResponse{
 		OK:                    true,
 		InvocationID:          invocationID,
@@ -1199,6 +1227,7 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 		RepoID:                repoID,
 		IntegrationWorktreeID: meta.IntegrationWorktreeID,
 		AlreadyRunning:        alreadyRunning,
+		RequestID:             requestID,
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
 		ClientRequestID:       clientRequestID,
@@ -1579,16 +1608,15 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 // This endpoint creates and starts a headed (tmux) invocation end-to-end.
 func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
 
 	// Parse request body
 	var req ControlPlaneStartHeadedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "", "")
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "", requestID)
 		return
 	}
-
-	// Generate daemon-side request_id (included in all responses)
-	requestID := uuid.New().String()
 
 	// 1. Validate required fields
 	if req.ClientRequestID == "" {

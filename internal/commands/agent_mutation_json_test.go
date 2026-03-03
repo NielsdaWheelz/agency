@@ -29,6 +29,7 @@ func assertMutationEnvelopeShape(t *testing.T, payload map[string]any) {
 		"error_code",
 		"message",
 		"hint",
+		"request_id",
 		"api_version",
 		"build_version",
 		"client_request_id",
@@ -60,6 +61,30 @@ func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EPromptRequired), payload["error_code"])
 }
 
+func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "start-json-daemon-fail")
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+		WorktreeRef: "does-not-exist",
+		Runner:      "claude",
+		Headless:    true,
+		Prompt:      "hello",
+		JSON:        true,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json failure mode should not return a human-formatted error")
+
+	payload := decodeJSONMap(t, stdout.Bytes())
+	assertMutationEnvelopeShape(t, payload)
+	assert.Equal(t, false, payload["ok"])
+	assert.NotEmpty(t, payload["request_id"])
+}
+
 func TestAgentStop_JSONSuccessEnvelope(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "stop-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
@@ -81,6 +106,7 @@ func TestAgentStop_JSONSuccessEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentKill_JSONSuccessEnvelope(t *testing.T) {
@@ -104,11 +130,14 @@ func TestAgentKill_JSONSuccessEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentLand_JSONFailureEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "land-json")
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "land-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	invocationID := "20260302171800-lnd1"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -116,7 +145,7 @@ func TestAgentLand_JSONFailureEnvelope(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLand(context.Background(), cr, fsys, repoDir, AgentLandOpts{
-		InvocationRef: "does-not-exist",
+		InvocationRef: invocationID,
 		JSON:          true,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "json failure mode should not return a human-formatted error")
@@ -124,7 +153,8 @@ func TestAgentLand_JSONFailureEnvelope(t *testing.T) {
 	payload := decodeJSONMap(t, stdout.Bytes())
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, false, payload["ok"])
-	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
+	assert.Equal(t, string(errors.EInvocationStillRunning), payload["error_code"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
@@ -148,6 +178,7 @@ func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentChat_JSONFailurePromptRequiredEnvelope(t *testing.T) {
@@ -184,6 +215,7 @@ func TestAgentChat_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, false, payload["ok"])
 	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentChat_JSONFailureTransportEnvelope(t *testing.T) {
@@ -239,6 +271,7 @@ func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, false, payload["ok"])
 	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentRestart_JSONFailureTransportEnvelope(t *testing.T) {

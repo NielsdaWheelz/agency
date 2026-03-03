@@ -21,6 +21,7 @@ import (
 
 type mergeTestResponse struct {
 	OK                    bool   `json:"ok"`
+	RequestID             string `json:"request_id,omitempty"`
 	ErrorCode             string `json:"error_code,omitempty"`
 	Message               string `json:"message,omitempty"`
 	Hint                  string `json:"hint,omitempty"`
@@ -298,6 +299,54 @@ func TestHandleMerge_LogWriteFailureReturnsPersistFailed(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
 	assert.Equal(t, string(errors.EPersistFailed), resp.ErrorCode)
+}
+
+func TestHandleMerge_ResponseIncludesRequestIDOnSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+
+	t.Run("failure", func(t *testing.T) {
+		t.Parallel()
+
+		env := setupReadTestEnv(t)
+		w := env.doInvocationRequestWithBody(
+			t,
+			http.MethodPost,
+			"/invocations/inv-1/merge?repo_id="+env.RepoID,
+			[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+		)
+		require.Equal(t, http.StatusConflict, w.Code)
+
+		var resp mergeTestResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.False(t, resp.OK)
+		assert.NotEmpty(t, resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
+	})
+
+	t.Run("success", func(t *testing.T) {
+		t.Parallel()
+
+		env := setupReadTestEnv(t)
+		fakeRunner := testutil.NewFakeCommandRunner()
+		env.Server.Runner = fakeRunner
+
+		_, _, _ = setupMergeReadyInvocation(t, env, "")
+		setMergeHappyRunnerResponses(fakeRunner, "agency/alpha")
+
+		w := env.doInvocationRequestWithBody(
+			t,
+			http.MethodPost,
+			"/invocations/inv-1/merge?repo_id="+env.RepoID,
+			[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+		)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp mergeTestResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.True(t, resp.OK)
+		assert.NotEmpty(t, resp.RequestID)
+		assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
+	})
 }
 
 func TestHandleMerge_VerifyEnvUsesRepoAndWorkspaceRoots(t *testing.T) {

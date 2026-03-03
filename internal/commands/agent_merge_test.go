@@ -139,6 +139,59 @@ func TestAgentMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	assert.Equal(t, float64(77), payload["pr_number"])
 	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", payload["pr_url"])
 	assert.Equal(t, "squash", payload["strategy"])
+	assert.NotEmpty(t, payload["request_id"])
+}
+
+func TestAgentMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json-failure")
+	invocationID := "20260302202000-merge-json-failure"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
+	writeAgentMergeScriptsAndConfig(t, integrationTree)
+	writeAgentMergeRepoRecord(t, dataDir, repoID, repoDir)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFinished
+		meta.LandingStatus = store.LandingStatusLanded
+		meta.IntegrationWorktreeID = worktreeID
+	}))
+
+	branch := "agency/merge-json-failure-abcd"
+	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+	daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+	daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+		Stdout:   `[]`,
+		ExitCode: 0,
+	}
+	daemonRunner.Responses["gh pr list --head "+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+		Stdout:   `[]`,
+		ExitCode: 0,
+	}
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentMerge(context.Background(), cr, fsys, repoDir, AgentMergeOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		Yes:             true,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "json mode should emit deterministic envelope for daemon-declared failure")
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	assert.Equal(t, false, payload["ok"])
+	assert.Equal(t, string(errors.ENoPR), payload["error_code"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func writeAgentMergeScriptsAndConfig(t *testing.T, integrationTree string) {

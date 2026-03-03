@@ -66,3 +66,31 @@ func TestHandleLandDiscardRouting(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleLandDiscard_ErrorResponseIncludesRequestID(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	tests := []string{
+		"/invocations/test-inv/land",
+		"/invocations/test-inv/discard",
+	}
+	for _, path := range tests {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			w := httptest.NewRecorder()
+			s.handleInvocations(w, req)
+
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&payload), "failed to decode response")
+			requestID, ok := payload["request_id"].(string)
+			require.True(t, ok, "request_id must be present")
+			assert.NotEmpty(t, requestID)
+			assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+		})
+	}
+}

@@ -154,6 +154,27 @@ func TestHandleCheckpointApply_InvocationNotFound(t *testing.T) {
 	assert.Equal(t, "E_INVOCATION_NOT_FOUND", resp.ErrorCode)
 }
 
+func TestHandleCheckpointApply_ErrorResponseIncludesRequestID(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	body, _ := json.Marshal(CheckpointApplyRequest{CheckpointID: 1})
+	req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/checkpoints/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleCheckpointApply(w, req, "test-inv")
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&payload), "failed to decode response")
+	requestID, ok := payload["request_id"].(string)
+	require.True(t, ok, "request_id must be present")
+	assert.NotEmpty(t, requestID)
+	assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+}
+
 // setupInvocationMeta is a helper that writes an invocation meta.json for testing.
 func setupInvocationMeta(t *testing.T, st *store.Store, repoID, invocationID string, mode store.RunnerMode, status store.InvocationStatus) {
 	t.Helper()

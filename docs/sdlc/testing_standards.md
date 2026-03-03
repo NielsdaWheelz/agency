@@ -409,8 +409,10 @@ make test        # go test ./...
 make test-race   # go test -race -count=1 ./...
 make lint        # golangci-lint run
 make fmt-check   # gofmt formatting check
-make e2e         # E2E entrypoint (GH-backed when token exists, else local smoke)
-make e2e-gh      # GitHub E2E only (requires GH_TOKEN or GITHUB_TOKEN)
+make e2e         # E2E entrypoint (always runs S5 failure matrix; GH happy path when token exists, else local smoke)
+make e2e-gh      # run both S5 E2E suites (requires GH_TOKEN or GITHUB_TOKEN)
+make e2e-s5-happy # GH-backed S5 happy-path E2E (requires GH token)
+make e2e-s5-failure-matrix # S5 failure-matrix E2E (no GH token)
 make e2e-local   # local black-box CLI E2E smoke tests
 ```
 
@@ -418,15 +420,18 @@ Command semantics:
 
 - `make check`: fast local feedback loop for routine development (static checks + tests + build, no race detector, no E2E).
 - `make verify`: full verification before merge (everything including race detector, E2E, and completions).
-- `make e2e`: E2E entrypoint; runs GitHub-backed E2E when token is present, otherwise runs local CLI smoke E2E.
-- `make e2e-gh`: explicit GitHub-backed E2E (requires `GH_TOKEN` or `GITHUB_TOKEN`; used selectively, not in every CI run).
+- `make e2e`: E2E entrypoint; always runs the deterministic S5 failure matrix, then runs GH-backed S5 happy path when token is present (else local smoke E2E).
+- `make e2e-gh`: runs both S5 suites (failure matrix + GH happy path); requires `GH_TOKEN` or `GITHUB_TOKEN`.
+- `make e2e-s5-happy`: runs only the GH-backed S5 happy-path suite.
+- `make e2e-s5-failure-matrix`: runs only the deterministic S5 failure-matrix suite.
 - `make e2e-local`: local black-box CLI E2E matrix coverage without GitHub dependency.
 
 ### CI Shape
 
 1. `go test ./...` on every push and PR.
-2. E2E job runs conditionally when `AGENCY_GH_TOKEN` secret is configured.
-3. E2E runs a single targeted test (`TestGHE2EAgentPRSyncMerge`) with `-count=1` under `-tags=e2e`.
+2. E2E job always runs deterministic S5 failure-matrix coverage (`TestS5E2EAgentPRSyncMergeFailureMatrix`) under `-tags=e2e`.
+3. GH-backed S5 happy-path E2E (`TestGHE2EAgentPRSyncMerge`) runs conditionally when `AGENCY_GH_TOKEN` is configured.
+4. Happy-path and failure-matrix suites run in separate CI steps for attribution.
 
 ## 13. Golden File / Snapshot Tests
 

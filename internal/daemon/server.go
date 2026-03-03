@@ -586,10 +586,23 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func setRequestIDHeader(w http.ResponseWriter, requestID string) {
+	if strings.TrimSpace(requestID) == "" {
+		return
+	}
+	w.Header().Set("X-Request-ID", requestID)
+}
+
 // writeError writes an error response.
 func (s *Server) writeError(w http.ResponseWriter, status int, code, message, hint string) {
+	s.writeErrorWithRequestID(w, status, uuid.New().String(), code, message, hint)
+}
+
+func (s *Server) writeErrorWithRequestID(w http.ResponseWriter, status int, requestID, code, message, hint string) {
+	setRequestIDHeader(w, requestID)
 	resp := ErrorResponse{
 		OK:        false,
+		RequestID: requestID,
 		ErrorCode: code,
 		Message:   message,
 		Hint:      hint,
