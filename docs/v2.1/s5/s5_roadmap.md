@@ -1,27 +1,23 @@
 # Slice S5: Invocation-Centric Review + PR + Merge — PR Roadmap
 
-### PR-01: daemon-backed invocation review + PR sync (`agent review`, `agent pr sync`)
-- **goal**: establish canonical invocation-scoped review and PR sync flows with deterministic human/JSON contracts.
-- **builds on**: Slice S4 merged state (`agent checks` readiness model, daemon API envelopes, runner-capability and mutation JSON baselines).
-- **acceptance**:
-  - `agency agent review <invocation_ref>` (human and `--json`) returns one deterministic readiness verdict with typed blocking reasons, navigation hints, and explicit PR progression eligibility for that invocation context.
-  - `agency agent pr sync <invocation_ref>` resolves invocation -> integration worktree deterministically, pushes the branch, and creates/updates one branch-scoped PR identity with stable machine-readable identity/outcome fields.
-  - command validation is deterministic and typed for repo resolution, dirty-worktree policy, and force-with-lease policy.
-  - report/body processing for PR sync is bounded by contract limits; over-limit reads or generation paths fail or degrade deterministically (no unbounded in-memory reads).
-  - canonical read/mutation behavior for these surfaces is daemon-mediated, not ad hoc CLI-local run-store orchestration.
-- **non-goals**: no invocation-scoped merge execution yet; no removal of legacy `push`/`merge` compatibility commands.
+Current status: canonical daemon-backed `agent review`, `agent pr sync`, and `agent merge` flows are implemented; PR-01 and PR-02 behavior is largely present in `main`.
 
-### PR-02: invocation-scoped merge contract + durability + workflow e2e (planned after PR-01 merges)
-- **goal**: complete invocation-scoped review -> PR -> merge progression with script-safe confirmation semantics and merge-path hardening.
-- **builds on**: PR-01.
+### PR-03: compatibility-path safety parity (`push`/`merge` hardening)
+- **goal**: close remaining S5 safety debt in legacy compatibility commands so non-canonical paths cannot violate S5 invariants.
+- **builds on**: merged PR-02 state.
 - **acceptance**:
-  - `agency agent merge <invocation_ref>` supports interactive and non-interactive confirmation paths with deterministic validation for merge strategy exclusivity and confirmation mode; non-interactive confirmation is standardized on `--yes`.
-  - merge prechecks, verify execution, merge execution, and post-merge lifecycle actions run as one invocation-scoped flow with stable `--json` result/error contracts.
-  - merge-log persistence failures surface as typed operation failures; successful merge logs use private permissions aligned with v2.1 safety expectations.
-  - verify environment assembly uses deterministic and correct root semantics (`repo root` = actual repository root; workspace root = integration worktree target).
-  - end-to-end coverage asserts happy path and key failure paths (not ready, missing/closed PR, mergeability failure, confirmation failure, bounded-input rejection, log-write failure) with deterministic outcomes.
-- **non-goals**: no reports-v2 migration or broad CLI ergonomics standardization beyond S5 canonical confirmation behavior (Slice S6).
+  - legacy `agency push` report/body handling is bounded (no unbounded report reads or fallback generation from unbounded git output).
+  - legacy `agency merge` surfaces merge-log write failures as typed errors and persists merge logs with private permissions.
+  - legacy merge verify environment uses correct root semantics (`AGENCY_REPO_ROOT` = repository root, `AGENCY_WORKSPACE_ROOT` = integration worktree path).
+  - targeted unit/integration tests cover oversized-input handling and merge-log persistence failure behavior in compatibility flows.
+- **non-goals**: no removal of legacy `push`/`merge` commands; no reports-v2 migration (Slice S6).
 
-### Compatibility policy (applies across S5 PRs)
-- `agent review` is canonical for invocation readiness/progression assessment.
-- `agent checks` is removed from the S5 command surface; compatibility may exist only in internal code paths during migration.
+### PR-04: contract closure + failure-path e2e matrix (planned after PR-03 merges)
+- **goal**: complete S5 contract/test closure for automation-safe invocation review -> PR -> merge workflows.
+- **builds on**: PR-03.
+- **acceptance**:
+  - `docs/contracts/daemon_api.md` explicitly documents invocation review/PR-sync/merge endpoints and deterministic error envelopes.
+  - invocation-scoped mutation responses include stable request-correlation fields alongside typed `error_code`/`message`/`hint` contracts.
+  - e2e coverage expands beyond happy path to assert key failures: not-ready invocation, missing/closed PR, mergeability failure, confirmation failure, bounded-input handling, and merge-log persistence failure.
+  - CI/docs wiring for S5 e2e clearly distinguishes happy-path vs failure-matrix runs.
+- **non-goals**: no new product surface beyond S5 command family; no merge queue/TUI/GUI expansion.
