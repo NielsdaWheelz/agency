@@ -17,7 +17,7 @@ Current status: canonical daemon-backed `agent review`, `agent pr sync`, and `ag
 - **builds on**: PR-03.
 - **acceptance**:
   - `docs/contracts/daemon_api.md` explicitly documents invocation review/PR-sync/merge endpoints and deterministic error envelopes.
-  - invocation-scoped mutation responses include stable request-correlation fields alongside typed `error_code`/`message`/`hint` contracts.
+  - invocation-scoped mutation responses include daemon-issued `request_id` correlation alongside typed `error_code`/`message`/`hint` contracts; `client_request_id` remains reserved for idempotency semantics.
   - e2e coverage expands beyond happy path to assert key failures: not-ready invocation, missing/closed PR, mergeability failure, confirmation failure, bounded-input handling, and merge-log persistence failure.
   - CI/docs wiring for S5 e2e clearly distinguishes happy-path vs failure-matrix runs.
 - **non-goals**: no new product surface beyond S5 command family; no merge queue/TUI/GUI expansion.
