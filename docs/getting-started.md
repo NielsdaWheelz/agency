@@ -282,7 +282,12 @@ what happened:
 1. resolved invocation -> integration worktree branch
 2. pushed the branch to origin
 3. created or updated the branch-scoped GitHub PR
-4. synced `.agency/report.md` (or bounded fallback body) to PR body
+4. evaluated reports v2 canonically (`.agency/report.json` authoritative over `.agency/report.md`)
+5. synced canonical report body (or deterministic bounded fallback body in compatibility mode) to PR body
+
+headless vs headed report behavior:
+- headless mode: strict fail-closed report validation with typed errors
+- headed mode: compatibility-first fallback with explicit diagnostics
 
 policy flags:
 
@@ -308,8 +313,9 @@ what happened:
 1. resolved invocation -> integration worktree -> branch -> PR identity
 2. ran `scripts/agency_verify.sh` in invocation-scoped non-interactive mode
 3. merged the PR via `gh pr merge` with your selected strategy
-4. persisted verify/merge logs under invocation state for auditability
-5. appended merge lifecycle events to invocation event history
+4. evaluated the same reports-v2 contract used by PR sync (strict in headless, compatibility diagnostics in headed)
+5. persisted verify/merge logs under invocation state for auditability
+6. appended merge lifecycle events to invocation event history
 
 merge options:
 ```bash

@@ -136,33 +136,36 @@ type agentMutationEnvelope struct {
 	BuildVersion    string `json:"build_version"`
 	ClientRequestID string `json:"client_request_id"`
 
-	InvocationID            string             `json:"invocation_id,omitempty"`
-	RepoID                  string             `json:"repo_id,omitempty"`
-	IntegrationWorktreeID   string             `json:"integration_worktree_id,omitempty"`
-	IntegrationWorktreeName string             `json:"integration_worktree_name,omitempty"`
-	SandboxPath             string             `json:"sandbox_path,omitempty"`
-	LogPaths                *daemon.LogPaths   `json:"log_paths,omitempty"`
-	PID                     int                `json:"pid,omitempty"`
-	PGID                    int                `json:"pgid,omitempty"`
-	DaemonInstanceID        string             `json:"daemon_instance_id,omitempty"`
-	AlreadyRunning          bool               `json:"already_running,omitempty"`
-	AlreadyApplied          bool               `json:"already_applied,omitempty"`
-	TimelineEntryID         string             `json:"timeline_entry_id,omitempty"`
-	CheckpointID            int                `json:"checkpoint_id,omitempty"`
-	SnapshotCommit          string             `json:"snapshot_commit,omitempty"`
-	RestoredAt              string             `json:"restored_at,omitempty"`
-	AppliedMode             daemon.LandingMode `json:"applied_mode,omitempty"`
-	IntegrationHeadBefore   string             `json:"integration_head_before,omitempty"`
-	IntegrationHeadAfter    string             `json:"integration_head_after,omitempty"`
-	CommitsLanded           int                `json:"commits_landed,omitempty"`
-	Branch                  string             `json:"branch,omitempty"`
-	PRNumber                int                `json:"pr_number,omitempty"`
-	PRURL                   string             `json:"pr_url,omitempty"`
-	PRAction                string             `json:"pr_action,omitempty"`
-	Strategy                string             `json:"strategy,omitempty"`
-	DeleteBranch            bool               `json:"delete_branch,omitempty"`
-	MergeLogPath            string             `json:"merge_log_path,omitempty"`
-	VerifyLogPath           string             `json:"verify_log_path,omitempty"`
+	InvocationID            string                    `json:"invocation_id,omitempty"`
+	RepoID                  string                    `json:"repo_id,omitempty"`
+	IntegrationWorktreeID   string                    `json:"integration_worktree_id,omitempty"`
+	IntegrationWorktreeName string                    `json:"integration_worktree_name,omitempty"`
+	SandboxPath             string                    `json:"sandbox_path,omitempty"`
+	LogPaths                *daemon.LogPaths          `json:"log_paths,omitempty"`
+	PID                     int                       `json:"pid,omitempty"`
+	PGID                    int                       `json:"pgid,omitempty"`
+	DaemonInstanceID        string                    `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning          bool                      `json:"already_running,omitempty"`
+	AlreadyApplied          bool                      `json:"already_applied,omitempty"`
+	TimelineEntryID         string                    `json:"timeline_entry_id,omitempty"`
+	CheckpointID            int                       `json:"checkpoint_id,omitempty"`
+	SnapshotCommit          string                    `json:"snapshot_commit,omitempty"`
+	RestoredAt              string                    `json:"restored_at,omitempty"`
+	AppliedMode             daemon.LandingMode        `json:"applied_mode,omitempty"`
+	IntegrationHeadBefore   string                    `json:"integration_head_before,omitempty"`
+	IntegrationHeadAfter    string                    `json:"integration_head_after,omitempty"`
+	CommitsLanded           int                       `json:"commits_landed,omitempty"`
+	Branch                  string                    `json:"branch,omitempty"`
+	PRNumber                int                       `json:"pr_number,omitempty"`
+	PRURL                   string                    `json:"pr_url,omitempty"`
+	PRAction                string                    `json:"pr_action,omitempty"`
+	Strategy                string                    `json:"strategy,omitempty"`
+	DeleteBranch            bool                      `json:"delete_branch,omitempty"`
+	MergeLogPath            string                    `json:"merge_log_path,omitempty"`
+	VerifyLogPath           string                    `json:"verify_log_path,omitempty"`
+	ReportSource            string                    `json:"report_source,omitempty"`
+	ReportFallbackUsed      bool                      `json:"report_fallback_used,omitempty"`
+	ReportDiagnostics       []daemon.ReportDiagnostic `json:"report_diagnostics,omitempty"`
 }
 
 func newAgentMutationEnvelope() agentMutationEnvelope {
@@ -1133,6 +1136,9 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 	if review.HowToTest != "" {
 		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", review.HowToTest)
 	}
+	if review.ReportSource != "" {
+		_, _ = fmt.Fprintf(w, "report_source:        %s\n", review.ReportSource)
+	}
 
 	_, _ = fmt.Fprintf(w, "\nBlocking reasons:\n")
 	if len(review.BlockingReasons) == 0 {
@@ -1143,6 +1149,13 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 			if strings.TrimSpace(reason.Hint) != "" {
 				_, _ = fmt.Fprintf(w, "      hint: %s\n", reason.Hint)
 			}
+		}
+	}
+
+	if len(review.ReportDiagnostics) > 0 {
+		_, _ = fmt.Fprintf(w, "\nReport diagnostics:\n")
+		for _, diagnostic := range review.ReportDiagnostics {
+			_, _ = fmt.Fprintf(w, "  - [%s] %s\n", diagnostic.Code, diagnostic.Message)
 		}
 	}
 
@@ -1247,6 +1260,9 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 			envelope.PRNumber = resp.PRNumber
 			envelope.PRURL = resp.PRURL
 			envelope.PRAction = resp.PRAction
+			envelope.ReportSource = resp.ReportSource
+			envelope.ReportFallbackUsed = resp.ReportFallbackUsed
+			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -1255,6 +1271,9 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 			}
 			envelope.RequestID = resp.RequestID
 		})
+	}
+	for _, diagnostic := range resp.ReportDiagnostics {
+		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
 	}
 
 	_, _ = fmt.Fprintln(stdout, "PR sync complete")
@@ -1415,6 +1434,9 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			envelope.DeleteBranch = resp.DeleteBranch
 			envelope.MergeLogPath = resp.MergeLogPath
 			envelope.VerifyLogPath = resp.VerifyLogPath
+			envelope.ReportSource = resp.ReportSource
+			envelope.ReportFallbackUsed = resp.ReportFallbackUsed
+			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -1423,6 +1445,9 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			}
 			envelope.RequestID = resp.RequestID
 		})
+	}
+	for _, diagnostic := range resp.ReportDiagnostics {
+		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
 	}
 
 	_, _ = fmt.Fprintln(stdout, "merge complete")

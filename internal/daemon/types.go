@@ -473,6 +473,13 @@ type PRSyncRequest struct {
 	ForceWithLease bool `json:"force_with_lease,omitempty"`
 }
 
+// ReportDiagnostic is an explicit machine-readable report contract diagnostic.
+type ReportDiagnostic struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Source  string `json:"source,omitempty"`
+}
+
 // PRSyncResponse is the response body for POST /invocations/{id}/pr/sync.
 type PRSyncResponse struct {
 	OK           bool   `json:"ok"`
@@ -481,13 +488,16 @@ type PRSyncResponse struct {
 	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
-	InvocationID          string `json:"invocation_id,omitempty"`
-	RepoID                string `json:"repo_id,omitempty"`
-	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
-	Branch                string `json:"branch,omitempty"`
-	PRNumber              int    `json:"pr_number,omitempty"`
-	PRURL                 string `json:"pr_url,omitempty"`
-	PRAction              string `json:"pr_action,omitempty"` // created|updated
+	InvocationID          string             `json:"invocation_id,omitempty"`
+	RepoID                string             `json:"repo_id,omitempty"`
+	IntegrationWorktreeID string             `json:"integration_worktree_id,omitempty"`
+	Branch                string             `json:"branch,omitempty"`
+	PRNumber              int                `json:"pr_number,omitempty"`
+	PRURL                 string             `json:"pr_url,omitempty"`
+	PRAction              string             `json:"pr_action,omitempty"` // created|updated
+	ReportSource          string             `json:"report_source,omitempty"`
+	ReportFallbackUsed    bool               `json:"report_fallback_used,omitempty"`
+	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
 
 	// Error fields (only set when OK is false)
 	ErrorCode string `json:"error_code,omitempty"`
@@ -518,16 +528,19 @@ type MergeResponse struct {
 	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
-	InvocationID          string `json:"invocation_id,omitempty"`
-	RepoID                string `json:"repo_id,omitempty"`
-	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
-	Branch                string `json:"branch,omitempty"`
-	PRNumber              int    `json:"pr_number,omitempty"`
-	PRURL                 string `json:"pr_url,omitempty"`
-	Strategy              string `json:"strategy,omitempty"`
-	DeleteBranch          bool   `json:"delete_branch,omitempty"`
-	MergeLogPath          string `json:"merge_log_path,omitempty"`
-	VerifyLogPath         string `json:"verify_log_path,omitempty"`
+	InvocationID          string             `json:"invocation_id,omitempty"`
+	RepoID                string             `json:"repo_id,omitempty"`
+	IntegrationWorktreeID string             `json:"integration_worktree_id,omitempty"`
+	Branch                string             `json:"branch,omitempty"`
+	PRNumber              int                `json:"pr_number,omitempty"`
+	PRURL                 string             `json:"pr_url,omitempty"`
+	Strategy              string             `json:"strategy,omitempty"`
+	DeleteBranch          bool               `json:"delete_branch,omitempty"`
+	MergeLogPath          string             `json:"merge_log_path,omitempty"`
+	VerifyLogPath         string             `json:"verify_log_path,omitempty"`
+	ReportSource          string             `json:"report_source,omitempty"`
+	ReportFallbackUsed    bool               `json:"report_fallback_used,omitempty"`
+	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
 
 	// Error fields (only set when OK is false)
 	ErrorCode string `json:"error_code,omitempty"`

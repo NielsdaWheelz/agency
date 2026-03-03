@@ -146,6 +146,7 @@ response envelope: `APIResponse` with:
 - `ok`, `api_version`, `build_version`, `git_sha`, `request_id`, `data`
 - `data` is `InvocationReviewData`
 - required review data fields: `invocation_id`, `repo_id`, `status`, `display_status`, `landing_status`, `readiness`, `ready`, `pr_sync_eligible`, `blocking_reasons[]`, `navigation`
+- additive report fields (headless strict report contract): `report_source`, `report_diagnostics[]`
 
 error envelope:
 - `ok=false`, `request_id`, `error_code`, `message`, `hint`, optional `details`
@@ -159,8 +160,12 @@ request: `PRSyncRequest`
 - optional: `allow_dirty`, `force_with_lease`
 
 response: `PRSyncResponse`
-- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `pr_action`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `pr_action`, `report_source`, `report_fallback_used`, `report_diagnostics[]`
 - error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
+
+report contract behavior:
+- headless mode is strict and fail-closed: report contract violations return typed deterministic errors (`E_REPORT_MISSING`, `E_REPORT_MALFORMED`, `E_REPORT_OVERSIZED`, `E_REPORT_SCHEMA_INCOMPATIBLE`, `E_REPORT_INCOMPLETE`)
+- headed mode is compatibility-first: progression remains allowed with fallback body generation and explicit report diagnostics
 
 ### POST /invocations/{ref}/merge
 
@@ -172,8 +177,12 @@ request: `MergeRequest`
 - optional: `strategy` (`squash` default, `merge`, `rebase`), `no_delete_branch`
 
 response: `MergeResponse`
-- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `strategy`, `delete_branch`, `merge_log_path`, `verify_log_path`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `strategy`, `delete_branch`, `merge_log_path`, `verify_log_path`, `report_source`, `report_fallback_used`, `report_diagnostics[]`
 - error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
+
+report contract behavior:
+- headless mode is strict and fail-closed: report contract violations return typed deterministic errors (`E_REPORT_MISSING`, `E_REPORT_MALFORMED`, `E_REPORT_OVERSIZED`, `E_REPORT_SCHEMA_INCOMPATIBLE`, `E_REPORT_INCOMPLETE`)
+- headed mode is compatibility-first: merge progression remains allowed and diagnostics are returned in success payload when fallback behavior is used
 
 ### POST /worktrees/create
 

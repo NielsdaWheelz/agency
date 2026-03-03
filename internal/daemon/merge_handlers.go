@@ -18,6 +18,7 @@ import (
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
+	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/verify"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -47,13 +48,16 @@ type normalizedMergeRequest struct {
 }
 
 type mergeResult struct {
-	Branch       string
-	PRNumber     int
-	PRURL        string
-	Strategy     mergeStrategy
-	DeleteBranch bool
-	MergeLogPath string
-	VerifyLog    string
+	Branch             string
+	PRNumber           int
+	PRURL              string
+	Strategy           mergeStrategy
+	DeleteBranch       bool
+	MergeLogPath       string
+	VerifyLog          string
+	ReportSource       string
+	ReportFallbackUsed bool
+	ReportDiagnostics  []report.Diagnostic
 }
 
 type mergePRView struct {
@@ -249,6 +253,9 @@ func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationR
 		DeleteBranch:          result.DeleteBranch,
 		MergeLogPath:          result.MergeLogPath,
 		VerifyLogPath:         result.VerifyLog,
+		ReportSource:          result.ReportSource,
+		ReportFallbackUsed:    result.ReportFallbackUsed,
+		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -303,6 +310,34 @@ func (s *Server) runMerge(
 	wtMeta *store.IntegrationWorktreeMeta,
 	req normalizedMergeRequest,
 ) (*mergeResult, error) {
+	reportSource := ""
+	reportFallbackUsed := false
+	var reportDiagnostics []report.Diagnostic
+
+	reportResolution, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
+		MaxBytes: report.MaxPRBodyReportBytes,
+	})
+	if reportErr != nil {
+		return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
+	}
+	if reportViolation != nil {
+		if record.Meta.Mode == store.RunnerModeHeadless {
+			return nil, reportViolationToAgencyError(reportViolation)
+		}
+		reportSource = "fallback"
+		reportFallbackUsed = true
+		reportDiagnostics = []report.Diagnostic{
+			{
+				Code:    string(reportViolation.Code),
+				Message: reportViolation.Message,
+				Source:  string(reportViolation.Source),
+			},
+		}
+	} else if reportResolution != nil {
+		reportSource = string(reportResolution.Source)
+		reportDiagnostics = reportResolution.Diagnostics
+	}
+
 	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
 	if err != nil {
 		return nil, err
@@ -399,13 +434,16 @@ func (s *Server) runMerge(
 	}
 
 	return &mergeResult{
-		Branch:       wtMeta.Branch,
-		PRNumber:     pr.Number,
-		PRURL:        pr.URL,
-		Strategy:     req.Strategy,
-		DeleteBranch: req.DeleteBranch,
-		MergeLogPath: mergeLogPath,
-		VerifyLog:    verifyLogPath,
+		Branch:             wtMeta.Branch,
+		PRNumber:           pr.Number,
+		PRURL:              pr.URL,
+		Strategy:           req.Strategy,
+		DeleteBranch:       req.DeleteBranch,
+		MergeLogPath:       mergeLogPath,
+		VerifyLog:          verifyLogPath,
+		ReportSource:       reportSource,
+		ReportFallbackUsed: reportFallbackUsed,
+		ReportDiagnostics:  reportDiagnostics,
 	}, nil
 }
 
@@ -809,6 +847,8 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 	case errors.EGHPRMergeFailed, errors.EGHPRViewFailed:
 		return http.StatusConflict
 	case errors.EScriptFailed:
+		return http.StatusConflict
+	case errors.EReportMissing, errors.EReportMalformed, errors.EReportOversized, errors.EReportSchemaIncompatible, errors.EReportIncomplete:
 		return http.StatusConflict
 	case errors.EInvalidArgument, errors.EGHRepoParseFailed, errors.EGhNotInstalled, errors.EGhNotAuthenticated:
 		return http.StatusBadRequest

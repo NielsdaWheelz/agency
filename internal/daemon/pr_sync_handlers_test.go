@@ -296,6 +296,8 @@ func TestHandlePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	assert.Equal(t, "agency/alpha", resp.Branch)
 	assert.Equal(t, "updated", resp.PRAction)
 	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", resp.PRURL)
+	assert.Equal(t, "report_markdown", resp.ReportSource)
+	assert.False(t, resp.ReportFallbackUsed)
 	assert.Contains(t, fakeRunner.Calls, "git push --force-with-lease -u origin agency/alpha")
 }
 
@@ -359,6 +361,140 @@ func TestHandlePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *testing.T)
 		assert.NotEmpty(t, requestID)
 		assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
 	})
+}
+
+func TestHandlePRSync_HeadlessStrictReportContractFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		prepare  func(t *testing.T, treePath string)
+		wantCode errors.Code
+	}{
+		{
+			name: "missing report artifacts",
+			prepare: func(t *testing.T, treePath string) {
+				t.Helper()
+				agencyDir := filepath.Join(treePath, ".agency")
+				require.NoError(t, os.Remove(filepath.Join(agencyDir, "report.md")))
+				_ = os.Remove(filepath.Join(agencyDir, "report.json"))
+			},
+			wantCode: errors.EReportMissing,
+		},
+		{
+			name: "malformed json is authoritative failure",
+			prepare: func(t *testing.T, treePath string) {
+				t.Helper()
+				agencyDir := filepath.Join(treePath, ".agency")
+				require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.json"), []byte(`{"schema_version":"1.0","summary":`), 0o644))
+			},
+			wantCode: errors.EReportMalformed,
+		},
+		{
+			name: "oversized json is deterministic failure",
+			prepare: func(t *testing.T, treePath string) {
+				t.Helper()
+				agencyDir := filepath.Join(treePath, ".agency")
+				require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.json"), bytes.Repeat([]byte("x"), prSyncMaxReportBytes+1), 0o644))
+			},
+			wantCode: errors.EReportOversized,
+		},
+		{
+			name: "schema incompatible json is deterministic failure",
+			prepare: func(t *testing.T, treePath string) {
+				t.Helper()
+				agencyDir := filepath.Join(treePath, ".agency")
+				require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.json"), []byte(`{
+  "schema_version": "9.9",
+  "summary": "summary",
+  "how_to_test": "go test ./..."
+}`), 0o644))
+			},
+			wantCode: errors.EReportSchemaIncompatible,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := setupReadTestEnv(t)
+			fakeRunner := testutil.NewFakeCommandRunner()
+			env.Server.Runner = fakeRunner
+
+			treePath, _ := setupPRSyncReadyInvocation(t, env)
+			tc.prepare(t, treePath)
+
+			fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+			fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+			fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+			fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
+			fakeRunner.Responses["git show-ref --verify --quiet refs/heads/main"] = testutil.FakeResponse{ExitCode: 0}
+			fakeRunner.Responses["git rev-list --count main..agency/alpha"] = testutil.FakeResponse{Stdout: "1\n", ExitCode: 0}
+
+			w := env.doInvocationRequestWithBody(
+				t,
+				http.MethodPost,
+				"/invocations/inv-1/pr/sync?repo_id="+env.RepoID,
+				[]byte(`{}`),
+			)
+			require.Equal(t, http.StatusConflict, w.Code)
+
+			var resp PRSyncResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.False(t, resp.OK)
+			assert.Equal(t, string(tc.wantCode), resp.ErrorCode)
+		})
+	}
+}
+
+func TestHandlePRSync_HeadedCompatibilityFallsBackWhenReportInvalid(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	treePath, _ := setupPRSyncReadyInvocation(t, env)
+	agencyDir := filepath.Join(treePath, ".agency")
+	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.json"), []byte(`{"schema_version":"1.0","summary":`), 0o644))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Mode = store.RunnerModeHeaded
+	}))
+
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+	fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+	fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
+	fakeRunner.Responses["git show-ref --verify --quiet refs/heads/main"] = testutil.FakeResponse{ExitCode: 0}
+	fakeRunner.Responses["git rev-list --count main..agency/alpha"] = testutil.FakeResponse{Stdout: "1\n", ExitCode: 0}
+	fakeRunner.Responses["git push -u origin agency/alpha"] = testutil.FakeResponse{ExitCode: 0}
+	fakeRunner.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n", ExitCode: 0}
+	fakeRunner.Responses["gh pr list --head test:agency/alpha --state all --json number,url,state"] = testutil.FakeResponse{
+		Stdout:   `[{"number":88,"url":"https://github.com/test/agent-repo/pull/88","state":"OPEN"}]`,
+		ExitCode: 0,
+	}
+	fallbackPath := filepath.Join(agencyDir, "pr_sync_fallback.md")
+	fakeRunner.Responses["gh pr edit 88 --body-file "+fallbackPath] = testutil.FakeResponse{ExitCode: 0}
+
+	w := env.doInvocationRequestWithBody(
+		t,
+		http.MethodPost,
+		"/invocations/inv-1/pr/sync?repo_id="+env.RepoID,
+		[]byte(`{}`),
+	)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp PRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.OK)
+	assert.Equal(t, "updated", resp.PRAction)
+	assert.Equal(t, "fallback", resp.ReportSource)
+	assert.True(t, resp.ReportFallbackUsed)
+	require.NotEmpty(t, resp.ReportDiagnostics)
+	assert.Equal(t, "report_malformed", resp.ReportDiagnostics[0].Code)
+	assert.Contains(t, fakeRunner.Calls, "gh pr edit 88 --body-file "+fallbackPath)
 }
 
 func setupPRSyncReadyInvocation(t *testing.T, env *readTestEnv) (string, string) {

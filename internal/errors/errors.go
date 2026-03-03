@@ -62,18 +62,22 @@ const (
 	ERepoLocked     Code = "E_REPO_LOCKED"      // another agency process holds the lock
 
 	// Slice 3 push/PR error codes
-	EUnsupportedOriginHost Code = "E_UNSUPPORTED_ORIGIN_HOST" // origin is not github.com
-	ENoOrigin              Code = "E_NO_ORIGIN"               // no origin remote configured
-	EParentNotFound        Code = "E_PARENT_NOT_FOUND"        // parent branch ref not found locally or on origin
-	EGitPushFailed         Code = "E_GIT_PUSH_FAILED"         // git push non-zero exit
-	EGHPRCreateFailed      Code = "E_GH_PR_CREATE_FAILED"     // gh pr create non-zero exit
-	EGHPREditFailed        Code = "E_GH_PR_EDIT_FAILED"       // gh pr edit non-zero exit
-	EGHPRViewFailed        Code = "E_GH_PR_VIEW_FAILED"       // gh pr view failed after create retries
-	EPRNotOpen             Code = "E_PR_NOT_OPEN"             // PR exists but is not open (CLOSED or MERGED)
-	EReportInvalid         Code = "E_REPORT_INVALID"          // report missing/empty (legacy; push uses fallback body)
-	EEmptyDiff             Code = "E_EMPTY_DIFF"              // no commits ahead of parent branch
-	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
-	EDirtyWorktree         Code = "E_DIRTY_WORKTREE"          // run worktree has uncommitted changes
+	EUnsupportedOriginHost    Code = "E_UNSUPPORTED_ORIGIN_HOST"    // origin is not github.com
+	ENoOrigin                 Code = "E_NO_ORIGIN"                  // no origin remote configured
+	EParentNotFound           Code = "E_PARENT_NOT_FOUND"           // parent branch ref not found locally or on origin
+	EGitPushFailed            Code = "E_GIT_PUSH_FAILED"            // git push non-zero exit
+	EGHPRCreateFailed         Code = "E_GH_PR_CREATE_FAILED"        // gh pr create non-zero exit
+	EGHPREditFailed           Code = "E_GH_PR_EDIT_FAILED"          // gh pr edit non-zero exit
+	EGHPRViewFailed           Code = "E_GH_PR_VIEW_FAILED"          // gh pr view failed after create retries
+	EPRNotOpen                Code = "E_PR_NOT_OPEN"                // PR exists but is not open (CLOSED or MERGED)
+	EReportInvalid            Code = "E_REPORT_INVALID"             // report missing/empty (legacy; push uses fallback body)
+	EReportMissing            Code = "E_REPORT_MISSING"             // required report artifacts are missing
+	EReportMalformed          Code = "E_REPORT_MALFORMED"           // report artifact is malformed/unreadable
+	EReportOversized          Code = "E_REPORT_OVERSIZED"           // report artifact exceeds bounded contract size
+	EReportSchemaIncompatible Code = "E_REPORT_SCHEMA_INCOMPATIBLE" // report schema_version is unsupported
+	EEmptyDiff                Code = "E_EMPTY_DIFF"                 // no commits ahead of parent branch
+	EWorktreeMissing          Code = "E_WORKTREE_MISSING"           // run worktree path is missing on disk
+	EDirtyWorktree            Code = "E_DIRTY_WORKTREE"             // run worktree has uncommitted changes
 
 	// Slice 4 lifecycle control error codes
 	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"     // attach when tmux session is missing; suggests resume

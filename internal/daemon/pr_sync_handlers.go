@@ -30,10 +30,13 @@ const (
 )
 
 type prSyncResult struct {
-	Branch   string
-	PRNumber int
-	PRURL    string
-	PRAction string
+	Branch             string
+	PRNumber           int
+	PRURL              string
+	PRAction           string
+	ReportSource       string
+	ReportFallbackUsed bool
+	ReportDiagnostics  []report.Diagnostic
 }
 
 type prSyncPR struct {
@@ -155,6 +158,9 @@ func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocation
 		PRNumber:              result.PRNumber,
 		PRURL:                 result.PRURL,
 		PRAction:              result.PRAction,
+		ReportSource:          result.ReportSource,
+		ReportFallbackUsed:    result.ReportFallbackUsed,
+		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -199,8 +205,12 @@ func (s *Server) runPRSync(
 		return nil, errors.New(errors.EEmptyDiff, "no commits ahead of parent; make at least one commit")
 	}
 
-	reportPath := filepath.Join(wtMeta.TreePath, ".agency", "report.md")
-	bodyPath, err := prSyncPrepareBody(s.FS, reportPath, record.InvocationID)
+	bodyPath, reportSource, reportFallbackUsed, reportDiagnostics, err := prSyncPrepareBody(
+		s.FS,
+		wtMeta.TreePath,
+		record.InvocationID,
+		record.Meta.Mode == store.RunnerModeHeadless,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -264,10 +274,13 @@ func (s *Server) runPRSync(
 		// Newly created PR already has body from --body-file.
 		if createdNow {
 			return &prSyncResult{
-				Branch:   wtMeta.Branch,
-				PRNumber: pr.Number,
-				PRURL:    pr.URL,
-				PRAction: "created",
+				Branch:             wtMeta.Branch,
+				PRNumber:           pr.Number,
+				PRURL:              pr.URL,
+				PRAction:           "created",
+				ReportSource:       reportSource,
+				ReportFallbackUsed: reportFallbackUsed,
+				ReportDiagnostics:  reportDiagnostics,
 			}, nil
 		}
 
@@ -276,10 +289,13 @@ func (s *Server) runPRSync(
 			return nil, err
 		}
 		return &prSyncResult{
-			Branch:   wtMeta.Branch,
-			PRNumber: pr.Number,
-			PRURL:    pr.URL,
-			PRAction: "updated",
+			Branch:             wtMeta.Branch,
+			PRNumber:           pr.Number,
+			PRURL:              pr.URL,
+			PRAction:           "updated",
+			ReportSource:       reportSource,
+			ReportFallbackUsed: reportFallbackUsed,
+			ReportDiagnostics:  reportDiagnostics,
 		}, nil
 	}
 
@@ -299,10 +315,13 @@ func (s *Server) runPRSync(
 	}
 
 	return &prSyncResult{
-		Branch:   wtMeta.Branch,
-		PRNumber: pr.Number,
-		PRURL:    pr.URL,
-		PRAction: "updated",
+		Branch:             wtMeta.Branch,
+		PRNumber:           pr.Number,
+		PRURL:              pr.URL,
+		PRAction:           "updated",
+		ReportSource:       reportSource,
+		ReportFallbackUsed: reportFallbackUsed,
+		ReportDiagnostics:  reportDiagnostics,
 	}, nil
 }
 
@@ -630,48 +649,74 @@ func prSyncEditPRBody(ctx context.Context, runner exec.CommandRunner, workDir st
 	return nil
 }
 
-func prSyncPrepareBody(fsys agencyfs.FS, reportPath, invocationID string) (string, error) {
-	content, exists, oversized, err := prSyncReadReportBounded(fsys, reportPath, prSyncMaxReportBytes)
-	if err != nil {
-		return "", err
+func prSyncPrepareBody(
+	fsys agencyfs.FS,
+	worktreePath string,
+	invocationID string,
+	strict bool,
+) (bodyPath, reportSource string, reportFallbackUsed bool, diagnostics []report.Diagnostic, err error) {
+	resolution, violation, resolveErr := report.ResolveCanonicalReport(fsys, worktreePath, report.ResolveOptions{
+		MaxBytes: prSyncMaxReportBytes,
+	})
+	if resolveErr != nil {
+		return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", resolveErr)
 	}
-	if exists && !oversized {
-		trimmed := strings.TrimSpace(string(content))
-		if len(trimmed) >= 20 {
-			completeness := report.CheckCompleteness(trimmed)
-			if completeness.Complete {
-				return reportPath, nil
-			}
+
+	if violation != nil {
+		if strict {
+			return "", "", false, nil, reportViolationToAgencyError(violation)
 		}
+
+		fallbackPath := filepath.Join(worktreePath, ".agency", "pr_sync_fallback.md")
+		fallbackDir := filepath.Dir(fallbackPath)
+		if mkdirErr := fsys.MkdirAll(fallbackDir, 0o700); mkdirErr != nil {
+			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to create .agency directory for fallback PR body", mkdirErr)
+		}
+		if chmodErr := fsys.Chmod(fallbackDir, 0o700); chmodErr != nil {
+			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to set fallback PR body directory permissions", chmodErr)
+		}
+		fallback := fmt.Sprintf(
+			"## summary\nfallback PR body generated for invocation %s.\n\n## how to test\n- run project tests and manual verification for this branch.\n",
+			invocationID,
+		)
+		if writeErr := fsys.WriteFile(fallbackPath, []byte(fallback), 0o600); writeErr != nil {
+			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to write fallback PR body", writeErr)
+		}
+		if chmodErr := fsys.Chmod(fallbackPath, 0o600); chmodErr != nil {
+			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to set fallback PR body permissions", chmodErr)
+		}
+		violationDiagnostics := []report.Diagnostic{
+			{
+				Code:    string(violation.Code),
+				Message: violation.Message,
+				Source:  string(violation.Source),
+			},
+		}
+		return fallbackPath, "fallback", true, violationDiagnostics, nil
 	}
 
-	fallbackPath := filepath.Join(filepath.Dir(reportPath), "pr_sync_fallback.md")
-	fallbackDir := filepath.Dir(fallbackPath)
-	if mkdirErr := fsys.MkdirAll(fallbackDir, 0o700); mkdirErr != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to create .agency directory for fallback PR body", mkdirErr)
+	if resolution == nil {
+		return "", "", false, nil, errors.New(errors.EInternal, "report resolution produced no result")
 	}
-	if chmodErr := fsys.Chmod(fallbackDir, 0o700); chmodErr != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to set fallback PR body directory permissions", chmodErr)
-	}
-	fallback := fmt.Sprintf(
-		"## summary\nfallback PR body generated for invocation %s.\n\n## how to test\n- run project tests and manual verification for this branch.\n",
-		invocationID,
-	)
-	if writeErr := fsys.WriteFile(fallbackPath, []byte(fallback), 0o600); writeErr != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to write fallback PR body", writeErr)
-	}
-	if chmodErr := fsys.Chmod(fallbackPath, 0o600); chmodErr != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to set fallback PR body permissions", chmodErr)
-	}
-	return fallbackPath, nil
-}
 
-func prSyncReadReportBounded(fsys agencyfs.FS, path string, maxBytes int) ([]byte, bool, bool, error) {
-	data, exists, oversized, err := report.ReadFileBounded(fsys, path, maxBytes)
-	if err != nil {
-		return nil, exists, false, errors.Wrap(errors.EInternal, "failed to read report file", err)
+	diags := resolution.Diagnostics
+	switch resolution.Source {
+	case report.SourceJSON:
+		canonicalPath, writeErr := report.WriteCanonicalMarkdownBody(fsys, worktreePath, "pr_sync_report_v2.md", resolution.Model)
+		if writeErr != nil {
+			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to materialize report.json body", writeErr)
+		}
+		return canonicalPath, string(resolution.Source), false, diags, nil
+	case report.SourceMarkdown:
+		reportPath := filepath.Join(worktreePath, ".agency", "report.md")
+		return reportPath, string(resolution.Source), false, diags, nil
+	default:
+		return "", "", false, nil, errors.NewWithDetails(
+			errors.EInternal,
+			"unsupported report source",
+			map[string]string{"source": string(resolution.Source)},
+		)
 	}
-	return data, exists, oversized, nil
 }
 
 func (s *Server) appendPRSyncEvent(repoID, invocationID, kind string, data map[string]any) error {
@@ -777,6 +822,8 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 	case errors.EEmptyDiff:
 		return http.StatusBadRequest
 	case errors.EPRNotOpen:
+		return http.StatusConflict
+	case errors.EReportMissing, errors.EReportMalformed, errors.EReportOversized, errors.EReportSchemaIncompatible, errors.EReportIncomplete:
 		return http.StatusConflict
 	case errors.EGHRepoParseFailed:
 		return http.StatusBadRequest

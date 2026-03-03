@@ -187,41 +187,7 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	repoRef := resolveGHRepoRef(originURL)
 
 	// Step 7: Report check (non-blocking)
-	reportPath := filepath.Join(meta.WorktreePath, ".agency", "report.md")
-	reportContent, reportExists, reportOversized, reportReadErr := report.ReadFileBounded(fsys, reportPath, report.MaxPRBodyReportBytes)
-
-	reportMissing := false
-	reportUnreadable := false
-	reportTooLarge := false
-	reportEmpty := false
-	reportIncomplete := false
-	var missingSections []string
-
-	if reportReadErr != nil {
-		reportUnreadable = true
-	} else if !reportExists {
-		reportMissing = true
-	} else if reportOversized {
-		reportTooLarge = true
-	} else {
-		completeness := report.CheckCompleteness(string(reportContent))
-		reportIncomplete = !completeness.Complete
-		missingSections = completeness.MissingSections
-		reportEmpty = len(strings.TrimSpace(string(reportContent))) < 20
-	}
-
-	reportUsable := reportReadErr == nil && !reportMissing && !reportTooLarge && !reportEmpty && !reportIncomplete
-	if reportMissing {
-		_, _ = fmt.Fprintln(stderr, "warning: report file missing; using auto-generated PR body")
-	} else if reportUnreadable {
-		_, _ = fmt.Fprintf(stderr, "warning: report unreadable (%v); using auto-generated PR body\n", reportReadErr)
-	} else if reportTooLarge {
-		_, _ = fmt.Fprintf(stderr, "warning: report exceeds %d bytes; using auto-generated PR body\n", report.MaxPRBodyReportBytes)
-	} else if reportEmpty {
-		_, _ = fmt.Fprintln(stderr, "warning: report empty (<20 chars); using auto-generated PR body")
-	} else if reportIncomplete {
-		_, _ = fmt.Fprintf(stderr, "warning: report incomplete (missing: %s); using auto-generated PR body\n", strings.Join(missingSections, ", "))
-	}
+	reportBodyPath, reportBodyHash, reportUsable := preparePushReportBody(fsys, meta.WorktreePath, stderr)
 
 	// Step 8: gh auth check
 	if err := checkGhAuthForPush(ctx, cr, meta.WorktreePath); err != nil {
@@ -278,11 +244,9 @@ func Push(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 
 	// Step 12: Prepare PR body (report or fallback)
-	bodyPath := reportPath
-	bodyHash := ""
-	if reportUsable {
-		bodyHash = computeReportHash(fsys, reportPath)
-	} else {
+	bodyPath := reportBodyPath
+	bodyHash := reportBodyHash
+	if !reportUsable {
 		fallbackPath, fallbackHash, err := writeFallbackPRBody(ctx, cr, fsys, meta.WorktreePath, parentRef, meta.Branch, meta)
 		if err != nil {
 			appendPushEvent(eventsPath, repoID, meta.RunID, "push_failed", map[string]any{
@@ -379,20 +343,6 @@ func resolveRunForPush(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, c
 	}
 
 	return runRef, record.Meta, runRef.RepoID, nil
-}
-
-// isReportEffectivelyEmpty returns true if the report is missing or has < 20 trimmed chars.
-func isReportEffectivelyEmpty(fsys fs.FS, reportPath string) (bool, error) {
-	data, err := fsys.ReadFile(reportPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	trimmed := strings.TrimSpace(string(data))
-	return len(trimmed) < 20, nil
 }
 
 // checkGhAuthForPush verifies gh is installed and authenticated with non-interactive env.
@@ -598,6 +548,66 @@ func computeReportHash(fsys fs.FS, reportPath string) string {
 	}
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+func preparePushReportBody(fsys fs.FS, worktreePath string, stderr io.Writer) (string, string, bool) {
+	resolution, violation, reportErr := report.ResolveCanonicalReport(fsys, worktreePath, report.ResolveOptions{
+		MaxBytes: report.MaxPRBodyReportBytes,
+	})
+	if reportErr != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: report contract evaluation failed (%v); using auto-generated PR body\n", reportErr)
+		return "", "", false
+	}
+	if violation != nil {
+		printPushReportViolationWarning(stderr, violation)
+		return "", "", false
+	}
+	if resolution == nil {
+		_, _ = fmt.Fprintln(stderr, "warning: report contract produced no result; using auto-generated PR body")
+		return "", "", false
+	}
+
+	reportBodyPath := ""
+	switch resolution.Source {
+	case report.SourceMarkdown:
+		reportBodyPath = filepath.Join(worktreePath, ".agency", "report.md")
+	case report.SourceJSON:
+		path, writeErr := report.WriteCanonicalMarkdownBody(fsys, worktreePath, "push_report_v2.md", resolution.Model)
+		if writeErr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: failed to materialize report.json body (%v); using auto-generated PR body\n", writeErr)
+			return "", "", false
+		}
+		reportBodyPath = path
+	default:
+		_, _ = fmt.Fprintf(stderr, "warning: unknown report source %q; using auto-generated PR body\n", resolution.Source)
+		return "", "", false
+	}
+
+	for _, diagnostic := range resolution.Diagnostics {
+		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
+	}
+	return reportBodyPath, computeReportHash(fsys, reportBodyPath), true
+}
+
+func printPushReportViolationWarning(stderr io.Writer, violation *report.Violation) {
+	if violation == nil {
+		return
+	}
+
+	switch violation.Code {
+	case report.ViolationMissing:
+		_, _ = fmt.Fprintln(stderr, "warning: report file missing; using auto-generated PR body")
+	case report.ViolationOversized:
+		_, _ = fmt.Fprintf(stderr, "warning: report exceeds %d bytes; using auto-generated PR body\n", report.MaxPRBodyReportBytes)
+	case report.ViolationSchemaIncompatible:
+		_, _ = fmt.Fprintln(stderr, "warning: report schema incompatible; using auto-generated PR body")
+	case report.ViolationMalformed:
+		_, _ = fmt.Fprintln(stderr, "warning: report malformed; using auto-generated PR body")
+	case report.ViolationIncomplete:
+		_, _ = fmt.Fprintf(stderr, "warning: report incomplete (%s); using auto-generated PR body\n", violation.Message)
+	default:
+		_, _ = fmt.Fprintf(stderr, "warning: report invalid (%s); using auto-generated PR body\n", violation.Message)
+	}
 }
 
 // prResult holds the result of PR operations.
