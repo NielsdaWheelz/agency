@@ -411,11 +411,14 @@ prefer `agency agent enter` for canonical invocation navigation.
 
 **usage:**
 ```bash
-agency agent attach <invocation_id|prefix>
+agency agent attach <invocation_id|prefix> [-r|--repo <id|prefix>]
 ```
 
 **arguments:**
 - `invocation_id|prefix`: invocation identifier (id or unique prefix)
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
 
 **behavior:**
 1. performs TTY preflight
@@ -552,15 +555,15 @@ shows canonical review/readiness state for invocation progression.
 
 **usage:**
 ```bash
-agency agent review <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
+agency agent review <invocation_id|name|prefix> [-r|--repo <id|prefix>] [-j|--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
-- `--json`: machine-readable output
+- `-r, --repo`: repo id or unique prefix
+- `-j, --json`: machine-readable output
 
 **behavior:**
 - reports deterministic review verdict (`ready` or `blocked`) with typed blocking reasons
@@ -573,6 +576,7 @@ agency agent review <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
 agency agent review 20260131
 agency agent review --repo abc123 my-invocation
 agency agent review --json 20260131
+agency agent review -r abc123 -j my-invocation
 ```
 
 ### `agency agent pr sync`
@@ -698,10 +702,14 @@ opens the sandbox in the configured editor.
 
 **usage:**
 ```bash
-agency agent open <invocation_id|name|prefix> [--editor <name>]
+agency agent open <invocation_id|name|prefix> [-r|--repo <id|prefix>] [--editor <name>]
 ```
 
 resolves invocation via daemon-first navigation kernel. no local store discovery.
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
+- `--editor`: editor override (default: configured editor)
 
 **error codes:**
 - `E_INVOCATION_NOT_FOUND` — invocation not found
@@ -714,7 +722,7 @@ prints the daemon-resolved sandbox path for scripting.
 
 **usage:**
 ```bash
-agency agent path <invocation_ref>
+agency agent path <invocation_ref> [-r|--repo <id|prefix>]
 ```
 
 **example:**
@@ -724,6 +732,9 @@ cd $(agency agent path 20260131)
 
 resolves invocation via daemon-first navigation kernel. no local store discovery.
 `agent path` is a pure path-printing surface — it does not fail if the path no longer exists.
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
 
 ### `agency agent shell`
 
@@ -747,12 +758,15 @@ attaches to a running headed invocation's tmux session (canonical interactive na
 
 **usage:**
 ```bash
-agency agent enter <invocation_ref>
+agency agent enter <invocation_ref> [-r|--repo <id|prefix>]
 ```
 
 resolves invocation identity/path via daemon-first navigation kernel with TTY preflight.
 headed-only: headless invocations are rejected with `E_INVOCATION_INVALID_MODE`.
 tmux session name is derived deterministically from `tmux.SessionName(invocation_id)`.
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
 
 **error codes:**
 - `E_NOT_INTERACTIVE` — not running in an interactive terminal
@@ -1530,11 +1544,14 @@ prints daemon-resolved sandbox path as a single line.
 
 **usage:**
 ```bash
-agency path <invocation_ref> [--repo <repo_id|prefix>]
+agency path <invocation_ref> [-r|--repo <repo_id|prefix>]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation id, name, or unique prefix
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
 
 **behavior:**
 - resolves invocation via daemon-first navigation
@@ -1553,11 +1570,15 @@ opens daemon-resolved sandbox path in editor.
 
 **usage:**
 ```bash
-agency open <invocation_ref> [--repo <repo_id|prefix>] [--editor <name>]
+agency open <invocation_ref> [-r|--repo <repo_id|prefix>] [--editor <name>]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation id, name, or unique prefix
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
+- `--editor`: editor override (default: configured editor)
 
 **error codes:**
 - `E_NO_REPO_CONTEXT` — no repo context and no `--repo` provided
@@ -1572,11 +1593,14 @@ attaches to a running headed invocation tmux session.
 
 **usage:**
 ```bash
-agency attach <invocation_ref> [--repo <repo_id|prefix>]
+agency attach <invocation_ref> [-r|--repo <repo_id|prefix>]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation id, name, or unique prefix
+
+**flags:**
+- `-r, --repo`: repo id or unique prefix
 
 **behavior:**
 1. performs TTY preflight
