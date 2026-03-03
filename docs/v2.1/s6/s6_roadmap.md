@@ -1,8 +1,10 @@
 # Slice S6: Reports v2 + CLI Ergonomics Cleanup — PR Roadmap
 
 Last updated: 2026-03-03
-Status: draft
+Status: active
 Upstream spec: `docs/v2.1/s6/s6_spec.md`
+
+Current state: PR-01 and PR-02 are merged. One closure pass remains to finish spec-level ergonomics parity and acceptance-test coverage.
 
 ### PR-01: reports v2 canonical model + mode-aware progression contract
 - **goal**: deliver one deterministic reports-v2 contract for review/PR/merge progression across JSON and markdown artifacts.
@@ -17,7 +19,7 @@ Upstream spec: `docs/v2.1/s6/s6_spec.md`
   - strict-vs-compatibility behavior is contract-documented and covered by deterministic success/failure tests.
 - **non-goals**: no broad CLI flag alias normalization; no command-family redesign.
 
-### PR-02: CLI ergonomics normalization for `--yes`, high-traffic flags, and open-on-create (planned after PR-01 merges)
+### PR-02: CLI ergonomics normalization for `--yes`, high-traffic flags, and open-on-create
 - **goal**: standardize script-safe confirmation and high-frequency flag ergonomics across canonical and compatibility command paths.
 - **builds on**: PR-01 merged report contracts.
 - **acceptance**:
@@ -27,3 +29,13 @@ Upstream spec: `docs/v2.1/s6/s6_spec.md`
   - legacy spellings remain additive compatibility aliases and do not redefine command meaning.
   - command help and automated coverage assert that human-facing and automation-facing flag/confirmation behavior stay aligned.
 - **non-goals**: no removal of legacy aliases, no full command taxonomy rewrite, no GUI/full-screen TUI scope.
+
+### PR-03: S6 contract closure for remaining short-alias parity + open-on-create test guarantees (planned after PR-02 merges)
+- **goal**: close remaining S6 ergonomics gaps so progression/navigation alias behavior and open-on-create contracts are fully spec-aligned and test asserted.
+- **builds on**: PR-02 merged.
+- **acceptance**:
+  - core invocation progression surfaces with repo/json flags (including `agent review`) expose additive canonical short aliases (`-r/--repo`, `-j/--json`) without changing existing long-flag semantics.
+  - high-traffic compatibility navigation aliases (`path`, `open`, `attach`) accept additive `-r/--repo` for parity with canonical invocation navigation flows.
+  - `worktree create --open` and `run --open` behaviors are test-asserted for deterministic open-first behavior and explicit `open_status` signaling on editor-launch failure after successful creation.
+  - command help coverage asserts alias visibility for covered commands, and confirmation behavior coverage remains deterministic for non-interactive flows requiring `--yes`.
+- **non-goals**: no new command families, no legacy alias removals, no report-contract redesign beyond existing PR-01 semantics.
