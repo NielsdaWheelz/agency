@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
 	"strings"
 	"time"
 
@@ -723,11 +722,18 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 // realTmuxAttach performs a real interactive tmux attach with stdin/stdout/stderr connected.
 // This is the only way to get proper interactive terminal behavior.
 func realTmuxAttach(sessionName string) error {
-	cmd := osexec.Command("tmux", "attach", "-t", sessionName)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	result, err := exec.RunAttached(context.Background(), "tmux", []string{"attach", "-t", sessionName}, exec.AttachedRunOpts{
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("tmux attach exited with code %d", result.ExitCode)
+	}
+	return nil
 }
 
 // isTerminal returns true if the given file descriptor is a terminal.
@@ -1895,20 +1901,20 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		editor = "code"
 	}
 
-	cmd := osexec.Command(editor, sandboxPath)
-	cmd.Dir = sandboxPath
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if runErr := cmd.Run(); runErr != nil {
-		if exitErr, ok := runErr.(*osexec.ExitError); ok {
-			return errors.WithExitCode(
-				errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", exitErr.ExitCode())),
-				exitErr.ExitCode(),
-			)
-		}
+	runResult, runErr := exec.RunAttached(ctx, editor, []string{sandboxPath}, exec.AttachedRunOpts{
+		Dir:    sandboxPath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if runErr != nil {
 		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", runErr)
+	}
+	if runResult.ExitCode != 0 {
+		return errors.WithExitCode(
+			errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", runResult.ExitCode)),
+			runResult.ExitCode,
+		)
 	}
 
 	return nil
@@ -1967,20 +1973,20 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		shell = "/bin/sh"
 	}
 
-	cmd := osexec.Command(shell, "-l")
-	cmd.Dir = sandboxPath
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if runErr := cmd.Run(); runErr != nil {
-		if exitErr, ok := runErr.(*osexec.ExitError); ok {
-			return errors.WithExitCode(
-				errors.New(errors.EInternal, fmt.Sprintf("shell exited with code %d", exitErr.ExitCode())),
-				exitErr.ExitCode(),
-			)
-		}
+	runResult, runErr := exec.RunAttached(ctx, shell, []string{"-l"}, exec.AttachedRunOpts{
+		Dir:    sandboxPath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if runErr != nil {
 		return errors.Wrap(errors.EInternal, "failed to run shell", runErr)
+	}
+	if runResult.ExitCode != 0 {
+		return errors.WithExitCode(
+			errors.New(errors.EInternal, fmt.Sprintf("shell exited with code %d", runResult.ExitCode)),
+			runResult.ExitCode,
+		)
 	}
 
 	return nil

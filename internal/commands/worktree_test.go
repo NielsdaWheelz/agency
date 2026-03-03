@@ -494,3 +494,45 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})
 }
+
+func TestWorktreeRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.T) {
+	env := setupWorktreeEnv(t, "rm-confirm")
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
+		WorktreeRef:   env.WorktreeID,
+		RepoFlag:      env.RepoID,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+}
+
+func TestWorktreeRm_NonInteractiveWithYes_Proceeds(t *testing.T) {
+	env := setupWorktreeEnv(t, "rm-yes")
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
+		WorktreeRef:   env.WorktreeID,
+		RepoFlag:      env.RepoID,
+		Yes:           true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.NotEqual(t, errors.EConfirmationRequired, errors.GetCode(err))
+	assert.NotEqual(t, errors.EAborted, errors.GetCode(err))
+}
+
+func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T) {
+	env := setupWorktreeEnv(t, "rm-reject")
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
+		WorktreeRef:    env.WorktreeID,
+		RepoFlag:       env.RepoID,
+		IsInteractive:  func() bool { return true },
+		ConfirmationIn: strings.NewReader("no\n"),
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EAborted, errors.GetCode(err))
+}

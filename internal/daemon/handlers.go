@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -282,40 +281,21 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	// Create the command
-	cmd := osexec.Command(runnerCmd, args...)
-	cmd.Dir = req.SandboxPath
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Create new process group
-	}
-
 	// Set up deterministic, automation-safe environment for headless runner starts.
-	cmd.Env = mergeEnvDeterministic(os.Environ(), nonInteractiveRunnerEnv(), req.Env)
-	cmd.Stdin = nil
-
-	// Set up pipes for stdout/stderr
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stdout pipe: "+err.Error(), "")
-		return
+	envOverlay := nonInteractiveRunnerEnv()
+	for k, v := range req.Env {
+		envOverlay[k] = v
 	}
 
-	stderrPipe, err := cmd.StderrPipe()
+	// Start runner with live stdout/stderr pipes.
+	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
+		Dir:        req.SandboxPath,
+		Env:        envOverlay,
+		StdoutPipe: true,
+		StderrPipe: true,
+		Setpgid:    true,
+	})
 	if err != nil {
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to create stderr pipe: "+err.Error(), "")
-		return
-	}
-
-	// Start the process
-	if err := cmd.Start(); err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
@@ -324,8 +304,10 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	pid := cmd.Process.Pid
-	pgid := pid // With Setpgid=true, the child becomes its own process group leader
+	stdoutPipe := startedProc.StdoutPipe
+	stderrPipe := startedProc.StderrPipe
+	pid := startedProc.PID
+	pgid := startedProc.PGID
 
 	// PR-07/S4 PR-02: keep stream sequence monotonic across append boundaries
 	// even for legacy /start_headless path.
@@ -390,7 +372,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	go s.streamOutput(proc, stderrPipe, stderrFile)
 
 	// Start goroutine to wait for process exit
-	go s.waitForExit(proc, cmd, rawFile, stderrFile, streamFile)
+	go s.waitForExit(proc, startedProc, rawFile, stderrFile, streamFile)
 
 	// Start goroutine to periodically flush lastOutputAt and semantic status
 	go s.runOutputFlushLoop(proc)
@@ -745,7 +727,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 }
 
 // waitForExit waits for the process to exit and updates meta.
-func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, stderrFile, streamFile *os.File) {
+func (s *Server) waitForExit(proc *SupervisedProcess, startedProc *exec.StartedProcess, rawFile, stderrFile, streamFile *os.File) {
 	defer func() { _ = rawFile.Close() }()
 	defer func() { _ = stderrFile.Close() }()
 	defer func() {
@@ -756,7 +738,7 @@ func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, 
 	defer proc.CloseDone()
 
 	// Wait for process to exit
-	err := cmd.Wait()
+	exitResult, waitErr := startedProc.WaitExit()
 
 	// Stop the parser
 	if proc.Parser != nil {
@@ -764,14 +746,11 @@ func (s *Server) waitForExit(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, 
 	}
 
 	// Determine exit code and status
-	exitCode := 0
+	exitCode := exitResult.ExitCode
 	exitReason := "exited"
 	status := store.InvocationStatusFinished
 
-	if err != nil {
-		if exitErr, ok := err.(*osexec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
+	if waitErr != nil || exitResult.ExitCode != 0 || exitResult.Signal != "" {
 		status = store.InvocationStatusFailed
 	}
 
@@ -1373,45 +1352,30 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		return 0, 0, fmt.Errorf("failed to open stream log file: %w", err)
 	}
 
-	// Create the command
-	cmd := osexec.Command(runnerCmd, args...)
-	cmd.Dir = result.SandboxPath
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+	// Set up deterministic environment overlays.
+	envOverlay := nonInteractiveRunnerEnv()
+	for k, v := range req.Env {
+		envOverlay[k] = v
 	}
 
-	// Set up environment
-	cmd.Env = mergeEnvDeterministic(os.Environ(), nonInteractiveRunnerEnv(), req.Env)
-	// Explicitly disallow interactive stdin expectations for headless runner starts.
-	cmd.Stdin = nil
-
-	// Set up pipes for stdout/stderr
-	stdoutPipe, err := cmd.StdoutPipe()
+	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
+		Dir:        result.SandboxPath,
+		Env:        envOverlay,
+		StdoutPipe: true,
+		StderrPipe: true,
+		Setpgid:    true,
+	})
 	if err != nil {
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
-		return 0, 0, fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
-		return 0, 0, fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	// Start the process
-	if err := cmd.Start(); err != nil {
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
 	}
 
-	pid := cmd.Process.Pid
-	pgid := pid
+	stdoutPipe := startedProc.StdoutPipe
+	stderrPipe := startedProc.StderrPipe
+	pid := startedProc.PID
+	pgid := startedProc.PGID
 
 	// PR-07/S3 PR-03: keep stream sequence monotonic across restart boundaries.
 	initialSeq := loadMaxStreamSeq(streamLogPath)
@@ -1470,7 +1434,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	go s.streamOutput(proc, stderrPipe, stderrFile)
 
 	// Start goroutine to wait for process exit
-	go s.waitForExitWithFailureReason(proc, cmd, rawFile, stderrFile, streamFile)
+	go s.waitForExitWithFailureReason(proc, startedProc, rawFile, stderrFile, streamFile)
 
 	// Start goroutines to periodically flush lastOutputAt and semantic status
 	go s.runOutputFlushLoop(proc)
@@ -1516,7 +1480,7 @@ func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, res
 }
 
 // waitForExitWithFailureReason waits for the process to exit and updates meta with failure_reason.
-func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osexec.Cmd, rawFile, stderrFile, streamFile *os.File) {
+func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedProc *exec.StartedProcess, rawFile, stderrFile, streamFile *os.File) {
 	defer func() { _ = rawFile.Close() }()
 	defer func() { _ = stderrFile.Close() }()
 	defer func() {
@@ -1527,7 +1491,7 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 	defer proc.CloseDone()
 
 	// Wait for process to exit
-	err := cmd.Wait()
+	exitResult, waitErr := startedProc.WaitExit()
 
 	// Stop the parser
 	if proc.Parser != nil {
@@ -1535,15 +1499,12 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, cmd *osex
 	}
 
 	// Determine exit code and status
-	exitCode := 0
+	exitCode := exitResult.ExitCode
 	exitReason := "exited"
 	failureReason := ""
 	status := store.InvocationStatusFinished
 
-	if err != nil {
-		if exitErr, ok := err.(*osexec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
+	if waitErr != nil || exitResult.ExitCode != 0 || exitResult.Signal != "" {
 		status = store.InvocationStatusFailed
 		failureReason = "runner_exit_nonzero"
 	}

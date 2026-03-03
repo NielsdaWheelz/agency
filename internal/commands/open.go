@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
@@ -34,7 +33,7 @@ type OpenOpts struct {
 
 // Open opens the run worktree in the configured editor.
 // Resolves run IDs globally and does not require repo cwd.
-func Open(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts OpenOpts, stdout, stderr io.Writer) error {
+func Open(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts OpenOpts, stdout, stderr io.Writer) error {
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
 	}
@@ -94,20 +93,20 @@ func Open(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return err
 	}
 
-	cmd := osexec.Command(editorCmd, worktreePath)
-	cmd.Dir = worktreePath
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*osexec.ExitError); ok {
-			return errors.WithExitCode(
-				errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", exitErr.ExitCode())),
-				exitErr.ExitCode(),
-			)
-		}
+	result, err := agencyexec.RunAttached(ctx, editorCmd, []string{worktreePath}, agencyexec.AttachedRunOpts{
+		Dir:    worktreePath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to run editor command", err)
+	}
+	if result.ExitCode != 0 {
+		return errors.WithExitCode(
+			errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", result.ExitCode)),
+			result.ExitCode,
+		)
 	}
 
 	_ = cwd

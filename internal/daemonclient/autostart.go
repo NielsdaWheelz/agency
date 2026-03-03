@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	osexec "os/exec"
-	"syscall"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 )
 
 // EnsureDaemonRunning ensures the daemon is running, starting it if necessary.
@@ -55,22 +54,19 @@ func StartDaemonBackground(logPath string) error {
 		return errors.Wrap(errors.EDaemonStartFailed, "failed to open daemon log file", err)
 	}
 
-	// Create command to start daemon
-	cmd := osexec.Command(exePath, "daemon", "start")
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Create new process group so daemon survives CLI exit
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	// Start the daemon (do NOT Wait - we want it to continue running)
-	if err := cmd.Start(); err != nil {
+	// Start daemon detached in its own process group.
+	proc, err := agencyexec.StartProcess(context.Background(), exePath, []string{"daemon", "start"}, agencyexec.StartOpts{
+		Setpgid: true,
+		Stdout:  logFile,
+		Stderr:  logFile,
+	})
+	if err != nil {
 		_ = logFile.Close()
 		return errors.Wrap(errors.EDaemonStartFailed, "failed to start daemon", err)
 	}
 
 	// Log startup info
-	_, _ = fmt.Fprintf(logFile, "[autostart] started daemon process (pid %d) at %s\n", cmd.Process.Pid, time.Now().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(logFile, "[autostart] started daemon process (pid %d) at %s\n", proc.PID, time.Now().Format(time.RFC3339))
 
 	// Close the log file - daemon will continue using it
 	_ = logFile.Close()

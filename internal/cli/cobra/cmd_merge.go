@@ -19,13 +19,14 @@ func newMergeCmd() *cobra.Command {
 	var noDeleteBranch bool
 	var allowDirty bool
 	var force bool
+	var yes bool
 
 	cmd := &cobra.Command{
 		Use:   "merge <run>",
 		Short: "Verify, confirm, merge PR, and archive workspace",
 		Long: `Verify, confirm, merge PR, and archive workspace.
 Requires cwd to be inside the target repo.
-Requires an interactive terminal for confirmation.
+Non-interactive usage requires explicit confirmation via --yes.
 
 Arguments:
   run    run name, run_id, or unique run_id prefix
@@ -34,7 +35,7 @@ Behavior:
   1. runs prechecks (origin, gh auth, PR exists, mergeable, etc.)
   2. runs scripts.verify (timeout: 30m)
   3. if verify fails: prompts to continue (unless --force)
-  4. prompts for typed confirmation (must type 'merge')
+  4. prompts for typed confirmation (must type 'merge') unless --yes
   5. merges PR via gh pr merge --delete-branch (unless --no-delete-branch)
   6. archives workspace (runs archive script, kills tmux, deletes worktree)
 
@@ -86,6 +87,7 @@ Notes:
 				Force:          force,
 				AllowDirty:     allowDirty,
 				NoDeleteBranch: noDeleteBranch,
+				Yes:            yes,
 			}
 
 			return commands.Merge(ctx, cr, fsys, cwd, opts, os.Stdin, stdout, stderr)
@@ -98,6 +100,7 @@ Notes:
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "preserve remote branch after merge")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "allow merge even if worktree has uncommitted changes")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass verify-failed prompt (still runs verify)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip interactive confirmation prompts")
 
 	return cmd
 }

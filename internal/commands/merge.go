@@ -57,6 +57,9 @@ type MergeOpts struct {
 	// By default, the branch is deleted on merge (--delete-branch passed to gh pr merge).
 	NoDeleteBranch bool
 
+	// Yes bypasses interactive confirmation prompts.
+	Yes bool
+
 	// Sleeper is an injectable sleeper for testing. If nil, uses real time.Sleep.
 	Sleeper Sleeper
 
@@ -87,9 +90,15 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		opts.Strategy = MergeStrategySquash
 	}
 
-	// Check for interactive TTY (stdin and stderr must be TTYs)
-	if !isInteractive() {
-		return errors.New(errors.ENotInteractive, "merge requires an interactive terminal; stdin and stderr must be TTYs")
+	// Confirmation-protected flows require explicit --yes in non-interactive contexts.
+	if !opts.Yes && !isInteractive() {
+		return errors.NewWithDetails(
+			errors.EConfirmationRequired,
+			"non-interactive merge requires explicit confirmation",
+			map[string]string{
+				"hint": "re-run with --yes",
+			},
+		)
 	}
 
 	// Get home directory for path resolution
@@ -327,7 +336,7 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 
 	// Handle verify failure
 	if verifyErr != nil || (verifyResult != nil && !verifyResult.OK) {
-		if !opts.Force {
+		if !opts.Force && !opts.Yes {
 			// Append verify_continue_prompted event
 			appendMergeEvent(eventsPath, repoID, meta.RunID, "verify_continue_prompted", nil)
 
@@ -363,19 +372,21 @@ func Merge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	// === Merge confirmation prompt ===
-	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
+	if !opts.Yes {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
 
-	_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
-	reader := bufio.NewReader(stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		input = ""
-	}
-	confirmation := strings.TrimSpace(input)
+		_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+		reader := bufio.NewReader(stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			input = ""
+		}
+		confirmation := strings.TrimSpace(input)
 
-	if confirmation != "merge" {
-		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EAborted)))
-		return errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'")
+		if confirmation != "merge" {
+			appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EAborted)))
+			return errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'")
+		}
 	}
 
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirmed", events.MergeConfirmedData())
@@ -431,20 +442,22 @@ func handleAlreadyMergedPR(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 
 	_, _ = fmt.Fprintf(stderr, "note: PR #%d is already merged; proceeding to archive\n", pr.Number)
 
-	// Still require typed confirmation (archive is destructive)
-	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
+	// Still require typed confirmation (archive is destructive) unless --yes is set.
+	if !opts.Yes {
+		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirm_prompted", events.MergeConfirmPromptedData())
 
-	_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
-	reader := bufio.NewReader(stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		input = ""
-	}
-	confirmation := strings.TrimSpace(input)
+		_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
+		reader := bufio.NewReader(stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			input = ""
+		}
+		confirmation := strings.TrimSpace(input)
 
-	if confirmation != "merge" {
-		appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EAborted)))
-		return errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'")
+		if confirmation != "merge" {
+			appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_finished", events.MergeFinishedData(false, string(errors.EAborted)))
+			return errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'")
+		}
 	}
 
 	appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_confirmed", events.MergeConfirmedData())

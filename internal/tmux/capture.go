@@ -3,9 +3,11 @@
 package tmux
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 )
 
 // Executor abstracts command execution for testing.
@@ -17,38 +19,20 @@ type Executor interface {
 	Run(name string, args ...string) (stdout string, stderr string, exitCode int, err error)
 }
 
-// RealExecutor implements Executor using os/exec.
-type RealExecutor struct{}
+// RealExecutor implements Executor using internal/exec.
+type RealExecutor struct {
+	runner agencyexec.CommandRunner
+}
 
 // NewRealExecutor creates a new RealExecutor.
 func NewRealExecutor() *RealExecutor {
-	return &RealExecutor{}
+	return &RealExecutor{runner: agencyexec.NewRealRunner()}
 }
 
 // Run executes the command and returns its output.
 func (e *RealExecutor) Run(name string, args ...string) (stdout string, stderr string, exitCode int, err error) {
-	cmd := exec.Command(name, args...)
-
-	var stdoutBuf, stderrBuf strings.Builder
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	runErr := cmd.Run()
-
-	stdout = stdoutBuf.String()
-	stderr = stderrBuf.String()
-
-	if runErr != nil {
-		// Check if it's an exit error (command ran but returned non-zero)
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-			return stdout, stderr, exitCode, nil
-		}
-		// Command failed to run (e.g., binary not found)
-		return stdout, stderr, -1, runErr
-	}
-
-	return stdout, stderr, 0, nil
+	result, runErr := e.runner.Run(context.Background(), name, args, agencyexec.RunOpts{})
+	return result.Stdout, result.Stderr, result.ExitCode, runErr
 }
 
 // HasSession checks if a tmux session exists.

@@ -269,8 +269,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }
@@ -349,8 +349,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }
@@ -390,8 +390,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }
@@ -446,8 +446,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().StringVar(&turnID, "turn", "", "Timeline entry id to anchor diff context")
 	cmd.Flags().StringVar(&turnRange, "turn-range", "", "Inclusive turn range (<start_entry_id>..<end_entry_id>)")
 
@@ -535,8 +535,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }
@@ -1058,8 +1058,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
 	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
 
@@ -1115,13 +1115,13 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
 	cmd.Flags().BoolVar(&merge, "merge", false, "Use regular merge strategy")
 	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase merge strategy")
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm merge in non-interactive mode")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm merge in non-interactive mode")
 
 	return cmd
 }

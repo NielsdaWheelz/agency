@@ -2,8 +2,15 @@ package commands
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
+	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -211,4 +218,53 @@ func TestRunOptsWithValues(t *testing.T) {
 	assert.Equal(t, "claude", opts.Runner)
 	assert.Equal(t, "main", opts.Parent)
 	assert.True(t, opts.Attach, "expected attach=true")
+}
+
+func TestOpenCreatedWorkspace_Success(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	editorPath := filepath.Join(homeDir, "editor-ok.sh")
+	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	writeUserConfigForEditorTest(t, homeDir, "test-editor", editorPath)
+
+	worktreePath := t.TempDir()
+	err := openCreatedWorkspace(context.Background(), agencyexec.NewRealRunner(), agencyfs.NewRealFS(), worktreePath)
+	require.NoError(t, err)
+}
+
+func TestOpenCreatedWorkspace_EditorExitNonZero(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	editorPath := filepath.Join(homeDir, "editor-fail.sh")
+	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 17\n"), 0o755))
+	writeUserConfigForEditorTest(t, homeDir, "test-editor", editorPath)
+
+	worktreePath := t.TempDir()
+	err := openCreatedWorkspace(context.Background(), agencyexec.NewRealRunner(), agencyfs.NewRealFS(), worktreePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "editor exited with code 17")
+}
+
+func writeUserConfigForEditorTest(t *testing.T, homeDir, editorName, editorCmd string) {
+	t.Helper()
+
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	configPath := filepath.Join(dirs.ConfigDir, "config.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0o755))
+
+	raw := map[string]any{
+		"version": 1,
+		"defaults": map[string]string{
+			"runner": "claude",
+			"editor": editorName,
+		},
+		"editors": map[string]string{
+			editorName: editorCmd,
+		},
+	}
+	data, err := json.Marshal(raw)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 }

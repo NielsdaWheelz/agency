@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,21 +105,39 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	// Open in editor if requested
 	if opts.Open {
 		editorName := opts.Editor
-		userCfg, found, _ := config.LoadUserConfig(fsys, dirs.ConfigDir)
-		if found && editorName == "" {
+		userCfg, _, cfgErr := config.LoadUserConfig(fsys, dirs.ConfigDir)
+		if cfgErr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", cfgErr)
+			_, _ = fmt.Fprintln(stdout, "open_status: failed")
+			return nil
+		}
+		if editorName == "" {
 			editorName = userCfg.Defaults.Editor
+		}
+		if editorName == "" {
+			editorName = os.Getenv("EDITOR")
 		}
 
 		editorCmd, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, editorName)
 		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: could not resolve editor: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", err)
+			_, _ = fmt.Fprintln(stdout, "open_status: failed")
 		} else {
-			cmd := osexec.Command(editorCmd, result.TreePath)
-			cmd.Dir = result.TreePath
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			_ = cmd.Run()
+			runResult, runErr := exec.RunAttached(ctx, editorCmd, []string{result.TreePath}, exec.AttachedRunOpts{
+				Dir:    result.TreePath,
+				Stdin:  os.Stdin,
+				Stdout: os.Stdout,
+				Stderr: os.Stderr,
+			})
+			if runErr != nil {
+				_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: %v\n", runErr)
+				_, _ = fmt.Fprintln(stdout, "open_status: failed")
+			} else if runResult.ExitCode != 0 {
+				_, _ = fmt.Fprintf(stderr, "warning: workspace created but open dispatch failed: editor exited with code %d\n", runResult.ExitCode)
+				_, _ = fmt.Fprintln(stdout, "open_status: failed")
+			} else {
+				_, _ = fmt.Fprintln(stdout, "open_status: opened")
+			}
 		}
 	}
 
@@ -414,20 +431,20 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	cmd := osexec.Command(editorCmd, treePath)
-	cmd.Dir = treePath
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*osexec.ExitError); ok {
-			return errors.WithExitCode(
-				errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", exitErr.ExitCode())),
-				exitErr.ExitCode(),
-			)
-		}
-		return errors.Wrap(errors.EInternal, "failed to run editor command", err)
+	runResult, runErr := exec.RunAttached(ctx, editorCmd, []string{treePath}, exec.AttachedRunOpts{
+		Dir:    treePath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if runErr != nil {
+		return errors.Wrap(errors.EInternal, "failed to run editor command", runErr)
+	}
+	if runResult.ExitCode != 0 {
+		return errors.WithExitCode(
+			errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", runResult.ExitCode)),
+			runResult.ExitCode,
+		)
 	}
 
 	return nil
@@ -471,20 +488,20 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		shell = "/bin/sh"
 	}
 
-	cmd := osexec.Command(shell, "-l")
-	cmd.Dir = treePath
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*osexec.ExitError); ok {
-			return errors.WithExitCode(
-				errors.New(errors.EInternal, fmt.Sprintf("shell exited with code %d", exitErr.ExitCode())),
-				exitErr.ExitCode(),
-			)
-		}
-		return errors.Wrap(errors.EInternal, "failed to run shell", err)
+	runResult, runErr := exec.RunAttached(ctx, shell, []string{"-l"}, exec.AttachedRunOpts{
+		Dir:    treePath,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if runErr != nil {
+		return errors.Wrap(errors.EInternal, "failed to run shell", runErr)
+	}
+	if runResult.ExitCode != 0 {
+		return errors.WithExitCode(
+			errors.New(errors.EInternal, fmt.Sprintf("shell exited with code %d", runResult.ExitCode)),
+			runResult.ExitCode,
+		)
 	}
 
 	return nil
@@ -551,6 +568,15 @@ type WorktreeRmOpts struct {
 	WorktreeRef string
 	RepoFlag    string // PR-A: --repo <repo_id>
 	Force       bool
+	Yes         bool
+
+	// IsInteractive reports whether stdin/stderr are interactive terminals.
+	// If nil, defaults to checking os.Stdin + os.Stderr.
+	IsInteractive func() bool
+
+	// ConfirmationIn provides interactive confirmation input.
+	// If nil, defaults to os.Stdin.
+	ConfirmationIn io.Reader
 }
 
 // WorktreeRm removes an integration worktree.
@@ -605,6 +631,35 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	worktreeName := record.Meta.Name
 	worktreeID := record.WorktreeID
+
+	if !opts.Yes {
+		isInteractiveFn := opts.IsInteractive
+		if isInteractiveFn == nil {
+			isInteractiveFn = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
+		}
+		if !isInteractiveFn() {
+			return errors.NewWithDetails(
+				errors.EConfirmationRequired,
+				"non-interactive worktree remove requires explicit confirmation",
+				map[string]string{
+					"hint": "re-run with --yes",
+				},
+			)
+		}
+
+		_, _ = fmt.Fprint(stderr, "confirm: type 'rm' to proceed: ")
+		confirmationIn := opts.ConfirmationIn
+		if confirmationIn == nil {
+			confirmationIn = os.Stdin
+		}
+		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
+		if err != nil {
+			return err
+		}
+		if token != "rm" {
+			return errors.New(errors.EAborted, "worktree remove confirmation failed; expected 'rm'")
+		}
+	}
 
 	// Call daemon to remove worktree
 	result, err := client.WorktreeRm(ctx, repoCtx.RepoID, worktreeID, opts.Force)

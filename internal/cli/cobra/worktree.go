@@ -93,7 +93,7 @@ Example:
 
 	cmd.Flags().StringVar(&name, "name", "", "Name for the integration worktree (required)")
 	cmd.Flags().StringVar(&parent, "parent", "", "Parent branch to branch from (default: current branch)")
-	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree in editor after creation")
+	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the worktree in editor after creation")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
 
 	return cmd
@@ -161,10 +161,10 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Filter by repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Filter by repo id or unique prefix")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().BoolVar(&watch, "watch", false, "Continuously redraw the list")
 	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Watch redraw interval (e.g. 500ms, 1s)")
 
@@ -205,8 +205,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }
@@ -243,7 +243,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 
 	return cmd
 }
@@ -280,7 +280,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
 
 	return cmd
@@ -318,7 +318,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 
 	return cmd
 }
@@ -326,6 +326,7 @@ Example:
 func newWorktreeRmCmd() *cobra.Command {
 	var repoFlag string
 	var force bool
+	var yes bool
 
 	cmd := &cobra.Command{
 		Use:   "rm <name|id|prefix>",
@@ -356,12 +357,14 @@ Example:
 				WorktreeRef: args[0],
 				RepoFlag:    repoFlag,
 				Force:       force,
+				Yes:         yes,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm remove in non-interactive mode")
 
 	return cmd
 }

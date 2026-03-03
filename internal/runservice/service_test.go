@@ -198,6 +198,25 @@ func TestService_CheckRepoSafe_DirtyRepo(t *testing.T) {
 	assert.Equal(t, errors.EParentDirty, code)
 }
 
+func TestService_CheckRepoSafe_UsesWorkingDirOverride(t *testing.T) {
+	repoRoot, dataDir, _ := setupTempRepo(t)
+
+	svc := NewWithDeps(agencyexec.NewRealRunner(), fs.NewRealFS())
+	svc.DataDirOverride = dataDir
+	svc.SetWorkingDir(repoRoot)
+	ctx := context.Background()
+
+	st := &pipeline.PipelineState{
+		Name:   "svc-working-dir",
+		Parent: "main",
+	}
+
+	err := svc.CheckRepoSafe(ctx, st)
+	require.NoError(t, err, "CheckRepoSafe should succeed using explicit working dir override")
+	assert.NotEmpty(t, st.RepoRoot)
+	assert.NotEmpty(t, st.RepoID)
+}
+
 func TestService_LoadAgencyConfig(t *testing.T) {
 	repoRoot, dataDir, configDir := setupTempRepo(t)
 
