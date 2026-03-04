@@ -63,6 +63,9 @@ agency watch [--interval <duration>]
 **keyboard shortcuts:**
 - `up/down` or `k/j`: move selected invocation
 - `home/end` or `g/G`: jump to top/bottom
+- `enter`: delegate to canonical `agent enter` for selected invocation
+- `o`: delegate to canonical `agent open` for selected invocation
+- `p`: delegate to canonical `agent pr sync` for selected invocation
 - `r`: trigger immediate refresh
 - `q`, `esc`, `ctrl+c`: quit and restore prior shell screen state
 
@@ -71,6 +74,7 @@ agency watch [--interval <duration>]
 - composes state from daemon read APIs (`repos`, paged `worktrees`, paged `invocations`, per-invocation `review`)
 - preserves selection by invocation identity across refresh reordering
 - surfaces recoverable refresh failures in-session without collapsing the workspace
+- action failures are surfaced in-session and keep watch running (including explicit `E_SESSION_ENDED` guidance for ended headed sessions)
 
 ## `agency repo` (v2)
 

@@ -16,6 +16,7 @@ type RunOptions struct {
 	Interval time.Duration
 	Input    io.Reader
 	Output   io.Writer
+	Actions  ActionDispatcher
 }
 
 // Run launches the full-screen watch TUI.
@@ -27,7 +28,7 @@ func Run(ctx context.Context, loader loader, opts RunOptions) error {
 		return errors.New(errors.EInternal, "watch runtime requires a snapshot loader")
 	}
 
-	m := newModel(ctx, loader, opts.Interval)
+	m := newModel(ctx, loader, opts.Interval, opts.Actions)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx)}
 	if opts.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(opts.Input))

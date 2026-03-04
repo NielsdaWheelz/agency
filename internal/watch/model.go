@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 const defaultRefreshInterval = 2 * time.Second
@@ -22,22 +23,35 @@ type loader interface {
 	Load(ctx context.Context) (Snapshot, error)
 }
 
+// ActionDispatcher executes delegated watch actions for a selected invocation.
+// Implementations should call canonical command contracts rather than
+// reimplementing policy in the watch runtime.
+type ActionDispatcher interface {
+	Enter(ctx context.Context, invocationID, repoID string) error
+	Open(ctx context.Context, invocationID, repoID string) error
+	PRSync(ctx context.Context, invocationID, repoID string) error
+}
+
 type keyMap struct {
 	Up      key.Binding
 	Down    key.Binding
 	Top     key.Binding
 	Bottom  key.Binding
+	Enter   key.Binding
+	Open    key.Binding
+	PRSync  key.Binding
 	Refresh key.Binding
 	Quit    key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Enter, k.Open, k.PRSync, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom},
+		{k.Enter, k.Open, k.PRSync},
 		{k.Refresh, k.Quit},
 	}
 }
@@ -58,6 +72,18 @@ var defaultKeyMap = keyMap{
 	Bottom: key.NewBinding(
 		key.WithKeys("end", "G"),
 		key.WithHelp("end/G", "jump to bottom"),
+	),
+	Enter: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "enter invocation"),
+	),
+	Open: key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open sandbox"),
+	),
+	PRSync: key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "pr sync"),
 	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
@@ -82,6 +108,7 @@ var (
 	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	actionStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 )
 
 type refreshTickMsg time.Time
@@ -93,9 +120,28 @@ type snapshotLoadedMsg struct {
 	err      error
 }
 
+type actionKind string
+
+const (
+	actionEnter  actionKind = "enter"
+	actionOpen   actionKind = "open"
+	actionPRSync actionKind = "pr sync"
+)
+
+func (k actionKind) String() string {
+	return string(k)
+}
+
+type actionResultMsg struct {
+	kind         actionKind
+	invocationID string
+	err          error
+}
+
 type model struct {
 	ctx      context.Context
 	loader   loader
+	actions  ActionDispatcher
 	interval time.Duration
 	keys     keyMap
 	help     help.Model
@@ -108,9 +154,12 @@ type model struct {
 	selectedInvocationID string
 	refreshing           bool
 	lastError            string
+	actionRunning        bool
+	lastActionMessage    string
+	lastActionError      bool
 }
 
-func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration) model {
+func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration, actions ActionDispatcher) model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -124,6 +173,7 @@ func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration
 	return model{
 		ctx:      ctx,
 		loader:   snapshotLoader,
+		actions:  actions,
 		interval: interval,
 		keys:     defaultKeyMap,
 		help:     h,
@@ -163,6 +213,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reconcileSelection()
 		return m, nil
 
+	case actionResultMsg:
+		m.actionRunning = false
+		m.lastActionError = msg.err != nil
+		if msg.err != nil {
+			m.lastActionMessage = formatActionError(msg.kind, msg.err)
+		} else {
+			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, shortID(msg.invocationID, 10))
+		}
+		// Refresh after each action outcome so readiness/details remain actionable.
+		return m, scheduleRefreshCmd()
+
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
@@ -187,6 +248,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 			}
 			return m, nil
+		case key.Matches(msg, m.keys.Enter):
+			return m.triggerAction(actionEnter)
+		case key.Matches(msg, m.keys.Open):
+			return m.triggerAction(actionOpen)
+		case key.Matches(msg, m.keys.PRSync):
+			return m.triggerAction(actionPRSync)
 		default:
 			return m, nil
 		}
@@ -220,6 +287,70 @@ func tickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return refreshTickMsg(t)
 	})
+}
+
+func (m model) triggerAction(kind actionKind) (tea.Model, tea.Cmd) {
+	if m.actionRunning {
+		return m, nil
+	}
+	if m.actions == nil {
+		m.lastActionError = true
+		m.lastActionMessage = fmt.Sprintf("%s unavailable: watch actions are not configured", kind)
+		return m, nil
+	}
+
+	selected, ok := m.selectedInvocation()
+	if !ok {
+		m.lastActionError = true
+		m.lastActionMessage = fmt.Sprintf("%s unavailable: no invocation selected", kind)
+		return m, nil
+	}
+
+	m.actionRunning = true
+	m.lastActionError = false
+	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, shortID(selected.InvocationID, 10))
+	return m, m.runActionCmd(kind, selected)
+}
+
+func (m model) runActionCmd(kind actionKind, selected daemon.InvocationDTO) tea.Cmd {
+	dispatcher := m.actions
+	ctx := m.ctx
+
+	return func() tea.Msg {
+		var err error
+		switch kind {
+		case actionEnter:
+			err = dispatcher.Enter(ctx, selected.InvocationID, selected.RepoID)
+		case actionOpen:
+			err = dispatcher.Open(ctx, selected.InvocationID, selected.RepoID)
+		case actionPRSync:
+			err = dispatcher.PRSync(ctx, selected.InvocationID, selected.RepoID)
+		default:
+			err = agencyerrors.New(agencyerrors.EInternal, "unknown watch action")
+		}
+		return actionResultMsg{
+			kind:         kind,
+			invocationID: selected.InvocationID,
+			err:          err,
+		}
+	}
+}
+
+func formatActionError(kind actionKind, err error) string {
+	code := agencyerrors.GetCode(err)
+	if code == agencyerrors.ESessionEnded {
+		hint := "session ended; use 'agency agent logs' or 'agency agent open' to view"
+		if ae, ok := agencyerrors.AsAgencyError(err); ok {
+			if resolvedHint := strings.TrimSpace(ae.Details["hint"]); resolvedHint != "" {
+				hint = resolvedHint
+			}
+		}
+		return fmt.Sprintf("%s failed (%s): %s", kind, code, hint)
+	}
+	if code != "" {
+		return fmt.Sprintf("%s failed (%s): %s", kind, code, err.Error())
+	}
+	return fmt.Sprintf("%s failed: %s", kind, err.Error())
 }
 
 func (m *model) moveSelection(delta int) {
@@ -276,6 +407,9 @@ func (m model) renderWorkspace() string {
 	if m.refreshing {
 		headerParts = append(headerParts, "refreshing")
 	}
+	if m.actionRunning {
+		headerParts = append(headerParts, "action-running")
+	}
 	if !m.snapshot.UpdatedAt.IsZero() {
 		headerParts = append(headerParts, "updated:"+m.snapshot.UpdatedAt.Format(time.RFC3339))
 	}
@@ -288,6 +422,17 @@ func (m model) renderWorkspace() string {
 	body := m.renderPanels(width, contentHeight)
 
 	footerLines := make([]string, 0, 3)
+	if m.lastActionMessage != "" {
+		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
+		switch {
+		case m.lastActionError:
+			footerLines = append(footerLines, errorStyle.Render(actionLine))
+		case m.actionRunning:
+			footerLines = append(footerLines, warningStyle.Render(actionLine))
+		default:
+			footerLines = append(footerLines, actionStyle.Render(actionLine))
+		}
+	}
 	if m.lastError != "" {
 		footerLines = append(footerLines, errorStyle.Render("refresh error: "+truncateWithEllipsis(m.lastError, width-4)+" (auto-retrying)"))
 	}

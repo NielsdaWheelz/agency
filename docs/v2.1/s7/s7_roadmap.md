@@ -4,7 +4,7 @@ Last updated: 2026-03-04
 Status: active
 Upstream spec: `docs/v2.1/s7/s7_spec.md`
 
-Current state: PR-01 is implemented. `agency watch` now launches a full-screen Bubble Tea v2 workspace in interactive terminals, composes snapshots from canonical daemon read/review APIs (`GET /repos`, paged `GET /worktrees`, paged `GET /invocations`, `GET /invocations/{ref}/review`), preserves selection by invocation identity across refresh reorderings, and surfaces recoverable refresh failures in-session without collapsing the workspace. Non-interactive startup fails deterministically with `E_NOT_INTERACTIVE` and an actionable hint. PR-02 remains the next step for delegation-first mutation/actions and explicit `E_SESSION_ENDED` action-path handling.
+Current state: PR-01 and PR-02 are implemented. `agency watch` now launches a full-screen Bubble Tea v2 workspace in interactive terminals, composes snapshots from canonical daemon read/review APIs (`GET /repos`, paged `GET /worktrees`, paged `GET /invocations`, `GET /invocations/{ref}/review`), preserves selection by invocation identity across refresh reorderings, and surfaces recoverable refresh failures in-session without collapsing the workspace. The workspace now exposes delegation-first actions for selected invocations (`enter`, `open`, `pr sync`) that route through canonical command contracts. Ended headed sessions are surfaced as recoverable in-session `E_SESSION_ENDED` guidance so watch continuity is preserved.
 
 ### PR-01: canonical `agency watch` real-TUI shell + daemon-snapshot readiness workspace
 - **goal**: ship a usable full-screen terminal watch shell built on a dedicated TUI framework that composes workspace state from existing daemon read contracts and renders canonical invocation readiness without inventing new readiness logic.
@@ -19,7 +19,7 @@ Current state: PR-01 is implemented. `agency watch` now launches a full-screen B
   - existing `agent ... --json` machine contracts remain unchanged; watch is additive human-interactive surface only.
 - **non-goals**: no action/mutation dispatch from watch in PR-01 (read-only seed only); no new daemon event-stream dependency; no new daemon readiness logic; no watch-specific machine-readable API contract.
 
-### PR-02: delegation-first watch actions + headed session-ended resilience closure (planned after PR-01 merges)
+### PR-02: delegation-first watch actions + headed session-ended resilience closure
 - **goal**: add invocation actions inside watch by delegating to canonical command/contract behavior, including explicit non-destructive handling of ended headed sessions.
 - **builds on**: PR-01 merged watch shell and snapshot composition model.
 - **acceptance**:

@@ -183,7 +183,7 @@ headless agents run as daemon subprocesses. the daemon captures logs, creates au
 ## step 4: monitor your agents
 
 ```bash
-agency watch                                 # full-screen readiness workspace (q to exit)
+agency watch                                 # full-screen readiness workspace (enter/o/p actions, q to exit)
 agency agent ls                              # list all agents
 agency agent ls --watch                      # live-updating dashboard
 agency agent ls --worktree add-user-auth     # filter to one worktree

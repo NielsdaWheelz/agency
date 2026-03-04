@@ -25,6 +25,9 @@ invocation review/readiness data from daemon-owned read APIs.
 
 Keyboard shortcuts:
   - up/down (or k/j): move selection
+  - enter: enter selected headed invocation
+  - o: open selected invocation sandbox
+  - p: pr sync selected invocation
   - r: refresh now
   - q/esc: exit watch
 
