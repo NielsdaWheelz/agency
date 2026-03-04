@@ -56,7 +56,8 @@ agency repo add                              # register this repo
 agency worktree create --name my-feature     # create an isolated branch
 agency agent start --worktree my-feature     # launch claude-code in a tmux session
 # Ctrl+b, d to detach from tmux
-agency agent ls --watch                      # monitor your agents
+agency watch                                 # full-screen readiness workspace (interactive tty)
+agency agent ls --watch                      # lightweight list watch
 agency agent land <invocation-id> --apply    # land changes back to worktree
 ```
 

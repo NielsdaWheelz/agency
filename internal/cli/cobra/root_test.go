@@ -219,10 +219,10 @@ func TestAgentCLI_RegistersCanonicalPathShellEnterSubcommands(t *testing.T) {
 	assert.True(t, subcmds["restart"], "agent must include canonical 'restart' subcommand in S3")
 }
 
-func TestWatchCmd_ReturnsUsageError(t *testing.T) {
+func TestWatchCmd_NonInteractiveReturnsENotInteractive(t *testing.T) {
 	_, _, err := executeCmd("watch")
-	require.Error(t, err, "expected error when watch called (not implemented)")
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	require.Error(t, err, "expected error when watch called non-interactively")
+	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
 }
 
 // Completion tests

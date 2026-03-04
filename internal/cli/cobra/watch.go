@@ -1,30 +1,56 @@
 package cobra
 
 import (
+	"context"
+	"os"
+
 	"github.com/spf13/cobra"
 
+	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newWatchCmd() *cobra.Command {
+	var intervalStr string
+
 	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Interactive TUI for monitoring worktrees and agents",
-		Long: `Interactive TUI for monitoring worktrees and agents.
+		Short: "Full-screen workspace for readiness monitoring",
+		Long: `Open the full-screen watch workspace for live monitoring.
 
-Watch provides a hierarchical live view of:
-  - Integration worktrees
-  - Agent invocations per worktree
+The watch workspace composes repositories, worktrees, invocations, and
+invocation review/readiness data from daemon-owned read APIs.
 
-Actions include attach, view logs, land/discard, stop/kill, and more.
+Keyboard shortcuts:
+  - up/down (or k/j): move selection
+  - r: refresh now
+  - q/esc: exit watch
 
-This command will be implemented in a future release.`,
+Use --interval to tune periodic refresh cadence.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "watch is not yet implemented")
+			interval, err := parseWatchInterval(intervalStr)
+			if err != nil {
+				return errors.New(errors.EInvalidArgument, err.Error())
+			}
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			ctx := context.Background()
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			return commands.Watch(ctx, cr, fsys, cwd, commands.WatchOpts{
+				Interval: interval,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().StringVar(&intervalStr, "interval", "2s", "Refresh interval (250ms to 5s)")
 
 	return cmd
 }

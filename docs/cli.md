@@ -35,11 +35,11 @@ v2 commands (slice 8+):
   agent       manage agent invocations (headed + headless via daemon)
               subcommands: start, ls, show, attach, enter, stop, kill, diff,
                            land, discard, open, path, shell, chat, restart,
-                           history, logs, checks
+                           history, logs, review, pr, merge
   daemon      manage the agency daemon (headless supervision)
   checkpoint  manage sandbox checkpoints for headless invocations
   repo        manage repository registry
-  watch       interactive TUI for monitoring (not yet implemented)
+  watch       full-screen readiness monitoring workspace
 ```
 
 high-traffic flags use consistent short aliases where available:
@@ -47,6 +47,30 @@ high-traffic flags use consistent short aliases where available:
 - `-j` for `--json`
 - `-y` for `--yes`
 - `-o` for `--open`
+
+## `agency watch` (v2.1)
+
+opens the full-screen daemon-backed monitoring workspace.
+
+**usage:**
+```bash
+agency watch [--interval <duration>]
+```
+
+**flags:**
+- `--interval`: snapshot refresh interval (default: `2s`, min: `250ms`, max: `5s`)
+
+**keyboard shortcuts:**
+- `up/down` or `k/j`: move selected invocation
+- `home/end` or `g/G`: jump to top/bottom
+- `r`: trigger immediate refresh
+- `q`, `esc`, `ctrl+c`: quit and restore prior shell screen state
+
+**behavior:**
+- requires an interactive terminal (`E_NOT_INTERACTIVE` otherwise)
+- composes state from daemon read APIs (`repos`, paged `worktrees`, paged `invocations`, per-invocation `review`)
+- preserves selection by invocation identity across refresh reordering
+- surfaces recoverable refresh failures in-session without collapsing the workspace
 
 ## `agency repo` (v2)
 
