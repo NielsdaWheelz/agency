@@ -183,6 +183,7 @@ headless agents run as daemon subprocesses. the daemon captures logs, creates au
 ## step 4: monitor your agents
 
 ```bash
+agency watch                                 # full-screen readiness workspace (q to exit)
 agency agent ls                              # list all agents
 agency agent ls --watch                      # live-updating dashboard
 agency agent ls --worktree add-user-auth     # filter to one worktree
@@ -422,6 +423,7 @@ AGENTS (AI executions in sandboxes)
   agency agent start --worktree <ref>       start headed agent
     --headless --prompt "..."               start headless agent
     --headless --prompt-file task.md        start headless with file
+  agency watch                              full-screen readiness workspace
   agency agent ls [--watch]                 list agents
   agency agent show <ref>                   show details
   agency agent enter <ref>                  attach to tmux session (canonical)

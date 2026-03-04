@@ -4,7 +4,7 @@ Last updated: 2026-03-04
 Status: active
 Upstream spec: `docs/v2.1/s7/s7_spec.md`
 
-Current state: `agency watch` is registered but still returns deterministic not-implemented usage failure; daemon-owned read contracts for worktrees/invocations/review are already available and canonical (`GET /worktrees`, `GET /invocations`, `GET /invocations/{ref}/review`), and headed session-ended behavior already exists via `E_SESSION_ENDED` in invocation enter flows. S7 direction is locked to a real full-screen TUI implementation using Bubble Tea v2 + Bubbles + Lip Gloss (not ad hoc ANSI redraws), while preserving CLI-first scriptable contracts as canonical automation surfaces.
+Current state: PR-01 is implemented. `agency watch` now launches a full-screen Bubble Tea v2 workspace in interactive terminals, composes snapshots from canonical daemon read/review APIs (`GET /repos`, paged `GET /worktrees`, paged `GET /invocations`, `GET /invocations/{ref}/review`), preserves selection by invocation identity across refresh reorderings, and surfaces recoverable refresh failures in-session without collapsing the workspace. Non-interactive startup fails deterministically with `E_NOT_INTERACTIVE` and an actionable hint. PR-02 remains the next step for delegation-first mutation/actions and explicit `E_SESSION_ENDED` action-path handling.
 
 ### PR-01: canonical `agency watch` real-TUI shell + daemon-snapshot readiness workspace
 - **goal**: ship a usable full-screen terminal watch shell built on a dedicated TUI framework that composes workspace state from existing daemon read contracts and renders canonical invocation readiness without inventing new readiness logic.
