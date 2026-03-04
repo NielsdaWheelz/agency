@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 type noopLoader struct{}
@@ -19,10 +20,35 @@ func (noopLoader) Load(_ context.Context) (Snapshot, error) {
 	return Snapshot{}, nil
 }
 
+type fakeActionDispatcher struct {
+	enterErr  error
+	openErr   error
+	prSyncErr error
+
+	enterCalls  []string
+	openCalls   []string
+	prSyncCalls []string
+}
+
+func (f *fakeActionDispatcher) Enter(_ context.Context, invocationID, repoID string) error {
+	f.enterCalls = append(f.enterCalls, invocationID+"@"+repoID)
+	return f.enterErr
+}
+
+func (f *fakeActionDispatcher) Open(_ context.Context, invocationID, repoID string) error {
+	f.openCalls = append(f.openCalls, invocationID+"@"+repoID)
+	return f.openErr
+}
+
+func (f *fakeActionDispatcher) PRSync(_ context.Context, invocationID, repoID string) error {
+	f.prSyncCalls = append(f.prSyncCalls, invocationID+"@"+repoID)
+	return f.prSyncErr
+}
+
 func TestModel_SnapshotRefresh_KeepsSelectionByInvocationID(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second)
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1"},
@@ -61,7 +87,7 @@ func TestModel_SnapshotRefresh_ErrorKeepsPriorWorkspace(t *testing.T) {
 		Warnings: []string{"old warning"},
 	}
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second)
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
 	m.snapshot = oldSnapshot
 	m.selectedInvocationID = "inv-1"
 	m.selectedIndex = 0
@@ -81,7 +107,7 @@ func TestModel_SnapshotRefresh_ErrorKeepsPriorWorkspace(t *testing.T) {
 func TestModel_KeyNavigation_TracksSelectedInvocationIdentity(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second)
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1"},
@@ -101,7 +127,7 @@ func TestModel_KeyNavigation_TracksSelectedInvocationIdentity(t *testing.T) {
 func TestModel_View_NarrowTerminalRendersWithoutBreakingPanels(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second)
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
 	m.width = 48
 	m.height = 18
 	m.snapshot = Snapshot{
@@ -137,4 +163,90 @@ func TestModel_View_NarrowTerminalRendersWithoutBreakingPanels(t *testing.T) {
 	assert.NotEmpty(t, view.Content)
 	assert.Contains(t, view.Content, "invocations")
 	assert.Contains(t, view.Content, "invocation details")
+}
+
+func TestModel_View_ShowsWatchActionSet(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
+	m.width = 96
+	m.height = 22
+
+	view := m.View()
+	assert.Contains(t, view.Content, "enter")
+	assert.Contains(t, view.Content, "open")
+	assert.Contains(t, view.Content, "pr sync")
+}
+
+func TestModel_ActionEnter_SessionEndedIsRecoverable(t *testing.T) {
+	t.Parallel()
+
+	dispatcher := &fakeActionDispatcher{
+		enterErr: errors.NewWithDetails(
+			errors.ESessionEnded,
+			"tmux session not found",
+			map[string]string{
+				"hint": "session ended; use 'agency agent logs' or 'agency agent open' to view",
+			},
+		),
+	}
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedIndex = 0
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	next, _ = next.(model).Update(msg)
+	nextModel := next.(model)
+
+	assert.Equal(t, "inv-1", nextModel.selectedInvocationID)
+	assert.Equal(t, 0, nextModel.selectedIndex)
+	assert.Contains(t, nextModel.lastActionMessage, string(errors.ESessionEnded))
+	assert.Contains(t, nextModel.lastActionMessage, "session ended")
+	require.Len(t, dispatcher.enterCalls, 1)
+	assert.Equal(t, "inv-1@repo-1", dispatcher.enterCalls[0])
+}
+
+func TestModel_ActionFailure_RemainsInteractive(t *testing.T) {
+	t.Parallel()
+
+	dispatcher := &fakeActionDispatcher{
+		prSyncErr: errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"pr sync blocked by contract validation",
+			map[string]string{"hint": "address blocking reasons and retry"},
+		),
+	}
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+			{InvocationID: "inv-2", RepoID: "repo-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedIndex = 0
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	next, _ = next.(model).Update(msg)
+	nextModel := next.(model)
+
+	assert.Contains(t, nextModel.lastActionMessage, string(errors.EInvalidArgument))
+
+	moved, _ := nextModel.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	movedModel := moved.(model)
+	assert.Equal(t, 1, movedModel.selectedIndex, "watch should continue handling navigation after recoverable action failure")
+	require.Len(t, dispatcher.prSyncCalls, 1)
+	assert.Equal(t, "inv-1@repo-1", dispatcher.prSyncCalls[0])
 }
