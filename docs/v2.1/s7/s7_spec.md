@@ -45,6 +45,8 @@ Provide a full-screen watch/TUI shell that builds on S3 checks-first terminal co
 
 **TUI is additive and optional, not the baseline product contract**: S7 resolves the direction ambiguity by treating full-screen watch as a thin wrapper on top of existing CLI/daemon behavior. CLI-first parity remains the release baseline for v2.1.
 
+**Watch is implemented on a dedicated TUI runtime stack, not ad hoc terminal redraw logic**: S7 uses a real full-screen TUI framework stack (Bubble Tea v2 + Bubbles + Lip Gloss) for deterministic input/render lifecycle behavior, composable state transitions, and production-grade maintainability.
+
 **Engine is snapshot composition over existing contracts**: watch composes workspace state from existing daemon read models for worktrees, invocations, and invocation review/readiness, using periodic refresh rather than introducing a new authority path.
 
 **Checks/readiness truth is owned by canonical review semantics**: watch must render the same deterministic readiness/blocking model already used by invocation review and progression flows; watch cannot introduce a parallel readiness taxonomy.
@@ -53,10 +55,13 @@ Provide a full-screen watch/TUI shell that builds on S3 checks-first terminal co
 
 **Action behavior is delegation-first**: any interactive actions exposed by watch must delegate to canonical agent/worktree behavior and preserve existing confirmation/error contracts, including non-interactive safety expectations.
 
+**Seed sequencing is read-only first, then delegated actions**: the first watch delivery emphasizes stable full-screen monitoring/readiness visibility; mutation/action dispatch is layered afterward as delegation to canonical command contracts rather than embedded policy logic.
+
 ## Out of Scope
 
 - New daemon readiness or blocking-reason logic beyond existing review/check contracts
 - New daemon event-stream infrastructure as a required dependency for S7 seed delivery
+- Bespoke ANSI clear/redraw loops as the primary watch architecture
 - Redefining tmux lifecycle to keep headed sessions alive after runner exit
 - Replacing CLI-first scriptable contracts with watch-specific machine interfaces
 - GUI/web dashboard scope or full desktop parity
