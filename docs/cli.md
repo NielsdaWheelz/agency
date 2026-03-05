@@ -35,7 +35,7 @@ v2 commands (slice 8+):
   agent       manage agent invocations (headed + headless via daemon)
               subcommands: start, ls, show, attach, enter, stop, kill, diff,
                            land, discard, open, path, shell, chat, restart,
-                           history, logs, review, pr, merge
+                           history, logs, review
   daemon      manage the agency daemon (headless supervision)
   checkpoint  manage sandbox checkpoints for headless invocations
   repo        manage repository registry
