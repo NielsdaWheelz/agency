@@ -118,17 +118,20 @@ agency repo ls [--json]
 **flags:**
 - `--json`: output as JSON
 
+**output:**
+the first column shows the repo short name (derived from the GitHub repository name). this name can be used as the `--repo` argument for any command that accepts a repo reference. when names are ambiguous across repos, use the full repo key (`owner/repo`) or id instead.
+
 ### `agency repo show`
 
 shows details of a registered repository.
 
 **usage:**
 ```bash
-agency repo show <repo-id> [--json]
+agency repo show <name|repo-key|id|prefix> [--json]
 ```
 
 **arguments:**
-- `repo-id`: repository identifier
+- `name|repo-key|id|prefix`: repository identifier. resolved in order: short name (GitHub repo name) → repo key (`owner/repo`) → exact id → unique id prefix
 
 **flags:**
 - `--json`: output as JSON
@@ -439,14 +442,14 @@ prefer `agency agent enter` for canonical invocation navigation.
 
 **usage:**
 ```bash
-agency agent attach <invocation_id|prefix> [-r|--repo <id|prefix>]
+agency agent attach <invocation_id|prefix> [-r|--repo <name|id|prefix>]
 ```
 
 **arguments:**
 - `invocation_id|prefix`: invocation identifier (id or unique prefix)
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 
 **behavior:**
 1. performs TTY preflight
@@ -471,14 +474,14 @@ sends a graceful stop signal (Ctrl-C / SIGINT) to a running invocation.
 
 **usage:**
 ```bash
-agency agent stop <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
+agency agent stop <invocation_id|name|prefix> [--repo <name|id|prefix>] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--json`: machine-readable mutation envelope output
 
 **behavior (headed mode):**
@@ -512,14 +515,14 @@ forcefully terminates a running invocation.
 
 **usage:**
 ```bash
-agency agent kill <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
+agency agent kill <invocation_id|name|prefix> [--repo <name|id|prefix>] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--json`: machine-readable mutation envelope output
 
 **behavior (headed mode):**
@@ -551,14 +554,14 @@ shows sandbox changes vs the integration worktree.
 
 **usage:**
 ```bash
-agency agent diff <invocation_id|name|prefix> [--repo <id|prefix>] [--json] [--turn <entry_id> | --turn-range <start>..<end>]
+agency agent diff <invocation_id|name|prefix> [--repo <name|id|prefix>] [--json] [--turn <entry_id> | --turn-range <start>..<end>]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--json`: machine-readable output
 - `--turn`: single timeline entry id to anchor deterministic diff context
 - `--turn-range`: inclusive timeline range (`<start_entry_id>..<end_entry_id>`)
@@ -572,6 +575,7 @@ agency agent diff <invocation_id|name|prefix> [--repo <id|prefix>] [--json] [--t
 **examples:**
 ```bash
 agency agent diff 20260131
+agency agent diff --repo myrepo my-invocation
 agency agent diff --repo abc123 my-invocation
 agency agent diff --turn inv_event:2:agency.followup_prompt 20260131
 agency agent diff --turn-range stream:4..stream:9 --json 20260131
@@ -583,14 +587,14 @@ shows canonical review/readiness state for invocation progression.
 
 **usage:**
 ```bash
-agency agent review <invocation_id|name|prefix> [-r|--repo <id|prefix>] [-j|--json]
+agency agent review <invocation_id|name|prefix> [-r|--repo <name|id|prefix>] [-j|--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 - `-j, --json`: machine-readable output
 
 **behavior:**
@@ -602,6 +606,7 @@ agency agent review <invocation_id|name|prefix> [-r|--repo <id|prefix>] [-j|--js
 **examples:**
 ```bash
 agency agent review 20260131
+agency agent review --repo myrepo my-invocation
 agency agent review --repo abc123 my-invocation
 agency agent review --json 20260131
 agency agent review -r abc123 -j my-invocation
@@ -613,14 +618,14 @@ pushes the resolved integration branch and creates/updates the branch-scoped PR 
 
 **usage:**
 ```bash
-agency agent pr sync <invocation_id|name|prefix> [--repo <id|prefix>] [--allow-dirty] [--force-with-lease] [--json]
+agency agent pr sync <invocation_id|name|prefix> [--repo <name|id|prefix>] [--allow-dirty] [--force-with-lease] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--allow-dirty`: allow sync with uncommitted integration worktree changes
 - `--force-with-lease`: use `git push --force-with-lease`
 - `--json`: machine-readable mutation envelope output
@@ -636,6 +641,7 @@ agency agent pr sync <invocation_id|name|prefix> [--repo <id|prefix>] [--allow-d
 **examples:**
 ```bash
 agency agent pr sync 20260131
+agency agent pr sync --repo myrepo my-invocation --allow-dirty
 agency agent pr sync --repo abc123 my-invocation --allow-dirty
 agency agent pr sync --force-with-lease 20260131
 agency agent pr sync --json 20260131
@@ -647,14 +653,14 @@ runs invocation-scoped verify + pull-request merge for the resolved integration 
 
 **usage:**
 ```bash
-agency agent merge <invocation_id|name|prefix> [--repo <id|prefix>] [--squash|--merge|--rebase] [--no-delete-branch] [--yes] [--json]
+agency agent merge <invocation_id|name|prefix> [--repo <name|id|prefix>] [--squash|--merge|--rebase] [--no-delete-branch] [--yes] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--squash`: squash merge strategy (default)
 - `--merge`: regular merge strategy
 - `--rebase`: rebase merge strategy
@@ -674,6 +680,7 @@ agency agent merge <invocation_id|name|prefix> [--repo <id|prefix>] [--squash|--
 **examples:**
 ```bash
 agency agent merge 20260131 --yes
+agency agent merge --repo myrepo my-invocation --merge --yes
 agency agent merge --repo abc123 my-invocation --merge --yes
 agency agent merge --rebase --no-delete-branch --yes 20260131
 agency agent merge --json --yes 20260131
@@ -685,14 +692,14 @@ applies sandbox changes back to the integration worktree.
 
 **usage:**
 ```bash
-agency agent land <invocation_id|name|prefix> [--repo <id|prefix>] [--apply] [--require-base] [--json]
+agency agent land <invocation_id|name|prefix> [--repo <name|id|prefix>] [--apply] [--require-base] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--apply`: apply uncommitted changes as a patch (when sandbox has no commits)
 - `--require-base`: fail if integration branch has moved since sandbox was created
 - `--json`: machine-readable mutation envelope output
@@ -709,14 +716,14 @@ discards a sandbox without landing changes.
 
 **usage:**
 ```bash
-agency agent discard <invocation_id|name|prefix> [--repo <id|prefix>] [--json]
+agency agent discard <invocation_id|name|prefix> [--repo <name|id|prefix>] [--json]
 ```
 
 **arguments:**
 - `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 - `--json`: machine-readable mutation envelope output
 
 **behavior:**
@@ -730,13 +737,13 @@ opens the sandbox in the configured editor.
 
 **usage:**
 ```bash
-agency agent open <invocation_id|name|prefix> [-r|--repo <id|prefix>] [--editor <name>]
+agency agent open <invocation_id|name|prefix> [-r|--repo <name|id|prefix>] [--editor <name>]
 ```
 
 resolves invocation via daemon-first navigation kernel. no local store discovery.
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 - `--editor`: editor override (default: configured editor)
 
 **error codes:**
@@ -750,7 +757,7 @@ prints the daemon-resolved sandbox path for scripting.
 
 **usage:**
 ```bash
-agency agent path <invocation_ref> [-r|--repo <id|prefix>]
+agency agent path <invocation_ref> [-r|--repo <name|id|prefix>]
 ```
 
 **example:**
@@ -762,7 +769,7 @@ resolves invocation via daemon-first navigation kernel. no local store discovery
 `agent path` is a pure path-printing surface — it does not fail if the path no longer exists.
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 
 ### `agency agent shell`
 
@@ -786,7 +793,7 @@ attaches to a running headed invocation's tmux session (canonical interactive na
 
 **usage:**
 ```bash
-agency agent enter <invocation_ref> [-r|--repo <id|prefix>]
+agency agent enter <invocation_ref> [-r|--repo <name|id|prefix>]
 ```
 
 resolves invocation identity/path via daemon-first navigation kernel with TTY preflight.
@@ -794,7 +801,7 @@ headed-only: headless invocations are rejected with `E_INVOCATION_INVALID_MODE`.
 tmux session name is derived deterministically from `tmux.SessionName(invocation_id)`.
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 
 **error codes:**
 - `E_NOT_INTERACTIVE` — not running in an interactive terminal
@@ -809,7 +816,7 @@ sends a follow-up prompt to an existing headless invocation without creating a n
 
 **usage:**
 ```bash
-agency agent chat <invocation_ref> [--repo <id|prefix>] [--prompt <text> | --prompt-file <path>] [--json]
+agency agent chat <invocation_ref> [--repo <name|id|prefix>] [--prompt <text> | --prompt-file <path>] [--json]
 ```
 
 **arguments:**
@@ -819,7 +826,7 @@ agency agent chat <invocation_ref> [--repo <id|prefix>] [--prompt <text> | --pro
 - `--prompt`: inline follow-up prompt
 - `--prompt-file`: read follow-up prompt from file (bounded read, max 256KB)
 - `--json`: machine-readable mutation envelope output
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 
 **json mutation envelope (`--json`):**
 - stable top-level fields: `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`
@@ -847,7 +854,7 @@ applies a checkpoint and restarts the same headless invocation in one invocation
 
 **usage:**
 ```bash
-agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <id|prefix>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
+agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <name|id|prefix>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
 ```
 
 **arguments:**
@@ -859,7 +866,7 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <i
 - `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
 - `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
 - `--json`: machine-readable mutation envelope output
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 
 **json mutation envelope (`--json`):**
 - stable top-level fields: `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`
@@ -894,7 +901,7 @@ reads the unified invocation timeline used for detached transcript/history inspe
 
 **usage:**
 ```bash
-agency agent history <invocation_ref> [--repo <id|prefix>] [--limit <n>] [--cursor <opaque>] [--json]
+agency agent history <invocation_ref> [--repo <name|id|prefix>] [--limit <n>] [--cursor <opaque>] [--json]
 ```
 
 **arguments:**
@@ -904,7 +911,7 @@ agency agent history <invocation_ref> [--repo <id|prefix>] [--limit <n>] [--curs
 - `--limit`: maximum entries returned per page (default: 100, required range: 1..500)
 - `--cursor`: opaque continuation cursor from prior response
 - `--json`: machine-readable output
-- `--repo`: repo id or unique prefix
+- `--repo`: repo name, key, id, or prefix
 
 **entry coverage:**
 - prompt seed context (`prompt_seed`)
@@ -1572,14 +1579,14 @@ prints daemon-resolved sandbox path as a single line.
 
 **usage:**
 ```bash
-agency path <invocation_ref> [-r|--repo <repo_id|prefix>]
+agency path <invocation_ref> [-r|--repo <name|id|prefix>]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation id, name, or unique prefix
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 
 **behavior:**
 - resolves invocation via daemon-first navigation
@@ -1598,14 +1605,14 @@ opens daemon-resolved sandbox path in editor.
 
 **usage:**
 ```bash
-agency open <invocation_ref> [-r|--repo <repo_id|prefix>] [--editor <name>]
+agency open <invocation_ref> [-r|--repo <name|id|prefix>] [--editor <name>]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation id, name, or unique prefix
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 - `--editor`: editor override (default: configured editor)
 
 **error codes:**
@@ -1621,14 +1628,14 @@ attaches to a running headed invocation tmux session.
 
 **usage:**
 ```bash
-agency attach <invocation_ref> [-r|--repo <repo_id|prefix>]
+agency attach <invocation_ref> [-r|--repo <name|id|prefix>]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation id, name, or unique prefix
 
 **flags:**
-- `-r, --repo`: repo id or unique prefix
+- `-r, --repo`: repo name, key, id, or prefix
 
 **behavior:**
 1. performs TTY preflight

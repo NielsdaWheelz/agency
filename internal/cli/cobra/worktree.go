@@ -161,7 +161,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Filter by repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Filter by repo name, key, id, or prefix")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -205,7 +205,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
@@ -243,7 +243,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 
 	return cmd
 }
@@ -280,7 +280,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
 
 	return cmd
@@ -318,7 +318,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 
 	return cmd
 }
@@ -362,7 +362,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm remove in non-interactive mode")
 

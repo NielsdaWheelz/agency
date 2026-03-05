@@ -20,10 +20,10 @@ agency repo add --path /path/to/repo  # register a specific path
 agency repo ls                        # list registered repos
 ```
 
-the `--repo` flag on worktree/agent commands enables CWD-less operation:
+the `--repo` flag on worktree/agent commands accepts a name, ID, or unique prefix and enables CWD-less operation:
 
 ```bash
-agency worktree create --name my-feature --repo <repo-id>
+agency worktree create --name my-feature --repo <name|id|prefix>
 agency agent ls --all-repos
 ```
 

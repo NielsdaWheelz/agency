@@ -16,6 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
+	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -76,7 +77,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 				errors.ENoRepoContext,
 				"no repo context (not in a git repo)",
 				map[string]string{
-					"hint": "run \"agency repo ls\" then re-run with --repo <repo_id>, or pass --all-repos, or register a repo with \"agency repo add /path/to/repo\"",
+					"hint": "run \"agency repo ls\" then re-run with --repo <name>, or pass --all-repos, or register a repo with \"agency repo add /path/to/repo\"",
 				},
 			)
 		}
@@ -84,7 +85,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 			errors.ENoRepoContext,
 			fmt.Sprintf("cannot resolve %s without a repo context", opts.CmdName),
 			map[string]string{
-				"hint": "run \"agency repo ls\" and re-run with \"--repo <repo_id>\", or register a repo: \"agency repo add /path/to/repo\"",
+				"hint": "run \"agency repo ls\" and re-run with \"--repo <name>\", or register a repo: \"agency repo add /path/to/repo\"",
 			},
 		)
 	}
@@ -193,15 +194,15 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	}
 
 	for _, r := range result.Repos {
-		origin := r.RepoKey
-		if r.Origin != nil && r.Origin.Present {
-			origin = r.RepoKey
+		// Show short name as primary column; fall back to truncated ID for path-based repos
+		label := ids.RepoShortName(r.RepoKey)
+		if label == "" {
+			label = r.RepoID
 		}
-		shortID := r.RepoID
-		if len(shortID) > 12 {
-			shortID = shortID[:12]
+		if len(label) > 20 {
+			label = label[:20]
 		}
-		_, _ = fmt.Fprintf(stdout, "%s  %s  %s\n", shortID, origin, r.PreferredRoot)
+		_, _ = fmt.Fprintf(stdout, "%-20s %s  %s\n", label, r.RepoKey, r.PreferredRoot)
 	}
 
 	return nil

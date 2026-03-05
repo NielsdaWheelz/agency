@@ -735,22 +735,37 @@ func (s *Server) resolveInvocationRefForRepo(ref string, repoID string) (*resolv
 }
 
 // getRepoIDsForQuery returns repo IDs to scan based on filter.
-func (s *Server) getRepoIDsForQuery(filterRepoID string) ([]string, error) {
-	if filterRepoID != "" {
-		return []string{filterRepoID}, nil
-	}
-
+// When filterRepoRef is non-empty, it resolves via ids.ResolveRepoRef
+// (name → key → exact ID → prefix).
+func (s *Server) getRepoIDsForQuery(filterRepoRef string) ([]string, error) {
 	// Load repo index
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {
 		return nil, err
 	}
 
-	var repoIDs []string
-	for _, entry := range idx.Repos {
-		repoIDs = append(repoIDs, entry.RepoID)
+	if filterRepoRef == "" {
+		var repoIDs []string
+		for _, entry := range idx.Repos {
+			repoIDs = append(repoIDs, entry.RepoID)
+		}
+		return repoIDs, nil
 	}
-	return repoIDs, nil
+
+	// Build refs and resolve
+	refs := s.buildRepoRefs(idx)
+	resolved, resolveErr := ids.ResolveRepoRef(filterRepoRef, refs, ids.ResolveRepoRefOpts{})
+	if resolveErr != nil {
+		// Resolution failed. Pass through the raw value for backward compat
+		// (it may be a valid repo ID not yet in the index). Reject values
+		// containing path separators to prevent directory traversal since
+		// this value is used in filepath.Join for filesystem operations.
+		if strings.ContainsAny(filterRepoRef, "/\\") {
+			return []string{}, nil
+		}
+		return []string{filterRepoRef}, nil
+	}
+	return []string{resolved.RepoID}, nil
 }
 
 // ----- Diff Building -----

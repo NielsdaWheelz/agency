@@ -49,7 +49,7 @@ Arguments:
 	}
 
 	cmd.Flags().StringVar(&editor, "editor", "", "editor name (default: user config defaults.editor)")
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo id or unique prefix")
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 
 	return cmd
 }

@@ -116,15 +116,18 @@ func newRepoShowCmd() *cobra.Command {
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "show <repo-id>",
+		Use:   "show <name|repo-key|id|prefix>",
 		Short: "Show details of a registered repository",
 		Long: `Show details of a registered repository.
 
-The argument can be a full repo_id or a unique prefix.
+The argument can be a repo name, owner/repo, full repo key, repo id, or unique prefix.
 
 Example:
-  agency repo show abc123
-  agency repo show --json abc123`,
+  agency repo show agency
+  agency repo show NielsdaWheelz/agency
+  agency repo show github:NielsdaWheelz/agency
+  agency repo show 769749d
+  agency repo show --json agency`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cr := exec.NewRealRunner()
@@ -198,7 +201,7 @@ Example:
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "repo ID (defaults to CWD auto-detect)")
+	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
 
 	return cmd
 }
@@ -224,7 +227,7 @@ func newRepoS1ReportCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "repo ID (defaults to CWD auto-detect)")
+	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
 
 	return cmd
 }
@@ -250,7 +253,7 @@ func newRepoS1FreezeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "repo ID (defaults to CWD auto-detect)")
+	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
 
 	return cmd
 }

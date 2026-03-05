@@ -13,6 +13,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
+	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
@@ -41,9 +42,9 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GET /repos/{repo_id}
+	// GET /repos/{repo_ref} — ref may contain slashes (e.g. "owner/repo")
 	remaining := strings.TrimPrefix(path, "/repos/")
-	if remaining != "" && !strings.Contains(remaining, "/") {
+	if remaining != "" {
 		if r.Method != http.MethodGet {
 			s.writeAPIError(w, http.StatusMethodNotAllowed, getOrCreateRequestID(r), "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
 			return
@@ -199,8 +200,8 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	s.writeAPIResponse(w, requestID, ListReposData{Repos: repos})
 }
 
-// handleGetRepo handles GET /repos/{repo_id}.
-func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request, repoID string) {
+// handleGetRepo handles GET /repos/{repo_ref}.
+func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request, repoRef string) {
 	requestID := getOrCreateRequestID(r)
 
 	idx, err := s.Store.LoadRepoIndex()
@@ -209,27 +210,43 @@ func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request, repoID st
 		return
 	}
 
-	// O(n) scan to find entry by repo_id
-	var found bool
-	var entry store.RepoIndexEntry
-	for _, e := range idx.Repos {
-		if e.RepoID == repoID {
-			entry = e
-			found = true
-			break
-		}
-	}
+	// Build refs for resolver
+	refs := s.buildRepoRefs(idx)
 
-	if !found {
-		s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
-			"repo not found: "+repoID,
-			"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
-			nil)
+	resolved, resolveErr := ids.ResolveRepoRef(repoRef, refs, ids.ResolveRepoRefOpts{})
+	if resolveErr != nil {
+		switch e := resolveErr.(type) {
+		case *ids.ErrRepoAmbiguous:
+			candidates := make([]string, len(e.Candidates))
+			for i, c := range e.Candidates {
+				candidates[i] = c.RepoID
+			}
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoIDAmbiguous),
+				e.Error(),
+				"use a more specific name, repo key, or full repo id",
+				AmbiguousDetails{Candidates: candidates})
+		default:
+			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
+				"repo not found: "+repoRef,
+				"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
+				nil)
+		}
 		return
 	}
 
-	dto := s.buildRepoDTO(entry)
-	s.writeAPIResponse(w, requestID, dto)
+	// Find the matching index entry
+	for _, entry := range idx.Repos {
+		if entry.RepoID == resolved.RepoID {
+			dto := s.buildRepoDTO(entry)
+			s.writeAPIResponse(w, requestID, dto)
+			return
+		}
+	}
+
+	s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
+		"repo not found: "+repoRef,
+		"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
+		nil)
 }
 
 // buildRepoDTO constructs a RepoDTO from a repo index entry.
@@ -306,6 +323,25 @@ func isRootAccessible(root string) bool {
 	}
 	info, err := os.Stat(root)
 	return err == nil && info.IsDir()
+}
+
+// buildRepoRefs builds a slice of ids.RepoRef from the repo index.
+func (s *Server) buildRepoRefs(idx store.RepoIndex) []ids.RepoRef {
+	var refs []ids.RepoRef
+	for _, entry := range idx.Repos {
+		ref := ids.RepoRef{
+			RepoID: entry.RepoID,
+		}
+		// Load repo.json for RepoKey
+		rec, exists, _ := s.Store.LoadRepoRecord(entry.RepoID)
+		if exists {
+			ref.RepoKey = rec.RepoKey
+		} else {
+			ref.Broken = true
+		}
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 // writeRepoError writes an error response for repo endpoints.
