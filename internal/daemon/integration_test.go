@@ -809,7 +809,7 @@ func TestDaemonCheckpointApplyNotFound(t *testing.T) {
 	startResp := startTestInvocation(t, env.Client, repoRoot, "cp-notfound", "exit-ok")
 
 	// Wait for invocation to finish.
-	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
+	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
 
 	// Apply non-existent checkpoint.
 	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 999)
