@@ -17,13 +17,15 @@ func newOpenCmd() *cobra.Command {
 	var repoFlag string
 
 	cmd := &cobra.Command{
-		Use:   "open <invocation_ref>",
-		Short: "Compatibility alias for 'agent open'",
-		Long: `Compatibility alias for 'agency agent open'.
-Opens daemon-resolved sandbox path in your editor.
+		Use:   "open <ref>",
+		Short: "Open a run or invocation worktree in your editor",
+		Long: `Open a run or invocation worktree in your editor.
+
+Resolves the reference as an invocation first (daemon-first), then
+falls back to legacy run resolution if no invocation matches.
 
 Arguments:
-  invocation_ref   invocation id, name, or unique prefix`,
+  ref   run or invocation id, name, or unique prefix`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stdout := cmd.OutOrStdout()
@@ -38,13 +40,28 @@ Arguments:
 			fsys := fs.NewRealFS()
 			ctx := context.Background()
 
-			opts := commands.AgentOpenOpts{
+			// Try invocation resolution first (daemon-first, S8 path).
+			agentErr := commands.AgentOpen(ctx, cr, fsys, cwd, commands.AgentOpenOpts{
 				InvocationRef: args[0],
 				RepoFlag:      repoFlag,
 				Editor:        editor,
+			}, stdout, stderr)
+			if agentErr == nil {
+				return nil
 			}
 
-			return commands.AgentOpen(ctx, cr, fsys, cwd, opts, stdout, stderr)
+			// Only fall back to legacy run resolution when the ref
+			// simply doesn't exist as an invocation. All other errors
+			// (daemon failures, ambiguity, sandbox missing, editor
+			// errors) are authoritative and must propagate.
+			if errors.GetCode(agentErr) != errors.EInvocationNotFound {
+				return agentErr
+			}
+
+			return commands.Open(ctx, cr, fsys, cwd, commands.OpenOpts{
+				RunID:  args[0],
+				Editor: editor,
+			}, stdout, stderr)
 		},
 	}
 

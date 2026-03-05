@@ -1600,24 +1600,27 @@ agency path <invocation_ref> [-r|--repo <name|id|prefix>]
 
 ## `agency open`
 
-compatibility alias for `agency agent open`.
-opens daemon-resolved sandbox path in editor.
+opens a run or invocation worktree in your editor.
+
+resolves the reference as an invocation first (daemon-first), then
+falls back to legacy run resolution if no invocation matches.
 
 **usage:**
 ```bash
-agency open <invocation_ref> [-r|--repo <name|id|prefix>] [--editor <name>]
+agency open <ref> [-r|--repo <name|id|prefix>] [--editor <name>]
 ```
 
 **arguments:**
-- `invocation_ref`: invocation id, name, or unique prefix
+- `ref`: run or invocation id, name, or unique prefix
 
 **flags:**
-- `-r, --repo`: repo name, key, id, or prefix
+- `-r, --repo`: repo name, key, id, or prefix (invocation resolution only)
 - `--editor`: editor override (default: configured editor)
 
 **error codes:**
 - `E_NO_REPO_CONTEXT` — no repo context and no `--repo` provided
-- `E_INVOCATION_NOT_FOUND` — invocation not found
+- `E_INVOCATION_NOT_FOUND` — invocation not found (triggers fallback to run resolution)
+- `E_RUN_NOT_FOUND` — ref matches neither invocation nor run
 - `E_AMBIGUOUS` — ref matches multiple invocations
 - `E_SANDBOX_MISSING` — sandbox directory no longer exists on disk
 
