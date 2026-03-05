@@ -493,6 +493,24 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
+			name:       "pr sync with GET should fail",
+			method:     http.MethodGet,
+			path:       "/worktrees/test-id/pr/sync",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "merge with GET should fail",
+			method:     http.MethodGet,
+			path:       "/worktrees/test-id/merge",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "update with GET should fail",
+			method:     http.MethodGet,
+			path:       "/worktrees/test-id/update",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
 			name:       "base path with GET should list worktrees (PR-12)",
 			method:     http.MethodGet,
 			path:       "/worktrees/",

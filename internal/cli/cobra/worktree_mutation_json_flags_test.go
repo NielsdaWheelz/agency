@@ -7,20 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgentMutationCommandsAcceptJSONFlag(t *testing.T) {
+func TestWorktreeMutationCommandsAcceptJSONFlag(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name   string
 		newCmd func() *cobra.Command
 	}{
-		{name: "start", newCmd: newAgentStartCmd},
-		{name: "stop", newCmd: newAgentStopCmd},
-		{name: "kill", newCmd: newAgentKillCmd},
-		{name: "land", newCmd: newAgentLandCmd},
-		{name: "discard", newCmd: newAgentDiscardCmd},
-		{name: "chat", newCmd: newAgentChatCmd},
-		{name: "restart", newCmd: newAgentRestartCmd},
+		{name: "pr sync", newCmd: newWorktreePRSyncCmd},
+		{name: "merge", newCmd: newWorktreeMergeCmd},
+		{name: "update", newCmd: newWorktreeUpdateCmd},
 	}
 
 	for _, tt := range tests {

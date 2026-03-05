@@ -83,16 +83,22 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{"checkpoint_id":1}`),
 		},
 		{
-			name:   "pr_sync_missing_repo",
+			name:   "worktree_pr_sync_missing_repo",
 			method: http.MethodPost,
-			path:   "/invocations/inv-1/pr/sync",
+			path:   "/worktrees/wt-1/pr/sync",
 			body:   []byte(`{}`),
 		},
 		{
-			name:   "merge_missing_repo",
+			name:   "worktree_merge_missing_repo",
 			method: http.MethodPost,
-			path:   "/invocations/inv-1/merge",
+			path:   "/worktrees/wt-1/merge",
 			body:   []byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+		},
+		{
+			name:   "worktree_update_missing_repo",
+			method: http.MethodPost,
+			path:   "/worktrees/wt-1/update",
+			body:   []byte(`{}`),
 		},
 		{
 			name:   "review",

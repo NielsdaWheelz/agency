@@ -88,7 +88,7 @@ e2e-gh:
 
 # Run S5 failure-matrix e2e suite (no GH token required)
 e2e-s5-failure-matrix:
-	go test -tags=e2e ./internal/commands -run TestS5E2EAgentPRSyncMergeFailureMatrix -count=1
+	go test -tags=e2e ./internal/commands -run TestS5E2EWorktreePRSyncMergeFailureMatrix -count=1
 
 # Run GH-backed S5 happy-path e2e suite (requires token)
 e2e-s5-happy:
@@ -98,7 +98,7 @@ e2e-s5-happy:
 		exit 1; \
 	fi; \
 	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN="$$token" \
-		go test -tags=e2e ./internal/commands -run TestGHE2EAgentPRSyncMerge -count=1
+		go test -tags=e2e ./internal/commands -run TestGHE2EWorktreePRSyncMerge -count=1
 
 # Run local black-box CLI e2e smoke tests
 e2e-local:

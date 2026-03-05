@@ -71,8 +71,9 @@ agency agent history <invocation-id> --limit 50   # limit must be 1..500
 agency agent review <invocation-id>               # review verdict + blocking reasons
 agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
 agency agent land <invocation-id> --apply         # land sandbox into integration worktree
-agency agent pr sync <invocation-id>              # push branch + create/update PR
-agency agent merge <invocation-id> --yes          # verify + merge invocation PR
+agency worktree pr sync <worktree-ref>            # push branch + create/update PR
+agency worktree merge <worktree-ref> --yes        # verify + merge worktree PR
+agency worktree update <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
 agency checkpoint ls --invocation <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 agency agent restart <invocation-id> --history     # interactive history selector (tty only)
@@ -98,7 +99,7 @@ non-interactive destructive flows require explicit confirmation via `--yes`:
 agency clean <run-id> --yes
 agency merge <run-id> --yes
 agency worktree rm <name|id|prefix> --yes
-agency agent merge <invocation-id> --yes
+agency worktree merge <worktree-ref> --yes
 ```
 
 automation-friendly mutation json:
@@ -108,8 +109,9 @@ agency agent start --worktree my-feature --headless --prompt "fix bug" --json
 agency agent stop <invocation-id> --json
 agency agent kill <invocation-id> --json
 agency agent land <invocation-id> --json
-agency agent pr sync <invocation-id> --json
-agency agent merge <invocation-id> --yes --json
+agency worktree pr sync <worktree-ref> --json
+agency worktree merge <worktree-ref> --yes --json
+agency worktree update <worktree-ref> --json
 agency agent discard <invocation-id> --json
 agency agent chat <invocation-id> --prompt "continue" --json
 agency agent restart <invocation-id> --checkpoint 3 --json
@@ -119,7 +121,7 @@ all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
-for `agent pr sync` and `agent merge`, additive report fields include
+for `worktree pr sync` and `worktree merge`, additive report fields include
 `report_source`, `report_fallback_used`, and `report_diagnostics`.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.

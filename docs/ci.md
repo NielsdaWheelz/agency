@@ -5,8 +5,8 @@ this document defines the ci contract. it must match `.github/workflows/ci.yml`.
 ## required checks
 
 - `go test ./...`
-- `go test -tags=e2e ./internal/commands -run TestS5E2EAgentPRSyncMergeFailureMatrix -count=1`
-- `go test -tags=e2e ./internal/commands -run TestGHE2EAgentPRSyncMerge -count=1` (only when `AGENCY_GH_TOKEN` is configured)
+- `go test -tags=e2e ./internal/commands -run TestS5E2EWorktreePRSyncMergeFailureMatrix -count=1`
+- `go test -tags=e2e ./internal/commands -run TestGHE2EWorktreePRSyncMerge -count=1` (only when `AGENCY_GH_TOKEN` is configured)
 
 ## environment
 

@@ -99,6 +99,7 @@ const (
 	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
 	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
 	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the run
+	ERebaseConflict        Code = "E_REBASE_CONFLICT"         // git rebase encountered conflicts during worktree update
 
 	// Name validation error codes
 	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run

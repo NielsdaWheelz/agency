@@ -21,6 +21,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
+	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -50,6 +51,9 @@ type Server struct {
 
 	// InvocationEvents appends invocation-scoped events with shared sequencing.
 	InvocationEvents *invocationevents.Writer
+
+	// WorktreeEvents appends worktree-scoped events with shared sequencing.
+	WorktreeEvents *worktreeevents.Writer
 
 	// PIDChecker checks if a PID is alive (injectable for testing).
 	PIDChecker func(int) bool
@@ -143,6 +147,9 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		reconcileLoopDone:       make(chan struct{}), // PR-11
 	}
 	server.InvocationEvents = invocationevents.NewWriter(func() time.Time {
+		return server.Clock()
+	})
+	server.WorktreeEvents = worktreeevents.NewWriter(func() time.Time {
 		return server.Clock()
 	})
 	return server
@@ -522,16 +529,6 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationChecks(w, r, invocationRef)
-	case "pr":
-		// S5 PR-01: invocation-scoped PR routes.
-		s.handleInvocationPRRoute(w, r, invocationRef, action)
-	case "merge":
-		// S5 PR-02: invocation-scoped merge route.
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
-			return
-		}
-		s.handleMerge(w, r, invocationRef)
 	case "chat":
 		// S3 PR-02: POST /invocations/{ref}/chat
 		if r.Method != http.MethodPost {
@@ -541,24 +538,6 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		s.handleControlPlaneFollowUpPrompt(w, r, invocationRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
-	}
-}
-
-func (s *Server) handleInvocationPRRoute(w http.ResponseWriter, r *http.Request, invocationRef, action string) {
-	subAction := ""
-	if idx := strings.Index(action, "/"); idx != -1 {
-		subAction = action[idx+1:]
-	}
-
-	switch subAction {
-	case "sync":
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
-			return
-		}
-		s.handlePRSync(w, r, invocationRef)
-	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown pr action: "+subAction, "")
 	}
 }
 
@@ -1403,7 +1382,8 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch action {
+	topAction, _, _ := strings.Cut(action, "/")
+	switch topAction {
 	case "":
 		// PR-12: GET /worktrees/{ref} - get single worktree
 		if r.Method == http.MethodGet {
@@ -1417,7 +1397,39 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleWorktreeRm(w, r, worktreeRef)
+	case "pr":
+		s.handleWorktreePRRoute(w, r, worktreeRef, action)
+	case "merge":
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleWorktreePRMerge(w, r, worktreeRef)
+	case "update":
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleWorktreeUpdate(w, r, worktreeRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm")
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm, pr, merge, update")
+	}
+}
+
+func (s *Server) handleWorktreePRRoute(w http.ResponseWriter, r *http.Request, worktreeRef, action string) {
+	subAction := ""
+	if idx := strings.Index(action, "/"); idx != -1 {
+		subAction = action[idx+1:]
+	}
+
+	switch subAction {
+	case "sync":
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			return
+		}
+		s.handleWorktreePRSync(w, r, worktreeRef)
+	default:
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown pr action: "+subAction, "")
 	}
 }

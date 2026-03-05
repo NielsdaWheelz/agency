@@ -1239,7 +1239,20 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		return fail(err)
 	}
 
-	resp, err := client.PRSync(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.PRSyncOpts{
+	invocationResult, err := client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return fail(err)
+	}
+	worktreeRef := strings.TrimSpace(invocationResult.Invocation.WorktreeID)
+	if worktreeRef == "" {
+		return fail(errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"invocation is not associated with an integration worktree",
+			map[string]string{"invocation_id": opts.InvocationRef},
+		))
+	}
+
+	resp, err := client.WorktreePRSync(ctx, worktreeRef, repoCtx.RepoID, daemonclient.WorktreePRSyncOpts{
 		AllowDirty:     opts.AllowDirty,
 		ForceWithLease: opts.ForceWithLease,
 	})
@@ -1259,7 +1272,7 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
+			envelope.InvocationID = opts.InvocationRef
 			envelope.RepoID = resp.RepoID
 			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
 			envelope.Branch = resp.Branch
@@ -1283,7 +1296,8 @@ func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	}
 
 	_, _ = fmt.Fprintln(stdout, "PR sync complete")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", opts.InvocationRef)
+	_, _ = fmt.Fprintf(stdout, "  worktree_id:    %s\n", resp.IntegrationWorktreeID)
 	_, _ = fmt.Fprintf(stdout, "  branch:         %s\n", resp.Branch)
 	_, _ = fmt.Fprintf(stdout, "  pr_action:      %s\n", resp.PRAction)
 	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)
@@ -1408,7 +1422,20 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fail(err)
 	}
 
-	resp, err := client.Merge(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.MergeOpts{
+	invocationResult, err := client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return fail(err)
+	}
+	worktreeRef := strings.TrimSpace(invocationResult.Invocation.WorktreeID)
+	if worktreeRef == "" {
+		return fail(errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"invocation is not associated with an integration worktree",
+			map[string]string{"invocation_id": opts.InvocationRef},
+		))
+	}
+
+	resp, err := client.WorktreePRMerge(ctx, worktreeRef, repoCtx.RepoID, daemonclient.WorktreePRMergeOpts{
 		Strategy:         strategy,
 		ConfirmationMode: confirmationMode,
 		Confirmed:        confirmed,
@@ -1430,7 +1457,7 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
+			envelope.InvocationID = opts.InvocationRef
 			envelope.RepoID = resp.RepoID
 			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
 			envelope.Branch = resp.Branch
@@ -1457,7 +1484,8 @@ func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	_, _ = fmt.Fprintln(stdout, "merge complete")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", opts.InvocationRef)
+	_, _ = fmt.Fprintf(stdout, "  worktree_id:    %s\n", resp.IntegrationWorktreeID)
 	_, _ = fmt.Fprintf(stdout, "  branch:         %s\n", resp.Branch)
 	_, _ = fmt.Fprintf(stdout, "  strategy:       %s\n", resp.Strategy)
 	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)

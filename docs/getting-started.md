@@ -271,31 +271,30 @@ agency agent kill <invocation-id>    # forceful (SIGKILL)
 
 sandbox is preserved after stop/kill for inspection.
 
-## step 10: sync PR for the invocation
+## step 10: sync PR for the worktree
 
-once changes are landed, sync the integration branch and PR using the invocation id:
+once changes are landed, sync the integration branch and PR using the worktree ref:
 
 ```bash
-agency agent pr sync <invocation-id>
+agency worktree pr sync <worktree-ref>
 ```
 
 what happened:
-1. resolved invocation -> integration worktree branch
+1. resolved worktree -> integration branch
 2. pushed the branch to origin
 3. created or updated the branch-scoped GitHub PR
 4. evaluated reports v2 canonically (`.agency/report.json` authoritative over `.agency/report.md`)
-5. synced canonical report body (or deterministic bounded fallback body in compatibility mode) to PR body
+5. synced canonical report body (or deterministic bounded fallback body) to PR body
 
-headless vs headed report behavior:
-- headless mode: strict fail-closed report validation with typed errors
-- headed mode: compatibility-first fallback with explicit diagnostics
+report behavior for worktree PR sync:
+- compatibility-first fallback with explicit diagnostics when canonical report contract is invalid
 
 policy flags:
 
 ```bash
-agency agent pr sync <invocation-id> --allow-dirty      # allow dirty integration tree
-agency agent pr sync <invocation-id> --force-with-lease # safe force push after rebase
-agency agent pr sync <invocation-id> --json             # machine-readable outcome
+agency worktree pr sync <worktree-ref> --allow-dirty      # allow dirty integration tree
+agency worktree pr sync <worktree-ref> --force-with-lease # safe force push after rebase
+agency worktree pr sync <worktree-ref> --json             # machine-readable outcome
 ```
 
 legacy compatibility still exists:
@@ -307,25 +306,26 @@ agency push <worktree-name>
 ## step 11: merge and cleanup
 
 ```bash
-agency agent merge <invocation-id> --yes
+agency worktree merge <worktree-ref> --yes
 ```
 
 what happened:
-1. resolved invocation -> integration worktree -> branch -> PR identity
-2. ran `scripts/agency_verify.sh` in invocation-scoped non-interactive mode
+1. resolved worktree -> branch -> PR identity
+2. ran `scripts/agency_verify.sh` in worktree-scoped non-interactive mode
 3. merged the PR via `gh pr merge` with your selected strategy
-4. evaluated the same reports-v2 contract used by PR sync (strict in headless, compatibility diagnostics in headed)
-5. persisted verify/merge logs under invocation state for auditability
-6. appended merge lifecycle events to invocation event history
+4. evaluated the same reports-v2 contract used by worktree PR sync (compatibility-first with diagnostics)
+5. persisted verify/merge logs under worktree state for auditability
+6. appended merge lifecycle events to worktree event history
 
 merge options:
 ```bash
-agency agent merge <invocation-id> --yes                     # script-safe confirmation
-agency agent merge <invocation-id> --squash --yes            # squash merge (default)
-agency agent merge <invocation-id> --merge --yes             # regular merge
-agency agent merge <invocation-id> --rebase --yes            # rebase merge
-agency agent merge <invocation-id> --no-delete-branch --yes  # keep remote branch
-agency agent merge <invocation-id> --json --yes              # machine-readable outcome
+agency worktree merge <worktree-ref> --yes                     # script-safe confirmation
+agency worktree merge <worktree-ref> --squash --yes            # squash merge (default)
+agency worktree merge <worktree-ref> --merge --yes             # regular merge
+agency worktree merge <worktree-ref> --rebase --yes            # rebase merge
+agency worktree merge <worktree-ref> --no-delete-branch --yes  # keep remote branch
+agency worktree merge <worktree-ref> --json --yes              # machine-readable outcome
+agency worktree update <worktree-ref> --json                   # fetch + rebase with typed conflict errors
 ```
 
 legacy compatibility command still exists:
@@ -395,10 +395,10 @@ agency worktree open auth-refactor --editor cursor
 
 # 9. review + PR sync
 agency agent review <id>
-agency agent pr sync <id>
+agency worktree pr sync auth-refactor
 
 # 10. merge
-agency agent merge <id> --yes --squash
+agency worktree merge auth-refactor --yes --squash
 ```
 
 ## command quick reference
@@ -418,6 +418,9 @@ WORKTREES (stable branches you own)
   agency worktree shell <ref>               shell into it
   agency worktree path <ref>                print path
   agency worktree rm <ref>                  remove worktree
+  agency worktree pr sync <ref>             push branch + create/update PR
+  agency worktree merge <ref> --yes         verify + merge worktree PR
+  agency worktree update <ref>              fetch + rebase onto parent branch
 
 AGENTS (AI executions in sandboxes)
   agency agent start --worktree <ref>       start headed agent
@@ -434,8 +437,6 @@ AGENTS (AI executions in sandboxes)
   agency agent diff <ref>                   show sandbox changes
   agency agent diff <ref> --turn <entry_id> turn-aware diff context
   agency agent review <ref>                 review verdict + blocking reasons
-  agency agent pr sync <ref>                push branch + create/update PR
-  agency agent merge <ref> --yes            verify + merge invocation PR
   agency agent open <ref>                   open sandbox in editor
   agency agent stop <ref>                   graceful stop
   agency agent kill <ref>                   forceful kill

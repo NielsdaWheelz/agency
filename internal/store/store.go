@@ -102,6 +102,18 @@ func (s *Store) IntegrationWorktreeTreePath(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "tree")
 }
 
+// IntegrationWorktreeEventsPath returns the path to an integration worktree's events.jsonl.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/events.jsonl
+func (s *Store) IntegrationWorktreeEventsPath(repoID, worktreeID string) string {
+	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "events.jsonl")
+}
+
+// IntegrationWorktreeLogsDir returns the logs directory for an integration worktree.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/logs/
+func (s *Store) IntegrationWorktreeLogsDir(repoID, worktreeID string) string {
+	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "logs")
+}
+
 // ----- V2 Invocation paths (Slice 8 PR-02) -----
 
 // InvocationsDir returns the invocations directory for a repo.

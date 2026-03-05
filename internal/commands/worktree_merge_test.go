@@ -19,17 +19,17 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestAgentMerge_NonInteractiveRequiresYes(t *testing.T) {
+func TestWorktreeMerge_NonInteractiveRequiresYes(t *testing.T) {
 	t.Parallel()
 
-	repoDir, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "merge-noninteractive")
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-noninteractive")
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
-	err := AgentMerge(context.Background(), cr, fsys, repoDir, AgentMergeOpts{
-		InvocationRef:   "inv-merge-ni",
+	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return false },
@@ -38,17 +38,17 @@ func TestAgentMerge_NonInteractiveRequiresYes(t *testing.T) {
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
 }
 
-func TestAgentMerge_InteractiveConfirmationRejected(t *testing.T) {
+func TestWorktreeMerge_InteractiveConfirmationRejected(t *testing.T) {
 	t.Parallel()
 
-	repoDir, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-reject")
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-reject")
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
-	err := AgentMerge(context.Background(), cr, fsys, repoDir, AgentMergeOpts{
-		InvocationRef:   "inv-merge-reject",
+	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return true },
@@ -58,15 +58,15 @@ func TestAgentMerge_InteractiveConfirmationRejected(t *testing.T) {
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
 
-func TestAgentMerge_InteractiveConfirmationTooLarge(t *testing.T) {
+func TestWorktreeMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 	t.Parallel()
 
-	repoDir, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-too-large")
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-too-large")
 	cr := testutil.NewFakeCommandRunner()
 
 	longToken := strings.Repeat("x", maxMergeConfirmationBytes+1) + "\n"
-	err := AgentMerge(context.Background(), cr, fsys, repoDir, AgentMergeOpts{
-		InvocationRef:   "inv-merge-too-large",
+	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return true },
@@ -76,23 +76,14 @@ func TestAgentMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
-func TestAgentMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
+func TestWorktreeMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json")
-	invocationID := "20260302201000-merge1"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	writeAgentMergeScriptsAndConfig(t, integrationTree)
-	writeAgentMergeRepoRecord(t, dataDir, repoID, repoDir)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-		meta.IntegrationWorktreeID = worktreeID
-	}))
+	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch := "agency/merge-json-abcd"
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
@@ -120,8 +111,8 @@ func TestAgentMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentMerge(context.Background(), cr, fsys, repoDir, AgentMergeOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		Yes:             true,
 		JSON:            true,
@@ -132,7 +123,6 @@ func TestAgentMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
 	assert.Equal(t, true, payload["ok"])
-	assert.Equal(t, invocationID, payload["invocation_id"])
 	assert.Equal(t, repoID, payload["repo_id"])
 	assert.Equal(t, worktreeID, payload["integration_worktree_id"])
 	assert.Equal(t, branch, payload["branch"])
@@ -140,25 +130,18 @@ func TestAgentMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", payload["pr_url"])
 	assert.Equal(t, "squash", payload["strategy"])
 	assert.NotEmpty(t, payload["request_id"])
+	_, hasInvocationID := payload["invocation_id"]
+	assert.False(t, hasInvocationID, "worktree merge should not return invocation_id")
 }
 
-func TestAgentMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
+func TestWorktreeMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json-failure")
-	invocationID := "20260302202000-merge-json-failure"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	writeAgentMergeScriptsAndConfig(t, integrationTree)
-	writeAgentMergeRepoRecord(t, dataDir, repoID, repoDir)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-		meta.IntegrationWorktreeID = worktreeID
-	}))
+	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch := "agency/merge-json-failure-abcd"
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
@@ -178,8 +161,8 @@ func TestAgentMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentMerge(context.Background(), cr, fsys, repoDir, AgentMergeOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		Yes:             true,
 		JSON:            true,
@@ -194,7 +177,7 @@ func TestAgentMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func writeAgentMergeScriptsAndConfig(t *testing.T, integrationTree string) {
+func writeWorktreeMergeScriptsAndConfig(t *testing.T, integrationTree string) {
 	t.Helper()
 
 	scriptsDir := filepath.Join(integrationTree, "scripts")
@@ -229,7 +212,7 @@ func writeAgentMergeScriptsAndConfig(t *testing.T, integrationTree string) {
 	require.NoError(t, os.WriteFile(filepath.Join(integrationTree, "agency.json"), []byte(agencyJSON), 0o644))
 }
 
-func writeAgentMergeRepoRecord(t *testing.T, dataDir, repoID, repoRoot string) {
+func writeWorktreeMergeRepoRecord(t *testing.T, dataDir, repoID, repoRoot string) {
 	t.Helper()
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)

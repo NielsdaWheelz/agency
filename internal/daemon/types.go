@@ -464,8 +464,8 @@ type DiscardResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// PRSyncRequest is the request body for POST /invocations/{id}/pr/sync.
-type PRSyncRequest struct {
+// WorktreePRSyncRequest is the request body for POST /worktrees/{ref}/pr/sync.
+type WorktreePRSyncRequest struct {
 	// AllowDirty permits PR sync when integration worktree has uncommitted changes.
 	AllowDirty bool `json:"allow_dirty,omitempty"`
 
@@ -480,15 +480,14 @@ type ReportDiagnostic struct {
 	Source  string `json:"source,omitempty"`
 }
 
-// PRSyncResponse is the response body for POST /invocations/{id}/pr/sync.
-type PRSyncResponse struct {
+// WorktreePRSyncResponse is the response body for POST /worktrees/{ref}/pr/sync.
+type WorktreePRSyncResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
 	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
-	InvocationID          string             `json:"invocation_id,omitempty"`
 	RepoID                string             `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string             `json:"integration_worktree_id,omitempty"`
 	Branch                string             `json:"branch,omitempty"`
@@ -505,8 +504,8 @@ type PRSyncResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// MergeRequest is the request body for POST /invocations/{id}/merge.
-type MergeRequest struct {
+// WorktreePRMergeRequest is the request body for POST /worktrees/{ref}/merge.
+type WorktreePRMergeRequest struct {
 	// Strategy selects merge strategy: squash|merge|rebase (default: squash).
 	Strategy string `json:"strategy,omitempty"`
 
@@ -520,15 +519,14 @@ type MergeRequest struct {
 	NoDeleteBranch bool `json:"no_delete_branch,omitempty"`
 }
 
-// MergeResponse is the response body for POST /invocations/{id}/merge.
-type MergeResponse struct {
+// WorktreePRMergeResponse is the response body for POST /worktrees/{ref}/merge.
+type WorktreePRMergeResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`
 	RequestID    string `json:"request_id,omitempty"`
 
 	// Success fields
-	InvocationID          string             `json:"invocation_id,omitempty"`
 	RepoID                string             `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string             `json:"integration_worktree_id,omitempty"`
 	Branch                string             `json:"branch,omitempty"`
@@ -541,6 +539,28 @@ type MergeResponse struct {
 	ReportSource          string             `json:"report_source,omitempty"`
 	ReportFallbackUsed    bool               `json:"report_fallback_used,omitempty"`
 	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
+
+	// Error fields (only set when OK is false)
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// WorktreeUpdateRequest is the request body for POST /worktrees/{ref}/update.
+type WorktreeUpdateRequest struct{}
+
+// WorktreeUpdateResponse is the response body for POST /worktrees/{ref}/update.
+type WorktreeUpdateResponse struct {
+	OK           bool   `json:"ok"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+
+	// Success fields
+	RepoID                string `json:"repo_id,omitempty"`
+	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
+	Branch                string `json:"branch,omitempty"`
+	ParentBranch          string `json:"parent_branch,omitempty"`
 
 	// Error fields (only set when OK is false)
 	ErrorCode string `json:"error_code,omitempty"`
