@@ -1187,311 +1187,7 @@ func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	return AgentReview(ctx, cr, fsys, cwd, AgentReviewOpts(opts), stdout, stderr)
 }
 
-// AgentPRSyncOpts holds options for the agent pr sync command.
-type AgentPRSyncOpts struct {
-	InvocationRef   string
-	RepoFlag        string
-	AllowDirty      bool
-	ForceWithLease  bool
-	JSON            bool
-	DataDirOverride string
-}
-
-// AgentPRSync performs invocation-scoped branch push + PR create/update via daemon.
-func AgentPRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentPRSyncOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeAgentMutationJSONError(stdout, err)
-	}
-
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return fail(err)
-	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
-		AllowAllRepos: false,
-		CmdName:       "agent pr sync",
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	invocationResult, err := client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
-	if err != nil {
-		return fail(err)
-	}
-	worktreeRef := strings.TrimSpace(invocationResult.Invocation.WorktreeID)
-	if worktreeRef == "" {
-		return fail(errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"invocation is not associated with an integration worktree",
-			map[string]string{"invocation_id": opts.InvocationRef},
-		))
-	}
-
-	resp, err := client.WorktreePRSync(ctx, worktreeRef, repoCtx.RepoID, daemonclient.WorktreePRSyncOpts{
-		AllowDirty:     opts.AllowDirty,
-		ForceWithLease: opts.ForceWithLease,
-	})
-	if err != nil {
-		return fail(err)
-	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
-
-	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = opts.InvocationRef
-			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.Branch = resp.Branch
-			envelope.PRNumber = resp.PRNumber
-			envelope.PRURL = resp.PRURL
-			envelope.PRAction = resp.PRAction
-			envelope.ReportSource = resp.ReportSource
-			envelope.ReportFallbackUsed = resp.ReportFallbackUsed
-			envelope.ReportDiagnostics = resp.ReportDiagnostics
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
-		})
-	}
-	for _, diagnostic := range resp.ReportDiagnostics {
-		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
-	}
-
-	_, _ = fmt.Fprintln(stdout, "PR sync complete")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", opts.InvocationRef)
-	_, _ = fmt.Fprintf(stdout, "  worktree_id:    %s\n", resp.IntegrationWorktreeID)
-	_, _ = fmt.Fprintf(stdout, "  branch:         %s\n", resp.Branch)
-	_, _ = fmt.Fprintf(stdout, "  pr_action:      %s\n", resp.PRAction)
-	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)
-	return nil
-}
-
-// AgentMergeOpts holds options for the agent merge command.
-type AgentMergeOpts struct {
-	InvocationRef  string
-	RepoFlag       string
-	Squash         bool
-	Merge          bool
-	Rebase         bool
-	NoDeleteBranch bool
-	Yes            bool
-	JSON           bool
-
-	// DataDirOverride, if set, is used instead of resolving from environment.
-	DataDirOverride string
-
-	// IsInteractive reports whether stdin/stderr are interactive terminals.
-	// If nil, defaults to checking os.Stdin + os.Stderr.
-	IsInteractive func() bool
-
-	// ConfirmationIn provides interactive confirmation input.
-	// If nil, defaults to os.Stdin.
-	ConfirmationIn io.Reader
-}
-
 const maxMergeConfirmationBytes = 64
-
-// AgentMerge performs invocation-scoped verify + merge via daemon.
-func AgentMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentMergeOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeAgentMutationJSONError(stdout, err)
-	}
-
-	strategyCount := 0
-	strategy := "squash"
-	if opts.Squash {
-		strategyCount++
-		strategy = "squash"
-	}
-	if opts.Merge {
-		strategyCount++
-		strategy = "merge"
-	}
-	if opts.Rebase {
-		strategyCount++
-		strategy = "rebase"
-	}
-	if strategyCount > 1 {
-		return fail(errors.New(errors.EUsage, "at most one of --squash, --merge, --rebase may be specified"))
-	}
-
-	confirmationMode := "yes"
-	confirmed := true
-	if !opts.Yes {
-		isInteractive := opts.IsInteractive
-		if isInteractive == nil {
-			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
-		}
-		if !isInteractive() {
-			return fail(errors.NewWithDetails(
-				errors.EConfirmationRequired,
-				"non-interactive merge requires explicit confirmation",
-				map[string]string{
-					"hint": "re-run with --yes",
-				},
-			))
-		}
-
-		_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
-		confirmationIn := opts.ConfirmationIn
-		if confirmationIn == nil {
-			confirmationIn = os.Stdin
-		}
-		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
-		if err != nil {
-			return fail(err)
-		}
-		if token != "merge" {
-			return fail(errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'"))
-		}
-		confirmationMode = "typed"
-		confirmed = true
-	}
-
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return fail(err)
-	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
-		AllowAllRepos: false,
-		CmdName:       "agent merge",
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	invocationResult, err := client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
-	if err != nil {
-		return fail(err)
-	}
-	worktreeRef := strings.TrimSpace(invocationResult.Invocation.WorktreeID)
-	if worktreeRef == "" {
-		return fail(errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"invocation is not associated with an integration worktree",
-			map[string]string{"invocation_id": opts.InvocationRef},
-		))
-	}
-
-	resp, err := client.WorktreePRMerge(ctx, worktreeRef, repoCtx.RepoID, daemonclient.WorktreePRMergeOpts{
-		Strategy:         strategy,
-		ConfirmationMode: confirmationMode,
-		Confirmed:        confirmed,
-		NoDeleteBranch:   opts.NoDeleteBranch,
-	})
-	if err != nil {
-		return fail(err)
-	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
-
-	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = opts.InvocationRef
-			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.Branch = resp.Branch
-			envelope.PRNumber = resp.PRNumber
-			envelope.PRURL = resp.PRURL
-			envelope.Strategy = resp.Strategy
-			envelope.DeleteBranch = resp.DeleteBranch
-			envelope.MergeLogPath = resp.MergeLogPath
-			envelope.VerifyLogPath = resp.VerifyLogPath
-			envelope.ReportSource = resp.ReportSource
-			envelope.ReportFallbackUsed = resp.ReportFallbackUsed
-			envelope.ReportDiagnostics = resp.ReportDiagnostics
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
-		})
-	}
-	for _, diagnostic := range resp.ReportDiagnostics {
-		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
-	}
-
-	_, _ = fmt.Fprintln(stdout, "merge complete")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", opts.InvocationRef)
-	_, _ = fmt.Fprintf(stdout, "  worktree_id:    %s\n", resp.IntegrationWorktreeID)
-	_, _ = fmt.Fprintf(stdout, "  branch:         %s\n", resp.Branch)
-	_, _ = fmt.Fprintf(stdout, "  strategy:       %s\n", resp.Strategy)
-	_, _ = fmt.Fprintf(stdout, "  pr_url:         %s\n", resp.PRURL)
-	_, _ = fmt.Fprintf(stdout, "  merge_log:      %s\n", resp.MergeLogPath)
-	return nil
-}
 
 func readBoundedMergeConfirmationToken(r io.Reader, maxBytes int) (string, error) {
 	if r == nil {
@@ -1772,11 +1468,18 @@ type agentNavSetup struct {
 }
 
 func setupAgentNav(ctx context.Context, fsys fs.FS) (*agentNavSetup, error) {
+	return setupAgentNavWithDataDir(ctx, fsys, "")
+}
+
+func setupAgentNavWithDataDir(ctx context.Context, fsys fs.FS, dataDirOverride string) (*agentNavSetup, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	if dataDirOverride != "" {
+		dirs.DataDir = dataDirOverride
+	}
 
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
@@ -1876,13 +1579,16 @@ type AgentOpenOpts struct {
 	InvocationRef string
 	RepoFlag      string
 	Editor        string // override for tests; empty uses config/env/default
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // AgentOpen opens the sandbox directory in the configured editor.
 // S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
 // No local invocation target discovery — sandbox_path sourced from daemon.
 func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
-	ns, err := setupAgentNav(ctx, fsys)
+	ns, err := setupAgentNavWithDataDir(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
@@ -2062,25 +1768,9 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		)
 	}
 
-	var ns *agentNavSetup
-	var err error
-	if opts.DataDirOverride != "" {
-		st := store.NewStore(fsys, opts.DataDirOverride, time.Now)
-		socketPath := st.DaemonSocketPath()
-		logPath := st.DaemonLogPath()
-		client, clientErr := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-		if clientErr != nil {
-			return clientErr
-		}
-		homeDir, _ := os.UserHomeDir()
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dirs.DataDir = opts.DataDirOverride
-		ns = &agentNavSetup{dirs: dirs, client: client}
-	} else {
-		ns, err = setupAgentNav(ctx, fsys)
-		if err != nil {
-			return err
-		}
+	ns, err := setupAgentNavWithDataDir(ctx, fsys, opts.DataDirOverride)
+	if err != nil {
+		return err
 	}
 
 	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent enter", isInteractive)

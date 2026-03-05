@@ -28,59 +28,64 @@ type WatchOpts struct {
 
 type watchEnterDelegate func(context.Context, exec.CommandRunner, fs.FS, string, AgentEnterOpts, io.Writer, io.Writer) error
 type watchOpenDelegate func(context.Context, exec.CommandRunner, fs.FS, string, AgentOpenOpts, io.Writer, io.Writer) error
-type watchPRSyncDelegate func(context.Context, exec.CommandRunner, fs.FS, string, AgentPRSyncOpts, io.Writer, io.Writer) error
+type watchPRSyncDelegate func(context.Context, exec.CommandRunner, fs.FS, string, WorktreePRSyncOpts, io.Writer, io.Writer) error
 
 // watchActionDelegates forwards in-watch actions to canonical command contracts.
 // It intentionally does not implement watch-specific policy logic.
 type watchActionDelegates struct {
-	cr     exec.CommandRunner
-	fsys   fs.FS
-	cwd    string
-	stdout io.Writer
-	stderr io.Writer
+	cr              exec.CommandRunner
+	fsys            fs.FS
+	cwd             string
+	dataDirOverride string
+	stdout          io.Writer
+	stderr          io.Writer
 
 	enterFn  watchEnterDelegate
 	openFn   watchOpenDelegate
 	prSyncFn watchPRSyncDelegate
 }
 
-func newWatchActionDelegates(cr exec.CommandRunner, fsys fs.FS, cwd string, stdout, stderr io.Writer) *watchActionDelegates {
+func newWatchActionDelegates(cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string, stdout, stderr io.Writer) *watchActionDelegates {
 	return &watchActionDelegates{
-		cr:     cr,
-		fsys:   fsys,
-		cwd:    cwd,
-		stdout: stdout,
-		stderr: stderr,
+		cr:              cr,
+		fsys:            fsys,
+		cwd:             cwd,
+		dataDirOverride: dataDirOverride,
+		stdout:          stdout,
+		stderr:          stderr,
 		enterFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentEnterOpts, stdout, stderr io.Writer) error {
 			return AgentEnter(ctx, cr, fsys, cwd, opts, stdout, stderr)
 		},
 		openFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
 			return AgentOpen(ctx, cr, fsys, cwd, opts, stdout, stderr)
 		},
-		prSyncFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentPRSyncOpts, stdout, stderr io.Writer) error {
-			return AgentPRSync(ctx, cr, fsys, cwd, opts, stdout, stderr)
+		prSyncFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePRSyncOpts, stdout, stderr io.Writer) error {
+			return WorktreePRSync(ctx, cr, fsys, cwd, opts, stdout, stderr)
 		},
 	}
 }
 
 func (d *watchActionDelegates) Enter(ctx context.Context, invocationID, repoID string) error {
 	return d.enterFn(ctx, d.cr, d.fsys, d.cwd, AgentEnterOpts{
-		InvocationRef: invocationID,
-		RepoFlag:      repoID,
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		DataDirOverride: d.dataDirOverride,
 	}, d.stdout, d.stderr)
 }
 
 func (d *watchActionDelegates) Open(ctx context.Context, invocationID, repoID string) error {
 	return d.openFn(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
-		InvocationRef: invocationID,
-		RepoFlag:      repoID,
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		DataDirOverride: d.dataDirOverride,
 	}, d.stdout, d.stderr)
 }
 
-func (d *watchActionDelegates) PRSync(ctx context.Context, invocationID, repoID string) error {
-	return d.prSyncFn(ctx, d.cr, d.fsys, d.cwd, AgentPRSyncOpts{
-		InvocationRef: invocationID,
-		RepoFlag:      repoID,
+func (d *watchActionDelegates) PRSync(ctx context.Context, worktreeID, repoID string) error {
+	return d.prSyncFn(ctx, d.cr, d.fsys, d.cwd, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
+		RepoFlag:        repoID,
+		DataDirOverride: d.dataDirOverride,
 	}, d.stdout, d.stderr)
 }
 
@@ -145,7 +150,7 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	loader := watch.NewSnapshotLoader(client)
-	actionDelegates := newWatchActionDelegates(cr, fsys, cwd, io.Discard, io.Discard)
+	actionDelegates := newWatchActionDelegates(cr, fsys, cwd, opts.DataDirOverride, io.Discard, io.Discard)
 	return watch.Run(ctx, loader, watch.RunOptions{
 		Interval: interval,
 		Input:    input,
