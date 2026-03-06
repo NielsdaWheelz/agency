@@ -384,7 +384,84 @@ func TestEngine_FinalCheckpoint_SkipsDuplicateOnShutdown(t *testing.T) {
 	assert.Len(t, cpFile.Checkpoints, 2, "expected 2 checkpoints after modified final")
 }
 
-// 4.9 TestEngine_pruneCheckpoints_RealGit
+// 4.9 TestEngine_CreateSemanticCheckpoint_RealGit
+func TestEngine_CreateSemanticCheckpoint_RealGit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	repoDir := setupRealGitRepo(t)
+	e, _ := newRealEngine(t, repoDir)
+
+	// Modify a tracked file
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Semantic Edit\n"), 0o644))
+
+	trigger := &TriggerEvent{
+		Kind:     TriggerToolEnd,
+		ToolName: "Edit",
+		Seq:      7,
+	}
+	err := e.CreateSemanticCheckpoint(context.Background(), trigger)
+	require.NoError(t, err)
+
+	// Verify checkpoint has semantic metadata
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+
+	cp := cpFile.Checkpoints[0]
+	assert.Equal(t, TriggerToolEnd, cp.Trigger)
+	assert.Equal(t, "Edit", cp.ToolName)
+	assert.Equal(t, uint64(7), cp.StreamSeq)
+	assert.NotEmpty(t, cp.Description)
+	assert.NotEmpty(t, cp.Diffstat)
+
+	// Verify schema version is 1.1
+	assert.Equal(t, "1.1", cpFile.SchemaVersion)
+
+	// Verify the snapshot ref exists in git
+	cr := exec.NewRealRunner()
+	result, err := cr.Run(context.Background(), "git", []string{"-C", repoDir, "show-ref", cp.SnapshotRef}, exec.RunOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ExitCode, "snapshot ref should exist")
+}
+
+// 4.10 TestEngine_SemanticCheckpoints_NoRateLimit_RealGit
+func TestEngine_SemanticCheckpoints_NoRateLimit_RealGit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	repoDir := setupRealGitRepo(t)
+	e, _ := newRealEngine(t, repoDir)
+	ctx := context.Background()
+
+	// Create 3 rapid semantic checkpoints (no rate limit between them)
+	for i := 1; i <= 3; i++ {
+		content := strings.Repeat("z", i*10) + "\n"
+		require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(content), 0o644))
+
+		trigger := &TriggerEvent{
+			Kind:     TriggerToolEnd,
+			ToolName: "Edit",
+			Seq:      uint64(i),
+		}
+		require.NoError(t, e.CreateSemanticCheckpoint(ctx, trigger), "semantic checkpoint %d", i)
+	}
+
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 3, "all 3 semantic checkpoints should exist (no rate limiting)")
+
+	// All should have semantic metadata
+	for i, cp := range cpFile.Checkpoints {
+		assert.Equal(t, TriggerToolEnd, cp.Trigger, "checkpoint[%d].Trigger", i)
+		assert.Equal(t, "Edit", cp.ToolName, "checkpoint[%d].ToolName", i)
+		assert.Equal(t, uint64(i+1), cp.StreamSeq, "checkpoint[%d].StreamSeq", i)
+	}
+}
+
+// 4.11 TestEngine_pruneCheckpoints_RealGit
 func TestEngine_pruneCheckpoints_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

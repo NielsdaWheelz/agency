@@ -7,7 +7,11 @@ import (
 )
 
 // SchemaVersion is the current schema version for checkpoints.json.
-const SchemaVersion = "1.0"
+// Bumped to 1.1 for semantic trigger metadata (Trigger, ToolName, StreamSeq, Description).
+const SchemaVersion = "1.1"
+
+// SchemaVersionLegacy is the previous schema version (accepted on read).
+const SchemaVersionLegacy = "1.0"
 
 // MaxCheckpoints is the maximum number of checkpoints retained per invocation.
 const MaxCheckpoints = 200
@@ -43,6 +47,21 @@ type Checkpoint struct {
 	// TreeSHA is the SHA of the git tree object for this snapshot.
 	// Used to detect duplicate checkpoints with identical content.
 	TreeSHA string `json:"tree_sha,omitempty"`
+
+	// Trigger describes what caused this checkpoint (schema 1.1+).
+	// Values: "tool_end", "drift", "poll", "shutdown", "manual".
+	Trigger string `json:"trigger,omitempty"`
+
+	// ToolName is the tool that completed when trigger is "tool_end" (schema 1.1+).
+	// Examples: "Edit", "Write", "Bash", "NotebookEdit".
+	ToolName string `json:"tool_name,omitempty"`
+
+	// StreamSeq is the stream.jsonl sequence number that triggered this checkpoint (schema 1.1+).
+	StreamSeq uint64 `json:"stream_seq,omitempty"`
+
+	// Description is a human-readable label auto-generated from trigger context (schema 1.1+).
+	// Examples: "After Edit", "After Bash", "Drift checkpoint", "Final checkpoint".
+	Description string `json:"description,omitempty"`
 }
 
 // CheckpointsFile represents the checkpoints.json structure.
@@ -130,6 +149,11 @@ func NewEvent(invocationID string, seq uint64, kind EventKind, data map[string]a
 	}
 }
 
+// ValidSchemaVersion reports whether v is a known checkpoints.json schema version.
+func ValidSchemaVersion(v string) bool {
+	return v == SchemaVersion || v == SchemaVersionLegacy
+}
+
 // CheckpointCreatedData returns the data map for a checkpoint_created event.
 func CheckpointCreatedData(checkpointID int, includesUntracked bool, sandboxHeadSHA string) map[string]any {
 	return map[string]any{
@@ -173,20 +197,66 @@ var DenylistPatterns = []string{
 	"secrets.json",
 }
 
+// TriggerEvent is a semantic signal from the stream parser that a mutating
+// tool has completed and a checkpoint should be created.
+type TriggerEvent struct {
+	// Kind is the trigger type (see Trigger* constants).
+	Kind string
+
+	// ToolName is the tool that completed (e.g., "Edit", "Write", "Bash").
+	ToolName string
+
+	// ToolNames lists all mutating tools in a multi-tool message turn.
+	ToolNames []string
+
+	// Seq is the stream.jsonl sequence number of the triggering event.
+	Seq uint64
+}
+
+// Trigger constants for Checkpoint.Trigger field.
+const (
+	TriggerToolEnd  = "tool_end"
+	TriggerDrift    = "drift"
+	TriggerPoll     = "poll"
+	TriggerShutdown = "shutdown"
+	TriggerManual   = "manual"
+)
+
+// MutatingTools is the set of tool names that modify the filesystem and
+// should trigger a checkpoint on completion.
+var MutatingTools = map[string]bool{
+	"Edit":         true,
+	"Write":        true,
+	"MultiEdit":    true,
+	"NotebookEdit": true,
+	"Bash":         true,
+}
+
+// IsMutatingTool reports whether the given tool name modifies the filesystem.
+func IsMutatingTool(name string) bool {
+	return MutatingTools[name]
+}
+
 // Config holds the checkpoint engine configuration.
 type Config struct {
 	// IncludeUntracked determines whether untracked files are included in snapshots.
 	// If false, only tracked files are staged (git add -u).
 	IncludeUntracked bool
 
-	// DebounceInterval is the duration to wait after the last file change before snapshotting.
+	// DebounceInterval is the duration to wait after the last file change before
+	// creating a drift checkpoint (fsnotify safety net).
 	DebounceInterval time.Duration
 
-	// RateLimit is the minimum duration between snapshots.
+	// RateLimit is the minimum duration between drift/poll checkpoints.
+	// Semantic trigger checkpoints are NOT rate-limited (each tool completion is distinct).
 	RateLimit time.Duration
 
 	// PollInterval is the interval for the fallback polling check.
 	PollInterval time.Duration
+
+	// DriftInterval is the minimum time between fsnotify-based drift checkpoints.
+	// If zero, defaults to 60 seconds. Only applies when semantic triggers are active.
+	DriftInterval time.Duration
 }
 
 // DefaultConfig returns the default checkpoint configuration.
@@ -196,5 +266,6 @@ func DefaultConfig() Config {
 		DebounceInterval: 3 * time.Second,
 		RateLimit:        10 * time.Second,
 		PollInterval:     30 * time.Second,
+		DriftInterval:    60 * time.Second,
 	}
 }
