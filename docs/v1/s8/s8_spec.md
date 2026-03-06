@@ -510,7 +510,7 @@ agency checkpoint apply --invocation <name|id|prefix> <checkpoint_id>
 **Rules:**
 
 - `ls` shows checkpoint history for an invocation (id, timestamp, diffstat)
-- `apply` restores the sandbox to a checkpoint state (`git reset --hard` + `git checkout <snapshot_commit> -- .`)
+- `apply` restores the sandbox to a checkpoint state (`git reset --hard` + `git read-tree --reset -u <snapshot_commit>`)
 - `apply` fails if invocation is still running (stop first)
 - `apply` does **not** resume the invocation — user starts a new one after rollback
 
@@ -913,10 +913,10 @@ git reset --hard
 git clean -fd
 
 # 2. Restore full tree state from the snapshot commit
-git checkout <snapshot_commit> -- .
+git read-tree --reset -u <snapshot_commit>
 ```
 
-**How step 2 works:** The snapshot commit's tree contains all files (tracked + formerly untracked). `git checkout <sha> -- .` overwrites the working tree with every file in that tree. After step 1 cleaned everything, this restores the exact snapshot state.
+**How step 2 works:** The snapshot commit's tree contains all files (tracked + formerly untracked). `git read-tree --reset -u <sha>` materializes that tree exactly into index + working tree. After step 1 cleaned everything, this restores the exact snapshot state.
 
 **Post-rollback:**
 

@@ -87,6 +87,7 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
+`agent restart` replays the invocation's stored original prompt; use `agency checkpoint apply` when you want restore-only rollback without restarting prompt execution.
 
 legacy `run` surface supports open-on-create:
 

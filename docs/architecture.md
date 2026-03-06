@@ -253,7 +253,8 @@ denylisted files degrade the checkpoint to tracked-files-only (non-fatal).
 
 ### rollback
 
-restores sandbox via `git reset --hard` + `git clean -fd` + `git checkout <snapshot> -- .`. invocation must be stopped first.
+restores sandbox via `git reset --hard` + `git clean -fd` + `git read-tree --reset -u <snapshot>`. invocation must be stopped first.
+for restart flows, daemon rewinds sandbox `HEAD` to checkpoint `sandbox_head_sha` before restoring the snapshot tree.
 
 ### events
 
@@ -261,6 +262,7 @@ emitted to `invocations/<id>/events.jsonl`:
 - `agency.followup_prompt` (idempotent by `client_request_id`)
 - `agency.checkpoint_created`
 - `agency.checkpoint_failed`
+- `agency.checkpoint_apply_started`
 - `agency.checkpoint_applied` (rollback)
 - `agency.checkpoint_denylist_triggered`
 - `agency.land_*`, `agency.discard_*`, `agency.conflict_detected`

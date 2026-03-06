@@ -873,8 +873,10 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 4. each turn carries the latest valid checkpoint at or before it; selecting a turn without a checkpoint returns deterministic error guidance
 5. if invocation has a stored custom-env profile, requires explicit replay of all required env keys
 6. if running, force-stops current process and waits for terminalization
-7. applies checkpoint to sandbox
+7. rewinds sandbox branch `HEAD` to the checkpoint's recorded `sandbox_head_sha`, then restores the checkpoint snapshot tree exactly
 8. restarts runner under the same `invocation_id` and returns new `pid/pgid`
+
+`agent restart` always reuses the stored original prompt (`invocations/<id>/prompt.txt`). use `agency checkpoint apply` when you want restore-only behavior without replaying the prompt.
 
 **error codes:**
 - `E_USAGE` — invalid CLI usage (for example malformed `--env` value, missing selector mode, or conflicting `--checkpoint` + `--history`)
@@ -1180,8 +1182,8 @@ agency checkpoint apply --invocation <name|id|prefix> <checkpoint_id>
 2. verifies invocation is headless mode
 3. verifies invocation is NOT running (must be stopped/finished)
 4. sends apply request to daemon
-5. daemon performs rollback: `git reset --hard`, `git clean -fd`, `git checkout <snapshot> -- .`
-6. emits `checkpoint_applied` event
+5. daemon performs rollback: `git reset --hard`, `git clean -fd`, `git read-tree --reset -u <snapshot>`
+6. emits `checkpoint_apply_started` and `checkpoint_applied` events
 
 **output:**
 ```
@@ -1212,6 +1214,7 @@ all checkpoint errors are typed `AgencyError` objects with stable codes. the dae
 - checkpoint refs remain valid for future rollback
 - rollback overwrites all sandbox files (tracked and untracked)
 - original sandbox HEAD is not preserved (use a different checkpoint to go back)
+- rollback is restore-only; it does not restart runner execution or replay prompts
 
 **examples:**
 ```bash

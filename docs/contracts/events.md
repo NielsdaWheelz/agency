@@ -56,7 +56,7 @@ All of the following append through one invocation-scoped writer contract:
 
 - follow-up prompt writes (`agency.followup_prompt`)
 - checkpoint lifecycle writes (`agency.checkpoint_created`, `agency.checkpoint_failed`, `agency.checkpoint_denylist_triggered`)
-- checkpoint apply writes (`agency.checkpoint_applied`)
+- checkpoint apply writes (`agency.checkpoint_apply_started`, `agency.checkpoint_applied`)
 - land/discard lifecycle writes (`agency.land_*`, `agency.discard_*`, `agency.conflict_detected`)
 
 ## known run event names (non-exhaustive)
@@ -83,6 +83,7 @@ All of the following append through one invocation-scoped writer contract:
 - agency.checkpoint_created
 - agency.checkpoint_failed
 - agency.checkpoint_denylist_triggered
+- agency.checkpoint_apply_started
 - agency.checkpoint_applied
 - agency.land_started
 - agency.land_failed
