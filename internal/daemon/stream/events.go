@@ -146,3 +146,27 @@ type ParseErrorData struct {
 	ParseErrorCount int    `json:"parse_error_count"`
 	Reason          string `json:"reason,omitempty"`
 }
+
+// CheckpointNotification is emitted by the parser when a mutating tool completes.
+// The daemon wiring layer converts this to a checkpoint.TriggerEvent.
+// Defined here to avoid a circular dependency between stream and checkpoint packages.
+type CheckpointNotification struct {
+	// ToolName is the tool that completed (e.g., "Edit", "Write", "Bash").
+	ToolName string
+
+	// ToolNames lists all mutating tools in a multi-tool message (may be empty).
+	ToolNames []string
+
+	// Seq is the stream.jsonl sequence number of the triggering event.
+	Seq uint64
+}
+
+// MutatingStreamTools is the set of tool names that modify the filesystem.
+// Duplicated from checkpoint package to avoid circular import.
+var MutatingStreamTools = map[string]bool{
+	"Edit":         true,
+	"Write":        true,
+	"MultiEdit":    true,
+	"NotebookEdit": true,
+	"Bash":         true,
+}
