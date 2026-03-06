@@ -20,8 +20,11 @@ type UserConfig struct {
 
 // UserDefaults contains default values for user-scoped operations.
 type UserDefaults struct {
-	Runner string `json:"runner"`
-	Editor string `json:"editor"`
+	Runner       string `json:"runner"`
+	Editor       string `json:"editor"`
+	ParentBranch string `json:"parent_branch,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Thinking     string `json:"thinking,omitempty"`
 }
 
 // DefaultUserConfig returns built-in defaults used when config.json is missing.
@@ -29,8 +32,9 @@ func DefaultUserConfig() UserConfig {
 	return UserConfig{
 		Version: 1,
 		Defaults: UserDefaults{
-			Runner: "claude",
-			Editor: "code",
+			Runner:       "claude",
+			Editor:       "code",
+			ParentBranch: "main",
 		},
 		Runners: map[string]string{},
 		Editors: map[string]string{},
@@ -111,6 +115,18 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 		if err := json.Unmarshal(rawDefaults, &defaultsMap); err != nil {
 			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults must be an object")
 		}
+		allowedDefaultKeys := map[string]bool{
+			"runner":        true,
+			"editor":        true,
+			"parent_branch": true,
+			"model":         true,
+			"thinking":      true,
+		}
+		for key := range defaultsMap {
+			if !allowedDefaultKeys[key] {
+				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults contains unknown field: "+key)
+			}
+		}
 		if rawRunner, ok := defaultsMap["runner"]; ok {
 			var runner string
 			if err := json.Unmarshal(rawRunner, &runner); err != nil {
@@ -124,6 +140,27 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.editor must be a string")
 			}
 			cfg.Defaults.Editor = editor
+		}
+		if rawParentBranch, ok := defaultsMap["parent_branch"]; ok {
+			var parentBranch string
+			if err := json.Unmarshal(rawParentBranch, &parentBranch); err != nil {
+				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.parent_branch must be a string")
+			}
+			cfg.Defaults.ParentBranch = parentBranch
+		}
+		if rawModel, ok := defaultsMap["model"]; ok {
+			var model string
+			if err := json.Unmarshal(rawModel, &model); err != nil {
+				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.model must be a string")
+			}
+			cfg.Defaults.Model = model
+		}
+		if rawThinking, ok := defaultsMap["thinking"]; ok {
+			var thinking string
+			if err := json.Unmarshal(rawThinking, &thinking); err != nil {
+				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.thinking must be a string")
+			}
+			cfg.Defaults.Thinking = thinking
 		}
 	}
 
