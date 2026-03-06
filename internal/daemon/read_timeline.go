@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,7 +44,7 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 	}
 
 	repoID := r.URL.Query().Get("repo_id")
-	params, invalidLimit := parseGetTimelineParams(r)
+	params, invalidLimit, invalidOrder := parseGetTimelineParams(r)
 	if invalidLimit != "" {
 		s.writeAPIError(
 			w,
@@ -52,6 +53,30 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 			string(errors.EInvalidArgument),
 			fmt.Sprintf("invalid value for parameter 'limit': %q", invalidLimit),
 			"provide limit in [1, 500]",
+			nil,
+		)
+		return
+	}
+	if invalidOrder != "" {
+		s.writeAPIError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter 'order': %q", invalidOrder),
+			"use 'asc' or 'desc'",
+			nil,
+		)
+		return
+	}
+	if params.Order == "desc" && params.Cursor != "" {
+		s.writeAPIError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			"cursor pagination is not supported with order=desc",
+			"omit cursor when using order=desc",
 			nil,
 		)
 		return
@@ -65,6 +90,9 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 	}
 
 	entries := s.collectTimelineEntries(record)
+	if params.Order == "desc" {
+		reverseTimelineEntries(entries)
+	}
 	page, nextCursor := paginateTimeline(entries, params.Cursor, params.Limit)
 	s.writeAPIResponse(w, requestID, InvocationTimelineData{
 		Entries:    page,
@@ -72,19 +100,26 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func parseGetTimelineParams(r *http.Request) (GetTimelineParams, string) {
+func parseGetTimelineParams(r *http.Request) (GetTimelineParams, string, string) {
 	params := GetTimelineParams{
 		Limit: 100,
+		Order: "asc",
 	}
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		parsed, err := strconv.Atoi(limit)
 		if err != nil || parsed < 1 || parsed > 500 {
-			return params, limit
+			return params, limit, ""
 		}
 		params.Limit = parsed
 	}
+	if order := r.URL.Query().Get("order"); order != "" {
+		if order != "asc" && order != "desc" {
+			return params, "", order
+		}
+		params.Order = order
+	}
 	params.Cursor = r.URL.Query().Get("cursor")
-	return params, ""
+	return params, "", ""
 }
 
 func (s *Server) collectTimelineEntries(record *resolvedInvocation) []timelineSortableEntry {
@@ -346,6 +381,10 @@ func paginateTimeline(all []timelineSortableEntry, cursor string, limit int) ([]
 	}
 
 	return entries, nextCursor
+}
+
+func reverseTimelineEntries(entries []timelineSortableEntry) {
+	slices.Reverse(entries)
 }
 
 func nonEmpty(v, fallback string) string {

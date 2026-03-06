@@ -2407,6 +2407,126 @@ func TestHandleGetInvocationTimeline_InvalidLimitReturnsEInvalidArgument(t *test
 	}
 }
 
+func TestHandleGetInvocationTimeline_OrderDescReturnsReversedEntries(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed 4 stream messages with ascending timestamps.
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	require.NoError(t, err)
+	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
+	for i := 1; i <= 4; i++ {
+		ev := map[string]any{
+			"schema_version": "1.0",
+			"seq":            i,
+			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+			"invocation_id":  "inv-1",
+			"runner":         "claude",
+			"kind":           "message",
+			"data": map[string]any{
+				"role": "assistant",
+				"text": fmt.Sprintf("msg-%d", i),
+			},
+		}
+		line, mErr := json.Marshal(ev)
+		require.NoError(t, mErr)
+		_, _ = streamFile.Write(append(line, '\n'))
+	}
+	require.NoError(t, streamFile.Close())
+
+	// Ascending (default) — first entry should be stream:1.
+	wAsc := env.doInvocationRequest(t, http.MethodGet,
+		"/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=500")
+	assert.Equal(t, http.StatusOK, wAsc.Code)
+	respAsc := decodeAPIResponse(t, wAsc)
+	var ascData InvocationTimelineData
+	decodeData(t, respAsc, &ascData)
+	require.NotEmpty(t, ascData.Entries)
+
+	// Descending — entries must appear in reverse order.
+	wDesc := env.doInvocationRequest(t, http.MethodGet,
+		"/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=500&order=desc")
+	assert.Equal(t, http.StatusOK, wDesc.Code)
+	respDesc := decodeAPIResponse(t, wDesc)
+	var descData InvocationTimelineData
+	decodeData(t, respDesc, &descData)
+	require.Equal(t, len(ascData.Entries), len(descData.Entries))
+
+	// Verify descending is exact reverse of ascending.
+	for i, entry := range descData.Entries {
+		assert.Equal(t, ascData.Entries[len(ascData.Entries)-1-i].EntryID, entry.EntryID,
+			"desc entry %d should match reverse of asc", i)
+	}
+}
+
+func TestHandleGetInvocationTimeline_OrderDescLimit1ReturnsLastEntry(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed stream messages.
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	require.NoError(t, err)
+	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
+	for i := 1; i <= 5; i++ {
+		ev := map[string]any{
+			"schema_version": "1.0",
+			"seq":            i,
+			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+			"invocation_id":  "inv-1",
+			"runner":         "claude",
+			"kind":           "message",
+			"data": map[string]any{
+				"role": "assistant",
+				"text": fmt.Sprintf("msg-%d", i),
+			},
+		}
+		line, mErr := json.Marshal(ev)
+		require.NoError(t, mErr)
+		_, _ = streamFile.Write(append(line, '\n'))
+	}
+	require.NoError(t, streamFile.Close())
+
+	// Get last entry with order=desc&limit=1.
+	w := env.doInvocationRequest(t, http.MethodGet,
+		"/invocations/inv-1/timeline?repo_id="+env.RepoID+"&order=desc&limit=1")
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	var data InvocationTimelineData
+	decodeData(t, resp, &data)
+	require.Len(t, data.Entries, 1)
+	assert.Equal(t, "stream:5", data.Entries[0].EntryID, "order=desc&limit=1 must return chronologically last entry")
+}
+
+func TestHandleGetInvocationTimeline_InvalidOrderReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet,
+		"/invocations/inv-1/timeline?repo_id="+env.RepoID+"&order=sideways")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+}
+
+func TestHandleGetInvocationTimeline_OrderDescWithCursorReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet,
+		"/invocations/inv-1/timeline?repo_id="+env.RepoID+"&order=desc&cursor=fakecursor")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+}
+
 func TestHandleGetInvocationLogs_TailBytesInvalidReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
