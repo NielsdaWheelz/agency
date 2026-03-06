@@ -26,7 +26,20 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("not_ready_invocation", func(t *testing.T) {
-		repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "s5-not-ready")
+		repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "s5-not-ready")
+
+		branch := "agency/s5-not-ready-abcd"
+		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+		daemonRunner.Responses["gh pr list --head test:"+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[]`,
+			ExitCode: 0,
+		}
+		daemonRunner.Responses["gh pr list --head "+branch+" --state all --json number,url,state"] = testutil.FakeResponse{
+			Stdout:   `[]`,
+			ExitCode: 0,
+		}
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
@@ -188,11 +201,19 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		}, &stdout, &stderr)
 		require.NoError(t, err)
 
+		// Worktree PR sync uses non-strict mode: oversized reports fall back
+		// to a generated body rather than failing, so sync succeeds with
+		// fallback diagnostics.
 		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
-		assert.Equal(t, false, payload["ok"])
-		assert.Equal(t, string(errors.EReportOversized), payload["error_code"])
+		assert.Equal(t, true, payload["ok"])
+		assert.Equal(t, true, payload["report_fallback_used"])
 		assertS5E2EHasRequestID(t, payload)
-		assert.NotContains(t, daemonRunner.Calls, "gh pr edit 81 --body-file")
+
+		// Verify the oversized report was NOT sent to GitHub (fallback body was used instead).
+		diagnostics, _ := payload["report_diagnostics"].([]any)
+		require.NotEmpty(t, diagnostics, "expected report diagnostics for oversized fallback")
+		firstDiag, _ := diagnostics[0].(map[string]any)
+		assert.Equal(t, "report_oversized", firstDiag["code"])
 	})
 
 	t.Run("merge_log_persistence_failure", func(t *testing.T) {
