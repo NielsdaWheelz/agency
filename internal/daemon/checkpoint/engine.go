@@ -515,33 +515,43 @@ func (e *Engine) createCheckpointWithMetadata(ctx context.Context, trigger *Trig
 		}
 	}
 
-	// 5. Stage changes into temp index
+	// 5. Stage changes into temp index.
+	// Two-step approach: add everything, then remove private dirs from the
+	// index. This avoids pathspec-vs-gitignore conflicts where git add -A
+	// with :(exclude) still fails when the excluded path is also gitignored.
+	env := map[string]string{"GIT_INDEX_FILE": tempIndexPath}
+
 	var addArgs []string
 	if includeUntracked {
-		// git add -A -- . ':(exclude).agency' ':(exclude).git'
-		addArgs = []string{
-			"-C", e.sandboxPath,
-			"add", "-A", "--", ".", ":(exclude).agency", ":(exclude).git",
-		}
+		addArgs = []string{"-C", e.sandboxPath, "add", "-A"}
 	} else {
-		// git add -u (tracked files only)
-		addArgs = []string{
-			"-C", e.sandboxPath,
-			"add", "-u",
-		}
+		addArgs = []string{"-C", e.sandboxPath, "add", "-u"}
 	}
 
-	env := map[string]string{"GIT_INDEX_FILE": tempIndexPath}
 	addResult, err := e.runner.Run(ctx, "git", addArgs, exec.RunOpts{Env: env})
 	if err != nil {
 		return fmt.Errorf("failed to run git add: %w", err)
 	}
 	if addResult.ExitCode != 0 {
-		// Check for index lock
 		if strings.Contains(addResult.Stderr, "index.lock") {
 			return fmt.Errorf("index lock detected: %s", addResult.Stderr)
 		}
 		return fmt.Errorf("git add failed: %s", addResult.Stderr)
+	}
+
+	// Remove private directories from the temp index. --ignore-unmatch
+	// ensures this is a no-op when the paths weren't staged.
+	for _, exclude := range []string{".agency", ".git"} {
+		rmResult, rmErr := e.runner.Run(ctx, "git", []string{
+			"-C", e.sandboxPath,
+			"rm", "-r", "--cached", "--ignore-unmatch", exclude,
+		}, exec.RunOpts{Env: env})
+		if rmErr != nil {
+			return fmt.Errorf("failed to run git rm --cached %s: %w", exclude, rmErr)
+		}
+		if rmResult.ExitCode != 0 {
+			return fmt.Errorf("git rm --cached %s failed: %s", exclude, rmResult.Stderr)
+		}
 	}
 
 	// 6. Write tree from temp index
