@@ -889,7 +889,9 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 
 ### `agency agent history`
 
-reads the unified invocation timeline used for detached transcript/history inspection.
+shows a rich transcript of the agent's conversation for an invocation.
+
+for runners with semantic adapters (claude, codex), the default output is a styled, human-readable transcript showing assistant messages, tool use with inputs, prompts, and results. for other runners, falls back to a sparse timeline format.
 
 **usage:**
 ```bash
@@ -902,12 +904,16 @@ agency agent history <invocation_ref> [--repo <name|id|prefix>] [--limit <n>] [-
 **flags:**
 - `--limit`: maximum entries returned per page (default: 100, required range: 1..500)
 - `--cursor`: opaque continuation cursor from prior response
-- `--json`: machine-readable output
+- `--json`: machine-readable output (includes full `content_blocks` in message entries)
 - `--repo`: repo name, key, id, or prefix
+
+**output modes:**
+- **human** (default): rich transcript with styled headers, tool use blocks, and exit codes. adapters that produce `content_blocks` (claude, codex) get full rendering; non-adapted runners fall back to sparse one-liners.
+- **json** (`--json`): structured output with full `content_blocks` data for programmatic consumption.
 
 **entry coverage:**
 - prompt seed context (`prompt_seed`)
-- assistant/user messages (`message`)
+- assistant/user messages (`message`) — includes `content_blocks` with structured text, tool_use (name, id, input), and tool_result (tool_use_id, content) blocks when available
 - tool activity (`tool_use`)
 - follow-up prompts (`followup_prompt`)
 - raw-log coverage marker (`raw_log_coverage`)

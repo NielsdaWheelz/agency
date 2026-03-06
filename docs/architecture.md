@@ -182,6 +182,17 @@ each line in `stream.jsonl` contains a JSON event with a stable schema:
 }
 ```
 
+### content block enrichment
+
+for runners with semantic adapters (claude, codex), `message` events include a `content_blocks` array in `data` that preserves the full structure of each content block. this is additive to the existing `text`, `has_tool_use`, and `tool_names` fields.
+
+block types:
+- `text`: `{ "type": "text", "text": "..." }`
+- `tool_use`: `{ "type": "tool_use", "name": "...", "id": "...", "input": { ... } }`
+- `tool_result`: `{ "type": "tool_result", "tool_use_id": "...", "content": "..." }`
+
+empty blocks (type="") are filtered. tool_use inputs are pre-parsed from `json.RawMessage` to `interface{}` for stable JSON round-trips.
+
 ### semantic status
 
 derived from parsed output:

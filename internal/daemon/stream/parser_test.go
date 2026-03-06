@@ -126,6 +126,58 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 	}
 }
 
+func TestClaudeAdapter_ContentBlocks_Assistant(t *testing.T) {
+	t.Parallel()
+	adapter := &ClaudeAdapter{}
+
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"tool_use","id":"t1","name":"Read","input":{"path":"/foo"}}]}}`
+
+	result, err := adapter.ParseLine([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+
+	ev := result.Events[0]
+	assert.Equal(t, "assistant", ev.Data["role"])
+	assert.Equal(t, true, ev.Data["has_tool_use"])
+	assert.Equal(t, "Let me check", ev.Data["text"])
+	assert.Equal(t, []string{"Read"}, ev.Data["tool_names"])
+
+	blocks, ok := ev.Data["content_blocks"].([]map[string]interface{})
+	require.True(t, ok, "content_blocks should be []map[string]interface{}")
+	require.Len(t, blocks, 2)
+
+	assert.Equal(t, "text", blocks[0]["type"])
+	assert.Equal(t, "Let me check", blocks[0]["text"])
+
+	assert.Equal(t, "tool_use", blocks[1]["type"])
+	assert.Equal(t, "Read", blocks[1]["name"])
+	assert.Equal(t, "t1", blocks[1]["id"])
+	assert.NotNil(t, blocks[1]["input"], "tool_use block should have input")
+}
+
+func TestClaudeAdapter_ContentBlocks_User(t *testing.T) {
+	t.Parallel()
+	adapter := &ClaudeAdapter{}
+
+	input := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents here"}]}}`
+
+	result, err := adapter.ParseLine([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+
+	ev := result.Events[0]
+	assert.Equal(t, "user", ev.Data["role"])
+	assert.Equal(t, "file contents here", ev.Data["text"])
+
+	blocks, ok := ev.Data["content_blocks"].([]map[string]interface{})
+	require.True(t, ok, "content_blocks should be present")
+	require.Len(t, blocks, 1)
+
+	assert.Equal(t, "tool_result", blocks[0]["type"])
+	assert.Equal(t, "t1", blocks[0]["tool_use_id"])
+	assert.Equal(t, "file contents here", blocks[0]["content"])
+}
+
 func TestCodexAdapter_ParseLine(t *testing.T) {
 	t.Parallel()
 	adapter := &CodexAdapter{}
@@ -208,6 +260,28 @@ func TestCodexAdapter_ParseLine(t *testing.T) {
 	}
 }
 
+func TestCodexAdapter_ContentBlocks_AgentMessage(t *testing.T) {
+	t.Parallel()
+	adapter := &CodexAdapter{}
+
+	input := `{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Done!"}]}}`
+
+	result, err := adapter.ParseLine([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+
+	ev := result.Events[0]
+	assert.Equal(t, "assistant", ev.Data["role"])
+	assert.Equal(t, "Done!", ev.Data["text"])
+
+	blocks, ok := ev.Data["content_blocks"].([]map[string]interface{})
+	require.True(t, ok, "content_blocks should be present")
+	require.Len(t, blocks, 1)
+
+	assert.Equal(t, "text", blocks[0]["type"])
+	assert.Equal(t, "Done!", blocks[0]["text"])
+}
+
 func TestParser_StreamAndParse_ClaudeFixture(t *testing.T) {
 	t.Parallel()
 	// Read fixture
@@ -247,6 +321,16 @@ func TestParser_StreamAndParse_ClaudeFixture(t *testing.T) {
 	// Count lines in stream.jsonl (should have multiple events)
 	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
 	assert.GreaterOrEqual(t, len(lines), 5, "Expected at least 5 normalized events")
+
+	// Verify enriched content_blocks appear in stream.jsonl
+	foundContentBlocks := false
+	for _, line := range lines {
+		if strings.Contains(line, `"content_blocks"`) {
+			foundContentBlocks = true
+			break
+		}
+	}
+	assert.True(t, foundContentBlocks, "stream.jsonl should contain content_blocks in at least one event")
 
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()

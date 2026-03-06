@@ -23,6 +23,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -2653,14 +2654,40 @@ func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO
 }
 
 func writeAgentHistoryHumanFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
-	if len(entries) == 0 {
-		_, _ = fmt.Fprintln(w, "No timeline entries found.")
-		return nil
+	// Check if timeline has stream-sourced entries (semantic adapter output)
+	hasStreamEntries := false
+	for _, e := range entries {
+		if e.Source == "stream" {
+			hasStreamEntries = true
+			break
+		}
 	}
 
-	for _, entry := range entries {
-		_, _ = fmt.Fprintf(w, "%s  %s  %s\n", entry.Timestamp, entry.Kind, timelineEntrySummary(entry))
+	if hasStreamEntries {
+		// Convert to render.TranscriptEntry to avoid import cycle
+		transcriptEntries := make([]render.TranscriptEntry, len(entries))
+		for i, e := range entries {
+			transcriptEntries[i] = render.TranscriptEntry{
+				Kind:      e.Kind,
+				Timestamp: e.Timestamp,
+				Data:      e.Data,
+			}
+		}
+		opts := render.TranscriptOpts{
+			NoColor: os.Getenv("NO_COLOR") != "",
+		}
+		if err := render.WriteTranscript(w, transcriptEntries, opts); err != nil {
+			return err
+		}
+	} else if len(entries) == 0 {
+		_, _ = fmt.Fprintln(w, "No timeline entries found.")
+	} else {
+		// Fallback for non-adapted runners: sparse one-liner format
+		for _, entry := range entries {
+			_, _ = fmt.Fprintf(w, "%s  %s  %s\n", entry.Timestamp, entry.Kind, timelineEntrySummary(entry))
+		}
 	}
+
 	if nextCursor != "" {
 		_, _ = fmt.Fprintf(w, "\nnext_cursor: %s\n", nextCursor)
 	}

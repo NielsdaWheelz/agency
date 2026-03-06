@@ -99,11 +99,15 @@ type SessionStartData struct {
 }
 
 // MessageData contains data for message events.
+// ContentBlocks, when present, preserves the full structure of content blocks
+// (text, tool_use, tool_result) with their complete fields. This is additive
+// to the existing Text/HasToolUse/ToolNames fields which remain for backwards compat.
 type MessageData struct {
-	HasToolUse bool     `json:"has_tool_use"`
-	ToolNames  []string `json:"tool_names,omitempty"`
-	Text       string   `json:"text,omitempty"`
-	Role       string   `json:"role,omitempty"`
+	HasToolUse    bool                     `json:"has_tool_use"`
+	ToolNames     []string                 `json:"tool_names,omitempty"`
+	Text          string                   `json:"text,omitempty"`
+	Role          string                   `json:"role,omitempty"`
+	ContentBlocks []map[string]interface{} `json:"content_blocks,omitempty"`
 }
 
 // ToolStartData contains data for tool_start events.
