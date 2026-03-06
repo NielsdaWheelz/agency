@@ -861,11 +861,14 @@ func newAgentHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history <invocation_ref>",
 		Short: "Show unified invocation timeline",
-		Long: `Show the unified, typed timeline for an invocation.
+		Long: `Show a rich transcript of the agent's conversation for an invocation.
 
-The timeline merges prompt seed context, assistant/user messages, tool-use
-activity, and raw-log coverage markers into one deterministic order.
+By default, renders a human-readable transcript with styled output showing
+assistant messages, tool use, prompts, and results. For runners with semantic
+adapters (Claude, Codex), the transcript includes full content blocks with
+tool inputs and results. For other runners, falls back to a sparse timeline.
 
+Use --json for machine-readable output with full content_blocks data.
 Use --limit and --cursor for stable paginated reads.
 
 Example:
