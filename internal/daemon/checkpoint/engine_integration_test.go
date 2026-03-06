@@ -201,6 +201,43 @@ func TestApplier_Apply_CleansUntrackedFiles(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "untracked file should have been removed by apply")
 }
 
+// 4.3.1 TestApplier_Apply_RemovesTrackedFilesAddedAfterCheckpoint
+func TestApplier_Apply_RemovesTrackedFilesAddedAfterCheckpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	repoDir := setupRealGitRepo(t)
+	e, checkpointsDir := newRealEngine(t, repoDir)
+	ctx := context.Background()
+	cr := exec.NewRealRunner()
+
+	// Create checkpoint from a modified tracked file.
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Snapshot State\n"), 0o644))
+	require.NoError(t, e.createCheckpointInternal(ctx), "checkpoint failed")
+
+	// Commit a new tracked file after the checkpoint.
+	postCheckpointTracked := filepath.Join(repoDir, "post-checkpoint.txt")
+	require.NoError(t, os.WriteFile(postCheckpointTracked, []byte("tracked after checkpoint\n"), 0o644))
+	addRes, addErr := cr.Run(ctx, "git", []string{"-C", repoDir, "add", "README.md", "post-checkpoint.txt"}, exec.RunOpts{})
+	require.NoError(t, addErr)
+	require.Equal(t, 0, addRes.ExitCode, "git add failed: %s", addRes.Stderr)
+	commitRes, commitErr := cr.Run(ctx, "git", []string{"-C", repoDir, "commit", "-m", "post checkpoint tracked file"}, exec.RunOpts{})
+	require.NoError(t, commitErr)
+	require.Equal(t, 0, commitRes.ExitCode, "git commit failed: %s", commitRes.Stderr)
+
+	// Apply checkpoint 1.
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+	applier := NewApplier("test-inv-integration", repoDir, checkpointsDir, eventsPath, cr, fs.NewRealFS(), time.Now)
+	_, err := applier.Apply(ctx, 1)
+	require.NoError(t, err, "Apply(1)")
+
+	// Exact restore must remove files that were tracked only after the checkpoint.
+	_, statErr := os.Stat(postCheckpointTracked)
+	assert.True(t, os.IsNotExist(statErr), "tracked file introduced after checkpoint should be removed")
+}
+
 // 4.4 TestEngine_isDirty_RealGit
 func TestEngine_isDirty_RealGit(t *testing.T) {
 	if testing.Short() {
