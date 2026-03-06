@@ -55,7 +55,10 @@ func StartDaemonBackground(logPath string) error {
 	}
 
 	// Start daemon detached in its own process group.
-	proc, err := agencyexec.StartProcess(context.Background(), exePath, []string{"daemon", "start"}, agencyexec.StartOpts{
+	// --foreground is required: "daemon start" defaults to background mode, which
+	// would re-exec again causing infinite recursion. The spawned child must run
+	// in foreground so it actually starts the server loop.
+	proc, err := agencyexec.StartProcess(context.Background(), exePath, []string{"daemon", "start", "--foreground"}, agencyexec.StartOpts{
 		Setpgid: true,
 		Stdout:  logFile,
 		Stderr:  logFile,

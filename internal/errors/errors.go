@@ -150,6 +150,13 @@ const (
 	ELifecycleOwnerMismatch  Code = "E_LIFECYCLE_OWNER_MISMATCH"  // attempt to modify invocation owned by another entity
 	EPromptRequired          Code = "E_PROMPT_REQUIRED"           // headless invocation requires a prompt
 
+	// Daemon service manager error codes
+	EDaemonServiceInstallFailed    Code = "E_DAEMON_SERVICE_INSTALL_FAILED"    // service install operation failed
+	EDaemonServiceUninstallFailed  Code = "E_DAEMON_SERVICE_UNINSTALL_FAILED"  // service uninstall operation failed
+	EDaemonServiceUnsupported      Code = "E_DAEMON_SERVICE_UNSUPPORTED"       // platform does not support service management
+	EDaemonServiceAlreadyInstalled Code = "E_DAEMON_SERVICE_ALREADY_INSTALLED" // service is already installed
+	EDaemonServiceNotInstalled     Code = "E_DAEMON_SERVICE_NOT_INSTALLED"     // service is not installed
+
 	// Slice 8 daemon control plane error codes (PR-05)
 	EUnsafeRepoRoot     Code = "E_UNSAFE_REPO_ROOT"    // repo_root is inside an agency-managed worktree
 	EPromptTooLarge     Code = "E_PROMPT_TOO_LARGE"    // prompt exceeds 256 KB

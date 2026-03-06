@@ -23,13 +23,15 @@ The daemon supervises headless agent invocations, providing:
 - Reliable PID tracking and recovery
 
 Subcommands:
-  start     Start the daemon (foreground)
+  start     Start the daemon (background by default, --foreground for service managers)
+  stop      Stop the daemon
   status    Show daemon status
-  stop      Stop the daemon`,
+  install   Install as an OS service (launchd/systemd)
+  uninstall Remove the OS service`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency daemon <start|status|stop>")
+			return errors.New(errors.EUsage, "specify a subcommand: agency daemon <start|stop|status|install|uninstall>")
 		},
 	}
 
@@ -37,24 +39,35 @@ Subcommands:
 		newDaemonStartCmd(),
 		newDaemonStatusCmd(),
 		newDaemonStopCmd(),
+		newDaemonInstallCmd(),
+		newDaemonUninstallCmd(),
 	)
 
 	return cmd
 }
 
 func newDaemonStartCmd() *cobra.Command {
+	var foreground bool
+
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon",
-		Long: `Start the agency daemon in the foreground.
+		Long: `Start the agency daemon.
 
-The daemon runs a server loop in the current process. Use Ctrl-C to stop.
+By default the daemon is started as a detached background process. The command
+waits for the daemon to pass a health check, prints its PID and socket path,
+then returns control to the shell.
+
+Use --foreground to run the server loop in the current process (for service
+managers like launchd/systemd, or for debugging). Press Ctrl-C to stop.
+
 If the daemon is already running, this command exits successfully (no-op).
 
 The daemon listens on a Unix socket at ${AGENCY_DATA_DIR}/agencyd.sock.
 
-Example:
-  agency daemon start`,
+Examples:
+  agency daemon start               # background (default)
+  agency daemon start --foreground   # foreground (for launchd/systemd)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cr := exec.NewRealRunner()
@@ -62,10 +75,12 @@ Example:
 			ctx := context.Background()
 
 			return commands.DaemonStart(ctx, cr, fsys, commands.DaemonStartOpts{
-				Foreground: true,
+				Foreground: foreground,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+
+	cmd.Flags().BoolVar(&foreground, "foreground", false, "Run in foreground (for service managers or debugging)")
 
 	return cmd
 }
@@ -125,6 +140,59 @@ Example:
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Terminate active invocations and stop")
+
+	return cmd
+}
+
+func newDaemonInstallCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install daemon as an OS service",
+		Long: `Install the agency daemon as an OS-managed service.
+
+On macOS, writes a launchd plist to ~/Library/LaunchAgents/ and loads it.
+On Linux, writes a systemd user unit to ~/.config/systemd/user/ and enables it.
+
+The service runs "agency daemon start --foreground" and is configured to:
+- Start automatically on login
+- Restart on failure
+
+Examples:
+  agency daemon install
+  agency daemon uninstall   # to remove`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cr := exec.NewRealRunner()
+			ctx := context.Background()
+
+			return commands.DaemonInstall(ctx, cr, commands.DaemonInstallOpts{},
+				cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return cmd
+}
+
+func newDaemonUninstallCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove daemon OS service",
+		Long: `Remove the agency daemon OS service.
+
+On macOS, unloads and removes the launchd plist.
+On Linux, stops, disables, and removes the systemd user unit.
+
+Example:
+  agency daemon uninstall`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cr := exec.NewRealRunner()
+			ctx := context.Background()
+
+			return commands.DaemonUninstall(ctx, cr, commands.DaemonUninstallOpts{},
+				cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
 
 	return cmd
 }
