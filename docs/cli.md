@@ -855,7 +855,7 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 
 **flags:**
 - `--checkpoint`: checkpoint id to restore before restart (explicit/script-safe mode)
-- `--history`: open interactive arrow-key selector over timeline history
+- `--history`: open interactive TUI picker over timeline history (groups entries into conversation turns with checkpoint badges)
 - `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
 - `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
 - `--json`: machine-readable mutation envelope output
@@ -869,8 +869,8 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 **behavior:**
 1. resolves invocation through daemon-first navigation
 2. validates target is headless
-3. if `--history` is used, requires an interactive terminal and opens a selector (`↑/↓` or `k/j`, `enter` to confirm, `q` to cancel)
-4. deterministic mapping rule for `--history`: selected timeline entry maps to the latest `checkpoint_event` at or before that entry; if no valid mapping exists, returns deterministic error guidance
+3. if `--history` is used, requires an interactive terminal and opens a full-screen TUI picker (`↑/↓` or `k/j`, `home/g`, `end/G`, `enter` to confirm, `q/esc` to cancel) that groups timeline entries into conversation turns (prompt, assistant + tool calls, follow-up) with checkpoint badges
+4. each turn carries the latest valid checkpoint at or before it; selecting a turn without a checkpoint returns deterministic error guidance
 5. if invocation has a stored custom-env profile, requires explicit replay of all required env keys
 6. if running, force-stops current process and waits for terminalization
 7. applies checkpoint to sandbox
@@ -880,7 +880,7 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 - `E_USAGE` — invalid CLI usage (for example malformed `--env` value, missing selector mode, or conflicting `--checkpoint` + `--history`)
 - `E_NOT_INTERACTIVE` — `--history` used outside an interactive terminal
 - `E_ABORTED` — interactive selection canceled by user
-- `E_INVALID_ARGUMENT` — history/checkpoint selection input is invalid or exceeds bounded selector limits
+- `E_INVALID_ARGUMENT` — history/checkpoint selection input is invalid or exceeds bounded picker limits
 - `E_INVALID_REQUEST` — restart env replay is incomplete for required keys
 - `E_INVOCATION_NOT_FOUND` — invocation not found
 - `E_INVOCATION_INVALID_MODE` — invocation is not headless

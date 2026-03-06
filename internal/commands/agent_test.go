@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,6 +24,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1801,136 +1801,17 @@ func TestResolveBoundedPromptInput_EmptyFileUsesContextMessage(t *testing.T) {
 	assert.Contains(t, err.Error(), "context-specific empty file message")
 }
 
-func TestRunInteractiveHistorySelector_ArrowNavigationAndConfirm(t *testing.T) {
-	t.Parallel()
-
-	items := []historySelectorItem{
-		{Entry: daemon.TimelineEntryDTO{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z"}, Summary: "first"},
-		{Entry: daemon.TimelineEntryDTO{EntryID: "e-2", Kind: "message", Timestamp: "2026-02-05T11:50:20Z"}, Summary: "second"},
-		{Entry: daemon.TimelineEntryDTO{EntryID: "e-3", Kind: "message", Timestamp: "2026-02-05T11:50:30Z"}, Summary: "third"},
-	}
-
-	// Initial selection is newest (last item). Arrow-up then Enter should pick e-2.
-	input := bytes.NewBufferString("\x1b[A\r")
-	var output bytes.Buffer
-	selected, err := runInteractiveHistorySelector(items, input, &output)
-	require.NoError(t, err)
-	assert.Equal(t, "e-2", selected.Entry.EntryID)
-}
-
-func TestRunInteractiveHistorySelector_CancelReturnsAborted(t *testing.T) {
-	t.Parallel()
-
-	items := []historySelectorItem{
-		{Entry: daemon.TimelineEntryDTO{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z"}, Summary: "first"},
-	}
-
-	input := bytes.NewBufferString("q")
-	var output bytes.Buffer
-	_, err := runInteractiveHistorySelector(items, input, &output)
-	require.Error(t, err)
-	assert.Equal(t, errors.EAborted, errors.GetCode(err))
-}
-
-func TestMapTimelineSelectionToCheckpoint_Deterministic(t *testing.T) {
-	t.Parallel()
-
-	entries := []daemon.TimelineEntryDTO{
-		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:05Z"},
-		{
-			EntryID:   "cp-1",
-			Kind:      "checkpoint_event",
-			Timestamp: "2026-02-05T11:50:10Z",
-			Data: map[string]interface{}{
-				"event_kind":    "agency.checkpoint_created",
-				"checkpoint_id": 1,
-			},
-		},
-		{EntryID: "e-2", Kind: "followup_prompt", Timestamp: "2026-02-05T11:50:20Z"},
-		{
-			EntryID:   "cp-2",
-			Kind:      "checkpoint_event",
-			Timestamp: "2026-02-05T11:50:30Z",
-			Data: map[string]interface{}{
-				"event_kind":    "agency.checkpoint_created",
-				"checkpoint_id": 2,
-			},
-		},
-		{EntryID: "e-3", Kind: "message", Timestamp: "2026-02-05T11:50:40Z"},
-	}
-	checkpoints := []daemon.CheckpointDTO{
-		{ID: 1},
-		{ID: 2},
-	}
-
-	first, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-2")
-	require.NoError(t, err)
-	second, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-2")
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, first)
-	assert.Equal(t, first, second)
-}
-
-func TestMapTimelineSelectionToCheckpoint_NoMappingReturnsCheckpointNotFound(t *testing.T) {
-	t.Parallel()
-
-	entries := []daemon.TimelineEntryDTO{
-		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:05Z"},
-		{EntryID: "e-2", Kind: "message", Timestamp: "2026-02-05T11:50:06Z"},
-	}
-	checkpoints := []daemon.CheckpointDTO{{ID: 1}}
-
-	_, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-1")
-	require.Error(t, err)
-	assert.Equal(t, errors.ECheckpointNotFound, errors.GetCode(err))
-}
-
-func TestMapTimelineSelectionToCheckpoint_MappedCheckpointUnavailableReturnsCheckpointNotFound(t *testing.T) {
-	t.Parallel()
-
-	entries := []daemon.TimelineEntryDTO{
-		{
-			EntryID:   "cp-1",
-			Kind:      "checkpoint_event",
-			Timestamp: "2026-02-05T11:50:10Z",
-			Data: map[string]interface{}{
-				"event_kind":    "agency.checkpoint_created",
-				"checkpoint_id": 1,
-			},
-		},
-		{
-			EntryID:   "cp-2",
-			Kind:      "checkpoint_event",
-			Timestamp: "2026-02-05T11:50:30Z",
-			Data: map[string]interface{}{
-				"event_kind":    "agency.checkpoint_created",
-				"checkpoint_id": 2,
-			},
-		},
-		{EntryID: "e-3", Kind: "message", Timestamp: "2026-02-05T11:50:40Z"},
-	}
-	checkpoints := []daemon.CheckpointDTO{
-		{ID: 1},
-	}
-
-	_, err := mapTimelineSelectionToCheckpoint(entries, checkpoints, "e-3")
-	require.Error(t, err)
-	assert.Equal(t, errors.ECheckpointNotFound, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "mapped checkpoint 2 is no longer available")
-}
-
 func TestAgentRestart_InteractiveHistory_NonInteractiveFailsFast(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
 	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef:      "inv-123",
-		InteractiveHistory: true,
-		IsInteractive:      func() bool { return false },
-		DataDirOverride:    t.TempDir(),
-		HistorySelectorIn:  bytes.NewBuffer(nil),
-		HistorySelectorOut: &bytes.Buffer{},
+		InvocationRef:       "inv-123",
+		InteractiveHistory:  true,
+		IsInteractive:       func() bool { return false },
+		DataDirOverride:     t.TempDir(),
+		HistoryPickerInput:  bytes.NewBuffer(nil),
+		HistoryPickerOutput: &bytes.Buffer{},
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
@@ -2015,14 +1896,15 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 		InvocationRef:      invocationID,
 		InteractiveHistory: true,
 		IsInteractive:      func() bool { return true },
-		HistorySelector: func(items []historySelectorItem, _ io.Reader, _ io.Writer) (historySelectorItem, error) {
-			for _, item := range items {
-				if item.Entry.EntryID == "inv_event:2:agency.followup_prompt" {
-					return item, nil
+		HistoryPickerRun: func(turns []historypicker.Turn, _ historypicker.RunOptions) (historypicker.Turn, error) {
+			// Find the followup turn — it should be grouped as its own turn
+			for _, turn := range turns {
+				if turn.Kind == historypicker.TurnFollowup {
+					return turn, nil
 				}
 			}
-			t.Fatalf("expected follow-up timeline entry in selector items")
-			return historySelectorItem{}, nil
+			t.Fatalf("expected follow-up turn in picker turns; got %d turns", len(turns))
+			return historypicker.Turn{}, nil
 		},
 		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
 		JSON:            true,
@@ -2034,6 +1916,6 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
-	// Selected follow-up entry is before checkpoint 2, so deterministic mapping must pick checkpoint 1.
+	// The followup turn inherits checkpoint 1 (the latest before it).
 	assert.Equal(t, float64(1), payload["checkpoint_id"])
 }
