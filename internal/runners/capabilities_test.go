@@ -64,6 +64,35 @@ func TestValidateArgs(t *testing.T) {
 	require.Error(t, ValidateArgs("cursor", []string{"-p"}))
 	require.Error(t, ValidateArgs("droid", []string{"exec"}))
 	require.NoError(t, ValidateArgs("amp", []string{"--model", "amp-fast"}))
+
+	// Permission flags are allowed in headed mode (user at terminal).
+	require.NoError(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
+	require.NoError(t, ValidateArgs("codex", []string{"--full-auto"}))
+	require.NoError(t, ValidateArgs("opencode", []string{"--mode", "safe"}))
+}
+
+func TestValidateHeadlessArgs(t *testing.T) {
+	t.Parallel()
+
+	// Structural flags rejected in headless mode.
+	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--output-format", "json"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--json"}))
+	require.Error(t, ValidateHeadlessArgs("opencode", []string{"run"}))
+
+	// Permission/approval flags rejected in headless mode — Agency controls them.
+	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--dangerously-skip-permissions"}))
+	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "default"}))
+	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode=acceptEdits"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--full-auto"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--approval-mode", "suggest"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--approval-mode=auto-edit"}))
+	require.Error(t, ValidateHeadlessArgs("opencode", []string{"--mode", "safe"}))
+	require.Error(t, ValidateHeadlessArgs("opencode", []string{"--mode=auto"}))
+
+	// Non-conflicting flags pass.
+	require.NoError(t, ValidateHeadlessArgs("claude-code", []string{"--model", "opus"}))
+	require.NoError(t, ValidateHeadlessArgs("codex", []string{"--model", "gpt-5"}))
+	require.NoError(t, ValidateHeadlessArgs("opencode", []string{"--model", "open"}))
 }
 
 func TestBuildHeadlessArgs(t *testing.T) {
@@ -71,11 +100,11 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	claudeArgs, err := BuildHeadlessArgs("claude", "fix bug", "/sandbox", []string{"--model", "opus"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--verbose", "--model", "opus", "fix bug"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--model", "gpt-5", "fix bug"}, codexArgs)
+	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--full-auto", "--model", "gpt-5", "fix bug"}, codexArgs)
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
@@ -83,7 +112,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	opencodeArgs, err := BuildHeadlessArgs("opencode", "fix bug", "/sandbox", []string{"--model", "open"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"run", "--model", "open", "fix bug"}, opencodeArgs)
+	assert.Equal(t, []string{"run", "--mode", "auto", "--model", "open", "fix bug"}, opencodeArgs)
 
 	cursorArgs, err := BuildHeadlessArgs("cursor", "fix bug", "/sandbox", []string{"--model", "cursor-fast"})
 	require.NoError(t, err)

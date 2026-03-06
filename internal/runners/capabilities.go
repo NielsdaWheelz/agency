@@ -29,10 +29,11 @@ type Capability struct {
 	SupportsHeaded     bool
 	HasSemanticAdapter bool
 
-	reservedArgs     []string
-	aliases          []string
-	headlessTemplate []string
-	headedTemplate   []string
+	reservedArgs         []string // flags reserved in both headless and headed modes
+	reservedHeadlessArgs []string // flags reserved only in headless mode (permission/approval)
+	aliases              []string
+	headlessTemplate     []string
+	headedTemplate       []string
 }
 
 var canonicalIDs = []string{
@@ -46,33 +47,37 @@ var canonicalIDs = []string{
 
 var capabilityByID = map[string]Capability{
 	RunnerClaudeCode: {
-		ID:                 RunnerClaudeCode,
-		SupportsHeadless:   true,
-		SupportsHeaded:     true,
-		HasSemanticAdapter: true,
-		reservedArgs:       []string{"--output-format", "-p", "--print", "--verbose"},
-		aliases:            []string{LegacyRunnerClaude},
+		ID:                   RunnerClaudeCode,
+		SupportsHeadless:     true,
+		SupportsHeaded:       true,
+		HasSemanticAdapter:   true,
+		reservedArgs:         []string{"--output-format", "-p", "--print", "--verbose"},
+		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
+		aliases:              []string{LegacyRunnerClaude},
 		headlessTemplate: []string{
 			"-p",
 			"--output-format",
 			"stream-json",
 			"--verbose",
+			"--dangerously-skip-permissions",
 			launchTokenExtraArgs,
 			launchTokenPrompt,
 		},
 		headedTemplate: []string{launchTokenExtraArgs},
 	},
 	RunnerCodex: {
-		ID:                 RunnerCodex,
-		SupportsHeadless:   true,
-		SupportsHeaded:     true,
-		HasSemanticAdapter: true,
-		reservedArgs:       []string{"exec", "--json", "-C", "--cd"},
+		ID:                   RunnerCodex,
+		SupportsHeadless:     true,
+		SupportsHeaded:       true,
+		HasSemanticAdapter:   true,
+		reservedArgs:         []string{"exec", "--json", "-C", "--cd"},
+		reservedHeadlessArgs: []string{"--full-auto", "--approval-mode"},
 		headlessTemplate: []string{
 			"exec",
 			"--cd",
 			launchTokenSandboxPath,
 			"--json",
+			"--full-auto",
 			launchTokenExtraArgs,
 			launchTokenPrompt,
 		},
@@ -85,14 +90,16 @@ var capabilityByID = map[string]Capability{
 		reservedArgs:     []string{"-x", "--execute"},
 		headlessTemplate: []string{"-x", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:   []string{launchTokenExtraArgs},
+		// TODO: verify upstream amp CLI auto-approve flags for headless mode.
 	},
 	RunnerOpenCode: {
-		ID:               RunnerOpenCode,
-		SupportsHeadless: true,
-		SupportsHeaded:   true,
-		reservedArgs:     []string{"run"},
-		headlessTemplate: []string{"run", launchTokenExtraArgs, launchTokenPrompt},
-		headedTemplate:   []string{launchTokenExtraArgs},
+		ID:                   RunnerOpenCode,
+		SupportsHeadless:     true,
+		SupportsHeaded:       true,
+		reservedArgs:         []string{"run"},
+		reservedHeadlessArgs: []string{"--mode"},
+		headlessTemplate:     []string{"run", "--mode", "auto", launchTokenExtraArgs, launchTokenPrompt},
+		headedTemplate:       []string{launchTokenExtraArgs},
 	},
 	RunnerCursor: {
 		ID:               RunnerCursor,
@@ -102,6 +109,7 @@ var capabilityByID = map[string]Capability{
 		aliases:          []string{LegacyRunnerCursorCLI},
 		headlessTemplate: []string{"-p", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:   []string{launchTokenExtraArgs},
+		// TODO: verify upstream cursor CLI auto-approve flags for headless mode.
 	},
 	RunnerDroid: {
 		ID:               RunnerDroid,
@@ -110,6 +118,7 @@ var capabilityByID = map[string]Capability{
 		reservedArgs:     []string{"exec"},
 		headlessTemplate: []string{"exec", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:   []string{launchTokenExtraArgs},
+		// TODO: verify upstream droid CLI auto-approve flags for headless mode.
 	},
 }
 
@@ -179,21 +188,39 @@ func ConfigLookupKeys(runner string) ([]string, error) {
 	return keys, nil
 }
 
-// ValidateArgs rejects user-supplied args that conflict with reserved flags.
+// ValidateArgs rejects user-supplied args that conflict with universal reserved flags.
+// Use ValidateHeadlessArgs for headless invocations to also check permission flags.
 func ValidateArgs(runner string, args []string) error {
 	capability, err := Resolve(runner)
 	if err != nil {
 		return err
 	}
+	return validateAgainst(capability, args, capability.reservedArgs)
+}
+
+// ValidateHeadlessArgs rejects user-supplied args that conflict with any reserved flag,
+// including headless-only permission/approval flags that Agency injects for autonomous operation.
+func ValidateHeadlessArgs(runner string, args []string) error {
+	capability, err := Resolve(runner)
+	if err != nil {
+		return err
+	}
+	all := make([]string, 0, len(capability.reservedArgs)+len(capability.reservedHeadlessArgs))
+	all = append(all, capability.reservedArgs...)
+	all = append(all, capability.reservedHeadlessArgs...)
+	return validateAgainst(capability, args, all)
+}
+
+func validateAgainst(capability Capability, args, reserved []string) error {
 	for _, arg := range args {
-		for _, reserved := range capability.reservedArgs {
-			if arg == reserved || strings.HasPrefix(arg, reserved+"=") {
+		for _, r := range reserved {
+			if arg == r || strings.HasPrefix(arg, r+"=") {
 				return errors.NewWithDetails(
 					errors.ERunnerArgConflict,
-					"reserved flag '"+reserved+"' cannot be passed via runner_args",
+					"reserved flag '"+r+"' cannot be passed via runner_args",
 					map[string]string{
 						"runner": capability.ID,
-						"flag":   reserved,
+						"flag":   r,
 					},
 				)
 			}
