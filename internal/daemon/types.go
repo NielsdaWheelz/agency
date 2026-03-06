@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 )
 
@@ -125,6 +126,7 @@ type ControlPlaneFollowUpPromptResponse struct {
 	InvocationID   string `json:"invocation_id,omitempty"`
 	TimelineEntry  string `json:"timeline_entry_id,omitempty"`
 	AlreadyApplied bool   `json:"already_applied,omitempty"`
+	DeliveryMode   string `json:"delivery_mode,omitempty"` // "delivered" (stdin), "queued" (resume), "audit_only" (no relay)
 	RequestID      string `json:"request_id,omitempty"`
 
 	// Standard response fields
@@ -245,6 +247,11 @@ type SupervisedProcess struct {
 	// CheckpointEngine manages checkpoint creation (PR-08).
 	// May be nil if checkpointing is disabled.
 	CheckpointEngine CheckpointEngine
+
+	// Relay delivers follow-up messages to the runner.
+	// StdinRelay for stdin-capable runners, ResumeRelay for session-resume runners.
+	// May be nil for headed invocations.
+	Relay relay.ChatRelay
 
 	// lastOutputAt is updated in-memory on every chunk; persisted with throttling.
 	lastOutputAt atomic.Int64
