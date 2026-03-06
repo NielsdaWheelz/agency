@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
@@ -13,6 +14,17 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
+
+// ApplyOptions controls checkpoint apply behavior for different callers.
+type ApplyOptions struct {
+	// RewindHeadToSnapshotBase resets HEAD to checkpoint.sandbox_head_sha before
+	// restoring the snapshot tree. This gives true retry semantics for restart.
+	RewindHeadToSnapshotBase bool
+
+	// BackupRefPrefix controls where pre-apply HEAD backup refs are written.
+	// Defaults to RestoreBackupRefPrefix when empty.
+	BackupRefPrefix string
+}
 
 // Applier handles checkpoint rollback operations.
 type Applier struct {
@@ -72,6 +84,20 @@ func NewApplierWithWriter(
 // Apply restores the sandbox to the state at the given checkpoint.
 // Returns the applied checkpoint details on success.
 func (a *Applier) Apply(ctx context.Context, checkpointID int) (*Checkpoint, error) {
+	return a.ApplyWithOptions(ctx, checkpointID, ApplyOptions{})
+}
+
+// ApplyWithOptions restores the sandbox to the state at the given checkpoint
+// with caller-controlled restore semantics.
+func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts ApplyOptions) (*Checkpoint, error) {
+	backupPrefix := strings.TrimSpace(opts.BackupRefPrefix)
+	if backupPrefix == "" {
+		backupPrefix = RestoreBackupRefPrefix
+	}
+	if !strings.HasSuffix(backupPrefix, "/") {
+		backupPrefix += "/"
+	}
+
 	// 1. Load checkpoints file
 	cpFile, err := a.loadCheckpoints()
 	if err != nil {
@@ -85,57 +111,216 @@ func (a *Applier) Apply(ctx context.Context, checkpointID int) (*Checkpoint, err
 	}
 
 	// 3. Verify the snapshot commit exists
-	verifyResult, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"cat-file", "-t", cp.SnapshotCommit,
-	}, exec.RunOpts{})
-	if err != nil || verifyResult.ExitCode != 0 {
+	if err := a.verifyCommitExists(ctx, cp.SnapshotCommit); err != nil {
 		return nil, errors.New(errors.ECheckpointNotFound, fmt.Sprintf("snapshot commit %s not found or inaccessible", cp.SnapshotCommit))
 	}
 
-	// 4. Reset sandbox to clean state (removes any staged/unstaged changes)
-	resetResult, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"reset", "--hard",
-	}, exec.RunOpts{})
-	if err != nil {
-		return nil, errors.Wrap(errors.ERollbackFailed, "failed to execute git reset", err)
-	}
-	if resetResult.ExitCode != 0 {
-		return nil, errors.New(errors.ERollbackFailed, fmt.Sprintf("git reset --hard failed: %s", resetResult.Stderr))
-	}
-
-	// 5. Clean untracked files (removes any untracked files/directories)
-	cleanResult, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"clean", "-fd",
-	}, exec.RunOpts{})
-	if err != nil {
-		return nil, errors.Wrap(errors.ERollbackFailed, "failed to execute git clean", err)
-	}
-	if cleanResult.ExitCode != 0 {
-		return nil, errors.New(errors.ERollbackFailed, fmt.Sprintf("git clean -fd failed: %s", cleanResult.Stderr))
+	snapshotBase := ""
+	if opts.RewindHeadToSnapshotBase {
+		snapshotBase, err = a.resolveSnapshotBase(ctx, cp)
+		if err != nil {
+			if errors.GetCode(err) != "" {
+				return nil, err
+			}
+			return nil, errors.Wrap(errors.ECheckpointFailed, "failed to resolve checkpoint base commit", err)
+		}
 	}
 
-	// 6. Restore exact state from snapshot commit
-	// This checks out the entire tree from the snapshot commit
-	checkoutResult, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"checkout", cp.SnapshotCommit, "--", ".",
-	}, exec.RunOpts{})
-	if err != nil {
-		return nil, errors.Wrap(errors.ERollbackFailed, "failed to execute git checkout", err)
-	}
-	if checkoutResult.ExitCode != 0 {
-		return nil, errors.New(errors.ERollbackFailed, fmt.Sprintf("git checkout failed: %s", checkoutResult.Stderr))
+	// 4. Emit checkpoint_apply_started before mutation.
+	if err := a.emitCheckpointApplyStarted(checkpointID, cp.SnapshotCommit, opts.RewindHeadToSnapshotBase); err != nil {
+		return nil, errors.Wrap(errors.ECheckpointFailed, "failed to append checkpoint_apply_started event", err)
 	}
 
-	// 7. Emit checkpoint_applied event
+	// 5. Capture and persist pre-apply HEAD for safety/recovery.
+	preApplyHead, err := a.currentHead(ctx)
+	if err != nil {
+		return nil, errors.Wrap(errors.ERollbackFailed, "failed to resolve pre-apply HEAD", err)
+	}
+	backupRef := a.buildBackupRef(backupPrefix, checkpointID)
+	if err := a.createBackupRef(ctx, backupRef, preApplyHead); err != nil {
+		return nil, errors.Wrap(errors.ERollbackFailed, "failed to create pre-apply backup ref", err)
+	}
+
+	restoreWithRecovery := func(restoreErr error, message string) error {
+		recoverErr := a.recoverPreApplyState(preApplyHead)
+		if recoverErr != nil {
+			return errors.New(
+				errors.ERollbackFailed,
+				fmt.Sprintf("%s: %v (failed to recover pre-apply state from %s: %v)", message, restoreErr, backupRef, recoverErr),
+			)
+		}
+		return errors.New(
+			errors.ERollbackFailed,
+			fmt.Sprintf("%s: %v (recovered pre-apply state from %s)", message, restoreErr, backupRef),
+		)
+	}
+
+	// 6. Reset sandbox and optionally rewind HEAD to checkpoint base.
+	resetTarget := ""
+	if opts.RewindHeadToSnapshotBase {
+		resetTarget = snapshotBase
+	}
+	if err := a.gitResetHard(ctx, resetTarget); err != nil {
+		return nil, restoreWithRecovery(err, "failed to reset sandbox")
+	}
+
+	// 7. Remove untracked files/directories.
+	if err := a.gitClean(ctx); err != nil {
+		return nil, restoreWithRecovery(err, "failed to clean sandbox")
+	}
+
+	// 8. Restore exact tree/index state from snapshot commit.
+	if err := a.gitReadTree(ctx, cp.SnapshotCommit); err != nil {
+		return nil, restoreWithRecovery(err, "failed to restore snapshot tree")
+	}
+
+	// 9. Emit checkpoint_applied event
 	if err := a.emitCheckpointApplied(checkpointID, cp.SnapshotCommit); err != nil {
 		return nil, errors.Wrap(errors.ECheckpointFailed, "failed to append checkpoint_applied event", err)
 	}
 
 	return cp, nil
+}
+
+func (a *Applier) verifyCommitExists(ctx context.Context, sha string) error {
+	verifyResult, err := a.runner.Run(ctx, "git", []string{
+		"-C", a.sandboxPath,
+		"cat-file", "-t", sha,
+	}, exec.RunOpts{})
+	if err != nil {
+		return err
+	}
+	if verifyResult.ExitCode != 0 {
+		return fmt.Errorf("git cat-file -t %s failed: %s", sha, verifyResult.Stderr)
+	}
+	return nil
+}
+
+func (a *Applier) resolveSnapshotBase(ctx context.Context, cp *Checkpoint) (string, error) {
+	if cp == nil {
+		return "", errors.New(errors.ECheckpointFailed, "checkpoint is nil")
+	}
+	if base := strings.TrimSpace(cp.SandboxHeadSHA); base != "" {
+		if err := a.verifyCommitExists(ctx, base); err != nil {
+			return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint sandbox head commit %s not found", base))
+		}
+		return base, nil
+	}
+
+	// Backward-compat fallback for legacy checkpoints without sandbox_head_sha:
+	// derive base from snapshot commit parent.
+	result, err := a.runner.Run(ctx, "git", []string{
+		"-C", a.sandboxPath,
+		"rev-parse", cp.SnapshotCommit + "^",
+	}, exec.RunOpts{})
+	if err != nil {
+		return "", err
+	}
+	if result.ExitCode != 0 {
+		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit for %s not found", cp.SnapshotCommit))
+	}
+	base := strings.TrimSpace(result.Stdout)
+	if base == "" {
+		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit for %s is empty", cp.SnapshotCommit))
+	}
+	if err := a.verifyCommitExists(ctx, base); err != nil {
+		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit %s not found", base))
+	}
+	return base, nil
+}
+
+func (a *Applier) currentHead(ctx context.Context) (string, error) {
+	result, err := a.runner.Run(ctx, "git", []string{
+		"-C", a.sandboxPath,
+		"rev-parse", "HEAD",
+	}, exec.RunOpts{})
+	if err != nil {
+		return "", err
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("git rev-parse HEAD failed: %s", result.Stderr)
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+func (a *Applier) buildBackupRef(prefix string, checkpointID int) string {
+	return fmt.Sprintf(
+		"%s%s/%s-cp%d",
+		prefix,
+		a.invocationID,
+		a.clock().UTC().Format("20060102T150405.000000000Z"),
+		checkpointID,
+	)
+}
+
+func (a *Applier) createBackupRef(ctx context.Context, backupRef, headSHA string) error {
+	result, err := a.runner.Run(ctx, "git", []string{
+		"-C", a.sandboxPath,
+		"update-ref", backupRef, headSHA,
+	}, exec.RunOpts{})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("git update-ref %s %s failed: %s", backupRef, headSHA, result.Stderr)
+	}
+	return nil
+}
+
+func (a *Applier) gitResetHard(ctx context.Context, target string) error {
+	args := []string{"-C", a.sandboxPath, "reset", "--hard"}
+	if strings.TrimSpace(target) != "" {
+		args = append(args, target)
+	}
+	result, err := a.runner.Run(ctx, "git", args, exec.RunOpts{})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("git reset --hard failed: %s", result.Stderr)
+	}
+	return nil
+}
+
+func (a *Applier) gitClean(ctx context.Context) error {
+	result, err := a.runner.Run(ctx, "git", []string{
+		"-C", a.sandboxPath,
+		"clean", "-fd",
+	}, exec.RunOpts{})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("git clean -fd failed: %s", result.Stderr)
+	}
+	return nil
+}
+
+func (a *Applier) gitReadTree(ctx context.Context, snapshotCommit string) error {
+	result, err := a.runner.Run(ctx, "git", []string{
+		"-C", a.sandboxPath,
+		"read-tree", "--reset", "-u", snapshotCommit,
+	}, exec.RunOpts{})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("git read-tree --reset -u %s failed: %s", snapshotCommit, result.Stderr)
+	}
+	return nil
+}
+
+func (a *Applier) recoverPreApplyState(preApplyHead string) error {
+	recoverCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := a.gitResetHard(recoverCtx, preApplyHead); err != nil {
+		return err
+	}
+	if err := a.gitClean(recoverCtx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // loadCheckpoints reads checkpoints.json.
@@ -153,6 +338,9 @@ func (a *Applier) loadCheckpoints() (*CheckpointsFile, error) {
 	if err := json.Unmarshal(data, &cpFile); err != nil {
 		return nil, err
 	}
+	if !ValidSchemaVersion(cpFile.SchemaVersion) {
+		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
+	}
 
 	return &cpFile, nil
 }
@@ -164,6 +352,18 @@ func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string)
 		a.invocationID,
 		string(EventKindCheckpointApplied),
 		CheckpointAppliedData(checkpointID, snapshotCommit),
+		invocationevents.AppendOptions{},
+	)
+	return err
+}
+
+// emitCheckpointApplyStarted emits a checkpoint_apply_started event.
+func (a *Applier) emitCheckpointApplyStarted(checkpointID int, snapshotCommit string, rewindHead bool) error {
+	_, err := a.eventWriter.Append(
+		a.eventsPath,
+		a.invocationID,
+		string(EventKindCheckpointApplyStarted),
+		CheckpointApplyStartedData(checkpointID, snapshotCommit, rewindHead),
 		invocationevents.AppendOptions{},
 	)
 	return err

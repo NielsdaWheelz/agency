@@ -166,7 +166,9 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		s.Clock,
 		s.InvocationEvents,
 	)
-	cp, err := applier.Apply(r.Context(), req.CheckpointID)
+	cp, err := applier.ApplyWithOptions(r.Context(), req.CheckpointID, checkpoint.ApplyOptions{
+		RewindHeadToSnapshotBase: true,
+	})
 	if err != nil {
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:
