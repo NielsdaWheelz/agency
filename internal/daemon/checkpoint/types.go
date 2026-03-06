@@ -19,6 +19,9 @@ const MaxCheckpoints = 200
 // RefPrefix is the namespace prefix for checkpoint refs.
 const RefPrefix = "refs/agency/snapshots/"
 
+// RestoreBackupRefPrefix stores pre-apply HEAD backups for recovery/audit.
+const RestoreBackupRefPrefix = "refs/agency/restore-backups/"
+
 // Checkpoint represents a single checkpoint entry.
 type Checkpoint struct {
 	// ID is the checkpoint number (1-indexed, monotonically increasing).
@@ -109,6 +112,9 @@ const (
 	// EventKindCheckpointFailed indicates checkpoint creation failed.
 	EventKindCheckpointFailed EventKind = "agency.checkpoint_failed"
 
+	// EventKindCheckpointApplyStarted indicates checkpoint apply has started.
+	EventKindCheckpointApplyStarted EventKind = "agency.checkpoint_apply_started"
+
 	// EventKindCheckpointApplied indicates a checkpoint was applied (rollback).
 	EventKindCheckpointApplied EventKind = "agency.checkpoint_applied"
 
@@ -175,6 +181,15 @@ func CheckpointAppliedData(checkpointID int, snapshotCommit string) map[string]a
 	return map[string]any{
 		"checkpoint_id":   checkpointID,
 		"snapshot_commit": snapshotCommit,
+	}
+}
+
+// CheckpointApplyStartedData returns the data map for a checkpoint_apply_started event.
+func CheckpointApplyStartedData(checkpointID int, snapshotCommit string, rewindHead bool) map[string]any {
+	return map[string]any{
+		"checkpoint_id":   checkpointID,
+		"snapshot_commit": snapshotCommit,
+		"rewind_head":     rewindHead,
 	}
 }
 

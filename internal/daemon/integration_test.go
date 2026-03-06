@@ -1119,6 +1119,72 @@ func TestDaemonRestartFromCheckpoint_OneFlowMaintainsInvocationContinuity(t *tes
 	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
 }
 
+func TestDaemonRestartFromCheckpoint_RewindsHeadToCheckpointBase(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-head-rewind")
+	startResp := startTestInvocation(t, env.Client, repoRoot, "restart-head-rewind", "sleep")
+
+	// Create checkpoint from a tracked modification.
+	checkpointFile := filepath.Join(startResp.SandboxPath, "checkpoint-source.txt")
+	require.NoError(t, os.WriteFile(checkpointFile, []byte("checkpoint source\n"), 0o644))
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var cpData []byte
+	require.Eventually(t, func() bool {
+		var readErr error
+		cpData, readErr = os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(cpData, &cpFile) != nil {
+			return false
+		}
+		return len(cpFile.Checkpoints) > 0
+	}, 10*time.Second, 100*time.Millisecond, "checkpoint not created for head rewind test")
+
+	var cpFile checkpoint.CheckpointsFile
+	require.NoError(t, json.Unmarshal(cpData, &cpFile), "failed to parse checkpoints.json")
+	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
+	require.NotEmpty(t, latestCP.SandboxHeadSHA, "checkpoint must record sandbox_head_sha")
+
+	// Move branch HEAD forward after checkpoint.
+	postCheckpointTracked := filepath.Join(startResp.SandboxPath, "post-checkpoint-tracked.txt")
+	require.NoError(t, os.WriteFile(postCheckpointTracked, []byte("tracked after checkpoint\n"), 0o644))
+	_ = gitExec(t, startResp.SandboxPath, "add", "checkpoint-source.txt", "post-checkpoint-tracked.txt")
+	_ = gitExec(t, startResp.SandboxPath, "commit", "-m", "advance head after checkpoint")
+	headBefore := gitExec(t, startResp.SandboxPath, "rev-parse", "HEAD")
+	require.NotEqual(t, latestCP.SandboxHeadSHA, headBefore, "test setup requires HEAD to diverge after checkpoint")
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: latestCP.ID,
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
+
+	require.Eventually(t, func() bool {
+		meta, readErr := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+		return readErr == nil && meta.Status == store.InvocationStatusRunning
+	}, 5*time.Second, 50*time.Millisecond, "invocation did not return to running state after restart")
+
+	headAfter := gitExec(t, startResp.SandboxPath, "rev-parse", "HEAD")
+	assert.Equal(t, latestCP.SandboxHeadSHA, headAfter, "restart must rewind branch HEAD to checkpoint sandbox_head_sha")
+	_, statErr := os.Stat(postCheckpointTracked)
+	assert.True(t, os.IsNotExist(statErr), "tracked file added after checkpoint should be removed after restart")
+
+	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
 // S3 PR-03: stream sequence ordering must remain monotonic across checkpoint restart boundaries.
 func TestDaemonRestartFromCheckpoint_StreamSeqRemainsMonotonic(t *testing.T) {
 	if testing.Short() {

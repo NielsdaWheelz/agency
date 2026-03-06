@@ -1093,14 +1093,20 @@ func TestApplier_Apply_Success(t *testing.T) {
 	// Stub cat-file
 	sr.stub(fmt.Sprintf("git -C %s cat-file -t ccc333", sandboxPath),
 		exec.CmdResult{Stdout: "commit\n"})
+	// Stub rev-parse HEAD
+	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath),
+		exec.CmdResult{Stdout: "head-before-apply\n"})
+	// Stub backup ref creation
+	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp3 head-before-apply", sandboxPath),
+		exec.CmdResult{})
 	// Stub reset
 	sr.stub(fmt.Sprintf("git -C %s reset --hard", sandboxPath),
 		exec.CmdResult{})
 	// Stub clean
 	sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath),
 		exec.CmdResult{})
-	// Stub checkout
-	sr.stub(fmt.Sprintf("git -C %s checkout ccc333 -- .", sandboxPath),
+	// Stub exact tree restore
+	sr.stub(fmt.Sprintf("git -C %s read-tree --reset -u ccc333", sandboxPath),
 		exec.CmdResult{})
 
 	cp, err := applier.Apply(context.Background(), 3)
@@ -1113,9 +1119,11 @@ func TestApplier_Apply_Success(t *testing.T) {
 	calls := sr.callKeys()
 	expected := []string{
 		fmt.Sprintf("git -C %s cat-file -t ccc333", sandboxPath),
+		fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath),
+		fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp3 head-before-apply", sandboxPath),
 		fmt.Sprintf("git -C %s reset --hard", sandboxPath),
 		fmt.Sprintf("git -C %s clean -fd", sandboxPath),
-		fmt.Sprintf("git -C %s checkout ccc333 -- .", sandboxPath),
+		fmt.Sprintf("git -C %s read-tree --reset -u ccc333", sandboxPath),
 	}
 	require.Len(t, calls, len(expected))
 	for i := range expected {
@@ -1124,8 +1132,81 @@ func TestApplier_Apply_Success(t *testing.T) {
 
 	// Verify checkpoint_applied event
 	events := readEvents(t, eventsPath)
-	require.Len(t, events, 1)
-	assert.Equal(t, EventKindCheckpointApplied, events[0].Kind)
+	require.Len(t, events, 2)
+	assert.Equal(t, EventKindCheckpointApplyStarted, events[0].Kind)
+	assert.Equal(t, EventKindCheckpointApplied, events[1].Kind)
+}
+
+func TestApplier_Apply_EmitsStartedAndAppliedEvents(t *testing.T) {
+	t.Parallel()
+	sandboxPath := t.TempDir()
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	cpFile := &CheckpointsFile{
+		SchemaVersion: SchemaVersion,
+		Checkpoints: []Checkpoint{
+			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111"},
+		},
+	}
+	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
+
+	sr := newStubRunner()
+	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
+
+	sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath), exec.CmdResult{Stdout: "head-before-apply\n"})
+	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp1 head-before-apply", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s reset --hard", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s read-tree --reset -u aaa111", sandboxPath), exec.CmdResult{})
+
+	_, err := applier.Apply(context.Background(), 1)
+	require.NoError(t, err)
+
+	events := readEvents(t, eventsPath)
+	require.Len(t, events, 2, "apply should emit a start marker and a success marker")
+	assert.Equal(t, EventKindCheckpointApplyStarted, events[0].Kind)
+	assert.Equal(t, EventKindCheckpointApplied, events[1].Kind)
+}
+
+func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing.T) {
+	t.Parallel()
+	sandboxPath := t.TempDir()
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	cpFile := &CheckpointsFile{
+		SchemaVersion: SchemaVersionLegacy,
+		Checkpoints: []Checkpoint{
+			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111"},
+		},
+	}
+	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
+
+	sr := newStubRunner()
+	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
+
+	sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+	sr.stub(fmt.Sprintf("git -C %s rev-parse aaa111^", sandboxPath), exec.CmdResult{Stdout: "parent0001\n"})
+	sr.stub(fmt.Sprintf("git -C %s cat-file -t parent0001", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath), exec.CmdResult{Stdout: "head-before-apply\n"})
+	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp1 head-before-apply", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s reset --hard parent0001", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s read-tree --reset -u aaa111", sandboxPath), exec.CmdResult{})
+
+	_, err := applier.ApplyWithOptions(context.Background(), 1, ApplyOptions{RewindHeadToSnapshotBase: true})
+	require.NoError(t, err)
+
+	calls := sr.callKeys()
+	assert.Contains(t, calls, fmt.Sprintf("git -C %s reset --hard parent0001", sandboxPath))
 }
 
 // 1.12 TestApplier_Apply_NotFound
@@ -1191,11 +1272,11 @@ func TestApplier_Apply_GitFailures(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		failAt string // reset, clean, or checkout
+		failAt string // reset, clean, or read-tree
 	}{
 		{name: "reset fails", failAt: "reset"},
 		{name: "clean fails", failAt: "clean"},
-		{name: "checkout fails", failAt: "checkout"},
+		{name: "read-tree fails", failAt: "read-tree"},
 	}
 
 	for _, tt := range tests {
@@ -1223,6 +1304,10 @@ func TestApplier_Apply_GitFailures(t *testing.T) {
 			// cat-file succeeds
 			sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath),
 				exec.CmdResult{Stdout: "commit\n"})
+			sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath),
+				exec.CmdResult{Stdout: "head-before-apply\n"})
+			sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp1 head-before-apply", sandboxPath),
+				exec.CmdResult{})
 
 			switch tt.failAt {
 			case "reset":
@@ -1233,13 +1318,13 @@ func TestApplier_Apply_GitFailures(t *testing.T) {
 					exec.CmdResult{})
 				sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath),
 					exec.CmdResult{ExitCode: 1, Stderr: "clean failed"})
-			case "checkout":
+			case "read-tree":
 				sr.stub(fmt.Sprintf("git -C %s reset --hard", sandboxPath),
 					exec.CmdResult{})
 				sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath),
 					exec.CmdResult{})
-				sr.stub(fmt.Sprintf("git -C %s checkout aaa111 -- .", sandboxPath),
-					exec.CmdResult{ExitCode: 1, Stderr: "checkout failed"})
+				sr.stub(fmt.Sprintf("git -C %s read-tree --reset -u aaa111", sandboxPath),
+					exec.CmdResult{ExitCode: 1, Stderr: "read-tree failed"})
 			}
 
 			_, err := applier.Apply(context.Background(), 1)
@@ -1470,6 +1555,19 @@ func TestApplier_Apply_ReturnsTypedErrors(t *testing.T) {
 			cpID:     1,
 			wantCode: errors.ERollbackFailed,
 		},
+		{
+			name: "invalid schema version",
+			setup: func(sr *stubRunner, sandboxPath, checkpointsDir string) {
+				cpFile := &CheckpointsFile{
+					SchemaVersion: "9.9",
+					Checkpoints:   []Checkpoint{{ID: 1, SnapshotCommit: "aaa111"}},
+				}
+				cpData, _ := json.MarshalIndent(cpFile, "", "  ")
+				_ = os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644)
+			},
+			cpID:     1,
+			wantCode: errors.ECheckpointFailed,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1567,19 +1665,23 @@ func TestApplier_Apply_EmitsMonotonicSeqAfterExistingEvents(t *testing.T) {
 	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
 
 	sr.stub(fmt.Sprintf("git -C %s cat-file -t ccc333", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath), exec.CmdResult{Stdout: "head-before-apply\n"})
+	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp3 head-before-apply", sandboxPath), exec.CmdResult{})
 	sr.stub(fmt.Sprintf("git -C %s reset --hard", sandboxPath), exec.CmdResult{})
 	sr.stub(fmt.Sprintf("git -C %s clean -fd", sandboxPath), exec.CmdResult{})
-	sr.stub(fmt.Sprintf("git -C %s checkout ccc333 -- .", sandboxPath), exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s read-tree --reset -u ccc333", sandboxPath), exec.CmdResult{})
 
 	_, err = applier.Apply(context.Background(), 3)
 	require.NoError(t, err)
 
 	events := readEvents(t, eventsPath)
-	require.Len(t, events, 3)
+	require.Len(t, events, 4)
 	assert.Equal(t, uint64(7), events[0].Seq)
 	assert.Equal(t, uint64(8), events[1].Seq)
-	assert.Equal(t, uint64(9), events[2].Seq, "checkpoint apply event must continue the existing sequence")
-	assert.Equal(t, EventKindCheckpointApplied, events[2].Kind)
+	assert.Equal(t, uint64(9), events[2].Seq, "checkpoint_apply_started must continue the existing sequence")
+	assert.Equal(t, EventKindCheckpointApplyStarted, events[2].Kind)
+	assert.Equal(t, uint64(10), events[3].Seq, "checkpoint_applied must continue the existing sequence")
+	assert.Equal(t, EventKindCheckpointApplied, events[3].Kind)
 }
 
 func TestEngine_createCheckpointInternal_EventAppendFailure(t *testing.T) {

@@ -63,6 +63,21 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	// Repo-scoped lock serializes rollback mutations with other git-mutating flows.
+	unlock, err := s.repoLock.Lock(repoID, "checkpoint_apply")
+	if err != nil {
+		s.writeCheckpointError(
+			w,
+			http.StatusConflict,
+			requestID,
+			string(errors.ERepoLocked),
+			"repository is locked by another operation",
+			"wait for the other operation to complete",
+		)
+		return
+	}
+	defer func() { _ = unlock() }()
+
 	// Read invocation meta
 	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {

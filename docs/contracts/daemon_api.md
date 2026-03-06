@@ -92,6 +92,10 @@ response: `CheckpointApplyResponse`
 - success fields: `ok`, `request_id`, `api_version`, `build_version`, `checkpoint_id`, `snapshot_commit`, `restored_at`
 - error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`
 
+contract notes:
+- restore-only operation: apply does not restart runner execution
+- restore uses exact snapshot materialization (`git read-tree --reset -u`) after clean/reset preflight
+
 ### POST /invocations/{id}/land
 
 query:
@@ -137,6 +141,10 @@ request: `RestartFromCheckpointRequest`
 response: `RestartFromCheckpointResponse`
 - success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`, `checkpoint_id`, `snapshot_commit`, `restored_at`, `pid`, `pgid`, `daemon_instance_id`, `log_paths`
 - error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`
+
+contract notes:
+- restart reuses the invocation's stored original prompt file
+- restart rewinds sandbox `HEAD` to checkpoint `sandbox_head_sha` and restores the checkpoint tree before spawning the new runner process
 
 ### GET /invocations/{ref}/review
 

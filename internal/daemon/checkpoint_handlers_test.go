@@ -246,6 +246,33 @@ func TestHandleCheckpointApply_StillRunning(t *testing.T) {
 	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
 }
 
+func TestHandleCheckpointApply_RespectsRepoLock(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	setupInvocationMeta(t, st, "test-repo", "test-inv", store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	unlock, err := s.repoLock.Lock("test-repo", "checkpoint-apply-lock-holder")
+	require.NoError(t, err, "acquire competing repo lock")
+	t.Cleanup(func() {
+		_ = unlock()
+	})
+
+	body, _ := json.Marshal(CheckpointApplyRequest{CheckpointID: 1})
+	req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/checkpoints/apply?repo_id=test-repo", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleCheckpointApply(w, req, "test-inv")
+
+	var resp CheckpointApplyResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, "E_REPO_LOCKED", resp.ErrorCode)
+}
+
 // 2.5 TestHandleCheckpointApply_Starting
 func TestHandleCheckpointApply_Starting(t *testing.T) {
 	t.Parallel()
