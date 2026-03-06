@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -80,7 +82,10 @@ func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http
 		return
 	}
 
-	s.writeFollowUpSuccess(w, record.InvocationID, timelineEntryID, req.ClientRequestID, requestID, alreadyApplied)
+	// Deliver via chat relay (audit event is already persisted above).
+	deliveryMode := s.deliverFollowUp(record.InvocationID, req.Prompt)
+
+	s.writeFollowUpSuccessWithDelivery(w, record.InvocationID, timelineEntryID, req.ClientRequestID, requestID, alreadyApplied, deliveryMode)
 }
 
 func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
@@ -97,18 +102,47 @@ func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID
 	s.writeJSON(w, status, resp)
 }
 
-func (s *Server) writeFollowUpSuccess(w http.ResponseWriter, invocationID, timelineEntryID, clientRequestID, requestID string, alreadyApplied bool) {
+func (s *Server) writeFollowUpSuccessWithDelivery(w http.ResponseWriter, invocationID, timelineEntryID, clientRequestID, requestID string, alreadyApplied bool, deliveryMode string) {
 	resp := ControlPlaneFollowUpPromptResponse{
 		OK:              true,
 		InvocationID:    invocationID,
 		TimelineEntry:   timelineEntryID,
 		AlreadyApplied:  alreadyApplied,
+		DeliveryMode:    deliveryMode,
 		RequestID:       requestID,
 		APIVersion:      APIVersion,
 		BuildVersion:    version.FullVersion(),
 		ClientRequestID: clientRequestID,
 	}
 	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// deliverFollowUp sends the prompt to the runner via its chat relay.
+// Returns the delivery mode string for the API response.
+// Delivery failure is non-fatal — the audit event is already persisted.
+func (s *Server) deliverFollowUp(invocationID, prompt string) string {
+	s.mu.Lock()
+	proc, ok := s.processes[invocationID]
+	s.mu.Unlock()
+
+	if !ok || proc.Relay == nil {
+		return "audit_only"
+	}
+
+	if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+		// Delivery failure is best-effort; the audit event is the durable record.
+		// The runner may have exited between the status check and delivery.
+		return "audit_only"
+	}
+
+	switch proc.Relay.Mode() {
+	case relay.ModeStdin:
+		return "delivered"
+	case relay.ModeResume:
+		return "queued"
+	default:
+		return "audit_only"
+	}
 }
 
 func (s *Server) appendFollowUpPromptEvent(eventsPath, invocationID, clientRequestID, prompt string) (string, bool, error) {

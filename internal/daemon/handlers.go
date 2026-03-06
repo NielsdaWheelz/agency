@@ -18,6 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -287,15 +288,26 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		envOverlay[k] = v
 	}
 
+	// Create stdin pipe + chat relay for runners that support stdin streaming input.
+	stdinReader, chatRelay := createChatRelay(req.Runner)
+
 	// Start runner with live stdout/stderr pipes.
 	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
 		Dir:        req.SandboxPath,
 		Env:        envOverlay,
+		Stdin:      stdinReader,
 		StdoutPipe: true,
 		StderrPipe: true,
 		Setpgid:    true,
 	})
+	// Close the parent's copy of the stdin read end — the child has inherited the FD.
+	if stdinReader != nil {
+		_ = stdinReader.Close()
+	}
 	if err != nil {
+		if chatRelay != nil {
+			_ = chatRelay.Close()
+		}
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
@@ -326,6 +338,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		StreamLogFile: streamLogPath,
 		Runner:        req.Runner,
 		Parser:        parser,
+		Relay:         chatRelay,
 		done:          make(chan struct{}),
 	}
 
@@ -736,6 +749,11 @@ func (s *Server) waitForExit(proc *SupervisedProcess, startedProc *exec.StartedP
 		}
 	}()
 	defer proc.CloseDone()
+	defer func() {
+		if proc.Relay != nil {
+			_ = proc.Relay.Close()
+		}
+	}()
 
 	// Wait for process to exit
 	exitResult, waitErr := startedProc.WaitExit()
@@ -1364,14 +1382,25 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		envOverlay[k] = v
 	}
 
+	// Create stdin pipe + chat relay for runners that support stdin streaming input.
+	stdinReader, chatRelay := createChatRelay(req.Runner)
+
 	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
 		Dir:        result.SandboxPath,
 		Env:        envOverlay,
+		Stdin:      stdinReader,
 		StdoutPipe: true,
 		StderrPipe: true,
 		Setpgid:    true,
 	})
+	// Close the parent's copy of the stdin read end — the child has inherited the FD.
+	if stdinReader != nil {
+		_ = stdinReader.Close()
+	}
 	if err != nil {
+		if chatRelay != nil {
+			_ = chatRelay.Close()
+		}
 		_ = rawFile.Close()
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
@@ -1444,6 +1473,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		RepoRoot:              repoRoot, // PR-08: for checkpoint engine
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,
+		Relay:                 chatRelay,
 		done:                  make(chan struct{}),
 	}
 
@@ -1473,6 +1503,34 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 // buildRunnerArgsWithSandbox builds the command arguments for a runner, including sandbox path for codex.
 func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []string) ([]string, error) {
 	return runners.BuildHeadlessArgs(runner, prompt, sandboxPath, extraArgs)
+}
+
+// createChatRelay creates a stdin pipe and chat relay for stdin-capable runners,
+// or a resume relay for session-resume runners.
+// Returns (stdinReader, relay). stdinReader is nil for resume relays (stdin stays /dev/null).
+//
+// Uses os.Pipe() (not io.Pipe()) so that the *os.File read end is passed directly
+// as the child's stdin FD. Go's exec package treats *os.File specially — it uses the
+// descriptor without starting a copy goroutine, so cmd.Wait() does not block on stdin.
+func createChatRelay(runner string) (*os.File, relay.ChatRelay) {
+	mode, err := runners.ResolveChatMode(runner)
+	if err != nil {
+		return nil, nil
+	}
+
+	switch mode {
+	case runners.ChatModeStdin:
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create stdin pipe for chat relay: %v\n", err)
+			return nil, nil
+		}
+		return pr, relay.NewStdinRelay(pw, runner)
+	case runners.ChatModeResume:
+		return nil, relay.NewResumeRelay(runner)
+	default:
+		return nil, nil
+	}
 }
 
 // buildRunnerArgsForHeaded builds interactive launch args for headed mode.
@@ -1513,6 +1571,11 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 		}
 	}()
 	defer proc.CloseDone()
+	defer func() {
+		if proc.Relay != nil {
+			_ = proc.Relay.Close()
+		}
+	}()
 
 	// Wait for process to exit
 	exitResult, waitErr := startedProc.WaitExit()

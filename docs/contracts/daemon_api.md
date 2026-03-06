@@ -121,7 +121,8 @@ request: `ControlPlaneFollowUpPromptRequest`
 - required: `prompt`, `client_request_id`
 
 response: `ControlPlaneFollowUpPromptResponse`
-- success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`, `timeline_entry_id`, `already_applied`, `client_request_id`
+- success fields: `ok`, `request_id`, `api_version`, `build_version`, `invocation_id`, `timeline_entry_id`, `already_applied`, `delivery_mode`, `client_request_id`
+  - `delivery_mode`: `"delivered"` (written to stdin), `"queued"` (buffered for session resume), or `"audit_only"` (no relay available)
 - error fields: `ok=false`, `request_id`, `api_version`, `build_version`, `error_code`, `message`, `hint`, `client_request_id`
 
 ### POST /invocations/{ref}/restart

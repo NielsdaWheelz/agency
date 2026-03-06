@@ -58,11 +58,17 @@ func TestValidateArgs(t *testing.T) {
 
 	require.NoError(t, ValidateArgs("claude-code", []string{"--model", "opus"}))
 	require.Error(t, ValidateArgs("claude-code", []string{"--output-format", "json"}))
+	require.Error(t, ValidateArgs("claude-code", []string{"--input-format", "text"}))
 	require.Error(t, ValidateArgs("codex", []string{"--json"}))
 	require.Error(t, ValidateArgs("amp", []string{"-x"}))
+	require.Error(t, ValidateArgs("amp", []string{"--stream-json"}))
+	require.Error(t, ValidateArgs("amp", []string{"--stream-json-input"}))
 	require.Error(t, ValidateArgs("opencode", []string{"run"}))
 	require.Error(t, ValidateArgs("cursor", []string{"-p"}))
+	require.Error(t, ValidateArgs("cursor", []string{"--output-format", "json"}))
 	require.Error(t, ValidateArgs("droid", []string{"exec"}))
+	require.Error(t, ValidateArgs("droid", []string{"--output-format", "text"}))
+	require.Error(t, ValidateArgs("droid", []string{"--input-format", "text"}))
 	require.NoError(t, ValidateArgs("amp", []string{"--model", "amp-fast"}))
 
 	// Permission flags are allowed in headed mode (user at terminal).
@@ -100,7 +106,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	claudeArgs, err := BuildHeadlessArgs("claude", "fix bug", "/sandbox", []string{"--model", "opus"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
@@ -108,7 +114,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-x", "--model", "amp-fast", "fix bug"}, ampArgs)
+	assert.Equal(t, []string{"-x", "--stream-json", "--stream-json-input", "--model", "amp-fast", "fix bug"}, ampArgs)
 
 	opencodeArgs, err := BuildHeadlessArgs("opencode", "fix bug", "/sandbox", []string{"--model", "open"})
 	require.NoError(t, err)
@@ -116,11 +122,11 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	cursorArgs, err := BuildHeadlessArgs("cursor", "fix bug", "/sandbox", []string{"--model", "cursor-fast"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--model", "cursor-fast", "fix bug"}, cursorArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--model", "cursor-fast", "fix bug"}, cursorArgs)
 
 	droidArgs, err := BuildHeadlessArgs("droid", "fix bug", "/sandbox", []string{"--model", "droid-1"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--model", "droid-1", "fix bug"}, droidArgs)
+	assert.Equal(t, []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", "--model", "droid-1", "fix bug"}, droidArgs)
 }
 
 func TestBuildHeadedArgs(t *testing.T) {
@@ -149,6 +155,39 @@ func TestBuildHeadedArgs(t *testing.T) {
 	droidArgs, err := BuildHeadedArgs("droid", []string{"--model", "droid-1"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--model", "droid-1"}, droidArgs)
+}
+
+func TestChatMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		runner string
+		want   ChatMode
+	}{
+		{"claude-code", ChatModeStdin},
+		{"claude", ChatModeStdin},
+		{"codex", ChatModeResume},
+		{"amp", ChatModeStdin},
+		{"opencode", ChatModeResume},
+		{"cursor", ChatModeResume},
+		{"cursor-cli", ChatModeResume},
+		{"droid", ChatModeStdin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.runner, func(t *testing.T) {
+			t.Parallel()
+			mode, err := ResolveChatMode(tt.runner)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, mode)
+		})
+	}
+}
+
+func TestChatMode_UnknownRunner(t *testing.T) {
+	t.Parallel()
+	_, err := ResolveChatMode("unknown")
+	require.Error(t, err)
+	assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
 }
 
 func TestHasSemanticAdapter(t *testing.T) {

@@ -22,12 +22,24 @@ const (
 	launchTokenSandboxPath = "{sandbox_path}"
 )
 
+// ChatMode describes how a runner accepts follow-up messages in headless mode.
+type ChatMode string
+
+const (
+	// ChatModeStdin delivers messages via the runner's stdin pipe in real time (JSONL).
+	ChatModeStdin ChatMode = "stdin"
+
+	// ChatModeResume queues messages and delivers them by resuming the session.
+	ChatModeResume ChatMode = "resume"
+)
+
 // Capability defines launch/validation policy for a runner identity.
 type Capability struct {
 	ID                 string
 	SupportsHeadless   bool
 	SupportsHeaded     bool
 	HasSemanticAdapter bool
+	ChatMode           ChatMode // how follow-up messages are delivered in headless mode
 
 	reservedArgs         []string // flags reserved in both headless and headed modes
 	reservedHeadlessArgs []string // flags reserved only in headless mode (permission/approval)
@@ -51,13 +63,14 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		reservedArgs:         []string{"--output-format", "-p", "--print", "--verbose"},
+		ChatMode:             ChatModeStdin,
+		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose"},
 		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
 		aliases:              []string{LegacyRunnerClaude},
 		headlessTemplate: []string{
 			"-p",
-			"--output-format",
-			"stream-json",
+			"--output-format", "stream-json",
+			"--input-format", "stream-json",
 			"--verbose",
 			"--dangerously-skip-permissions",
 			launchTokenExtraArgs,
@@ -70,12 +83,12 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
+		ChatMode:             ChatModeResume,
 		reservedArgs:         []string{"exec", "--json", "-C", "--cd"},
 		reservedHeadlessArgs: []string{"--full-auto", "--approval-mode"},
 		headlessTemplate: []string{
 			"exec",
-			"--cd",
-			launchTokenSandboxPath,
+			"--cd", launchTokenSandboxPath,
 			"--json",
 			"--full-auto",
 			launchTokenExtraArgs,
@@ -87,8 +100,9 @@ var capabilityByID = map[string]Capability{
 		ID:               RunnerAmp,
 		SupportsHeadless: true,
 		SupportsHeaded:   true,
-		reservedArgs:     []string{"-x", "--execute"},
-		headlessTemplate: []string{"-x", launchTokenExtraArgs, launchTokenPrompt},
+		ChatMode:         ChatModeStdin,
+		reservedArgs:     []string{"-x", "--execute", "--stream-json", "--stream-json-input"},
+		headlessTemplate: []string{"-x", "--stream-json", "--stream-json-input", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:   []string{launchTokenExtraArgs},
 		// TODO: verify upstream amp CLI auto-approve flags for headless mode.
 	},
@@ -96,6 +110,7 @@ var capabilityByID = map[string]Capability{
 		ID:                   RunnerOpenCode,
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
+		ChatMode:             ChatModeResume,
 		reservedArgs:         []string{"run"},
 		reservedHeadlessArgs: []string{"--mode"},
 		headlessTemplate:     []string{"run", "--mode", "auto", launchTokenExtraArgs, launchTokenPrompt},
@@ -105,18 +120,20 @@ var capabilityByID = map[string]Capability{
 		ID:               RunnerCursor,
 		SupportsHeadless: true,
 		SupportsHeaded:   true,
-		reservedArgs:     []string{"-p", "--print"},
+		ChatMode:         ChatModeResume,
+		reservedArgs:     []string{"-p", "--print", "--output-format"},
 		aliases:          []string{LegacyRunnerCursorCLI},
-		headlessTemplate: []string{"-p", launchTokenExtraArgs, launchTokenPrompt},
+		headlessTemplate: []string{"-p", "--output-format", "stream-json", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:   []string{launchTokenExtraArgs},
-		// TODO: verify upstream cursor CLI auto-approve flags for headless mode.
+		// TODO: verify upstream cursor/agent CLI auto-approve flags for headless mode.
 	},
 	RunnerDroid: {
 		ID:               RunnerDroid,
 		SupportsHeadless: true,
 		SupportsHeaded:   true,
-		reservedArgs:     []string{"exec"},
-		headlessTemplate: []string{"exec", launchTokenExtraArgs, launchTokenPrompt},
+		ChatMode:         ChatModeStdin,
+		reservedArgs:     []string{"exec", "--output-format", "--input-format"},
+		headlessTemplate: []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:   []string{launchTokenExtraArgs},
 		// TODO: verify upstream droid CLI auto-approve flags for headless mode.
 	},
@@ -265,6 +282,15 @@ func BuildHeadedArgs(runner string, extraArgs []string) ([]string, error) {
 		)
 	}
 	return renderLaunchTemplate(capability.headedTemplate, "", "", extraArgs)
+}
+
+// ResolveChatMode returns the ChatMode for a runner (including aliases).
+func ResolveChatMode(runner string) (ChatMode, error) {
+	capability, err := Resolve(runner)
+	if err != nil {
+		return "", err
+	}
+	return capability.ChatMode, nil
 }
 
 // HasSemanticAdapter reports whether semantic parsing is supported for runner.

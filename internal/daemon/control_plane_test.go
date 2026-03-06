@@ -271,7 +271,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "fix the bug"},
 		},
 		{
 			name:        "claude with extra args",
@@ -279,7 +279,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
 		},
 		{
 			name:        "claude-code canonical",
@@ -287,7 +287,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
 		},
 		{
 			name:        "codex basic - includes --cd flag",
@@ -311,7 +311,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "amp-fast"},
-			wantArgs:    []string{"-x", "--model", "amp-fast", "fix the bug"},
+			wantArgs:    []string{"-x", "--stream-json", "--stream-json-input", "--model", "amp-fast", "fix the bug"},
 		},
 		{
 			name:        "opencode basic",
@@ -327,7 +327,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--profile", "default"},
-			wantArgs:    []string{"-p", "--profile", "default", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--profile", "default", "fix the bug"},
 		},
 		{
 			name:        "cursor-cli alias basic",
@@ -335,7 +335,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--profile", "default"},
-			wantArgs:    []string{"-p", "--profile", "default", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--profile", "default", "fix the bug"},
 		},
 		{
 			name:        "droid basic",
@@ -343,7 +343,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--agent", "android"},
-			wantArgs:    []string{"exec", "--agent", "android", "fix the bug"},
+			wantArgs:    []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", "--agent", "android", "fix the bug"},
 		},
 	}
 
