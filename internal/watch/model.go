@@ -29,7 +29,7 @@ type loader interface {
 type ActionDispatcher interface {
 	Enter(ctx context.Context, invocationID, repoID string) error
 	Open(ctx context.Context, invocationID, repoID string) error
-	PRSync(ctx context.Context, invocationID, repoID string) error
+	PRSync(ctx context.Context, worktreeID, repoID string) error
 }
 
 type keyMap struct {
@@ -83,7 +83,7 @@ var defaultKeyMap = keyMap{
 	),
 	PRSync: key.NewBinding(
 		key.WithKeys("p"),
-		key.WithHelp("p", "pr sync"),
+		key.WithHelp("p", "pr sync (worktree)"),
 	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
@@ -135,6 +135,7 @@ func (k actionKind) String() string {
 type actionResultMsg struct {
 	kind         actionKind
 	invocationID string
+	worktreeID   string
 	err          error
 }
 
@@ -217,9 +218,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.actionRunning = false
 		m.lastActionError = msg.err != nil
 		if msg.err != nil {
-			m.lastActionMessage = formatActionError(msg.kind, msg.err)
+			m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID)
 		} else {
-			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, shortID(msg.invocationID, 10))
+			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID))
 		}
 		// Refresh after each action outcome so readiness/details remain actionable.
 		return m, scheduleRefreshCmd()
@@ -305,10 +306,27 @@ func (m model) triggerAction(kind actionKind) (tea.Model, tea.Cmd) {
 		m.lastActionMessage = fmt.Sprintf("%s unavailable: no invocation selected", kind)
 		return m, nil
 	}
+	if kind == actionPRSync && strings.TrimSpace(selected.WorktreeID) == "" {
+		m.lastActionError = true
+		m.lastActionMessage = formatActionError(
+			kind,
+			agencyerrors.NewWithDetails(
+				agencyerrors.EInvalidArgument,
+				"selected invocation is not associated with an integration worktree",
+				map[string]string{
+					"invocation_id": selected.InvocationID,
+					"hint":          "refresh and retry; if this persists, inspect invocation metadata",
+				},
+			),
+			selected.InvocationID,
+			selected.WorktreeID,
+		)
+		return m, nil
+	}
 
 	m.actionRunning = true
 	m.lastActionError = false
-	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, shortID(selected.InvocationID, 10))
+	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID))
 	return m, m.runActionCmd(kind, selected)
 }
 
@@ -324,19 +342,21 @@ func (m model) runActionCmd(kind actionKind, selected daemon.InvocationDTO) tea.
 		case actionOpen:
 			err = dispatcher.Open(ctx, selected.InvocationID, selected.RepoID)
 		case actionPRSync:
-			err = dispatcher.PRSync(ctx, selected.InvocationID, selected.RepoID)
+			err = dispatcher.PRSync(ctx, selected.WorktreeID, selected.RepoID)
 		default:
 			err = agencyerrors.New(agencyerrors.EInternal, "unknown watch action")
 		}
 		return actionResultMsg{
 			kind:         kind,
 			invocationID: selected.InvocationID,
+			worktreeID:   selected.WorktreeID,
 			err:          err,
 		}
 	}
 }
 
-func formatActionError(kind actionKind, err error) string {
+func formatActionError(kind actionKind, err error, invocationID, worktreeID string) string {
+	target := actionTarget(kind, invocationID, worktreeID)
 	code := agencyerrors.GetCode(err)
 	if code == agencyerrors.ESessionEnded {
 		hint := "session ended; use 'agency agent logs' or 'agency agent open' to view"
@@ -345,12 +365,35 @@ func formatActionError(kind actionKind, err error) string {
 				hint = resolvedHint
 			}
 		}
-		return fmt.Sprintf("%s failed (%s): %s", kind, code, hint)
+		return fmt.Sprintf("%s failed (%s) for %s: %s", kind, code, target, hint)
 	}
 	if code != "" {
-		return fmt.Sprintf("%s failed (%s): %s", kind, code, err.Error())
+		return fmt.Sprintf("%s failed (%s) for %s: %s", kind, code, target, err.Error())
 	}
-	return fmt.Sprintf("%s failed: %s", kind, err.Error())
+	return fmt.Sprintf("%s failed for %s: %s", kind, target, err.Error())
+}
+
+func actionTarget(kind actionKind, invocationID, worktreeID string) string {
+	if kind == actionPRSync {
+		trimmedWorktreeID := strings.TrimSpace(worktreeID)
+		shortInvocationID := shortID(invocationID, 10)
+		if trimmedWorktreeID == "" {
+			if shortInvocationID != "" {
+				return fmt.Sprintf("invocation %s (worktree missing)", shortInvocationID)
+			}
+			return "selected invocation (worktree missing)"
+		}
+		if shortInvocationID != "" {
+			return fmt.Sprintf("worktree %s (invocation %s)", trimmedWorktreeID, shortInvocationID)
+		}
+		return fmt.Sprintf("worktree %s", trimmedWorktreeID)
+	}
+
+	shortInvocationID := shortID(invocationID, 10)
+	if shortInvocationID == "" {
+		return "selected invocation"
+	}
+	return shortInvocationID
 }
 
 func (m *model) moveSelection(delta int) {

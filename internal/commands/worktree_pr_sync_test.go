@@ -7,28 +7,18 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestAgentPRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
+func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-json")
-	invocationID := "20260302190000-prsync1"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-	}))
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
 	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
@@ -55,8 +45,8 @@ func TestAgentPRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentPRSync(context.Background(), cr, fsys, repoDir, AgentPRSyncOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
@@ -66,27 +56,20 @@ func TestAgentPRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
 	assert.Equal(t, true, payload["ok"])
-	assert.Equal(t, invocationID, payload["invocation_id"])
 	assert.Equal(t, repoID, payload["repo_id"])
 	assert.Equal(t, worktreeID, payload["integration_worktree_id"])
 	assert.Equal(t, "agency/prsync-json-abcd", payload["branch"])
 	assert.Equal(t, "created", payload["pr_action"])
 	assert.Equal(t, "https://github.com/test/agent-repo/pull/42", payload["pr_url"])
 	assert.NotEmpty(t, payload["request_id"])
+	_, hasInvocationID := payload["invocation_id"]
+	assert.False(t, hasInvocationID, "worktree pr sync should not return invocation_id")
 }
 
-func TestAgentPRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
+func TestWorktreePRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-dirty")
-	invocationID := "20260302191000-prsync2"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-	}))
 
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
 		Stdout: " M README.md\n",
@@ -96,8 +79,8 @@ func TestAgentPRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
-	err := AgentPRSync(context.Background(), cr, fsys, repoDir, AgentPRSyncOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		DataDirOverride: dataDir,
 	}, ioDiscard{}, ioDiscard{})
@@ -105,18 +88,10 @@ func TestAgentPRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 	assert.Equal(t, errors.EDirtyWorktree, errors.GetCode(err))
 }
 
-func TestAgentPRSync_JSONFailureIncludesDaemonRequestID(t *testing.T) {
+func TestWorktreePRSync_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-json-failure")
-	invocationID := "20260302191500-prsync-json-failure"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-	}))
 
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
 		Stdout: " M README.md\n",
@@ -127,8 +102,8 @@ func TestAgentPRSync_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentPRSync(context.Background(), cr, fsys, repoDir, AgentPRSyncOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
@@ -142,18 +117,10 @@ func TestAgentPRSync_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentPRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {
+func TestWorktreePRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-ff")
-	invocationID := "20260302192000-prsync3"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-	}))
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
 	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
@@ -177,8 +144,8 @@ func TestAgentPRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentPRSync(context.Background(), cr, fsys, repoDir, AgentPRSyncOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -190,18 +157,10 @@ func TestAgentPRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {
 	assert.Contains(t, ae.Details["hint"], "--force-with-lease")
 }
 
-func TestAgentPRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
+func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-fwl")
-	invocationID := "20260302193000-prsync4"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-	}))
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
 	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
@@ -229,8 +188,8 @@ func TestAgentPRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentPRSync(context.Background(), cr, fsys, repoDir, AgentPRSyncOpts{
-		InvocationRef:   invocationID,
+	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoID,
 		ForceWithLease:  true,
 		DataDirOverride: dataDir,

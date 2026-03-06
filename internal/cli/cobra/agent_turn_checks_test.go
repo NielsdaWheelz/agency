@@ -64,10 +64,10 @@ func TestAgentReviewCmd_AcceptsJSON(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestAgentPRSyncCmd_AcceptsPolicyFlags(t *testing.T) {
+func TestWorktreePRSyncCmd_AcceptsPolicyFlags(t *testing.T) {
 	t.Parallel()
 
-	cmd := newAgentCmd()
+	cmd := newWorktreeCmd()
 	var prCmd *spcobra.Command
 	for _, sub := range cmd.Commands() {
 		if sub.Name() == "pr" {

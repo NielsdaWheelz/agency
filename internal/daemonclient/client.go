@@ -1138,15 +1138,15 @@ func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID str
 	}, nil
 }
 
-// PRSyncOpts holds options for invocation-scoped PR sync.
-type PRSyncOpts struct {
+// WorktreePRSyncOpts holds options for worktree-scoped PR sync.
+type WorktreePRSyncOpts struct {
 	AllowDirty     bool
 	ForceWithLease bool
 }
 
-// PRSync performs invocation-scoped branch push + PR create/update via daemon.
-func (c *Client) PRSync(ctx context.Context, invocationRef, repoID string, opts PRSyncOpts) (*daemon.PRSyncResponse, error) {
-	reqBody := daemon.PRSyncRequest{
+// WorktreePRSync performs worktree-scoped branch push + PR create/update via daemon.
+func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string, opts WorktreePRSyncOpts) (*daemon.WorktreePRSyncResponse, error) {
+	reqBody := daemon.WorktreePRSyncRequest{
 		AllowDirty:     opts.AllowDirty,
 		ForceWithLease: opts.ForceWithLease,
 	}
@@ -1155,7 +1155,7 @@ func (c *Client) PRSync(ctx context.Context, invocationRef, repoID string, opts 
 		return nil, err
 	}
 
-	u := fmt.Sprintf("http://daemon/invocations/%s/pr/sync", url.PathEscape(invocationRef))
+	u := fmt.Sprintf("http://daemon/worktrees/%s/pr/sync", url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
@@ -1171,24 +1171,24 @@ func (c *Client) PRSync(ctx context.Context, invocationRef, repoID string, opts 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var result daemon.PRSyncResponse
+	var result daemon.WorktreePRSyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// MergeOpts holds options for invocation-scoped merge.
-type MergeOpts struct {
+// WorktreePRMergeOpts holds options for worktree-scoped merge.
+type WorktreePRMergeOpts struct {
 	Strategy         string
 	ConfirmationMode string
 	Confirmed        bool
 	NoDeleteBranch   bool
 }
 
-// Merge performs invocation-scoped verify + merge via daemon.
-func (c *Client) Merge(ctx context.Context, invocationRef, repoID string, opts MergeOpts) (*daemon.MergeResponse, error) {
-	reqBody := daemon.MergeRequest{
+// WorktreePRMerge performs worktree-scoped verify + merge via daemon.
+func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string, opts WorktreePRMergeOpts) (*daemon.WorktreePRMergeResponse, error) {
+	reqBody := daemon.WorktreePRMergeRequest{
 		Strategy:         opts.Strategy,
 		ConfirmationMode: opts.ConfirmationMode,
 		Confirmed:        opts.Confirmed,
@@ -1199,7 +1199,7 @@ func (c *Client) Merge(ctx context.Context, invocationRef, repoID string, opts M
 		return nil, err
 	}
 
-	u := fmt.Sprintf("http://daemon/invocations/%s/merge", url.PathEscape(invocationRef))
+	u := fmt.Sprintf("http://daemon/worktrees/%s/merge", url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
@@ -1215,7 +1215,38 @@ func (c *Client) Merge(ctx context.Context, invocationRef, repoID string, opts M
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var result daemon.MergeResponse
+	var result daemon.WorktreePRMergeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// WorktreeUpdate performs worktree-scoped fetch + rebase via daemon.
+func (c *Client) WorktreeUpdate(ctx context.Context, worktreeRef, repoID string) (*daemon.WorktreeUpdateResponse, error) {
+	reqBody := daemon.WorktreeUpdateRequest{}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("http://daemon/worktrees/%s/update", url.PathEscape(worktreeRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result daemon.WorktreeUpdateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGHE2EAgentPRSyncMerge(t *testing.T) {
+func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	if os.Getenv("AGENCY_GH_E2E") == "" {
 		t.Skip("set AGENCY_GH_E2E=1 to enable GH e2e")
 	}
@@ -236,12 +236,12 @@ This is an automated e2e test - no manual testing required.
 	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
 
 	var prSyncStdout, prSyncStderr bytes.Buffer
-	require.NoError(t, AgentPRSync(ctx, cr, fsys, repoRoot, AgentPRSyncOpts{
-		InvocationRef:   invocationID,
+	require.NoError(t, WorktreePRSync(ctx, cr, fsys, repoRoot, WorktreePRSyncOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoIdentity.RepoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
-	}, &prSyncStdout, &prSyncStderr), "agent pr sync failed\nstderr:\n%s", prSyncStderr.String())
+	}, &prSyncStdout, &prSyncStderr), "worktree pr sync failed\nstderr:\n%s", prSyncStderr.String())
 
 	var prSyncPayload struct {
 		PRNumber int `json:"pr_number"`
@@ -263,12 +263,12 @@ This is an automated e2e test - no manual testing required.
 	})
 
 	var mergeStdout, mergeStderr bytes.Buffer
-	require.NoError(t, AgentMerge(ctx, cr, fsys, repoRoot, AgentMergeOpts{
-		InvocationRef:   invocationID,
+	require.NoError(t, WorktreePRMerge(ctx, cr, fsys, repoRoot, WorktreePRMergeOpts{
+		WorktreeRef:     worktreeID,
 		RepoFlag:        repoIdentity.RepoID,
 		Yes:             true,
 		DataDirOverride: dataDir,
-	}, &mergeStdout, &mergeStderr), "agent merge failed\nstderr:\n%s", mergeStderr.String())
+	}, &mergeStdout, &mergeStderr), "worktree merge failed\nstderr:\n%s", mergeStderr.String())
 
 	merged = true
 	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)

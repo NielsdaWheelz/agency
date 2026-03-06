@@ -24,6 +24,8 @@ func TestIntegrationWorktreePaths(t *testing.T) {
 		wantDir  string
 		wantMeta string
 		wantTree string
+		wantEv   string
+		wantLogs string
 	}{
 		{
 			name:     "basic paths",
@@ -32,6 +34,8 @@ func TestIntegrationWorktreePaths(t *testing.T) {
 			wantDir:  "/data/repos/abc123/integration_worktrees/20260131120000-a1b2",
 			wantMeta: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/meta.json",
 			wantTree: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/tree",
+			wantEv:   "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/events.jsonl",
+			wantLogs: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/logs",
 		},
 	}
 
@@ -42,6 +46,8 @@ func TestIntegrationWorktreePaths(t *testing.T) {
 			assert.Equal(t, tt.wantDir, st.IntegrationWorktreeDir(tt.repoID, tt.wtID), "IntegrationWorktreeDir()")
 			assert.Equal(t, tt.wantMeta, st.IntegrationWorktreeMetaPath(tt.repoID, tt.wtID), "IntegrationWorktreeMetaPath()")
 			assert.Equal(t, tt.wantTree, st.IntegrationWorktreeTreePath(tt.repoID, tt.wtID), "IntegrationWorktreeTreePath()")
+			assert.Equal(t, tt.wantEv, st.IntegrationWorktreeEventsPath(tt.repoID, tt.wtID), "IntegrationWorktreeEventsPath()")
+			assert.Equal(t, tt.wantLogs, st.IntegrationWorktreeLogsDir(tt.repoID, tt.wtID), "IntegrationWorktreeLogsDir()")
 		})
 	}
 }

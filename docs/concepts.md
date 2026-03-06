@@ -85,8 +85,8 @@ agency agent logs <ref> --kind stream         # normalized events
 agency agent diff <ref>                       # show changes vs worktree
 agency agent diff <ref> --turn <entry_id>     # turn-aware diff context
 agency agent review <ref>                      # review verdict + blocking reasons
-agency agent pr sync <ref>                     # push branch + create/update PR
-agency agent merge <ref> --yes                # verify + merge invocation PR
+agency worktree pr sync <worktree-ref>        # push branch + create/update PR
+agency worktree merge <worktree-ref> --yes    # verify + merge worktree PR
 agency agent open <ref> [--editor cursor]     # open sandbox in editor
 ```
 

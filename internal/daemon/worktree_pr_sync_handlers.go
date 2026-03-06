@@ -1,0 +1,186 @@
+package daemon
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
+	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/version"
+)
+
+// handleWorktreePRSync handles POST /worktrees/{ref}/pr/sync.
+func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, worktreeRef string) {
+	requestID := getOrCreateRequestID(r)
+	setRequestIDHeader(w, requestID)
+	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
+	if repoID == "" {
+		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		return
+	}
+
+	req, decodeErr := decodePRSyncRequest(r.Body)
+	if decodeErr != "" {
+		s.writeWorktreePRSyncError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			decodeErr,
+			"",
+		)
+		return
+	}
+	record, err := s.resolveWorktreeRef(worktreeRef, repoID)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		status := prSyncHTTPStatusForCode(code)
+		s.writeWorktreePRSyncError(w, status, requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
+		return
+	}
+	if record == nil || record.Meta == nil {
+		s.writeWorktreePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "worktree metadata missing", "")
+		return
+	}
+
+	unlock, err := s.repoLock.Lock(record.RepoID, "worktree_pr_sync")
+	if err != nil {
+		s.writeWorktreePRSyncError(
+			w,
+			http.StatusConflict,
+			requestID,
+			string(errors.ERepoLocked),
+			"repository is locked by another operation",
+			"wait for the other operation to complete",
+		)
+		return
+	}
+	defer func() { _ = unlock() }()
+
+	if err := s.appendWorktreePRSyncEvent(record.RepoID, record.WorktreeID, prSyncEventStarted, map[string]any{
+		"allow_dirty":      req.AllowDirty,
+		"force_with_lease": req.ForceWithLease,
+		"branch":           record.Meta.Branch,
+	}); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EPersistFailed
+		}
+		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
+		return
+	}
+
+	result, err := s.runWorktreePRSync(r.Context(), record, req)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		hint := prSyncHintFromError(err)
+
+		if appendErr := s.appendWorktreePRSyncEvent(record.RepoID, record.WorktreeID, prSyncEventFailed, map[string]any{
+			"error_code": string(code),
+			"message":    err.Error(),
+		}); appendErr != nil {
+			appendCode := errors.GetCode(appendErr)
+			if appendCode == "" {
+				appendCode = errors.EPersistFailed
+			}
+			s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(appendCode), requestID, string(appendCode), appendErr.Error(), "")
+			return
+		}
+
+		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), hint)
+		return
+	}
+
+	if err := s.appendWorktreePRSyncEvent(record.RepoID, record.WorktreeID, prSyncEventSucceeded, map[string]any{
+		"branch":    result.Branch,
+		"pr_number": result.PRNumber,
+		"pr_url":    result.PRURL,
+		"pr_action": result.PRAction,
+	}); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EPersistFailed
+		}
+		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
+		return
+	}
+
+	resp := WorktreePRSyncResponse{
+		OK:                    true,
+		APIVersion:            APIVersion,
+		BuildVersion:          version.FullVersion(),
+		RequestID:             requestID,
+		RepoID:                record.RepoID,
+		IntegrationWorktreeID: record.WorktreeID,
+		Branch:                result.Branch,
+		PRNumber:              result.PRNumber,
+		PRURL:                 result.PRURL,
+		PRAction:              result.PRAction,
+		ReportSource:          result.ReportSource,
+		ReportFallbackUsed:    result.ReportFallbackUsed,
+		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
+	}
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) runWorktreePRSync(
+	ctx context.Context,
+	record *store.IntegrationWorktreeRecord,
+	req WorktreePRSyncRequest,
+) (*prSyncResult, error) {
+	if record == nil || record.Meta == nil {
+		return nil, errors.New(errors.EInternal, "worktree metadata missing")
+	}
+	// Reuse runPRSync core logic with worktree identity and non-strict report mode.
+	pseudoInvocation := &resolvedInvocation{
+		InvocationID: record.WorktreeID,
+		RepoID:       record.RepoID,
+		Meta: &store.InvocationMeta{
+			Mode: store.RunnerModeHeaded,
+		},
+	}
+	return s.runPRSync(ctx, pseudoInvocation, record.Meta, WorktreePRSyncRequest{
+		AllowDirty:     req.AllowDirty,
+		ForceWithLease: req.ForceWithLease,
+	})
+}
+
+func (s *Server) appendWorktreePRSyncEvent(repoID, worktreeID, kind string, data map[string]any) error {
+	writer := s.WorktreeEvents
+	if writer == nil {
+		writer = worktreeevents.NewWriter(s.Clock)
+		s.WorktreeEvents = writer
+	}
+	_, err := writer.Append(
+		s.Store.IntegrationWorktreeEventsPath(repoID, worktreeID),
+		worktreeID,
+		kind,
+		data,
+		worktreeevents.AppendOptions{},
+	)
+	if err != nil {
+		return errors.Wrap(errors.EPersistFailed, "failed to append worktree event", err)
+	}
+	return nil
+}
+
+func (s *Server) writeWorktreePRSyncError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
+	resp := WorktreePRSyncResponse{
+		OK:           false,
+		APIVersion:   APIVersion,
+		BuildVersion: version.FullVersion(),
+		RequestID:    requestID,
+		ErrorCode:    code,
+		Message:      message,
+		Hint:         hint,
+	}
+	s.writeJSON(w, status, resp)
+}

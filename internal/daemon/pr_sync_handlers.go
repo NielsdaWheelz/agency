@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
@@ -18,7 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 const (
@@ -45,131 +43,11 @@ type prSyncPR struct {
 	State  string `json:"state"`
 }
 
-// handlePRSync handles POST /invocations/{ref}/pr/sync.
-func (s *Server) handlePRSync(w http.ResponseWriter, r *http.Request, invocationRef string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
-	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
-	if repoID == "" {
-		s.writePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
-		return
-	}
-
-	req, decodeErr := decodePRSyncRequest(r.Body)
-	if decodeErr != "" {
-		s.writePRSyncError(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.EInvalidArgument),
-			decodeErr,
-			"",
-		)
-		return
-	}
-
-	record, err := s.resolveInvocationRef(invocationRef, repoID)
-	if err != nil {
-		code := errors.GetCode(err)
-		status := prSyncHTTPStatusForCode(code)
-		s.writePRSyncError(w, status, requestID, string(code), err.Error(), "use 'agency agent ls' to list invocations")
-		return
-	}
-	if record.Meta.LandingStatus != store.LandingStatusLanded {
-		s.writePRSyncError(
-			w,
-			http.StatusConflict,
-			requestID,
-			"E_INVALID_REQUEST",
-			"invocation must be landed before PR sync",
-			"run 'agency agent land <invocation_ref>' first",
-		)
-		return
-	}
-
-	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
-	if err != nil {
-		s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read integration worktree metadata", "")
-		return
-	}
-
-	unlock, err := s.repoLock.Lock(record.RepoID, "pr_sync")
-	if err != nil {
-		s.writePRSyncError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.ERepoLocked),
-			"repository is locked by another operation",
-			"wait for the other operation to complete",
-		)
-		return
-	}
-	defer func() { _ = unlock() }()
-
-	if err := s.appendPRSyncEvent(record.RepoID, record.InvocationID, prSyncEventStarted, map[string]any{
-		"allow_dirty":      req.AllowDirty,
-		"force_with_lease": req.ForceWithLease,
-		"branch":           wtMeta.Branch,
-	}); err != nil {
-		s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "")
-		return
-	}
-
-	result, err := s.runPRSync(r.Context(), record, wtMeta, req)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
-		hint := prSyncHintFromError(err)
-
-		if appendErr := s.appendPRSyncEvent(record.RepoID, record.InvocationID, prSyncEventFailed, map[string]any{
-			"error_code": string(code),
-			"message":    err.Error(),
-		}); appendErr != nil {
-			s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), appendErr.Error(), "")
-			return
-		}
-
-		s.writePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), hint)
-		return
-	}
-
-	if err := s.appendPRSyncEvent(record.RepoID, record.InvocationID, prSyncEventSucceeded, map[string]any{
-		"branch":    result.Branch,
-		"pr_number": result.PRNumber,
-		"pr_url":    result.PRURL,
-		"pr_action": result.PRAction,
-	}); err != nil {
-		s.writePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "")
-		return
-	}
-
-	resp := PRSyncResponse{
-		OK:                    true,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		RequestID:             requestID,
-		InvocationID:          record.InvocationID,
-		RepoID:                record.RepoID,
-		IntegrationWorktreeID: record.Meta.IntegrationWorktreeID,
-		Branch:                result.Branch,
-		PRNumber:              result.PRNumber,
-		PRURL:                 result.PRURL,
-		PRAction:              result.PRAction,
-		ReportSource:          result.ReportSource,
-		ReportFallbackUsed:    result.ReportFallbackUsed,
-		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
-}
-
 func (s *Server) runPRSync(
 	ctx context.Context,
 	record *resolvedInvocation,
 	wtMeta *store.IntegrationWorktreeMeta,
-	req PRSyncRequest,
+	req WorktreePRSyncRequest,
 ) (*prSyncResult, error) {
 	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
 	if err != nil {
@@ -719,24 +597,6 @@ func prSyncPrepareBody(
 	}
 }
 
-func (s *Server) appendPRSyncEvent(repoID, invocationID, kind string, data map[string]any) error {
-	writer := s.InvocationEvents
-	if writer == nil {
-		writer = invocationevents.NewWriter(s.Clock)
-	}
-	_, err := writer.Append(
-		s.Store.InvocationEventsPath(repoID, invocationID),
-		invocationID,
-		kind,
-		data,
-		invocationevents.AppendOptions{},
-	)
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to append invocation event", err)
-	}
-	return nil
-}
-
 func prSyncNonInteractiveEnv() map[string]string {
 	return map[string]string{
 		"GIT_TERMINAL_PROMPT": "0",
@@ -754,20 +614,20 @@ func prSyncHintFromError(err error) string {
 	return ""
 }
 
-func decodePRSyncRequest(body io.Reader) (PRSyncRequest, string) {
-	var req PRSyncRequest
+func decodePRSyncRequest(body io.Reader) (WorktreePRSyncRequest, string) {
+	var req WorktreePRSyncRequest
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		if err == io.EOF {
 			return req, ""
 		}
-		return PRSyncRequest{}, prSyncDecodeErrorMessage(err)
+		return WorktreePRSyncRequest{}, prSyncDecodeErrorMessage(err)
 	}
 
 	var trailing json.RawMessage
 	if err := dec.Decode(&trailing); err != io.EOF {
-		return PRSyncRequest{}, "invalid request body: expected a single JSON object"
+		return WorktreePRSyncRequest{}, "invalid request body: expected a single JSON object"
 	}
 
 	return req, ""
@@ -807,6 +667,10 @@ func prSyncUnknownFieldName(err error) (string, bool) {
 
 func prSyncHTTPStatusForCode(code errors.Code) int {
 	switch code {
+	case errors.EWorktreeNotFound:
+		return http.StatusNotFound
+	case errors.EWorktreeIDAmbiguous:
+		return http.StatusConflict
 	case errors.EInvocationNotFound:
 		return http.StatusNotFound
 	case errors.EInvocationIDAmbiguous:
@@ -831,20 +695,9 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 		return http.StatusBadRequest
 	case errors.EInvalidArgument:
 		return http.StatusBadRequest
+	case errors.EPersistFailed:
+		return http.StatusInternalServerError
 	default:
 		return http.StatusInternalServerError
 	}
-}
-
-func (s *Server) writePRSyncError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := PRSyncResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
 }

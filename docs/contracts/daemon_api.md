@@ -22,7 +22,7 @@ errors return `ok=false` and must include:
 - `message` (string)
 - `hint` (string, optional)
 
-for invocation-scoped mutation endpoints and review (`POST /invocations/start_headless`, `POST /invocations/start_headed`, `POST /invocations/{id}/start_headless`, `POST /invocations/{id}/stop`, `POST /invocations/{id}/kill`, `POST /invocations/{id}/checkpoints/apply`, `POST /invocations/{id}/land`, `POST /invocations/{id}/discard`, `POST /invocations/{ref}/chat`, `POST /invocations/{ref}/restart`, `POST /invocations/{ref}/pr/sync`, `POST /invocations/{ref}/merge`, `GET /invocations/{ref}/review`), responses must include daemon-issued `request_id` in both success and failure payloads.
+for invocation-scoped mutation endpoints and review (`POST /invocations/start_headless`, `POST /invocations/start_headed`, `POST /invocations/{id}/start_headless`, `POST /invocations/{id}/stop`, `POST /invocations/{id}/kill`, `POST /invocations/{id}/checkpoints/apply`, `POST /invocations/{id}/land`, `POST /invocations/{id}/discard`, `POST /invocations/{ref}/chat`, `POST /invocations/{ref}/restart`, `GET /invocations/{ref}/review`) and worktree-scoped mutation endpoints (`POST /worktrees/{ref}/pr/sync`, `POST /worktrees/{ref}/merge`, `POST /worktrees/{ref}/update`), responses must include daemon-issued `request_id` in both success and failure payloads.
 
 ## endpoints
 
@@ -151,38 +151,48 @@ response envelope: `APIResponse` with:
 error envelope:
 - `ok=false`, `request_id`, `error_code`, `message`, `hint`, optional `details`
 
-### POST /invocations/{ref}/pr/sync
+### POST /worktrees/{ref}/pr/sync
 
 query:
 - `repo_id` (required)
 
-request: `PRSyncRequest`
+request: `WorktreePRSyncRequest`
 - optional: `allow_dirty`, `force_with_lease`
 
-response: `PRSyncResponse`
-- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `pr_action`, `report_source`, `report_fallback_used`, `report_diagnostics[]`
+response: `WorktreePRSyncResponse`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `pr_action`, `report_source`, `report_fallback_used`, `report_diagnostics[]`
 - error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
 
 report contract behavior:
-- headless mode is strict and fail-closed: report contract violations return typed deterministic errors (`E_REPORT_MISSING`, `E_REPORT_MALFORMED`, `E_REPORT_OVERSIZED`, `E_REPORT_SCHEMA_INCOMPATIBLE`, `E_REPORT_INCOMPLETE`)
-- headed mode is compatibility-first: progression remains allowed with fallback body generation and explicit report diagnostics
+- worktree flows are compatibility-first: progression remains allowed with fallback body generation and explicit report diagnostics
 
-### POST /invocations/{ref}/merge
+### POST /worktrees/{ref}/merge
 
 query:
 - `repo_id` (required)
 
-request: `MergeRequest`
+request: `WorktreePRMergeRequest`
 - required: `confirmation_mode` (`yes` or `typed`), `confirmed=true`
 - optional: `strategy` (`squash` default, `merge`, `rebase`), `no_delete_branch`
 
-response: `MergeResponse`
-- success fields: `ok`, `api_version`, `build_version`, `request_id`, `invocation_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `strategy`, `delete_branch`, `merge_log_path`, `verify_log_path`, `report_source`, `report_fallback_used`, `report_diagnostics[]`
+response: `WorktreePRMergeResponse`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `repo_id`, `integration_worktree_id`, `branch`, `pr_number`, `pr_url`, `strategy`, `delete_branch`, `merge_log_path`, `verify_log_path`, `report_source`, `report_fallback_used`, `report_diagnostics[]`
 - error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
 
 report contract behavior:
-- headless mode is strict and fail-closed: report contract violations return typed deterministic errors (`E_REPORT_MISSING`, `E_REPORT_MALFORMED`, `E_REPORT_OVERSIZED`, `E_REPORT_SCHEMA_INCOMPATIBLE`, `E_REPORT_INCOMPLETE`)
-- headed mode is compatibility-first: merge progression remains allowed and diagnostics are returned in success payload when fallback behavior is used
+- worktree flows are compatibility-first: merge progression remains allowed and diagnostics are returned in success payload when fallback behavior is used
+
+### POST /worktrees/{ref}/update
+
+query:
+- `repo_id` (required)
+
+request: `WorktreeUpdateRequest`
+- request body is currently empty (`{}`)
+
+response: `WorktreeUpdateResponse`
+- success fields: `ok`, `api_version`, `build_version`, `request_id`, `repo_id`, `integration_worktree_id`, `branch`, `parent_branch`
+- error fields: `ok=false`, `api_version`, `build_version`, `request_id`, `error_code`, `message`, `hint`
 
 ### POST /worktrees/create
 

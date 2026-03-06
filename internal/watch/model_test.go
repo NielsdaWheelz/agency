@@ -40,8 +40,8 @@ func (f *fakeActionDispatcher) Open(_ context.Context, invocationID, repoID stri
 	return f.openErr
 }
 
-func (f *fakeActionDispatcher) PRSync(_ context.Context, invocationID, repoID string) error {
-	f.prSyncCalls = append(f.prSyncCalls, invocationID+"@"+repoID)
+func (f *fakeActionDispatcher) PRSync(_ context.Context, worktreeID, repoID string) error {
+	f.prSyncCalls = append(f.prSyncCalls, worktreeID+"@"+repoID)
 	return f.prSyncErr
 }
 
@@ -229,8 +229,8 @@ func TestModel_ActionFailure_RemainsInteractive(t *testing.T) {
 	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1"},
-			{InvocationID: "inv-2", RepoID: "repo-1"},
+			{InvocationID: "inv-1", WorktreeID: "wt-1", RepoID: "repo-1"},
+			{InvocationID: "inv-2", WorktreeID: "wt-2", RepoID: "repo-1"},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -248,5 +248,63 @@ func TestModel_ActionFailure_RemainsInteractive(t *testing.T) {
 	movedModel := moved.(model)
 	assert.Equal(t, 1, movedModel.selectedIndex, "watch should continue handling navigation after recoverable action failure")
 	require.Len(t, dispatcher.prSyncCalls, 1)
-	assert.Equal(t, "inv-1@repo-1", dispatcher.prSyncCalls[0])
+	assert.Equal(t, "wt-1@repo-1", dispatcher.prSyncCalls[0])
+}
+
+func TestModel_ActionPRSync_MessagesIncludeWorktreeTarget(t *testing.T) {
+	t.Parallel()
+
+	dispatcher := &fakeActionDispatcher{}
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-abcdefghij", WorktreeID: "wt-1", RepoID: "repo-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-abcdefghij"
+	m.selectedIndex = 0
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	nextModel := next.(model)
+	require.NotNil(t, cmd)
+	assert.Contains(t, nextModel.lastActionMessage, "worktree wt-1")
+	assert.Contains(t, nextModel.lastActionMessage, "invocation")
+
+	msg := cmd()
+	next, _ = nextModel.Update(msg)
+	nextModel = next.(model)
+	assert.Contains(t, nextModel.lastActionMessage, "worktree wt-1")
+	assert.Contains(t, nextModel.lastActionMessage, "complete")
+	require.Len(t, dispatcher.prSyncCalls, 1)
+	assert.Equal(t, "wt-1@repo-1", dispatcher.prSyncCalls[0])
+}
+
+func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
+	t.Parallel()
+
+	dispatcher := &fakeActionDispatcher{}
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+			{InvocationID: "inv-2", WorktreeID: "wt-2", RepoID: "repo-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedIndex = 0
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+	assert.True(t, nextModel.lastActionError)
+	assert.Contains(t, nextModel.lastActionMessage, string(errors.EInvalidArgument))
+	assert.Contains(t, nextModel.lastActionMessage, "worktree")
+	assert.Contains(t, nextModel.lastActionMessage, "inv-1")
+	require.Empty(t, dispatcher.prSyncCalls)
+
+	moved, _ := nextModel.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	movedModel := moved.(model)
+	assert.Equal(t, 1, movedModel.selectedIndex)
 }

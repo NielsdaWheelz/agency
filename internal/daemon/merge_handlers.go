@@ -4,15 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
@@ -20,8 +15,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
 	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/verify"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 const (
@@ -69,198 +62,7 @@ type mergePRView struct {
 	HeadRefName string `json:"headRefName"`
 }
 
-// handleMerge handles POST /invocations/{ref}/merge.
-func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request, invocationRef string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
-	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
-	if repoID == "" {
-		s.writeMergeError(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.EInvalidArgument),
-			"repo_id query parameter is required",
-			"pass ?repo_id=<repo_id>",
-		)
-		return
-	}
-
-	var req MergeRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		if err != io.EOF {
-			s.writeMergeError(
-				w,
-				http.StatusBadRequest,
-				requestID,
-				string(errors.EInvalidArgument),
-				"invalid request body: "+err.Error(),
-				"",
-			)
-			return
-		}
-	} else {
-		var trailing json.RawMessage
-		if err := dec.Decode(&trailing); err != io.EOF {
-			s.writeMergeError(
-				w,
-				http.StatusBadRequest,
-				requestID,
-				string(errors.EInvalidArgument),
-				"invalid request body: expected a single JSON object",
-				"",
-			)
-			return
-		}
-	}
-
-	normalizedReq, err := normalizeMergeRequest(req)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInvalidArgument
-		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
-		return
-	}
-
-	record, err := s.resolveInvocationRef(invocationRef, repoID)
-	if err != nil {
-		code := errors.GetCode(err)
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "use 'agency agent ls' to list invocations")
-		return
-	}
-
-	if record.Meta.Status == store.InvocationStatusStarting || record.Meta.Status == store.InvocationStatusRunning {
-		s.writeMergeError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.EInvocationStillRunning),
-			"invocation is still running; wait for completion before merge",
-			"run 'agency agent review <invocation_ref>' to check readiness",
-		)
-		return
-	}
-	if record.Meta.Status != store.InvocationStatusFinished {
-		s.writeMergeError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.EInvalidArgument),
-			"invocation is not in a mergeable lifecycle state",
-			"run 'agency agent review <invocation_ref>' for blocking reasons",
-		)
-		return
-	}
-	if record.Meta.LandingStatus != store.LandingStatusLanded {
-		s.writeMergeError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.EInvalidArgument),
-			"invocation must be landed before merge",
-			"run 'agency agent land <invocation_ref>' first",
-		)
-		return
-	}
-
-	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
-	if err != nil {
-		s.writeMergeError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read integration worktree metadata", "")
-		return
-	}
-
-	unlock, err := s.repoLock.Lock(record.RepoID, "merge")
-	if err != nil {
-		s.writeMergeError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.ERepoLocked),
-			"repository is locked by another operation",
-			"wait for the other operation to complete",
-		)
-		return
-	}
-	defer func() { _ = unlock() }()
-
-	if err := s.appendMergeEvent(record.RepoID, record.InvocationID, mergeEventStarted, map[string]any{
-		"strategy":          string(normalizedReq.Strategy),
-		"confirmation_mode": normalizedReq.ConfirmationMode,
-		"delete_branch":     normalizedReq.DeleteBranch,
-		"branch":            wtMeta.Branch,
-	}); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EPersistFailed
-		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
-		return
-	}
-
-	result, err := s.runMerge(r.Context(), record, wtMeta, normalizedReq)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
-		if appendErr := s.appendMergeEvent(record.RepoID, record.InvocationID, mergeEventFailed, map[string]any{
-			"error_code": string(code),
-			"message":    err.Error(),
-		}); appendErr != nil {
-			appendCode := errors.GetCode(appendErr)
-			if appendCode == "" {
-				appendCode = errors.EPersistFailed
-			}
-			s.writeMergeError(w, mergeHTTPStatusForCode(appendCode), requestID, string(appendCode), appendErr.Error(), "")
-			return
-		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
-		return
-	}
-
-	if err := s.appendMergeEvent(record.RepoID, record.InvocationID, mergeEventSucceeded, map[string]any{
-		"branch":         result.Branch,
-		"pr_number":      result.PRNumber,
-		"pr_url":         result.PRURL,
-		"strategy":       string(result.Strategy),
-		"delete_branch":  result.DeleteBranch,
-		"merge_log_path": result.MergeLogPath,
-	}); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EPersistFailed
-		}
-		s.writeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
-		return
-	}
-
-	resp := MergeResponse{
-		OK:                    true,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		RequestID:             requestID,
-		InvocationID:          record.InvocationID,
-		RepoID:                record.RepoID,
-		IntegrationWorktreeID: record.Meta.IntegrationWorktreeID,
-		Branch:                result.Branch,
-		PRNumber:              result.PRNumber,
-		PRURL:                 result.PRURL,
-		Strategy:              string(result.Strategy),
-		DeleteBranch:          result.DeleteBranch,
-		MergeLogPath:          result.MergeLogPath,
-		VerifyLogPath:         result.VerifyLog,
-		ReportSource:          result.ReportSource,
-		ReportFallbackUsed:    result.ReportFallbackUsed,
-		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
-}
-
-func normalizeMergeRequest(req MergeRequest) (normalizedMergeRequest, error) {
+func normalizeMergeRequest(req WorktreePRMergeRequest) (normalizedMergeRequest, error) {
 	mode := strings.TrimSpace(req.ConfirmationMode)
 	if mode != mergeConfirmationYes && mode != mergeConfirmationTyped {
 		return normalizedMergeRequest{}, errors.NewWithDetails(
@@ -304,149 +106,6 @@ func normalizeMergeRequest(req MergeRequest) (normalizedMergeRequest, error) {
 	}, nil
 }
 
-func (s *Server) runMerge(
-	ctx context.Context,
-	record *resolvedInvocation,
-	wtMeta *store.IntegrationWorktreeMeta,
-	req normalizedMergeRequest,
-) (*mergeResult, error) {
-	reportSource := ""
-	reportFallbackUsed := false
-	var reportDiagnostics []report.Diagnostic
-
-	reportResolution, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
-		MaxBytes: report.MaxPRBodyReportBytes,
-	})
-	if reportErr != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
-	}
-	if reportViolation != nil {
-		if record.Meta.Mode == store.RunnerModeHeadless {
-			return nil, reportViolationToAgencyError(reportViolation)
-		}
-		reportSource = "fallback"
-		reportFallbackUsed = true
-		reportDiagnostics = []report.Diagnostic{
-			{
-				Code:    string(reportViolation.Code),
-				Message: reportViolation.Message,
-				Source:  string(reportViolation.Source),
-			},
-		}
-	} else if reportResolution != nil {
-		reportSource = string(reportResolution.Source)
-		reportDiagnostics = reportResolution.Diagnostics
-	}
-
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
-	if err != nil {
-		return nil, err
-	}
-	if !clean {
-		return nil, errors.NewWithDetails(
-			errors.EDirtyWorktree,
-			"worktree has uncommitted changes; merge requires a clean integration tree",
-			map[string]string{
-				"dirty_status": dirtyStatus,
-				"hint":         "commit/stash/reset integration changes before merge",
-			},
-		)
-	}
-
-	if err := prSyncCheckGHAuth(ctx, s.Runner, wtMeta.TreePath); err != nil {
-		return nil, err
-	}
-
-	ghRepo, owner, err := s.resolveMergeGitHubRepo(ctx, record.RepoID, wtMeta.TreePath)
-	if err != nil {
-		return nil, err
-	}
-
-	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner)
-	if err != nil {
-		return nil, err
-	}
-
-	verifyLogPath, err := s.runMergeVerify(ctx, record, wtMeta, pr)
-	if err != nil {
-		return nil, err
-	}
-
-	args := []string{
-		"pr", "merge", fmt.Sprintf("%d", pr.Number),
-		"-R", ghRepo,
-		"--" + string(req.Strategy),
-	}
-	if req.DeleteBranch {
-		args = append(args, "--delete-branch")
-	}
-	result, runErr := s.Runner.Run(ctx, "gh", args, exec.RunOpts{
-		Dir: wtMeta.TreePath,
-		Env: prSyncNonInteractiveEnv(),
-	})
-
-	mergeLogPath := filepath.Join(s.Store.InvocationDir(record.RepoID, record.InvocationID), "merge.log")
-	command := "gh " + strings.Join(args, " ")
-	if err := writeMergeLog(s.FS, mergeLogPath, command, result, runErr); err != nil {
-		return nil, errors.WrapWithDetails(
-			errors.EPersistFailed,
-			"failed to persist merge log",
-			err,
-			map[string]string{
-				"merge_log_path": mergeLogPath,
-				"hint":           "merge may have completed; inspect PR state and retry if needed",
-			},
-		)
-	}
-
-	if runErr != nil {
-		return nil, errors.WrapWithDetails(
-			errors.EGHPRMergeFailed,
-			"gh pr merge failed to start",
-			runErr,
-			map[string]string{"command": command},
-		)
-	}
-	if result.ExitCode != 0 {
-		return nil, errors.NewWithDetails(
-			errors.EGHPRMergeFailed,
-			fmt.Sprintf("gh pr merge exited %d", result.ExitCode),
-			map[string]string{
-				"command":   command,
-				"exit_code": fmt.Sprintf("%d", result.ExitCode),
-				"stderr":    strings.TrimSpace(result.Stderr),
-			},
-		)
-	}
-
-	merged, err := mergeConfirmPRMerged(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number)
-	if err != nil {
-		return nil, err
-	}
-	if !merged {
-		return nil, errors.NewWithDetails(
-			errors.EGHPRMergeFailed,
-			"gh pr merge succeeded but merged state could not be confirmed",
-			map[string]string{
-				"hint": "re-run merge command; if PR is already merged this invocation may have succeeded",
-			},
-		)
-	}
-
-	return &mergeResult{
-		Branch:             wtMeta.Branch,
-		PRNumber:           pr.Number,
-		PRURL:              pr.URL,
-		Strategy:           req.Strategy,
-		DeleteBranch:       req.DeleteBranch,
-		MergeLogPath:       mergeLogPath,
-		VerifyLog:          verifyLogPath,
-		ReportSource:       reportSource,
-		ReportFallbackUsed: reportFallbackUsed,
-		ReportDiagnostics:  reportDiagnostics,
-	}, nil
-}
-
 func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner string) (*mergePRView, error) {
 	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, wtMeta.TreePath, owner, wtMeta.Branch)
 	if err != nil {
@@ -458,7 +117,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 			fmt.Sprintf("no pull request found for branch %q", wtMeta.Branch),
 			map[string]string{
 				"branch": wtMeta.Branch,
-				"hint":   "run 'agency agent pr sync <invocation_ref>' first",
+				"hint":   "run 'agency worktree pr sync <worktree_ref>' first",
 			},
 		)
 	}
@@ -649,79 +308,6 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 	)
 }
 
-func (s *Server) runMergeVerify(ctx context.Context, record *resolvedInvocation, wtMeta *store.IntegrationWorktreeMeta, pr *mergePRView) (string, error) {
-	agencyJSON, err := config.LoadAgencyConfig(s.FS, wtMeta.TreePath)
-	if err != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to load agency.json for verify", err)
-	}
-
-	invocationDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	verifyLogPath := filepath.Join(invocationDir, "logs", "verify.log")
-	verifyRecordPath := filepath.Join(invocationDir, "verify_record.json")
-	verifyJSONPath := filepath.Join(wtMeta.TreePath, ".agency", "out", "verify.json")
-
-	repoRoot, err := s.resolveMergeRepoRoot(ctx, record.RepoID, wtMeta.TreePath)
-	if err != nil {
-		return "", err
-	}
-
-	env := buildMergeVerifyEnv(record, wtMeta, repoRoot, invocationDir, pr)
-	runCfg := verify.RunConfig{
-		RepoID:         record.RepoID,
-		RunID:          record.InvocationID,
-		WorkDir:        wtMeta.TreePath,
-		Script:         agencyJSON.Scripts.Verify.Path,
-		Env:            env,
-		Timeout:        agencyJSON.Scripts.Verify.Timeout,
-		LogPath:        verifyLogPath,
-		VerifyJSONPath: verifyJSONPath,
-		RecordPath:     verifyRecordPath,
-	}
-
-	verifyRecord, runErr := verify.Run(ctx, runCfg)
-	if runErr != nil {
-		return "", errors.Wrap(errors.EInternal, "verify runner failed", runErr)
-	}
-	if !verifyRecord.OK {
-		return "", errors.NewWithDetails(
-			errors.EScriptFailed,
-			"verify failed; merge aborted",
-			map[string]string{
-				"verify_log_path": verifyLogPath,
-				"hint":            "fix verify failures and retry merge",
-			},
-		)
-	}
-
-	return verifyLogPath, nil
-}
-
-func buildMergeVerifyEnv(
-	record *resolvedInvocation,
-	wtMeta *store.IntegrationWorktreeMeta,
-	repoRoot string,
-	invocationDir string,
-	pr *mergePRView,
-) []string {
-	invocationName := strings.TrimSpace(record.Meta.InvocationName)
-	if invocationName == "" {
-		invocationName = record.InvocationID
-	}
-
-	return mergeflow.BuildVerifyEnv(os.Environ(), mergeflow.VerifyEnvInput{
-		RunID:         record.InvocationID,
-		Name:          invocationName,
-		RepoRoot:      repoRoot,
-		WorkspaceRoot: wtMeta.TreePath,
-		Branch:        wtMeta.Branch,
-		ParentBranch:  wtMeta.ParentBranch,
-		Runner:        record.Meta.Runner,
-		PRURL:         pr.URL,
-		PRNumber:      pr.Number,
-		InvocationDir: invocationDir,
-	})
-}
-
 func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot string) (string, error) {
 	return mergeflow.ResolveRepoRoot(ctx, s.Runner, s.Store, repoID, workspaceRoot)
 }
@@ -797,28 +383,6 @@ func writeMergeLog(fsys agencyfs.FS, mergeLogPath, command string, result exec.C
 	return mergeflow.WriteMergeLog(fsys, mergeLogPath, command, result, runErr)
 }
 
-func canonicalizePath(path string) string {
-	return mergeflow.CanonicalizePath(path)
-}
-
-func (s *Server) appendMergeEvent(repoID, invocationID, kind string, data map[string]any) error {
-	writer := s.InvocationEvents
-	if writer == nil {
-		writer = invocationevents.NewWriter(s.Clock)
-	}
-	_, err := writer.Append(
-		s.Store.InvocationEventsPath(repoID, invocationID),
-		invocationID,
-		kind,
-		data,
-		invocationevents.AppendOptions{},
-	)
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to append invocation event", err)
-	}
-	return nil
-}
-
 func mergeHintFromError(err error) string {
 	if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
 		if hint := strings.TrimSpace(ae.Details["hint"]); hint != "" {
@@ -830,6 +394,10 @@ func mergeHintFromError(err error) string {
 
 func mergeHTTPStatusForCode(code errors.Code) int {
 	switch code {
+	case errors.EWorktreeNotFound:
+		return http.StatusNotFound
+	case errors.EWorktreeIDAmbiguous:
+		return http.StatusConflict
 	case errors.EInvocationNotFound, errors.ENoPR:
 		return http.StatusNotFound
 	case errors.EInvocationIDAmbiguous:
@@ -857,17 +425,4 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 	default:
 		return http.StatusInternalServerError
 	}
-}
-
-func (s *Server) writeMergeError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := MergeResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
 }

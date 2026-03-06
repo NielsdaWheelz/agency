@@ -429,8 +429,8 @@ Command semantics:
 ### CI Shape
 
 1. `go test ./...` on every push and PR.
-2. E2E job always runs deterministic S5 failure-matrix coverage (`TestS5E2EAgentPRSyncMergeFailureMatrix`) under `-tags=e2e`.
-3. GH-backed S5 happy-path E2E (`TestGHE2EAgentPRSyncMerge`) runs conditionally when `AGENCY_GH_TOKEN` is configured.
+2. E2E job always runs deterministic S5 failure-matrix coverage (`TestS5E2EWorktreePRSyncMergeFailureMatrix`) under `-tags=e2e`.
+3. GH-backed S5 happy-path E2E (`TestGHE2EWorktreePRSyncMerge`) runs conditionally when `AGENCY_GH_TOKEN` is configured.
 4. Happy-path and failure-matrix suites run in separate CI steps for attribution.
 
 ## 13. Golden File / Snapshot Tests

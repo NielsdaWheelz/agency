@@ -78,7 +78,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 			RepoID:         record.RepoID,
 			HistoryCommand: fmt.Sprintf("agency agent history %s --repo %s", record.InvocationID, record.RepoID),
 			DiffCommand:    fmt.Sprintf("agency agent diff %s --repo %s", record.InvocationID, record.RepoID),
-			PRSyncCommand:  fmt.Sprintf("agency agent pr sync %s --repo %s", record.InvocationID, record.RepoID),
+			PRSyncCommand:  fmt.Sprintf("agency worktree pr sync %s --repo %s", firstNonEmpty(strings.TrimSpace(meta.IntegrationWorktreeID), "<worktree_ref>"), record.RepoID),
 		},
 	}
 	if meta.SemanticStatus != nil {
@@ -150,7 +150,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
 			Code:    checkReasonLandingPending,
 			Message: "invocation changes are not landed into integration yet",
-			Hint:    "run 'agency agent land <invocation_ref>' before 'agency agent pr sync'",
+			Hint:    "run 'agency agent land <invocation_ref>' before 'agency worktree pr sync <worktree_ref>'",
 		})
 	case store.LandingStatusDiscarded:
 		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{

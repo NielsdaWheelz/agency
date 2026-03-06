@@ -27,7 +27,7 @@ Keyboard shortcuts:
   - up/down (or k/j): move selection
   - enter: enter selected headed invocation
   - o: open selected invocation sandbox
-  - p: pr sync selected invocation
+  - p: sync PR for selected invocation's worktree
   - r: refresh now
   - q/esc: exit watch
 

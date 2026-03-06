@@ -29,11 +29,14 @@ Subcommands:
   path      Output worktree path for scripting
   open      Open worktree in editor
   shell     Open shell in worktree
-  rm        Remove a worktree`,
+  rm        Remove a worktree
+  pr sync   Push branch and sync pull request
+  merge     Verify and merge pull request
+  update    Rebase worktree branch onto parent`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency worktree <create|ls|show|path|open|shell|rm>")
+			return errors.New(errors.EUsage, "specify a subcommand: agency worktree <create|ls|show|path|open|shell|rm|pr|merge|update>")
 		},
 	}
 
@@ -45,6 +48,9 @@ Subcommands:
 		newWorktreeOpenCmd(),
 		newWorktreeShellCmd(),
 		newWorktreeRmCmd(),
+		newWorktreePRCmd(),
+		newWorktreeMergeCmd(),
+		newWorktreeUpdateCmd(),
 	)
 
 	return cmd
@@ -365,6 +371,170 @@ Example:
 	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm remove in non-interactive mode")
+
+	return cmd
+}
+
+func newWorktreePRCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pr",
+		Short: "Worktree-scoped pull request operations",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Help()
+			return errors.New(errors.EUsage, "specify a subcommand: agency worktree pr <sync>")
+		},
+	}
+	cmd.AddCommand(newWorktreePRSyncCmd())
+	return cmd
+}
+
+func newWorktreePRSyncCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+	var allowDirty bool
+	var forceWithLease bool
+
+	cmd := &cobra.Command{
+		Use:   "sync <worktree_ref>",
+		Short: "Push branch and create/update pull request",
+		Long: `Perform worktree-scoped PR synchronization.
+
+This command pushes the integration branch, then creates or updates the
+branch-scoped pull request.
+
+Example:
+  agency worktree pr sync my-feature
+  agency worktree pr sync --repo abc123 my-feature
+  agency worktree pr sync --allow-dirty my-feature
+  agency worktree pr sync --force-with-lease my-feature
+  agency worktree pr sync --json my-feature`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.WorktreePRSync(ctx, cr, fsys, cwd, commands.WorktreePRSyncOpts{
+				WorktreeRef:    args[0],
+				RepoFlag:       repoFlag,
+				AllowDirty:     allowDirty,
+				ForceWithLease: forceWithLease,
+				JSON:           jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
+	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
+
+	return cmd
+}
+
+func newWorktreeMergeCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+	var squash bool
+	var merge bool
+	var rebase bool
+	var noDeleteBranch bool
+	var yes bool
+
+	cmd := &cobra.Command{
+		Use:   "merge <worktree_ref>",
+		Short: "Verify and merge pull request",
+		Long: `Perform worktree-scoped merge.
+
+This command runs verify, merges the branch-scoped pull request, and persists
+merge logs under the worktree record.
+
+Non-interactive executions must pass --yes.
+
+Example:
+  agency worktree merge my-feature
+  agency worktree merge --repo abc123 my-feature
+  agency worktree merge --yes --json my-feature
+  agency worktree merge --merge my-feature
+  agency worktree merge --rebase --no-delete-branch my-feature`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.WorktreePRMerge(ctx, cr, fsys, cwd, commands.WorktreePRMergeOpts{
+				WorktreeRef:    args[0],
+				RepoFlag:       repoFlag,
+				Squash:         squash,
+				Merge:          merge,
+				Rebase:         rebase,
+				NoDeleteBranch: noDeleteBranch,
+				Yes:            yes,
+				JSON:           jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
+	cmd.Flags().BoolVar(&merge, "merge", false, "Use regular merge strategy")
+	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase merge strategy")
+	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm merge in non-interactive mode")
+
+	return cmd
+}
+
+func newWorktreeUpdateCmd() *cobra.Command {
+	var repoFlag string
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "update <worktree_ref>",
+		Short: "Rebase worktree branch onto parent branch",
+		Long: `Fetch origin and rebase the worktree branch onto origin/<parent_branch>.
+
+This command requires a clean worktree and returns a typed conflict error if
+the rebase cannot be applied cleanly.
+
+Example:
+  agency worktree update my-feature
+  agency worktree update --repo abc123 my-feature
+  agency worktree update --json my-feature`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
+
+			cr := exec.NewRealRunner()
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+
+			return commands.WorktreeUpdate(ctx, cr, fsys, cwd, commands.WorktreeUpdateOpts{
+				WorktreeRef: args[0],
+				RepoFlag:    repoFlag,
+				JSON:        jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }

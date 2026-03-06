@@ -22,18 +22,16 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
+func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("not_ready_invocation", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "s5-not-ready")
-		invocationID := "20260303071000-s5-not-ready"
-		createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
-		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
-			InvocationRef:   invocationID,
+		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
 			RepoFlag:        repoID,
 			Yes:             true,
 			JSON:            true,
@@ -43,12 +41,12 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 
 		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
 		assert.Equal(t, false, payload["ok"])
-		assert.Equal(t, string(errors.EInvocationStillRunning), payload["error_code"])
+		assert.Equal(t, string(errors.ENoPR), payload["error_code"])
 		assertS5E2EHasRequestID(t, payload)
 	})
 
 	t.Run("missing_pr", func(t *testing.T) {
-		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-missing-pr")
+		repoDir, dataDir, repoID, worktreeID, _, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-missing-pr")
 		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -63,8 +61,8 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
-		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
-			InvocationRef:   invocationID,
+		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
 			RepoFlag:        repoID,
 			Yes:             true,
 			JSON:            true,
@@ -79,7 +77,7 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 	})
 
 	t.Run("closed_pr", func(t *testing.T) {
-		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-closed-pr")
+		repoDir, dataDir, repoID, worktreeID, _, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-closed-pr")
 		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -94,8 +92,8 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
-		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
-			InvocationRef:   invocationID,
+		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
 			RepoFlag:        repoID,
 			Yes:             true,
 			JSON:            true,
@@ -110,7 +108,7 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 	})
 
 	t.Run("mergeability_failure", func(t *testing.T) {
-		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-mergeability")
+		repoDir, dataDir, repoID, worktreeID, _, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-mergeability")
 		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -125,8 +123,8 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
-		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
-			InvocationRef:   invocationID,
+		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
 			RepoFlag:        repoID,
 			Yes:             true,
 			JSON:            true,
@@ -145,7 +143,7 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 		st := store.NewStore(fsys, dataDir, time.Now)
 		client := daemonclient.NewClient(st.DaemonSocketPath())
 
-		resp, err := client.Merge(ctx, "inv-any", repoID, daemonclient.MergeOpts{
+		resp, err := client.WorktreePRMerge(ctx, "wt-any", repoID, daemonclient.WorktreePRMergeOpts{
 			Strategy:         "squash",
 			ConfirmationMode: "yes",
 			Confirmed:        false,
@@ -158,15 +156,6 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 
 	t.Run("bounded_input_handling", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "s5-bounded-input")
-		invocationID := "20260303071000-s5-bounded"
-		createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-		st := store.NewStore(fsys, dataDir, time.Now)
-		require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFinished
-			meta.LandingStatus = store.LandingStatusLanded
-			meta.IntegrationWorktreeID = worktreeID
-		}))
 
 		integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
 		reportDir := filepath.Join(integrationTree, ".agency")
@@ -191,8 +180,8 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
-		err := AgentPRSync(ctx, cr, fsys, repoDir, AgentPRSyncOpts{
-			InvocationRef:   invocationID,
+		err := WorktreePRSync(ctx, cr, fsys, repoDir, WorktreePRSyncOpts{
+			WorktreeRef:     worktreeID,
 			RepoFlag:        repoID,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -207,7 +196,7 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 	})
 
 	t.Run("merge_log_persistence_failure", func(t *testing.T) {
-		repoDir, dataDir, repoID, _, invocationID, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-merge-log-failure")
+		repoDir, dataDir, repoID, worktreeID, _, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-merge-log-failure")
 		daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 		daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -228,13 +217,13 @@ func TestS5E2EAgentPRSyncMergeFailureMatrix(t *testing.T) {
 			ExitCode: 0,
 		}
 
-		mergeLogPath := filepath.Join(dataDir, "repos", repoID, "invocations", invocationID, "merge.log")
+		mergeLogPath := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "logs", "merge.log")
 		require.NoError(t, os.MkdirAll(mergeLogPath, 0o700))
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
-		err := AgentMerge(ctx, cr, fsys, repoDir, AgentMergeOpts{
-			InvocationRef:   invocationID,
+		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
 			RepoFlag:        repoID,
 			Yes:             true,
 			JSON:            true,
@@ -256,8 +245,7 @@ func setupS5E2EMergeReadyInvocation(
 	t.Helper()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys = setupAgentTestEnvShort(t, worktreeName)
-	invocationID = "20260303070000-" + worktreeName
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+	invocationID = ""
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
 	reportDir := filepath.Join(integrationTree, ".agency")
@@ -265,15 +253,8 @@ func setupS5E2EMergeReadyInvocation(
 	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(
 		"## summary\nmerge-ready report\n\n## how to test\ngo test ./...\n",
 	), 0o644))
-	writeAgentMergeScriptsAndConfig(t, integrationTree)
-	writeAgentMergeRepoRecord(t, dataDir, repoID, repoDir)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFinished
-		meta.LandingStatus = store.LandingStatusLanded
-		meta.IntegrationWorktreeID = worktreeID
-	}))
+	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch = "agency/" + worktreeName + "-abcd"
 	return repoDir, dataDir, repoID, worktreeID, invocationID, branch, daemonRunner, fsys

@@ -35,7 +35,7 @@ v2 commands (slice 8+):
   agent       manage agent invocations (headed + headless via daemon)
               subcommands: start, ls, show, attach, enter, stop, kill, diff,
                            land, discard, open, path, shell, chat, restart,
-                           history, logs, review, pr, merge
+                           history, logs, review
   daemon      manage the agency daemon (headless supervision)
   checkpoint  manage sandbox checkpoints for headless invocations
   repo        manage repository registry
@@ -65,7 +65,7 @@ agency watch [--interval <duration>]
 - `home/end` or `g/G`: jump to top/bottom
 - `enter`: delegate to canonical `agent enter` for selected invocation
 - `o`: delegate to canonical `agent open` for selected invocation
-- `p`: delegate to canonical `agent pr sync` for selected invocation
+- `p`: sync PR for selected invocation's worktree (via canonical worktree PR sync flow)
 - `r`: trigger immediate refresh
 - `q`, `esc`, `ctrl+c`: quit and restore prior shell screen state
 
@@ -285,6 +285,72 @@ agency worktree rm <name|id|prefix> [--force] [--yes]
 - `E_WORKTREE_NOT_FOUND` — worktree not found
 - `E_DIRTY_WORKTREE` — worktree has uncommitted changes (use `--force`)
 - `E_WORKTREE_REMOVE_FAILED` — git worktree remove failed
+
+### `agency worktree pr sync`
+
+pushes a worktree branch and creates/updates the branch-scoped PR.
+
+**usage:**
+```bash
+agency worktree pr sync <worktree_ref> [--repo <name|id|prefix>] [--allow-dirty] [--force-with-lease] [--json]
+```
+
+**flags:**
+- `-r, --repo`: repo name, key, id, or prefix
+- `--allow-dirty`: allow sync with uncommitted integration worktree changes
+- `--force-with-lease`: use `git push --force-with-lease`
+- `-j, --json`: machine-readable mutation envelope output
+
+**behavior:**
+- resolves worktree context deterministically (name/id/prefix within repo scope)
+- enforces dirty-worktree and push policy validation with typed errors/hints
+- creates or updates one PR identity per branch and returns stable outcome fields (`branch`, `pr_action`, `pr_url`)
+- evaluates reports-v2 canonically (`report.json` authoritative over `report.md`) and returns `report_source` plus diagnostics in json mode
+- worktree flow is compatibility-first for report body generation (deterministic fallback body + diagnostics when needed)
+
+### `agency worktree merge`
+
+runs worktree-scoped verify + pull-request merge for the resolved integration branch.
+
+**usage:**
+```bash
+agency worktree merge <worktree_ref> [--repo <name|id|prefix>] [--squash|--merge|--rebase] [--no-delete-branch] [--yes] [--json]
+```
+
+**flags:**
+- `-r, --repo`: repo name, key, id, or prefix
+- `--squash`: squash merge strategy (default)
+- `--merge`: regular merge strategy
+- `--rebase`: rebase merge strategy
+- `--no-delete-branch`: keep remote branch after merge
+- `-y, --yes`: required for non-interactive/scripted runs
+- `-j, --json`: machine-readable mutation envelope output
+
+**behavior:**
+- resolves worktree context deterministically
+- enforces explicit confirmation contract (`--yes` non-interactive, typed token in interactive mode)
+- runs verify script with worktree-scoped environment, merges via `gh pr merge`, and writes private logs under worktree state
+- evaluates report contract using the same canonical resolver as `worktree pr sync`; success payload includes `report_source` and diagnostics
+- emits typed failure codes for prechecks, verify failure, mergeability conflicts, and durability failures
+
+### `agency worktree update`
+
+fetches from origin and rebases the worktree branch onto its configured parent branch.
+
+**usage:**
+```bash
+agency worktree update <worktree_ref> [--repo <name|id|prefix>] [--json]
+```
+
+**flags:**
+- `-r, --repo`: repo name, key, id, or prefix
+- `-j, --json`: machine-readable mutation envelope output
+
+**behavior:**
+- requires a clean worktree; dirty trees fail with typed `E_DIRTY_WORKTREE`
+- executes `git fetch origin` followed by `git rebase origin/<parent_branch>`
+- on rebase conflicts, attempts `git rebase --abort` and returns typed `E_REBASE_CONFLICT`
+- appends started/succeeded/failed lifecycle events to worktree event stream; append failures fail the operation
 
 ## `agency agent` (v2)
 
@@ -610,80 +676,6 @@ agency agent review --repo myrepo my-invocation
 agency agent review --repo abc123 my-invocation
 agency agent review --json 20260131
 agency agent review -r abc123 -j my-invocation
-```
-
-### `agency agent pr sync`
-
-pushes the resolved integration branch and creates/updates the branch-scoped PR for an invocation.
-
-**usage:**
-```bash
-agency agent pr sync <invocation_id|name|prefix> [--repo <name|id|prefix>] [--allow-dirty] [--force-with-lease] [--json]
-```
-
-**arguments:**
-- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
-
-**flags:**
-- `--repo`: repo name, key, id, or prefix
-- `--allow-dirty`: allow sync with uncommitted integration worktree changes
-- `--force-with-lease`: use `git push --force-with-lease`
-- `--json`: machine-readable mutation envelope output
-
-**behavior:**
-- resolves invocation -> integration worktree context deterministically
-- enforces dirty-worktree and push policy validation with typed errors/hints
-- creates or updates one PR identity per branch and returns stable outcome fields (`branch`, `pr_action`, `pr_url`)
-- evaluates reports-v2 canonically (`report.json` authoritative over `report.md`) and returns `report_source` plus report diagnostics in json mode
-- headless mode is strict (typed report contract failures); headed mode remains compatibility-first with deterministic fallback body and diagnostics
-- `--json` mutation envelopes include daemon `request_id` correlation for both success and daemon-declared failures
-
-**examples:**
-```bash
-agency agent pr sync 20260131
-agency agent pr sync --repo myrepo my-invocation --allow-dirty
-agency agent pr sync --repo abc123 my-invocation --allow-dirty
-agency agent pr sync --force-with-lease 20260131
-agency agent pr sync --json 20260131
-```
-
-### `agency agent merge`
-
-runs invocation-scoped verify + pull-request merge for the resolved integration branch.
-
-**usage:**
-```bash
-agency agent merge <invocation_id|name|prefix> [--repo <name|id|prefix>] [--squash|--merge|--rebase] [--no-delete-branch] [--yes] [--json]
-```
-
-**arguments:**
-- `invocation_id|name|prefix`: invocation identifier (name, id, or unique prefix)
-
-**flags:**
-- `--repo`: repo name, key, id, or prefix
-- `--squash`: squash merge strategy (default)
-- `--merge`: regular merge strategy
-- `--rebase`: rebase merge strategy
-- `--no-delete-branch`: keep remote branch after merge
-- `--yes`: required for non-interactive/scripted runs
-- `--json`: machine-readable mutation envelope output
-
-**behavior:**
-- resolves invocation context deterministically and requires landed + finished lifecycle state
-- enforces explicit confirmation contract (`--yes` non-interactive, typed token in interactive mode)
-- runs verify script with invocation-scoped environment, merges via `gh pr merge`, and writes private merge logs
-- evaluates report contract using the same canonical resolver as `agent pr sync`; success payload includes `report_source` and diagnostics
-- headless mode is strict (typed report contract failures); headed mode remains compatibility-first and progression-capable with diagnostics
-- emits typed failure codes for prechecks, verify failure, mergeability conflicts, and durability failures
-- `--json` mutation envelopes include daemon `request_id` correlation for both success and daemon-declared failures
-
-**examples:**
-```bash
-agency agent merge 20260131 --yes
-agency agent merge --repo myrepo my-invocation --merge --yes
-agency agent merge --repo abc123 my-invocation --merge --yes
-agency agent merge --rebase --no-delete-branch --yes 20260131
-agency agent merge --json --yes 20260131
 ```
 
 ### `agency agent land`
