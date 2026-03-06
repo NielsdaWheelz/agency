@@ -135,7 +135,8 @@ agency checkpoint apply --invocation <ref> <num>     # restore to checkpoint
 ```
 
 checkpoint behavior:
-- created every ~10 seconds (debounced 3s after last file change)
+- created on each mutating tool completion (Edit, Write, Bash, etc.) — every meaningful agent action gets its own checkpoint
+- drift safety net via filesystem watcher catches changes not covered by semantic triggers
 - deduplicated by tree-SHA (no duplicate snapshots)
 - stored as `refs/agency/snapshots/<invocation_id>/<num>` (never pollute branch history)
 - final checkpoint created on invocation exit
