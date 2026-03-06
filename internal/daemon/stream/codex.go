@@ -2,6 +2,7 @@ package stream
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
@@ -166,20 +167,27 @@ func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent
 	// Extract text from content blocks
 	if raw.Item != nil && len(raw.Item.Content) > 0 {
 		var textParts []string
+		// Codex agent_message items contain text blocks only; tool use is
+		// expressed via separate command_execution items.
+		var enrichedBlocks []map[string]interface{}
 		for _, block := range raw.Item.Content {
+			if block.Type == "" {
+				continue
+			}
+			enriched := map[string]interface{}{
+				"type": block.Type,
+			}
 			if block.Type == "text" && block.Text != "" {
 				textParts = append(textParts, block.Text)
+				enriched["text"] = block.Text
 			}
+			enrichedBlocks = append(enrichedBlocks, enriched)
+		}
+		if len(enrichedBlocks) > 0 {
+			event.Data["content_blocks"] = enrichedBlocks
 		}
 		if len(textParts) > 0 {
-			fullText := ""
-			for i, part := range textParts {
-				if i > 0 {
-					fullText += "\n"
-				}
-				fullText += part
-			}
-			event.Data["text"] = fullText
+			event.Data["text"] = strings.Join(textParts, "\n")
 		}
 	}
 
