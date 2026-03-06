@@ -214,7 +214,7 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			inputRunner:     "opencode",
 			canonicalRunner: "opencode",
 			prompt:          "headless launch args opencode",
-			runnerArgs:      []string{"--mode", "safe"},
+			runnerArgs:      []string{"--model", "open"},
 		},
 		{
 			name:            "cursor canonical",
@@ -271,11 +271,11 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			var wantArgs []string
 			switch tc.canonicalRunner {
 			case "claude-code":
-				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--verbose")
+				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "codex":
-				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json")
+				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json", "--full-auto")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "amp":
@@ -283,7 +283,7 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "opencode":
-				wantArgs = append(wantArgs, "run")
+				wantArgs = append(wantArgs, "run", "--mode", "auto")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "cursor":

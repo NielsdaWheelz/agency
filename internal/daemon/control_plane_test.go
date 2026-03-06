@@ -271,7 +271,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "fix the bug"},
 		},
 		{
 			name:        "claude with extra args",
@@ -279,7 +279,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--model", "opus", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
 		},
 		{
 			name:        "claude-code canonical",
@@ -287,7 +287,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--model", "opus", "fix the bug"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
 		},
 		{
 			name:        "codex basic - includes --cd flag",
@@ -295,7 +295,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "fix the bug"},
+			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--full-auto", "fix the bug"},
 		},
 		{
 			name:        "codex with extra args",
@@ -303,7 +303,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "gpt-4"},
-			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--model", "gpt-4", "fix the bug"},
+			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--full-auto", "--model", "gpt-4", "fix the bug"},
 		},
 		{
 			name:        "amp basic",
@@ -318,8 +318,8 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			runner:      "opencode",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
-			extraArgs:   []string{"--mode", "safe"},
-			wantArgs:    []string{"run", "--mode", "safe", "fix the bug"},
+			extraArgs:   []string{"--model", "open"},
+			wantArgs:    []string{"run", "--mode", "auto", "--model", "open", "fix the bug"},
 		},
 		{
 			name:        "cursor basic",
