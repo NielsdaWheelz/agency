@@ -563,6 +563,10 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 			SnapshotCommit:    cp.SnapshotCommit,
 			IncludesUntracked: cp.IncludesUntracked,
 			Degraded:          !cp.IncludesUntracked,
+			Trigger:           cp.Trigger,
+			ToolName:          cp.ToolName,
+			StreamSeq:         cp.StreamSeq,
+			Description:       cp.Description,
 		})
 	}
 

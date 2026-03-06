@@ -93,8 +93,8 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Checkpoints:\n\n")
-	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-10s  %-10s  %s\n", "ID", "Created", "Untracked", "Commit", "Diffstat")
-	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-10s  %-10s  %s\n", "----", "--------------------", "----------", "----------", "--------")
+	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-18s  %-10s  %s\n", "ID", "Created", "Trigger", "Commit", "Diffstat")
+	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-18s  %-10s  %s\n", "----", "--------------------", "------------------", "----------", "--------")
 
 	for _, cp := range result.Checkpoints {
 		// Parse and format timestamp
@@ -103,9 +103,16 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			createdAt = t.Local().Format("2006-01-02 15:04:05")
 		}
 
-		untracked := "yes"
-		if !cp.IncludesUntracked {
-			untracked = "no"
+		// Format trigger description
+		triggerDesc := cp.Description
+		if triggerDesc == "" && cp.ToolName != "" {
+			triggerDesc = "After " + cp.ToolName
+		}
+		if triggerDesc == "" {
+			triggerDesc = "-"
+		}
+		if len(triggerDesc) > 18 {
+			triggerDesc = triggerDesc[:15] + "..."
 		}
 
 		// Truncate snapshot commit
@@ -114,8 +121,8 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			snapshotCommit = snapshotCommit[:8]
 		}
 
-		_, _ = fmt.Fprintf(stdout, "%-4d  %-20s  %-10s  %-10s  %s\n",
-			cp.ID, createdAt, untracked, snapshotCommit, cp.Diffstat)
+		_, _ = fmt.Fprintf(stdout, "%-4d  %-20s  %-18s  %-10s  %s\n",
+			cp.ID, createdAt, triggerDesc, snapshotCommit, cp.Diffstat)
 	}
 
 	return nil

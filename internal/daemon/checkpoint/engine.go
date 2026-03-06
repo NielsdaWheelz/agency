@@ -37,9 +37,14 @@ type Engine struct {
 
 	// State
 	mu             sync.Mutex
-	lastCheckpoint time.Time
+	lastCheckpoint time.Time // last drift/poll checkpoint time (semantic triggers ignore this)
 	watcher        *fsnotify.Watcher
 	watchedDirs    map[string]bool
+
+	// Semantic trigger channel (optional). When set, the engine creates
+	// checkpoints in response to TriggerEvents (tool completions, commits)
+	// in addition to the fsnotify drift safety net.
+	triggerCh <-chan TriggerEvent
 
 	// Shutdown coordination
 	done     chan struct{}
@@ -100,6 +105,20 @@ func NewEngineWithWriter(
 	return engine
 }
 
+// SetTriggerChannel sets the semantic trigger channel for tool-completion-based
+// checkpoints. Must be called before Run.
+func (e *Engine) SetTriggerChannel(ch <-chan TriggerEvent) {
+	e.triggerCh = ch
+}
+
+// CreateSemanticCheckpoint creates a checkpoint with semantic metadata from a
+// tool completion trigger. Unlike CreateCheckpoint, this is NOT rate-limited —
+// each tool completion is semantically distinct and warrants its own checkpoint.
+// If trigger is nil, creates a plain checkpoint (backwards compat).
+func (e *Engine) CreateSemanticCheckpoint(ctx context.Context, trigger *TriggerEvent) error {
+	return e.createCheckpointWithMetadata(ctx, trigger)
+}
+
 // Run starts the checkpoint engine. It blocks until Stop is called.
 func (e *Engine) Run(ctx context.Context) error {
 	// Initialize fsnotify watcher
@@ -117,6 +136,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	// Start main loop
+	hasTriggerCh := e.triggerCh != nil
+
+	// When semantic triggers are active, use DriftInterval for fsnotify debounce
+	// instead of the shorter DebounceInterval. This makes fsnotify a safety net
+	// rather than the primary trigger mechanism.
+	debounceInterval := e.config.DebounceInterval
+	if hasTriggerCh && e.config.DriftInterval > 0 {
+		debounceInterval = e.config.DriftInterval
+	}
+
 	debounceTimer := time.NewTimer(0)
 	if !debounceTimer.Stop() {
 		select {
@@ -141,6 +170,19 @@ func (e *Engine) Run(ctx context.Context) error {
 			e.doFinalCheckpoint(context.Background())
 			return nil
 
+		case trigger, ok := <-e.triggerChanOrNil():
+			if !ok {
+				// Trigger channel closed; continue with fsnotify/polling only
+				e.triggerCh = nil
+				continue
+			}
+			// Semantic trigger — create checkpoint immediately (no rate limit)
+			if err := e.CreateSemanticCheckpoint(ctx, &trigger); err != nil {
+				if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
+					fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
+				}
+			}
+
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
@@ -157,10 +199,10 @@ func (e *Engine) Run(ctx context.Context) error {
 				}
 			}
 
-			// Reset debounce timer
+			// Reset debounce timer (drift safety net)
 			if !debouncePending {
 				debouncePending = true
-				debounceTimer.Reset(e.config.DebounceInterval)
+				debounceTimer.Reset(debounceInterval)
 			} else {
 				// Extend debounce period
 				if !debounceTimer.Stop() {
@@ -169,7 +211,7 @@ func (e *Engine) Run(ctx context.Context) error {
 					default:
 					}
 				}
-				debounceTimer.Reset(e.config.DebounceInterval)
+				debounceTimer.Reset(debounceInterval)
 			}
 
 		case err, ok := <-watcher.Errors:
@@ -181,7 +223,12 @@ func (e *Engine) Run(ctx context.Context) error {
 
 		case <-debounceTimer.C:
 			debouncePending = false
-			e.tryCheckpoint(ctx, "fsnotify")
+			if hasTriggerCh {
+				// With semantic triggers active, fsnotify fires as drift detection
+				e.tryDriftCheckpoint(ctx)
+			} else {
+				e.tryCheckpoint(ctx, "fsnotify")
+			}
 
 		case <-pollTicker.C:
 			e.tryCheckpointIfDirty(ctx)
@@ -271,6 +318,31 @@ func (e *Engine) shouldIgnorePath(path string) bool {
 		}
 	}
 	return false
+}
+
+// triggerChanOrNil returns the trigger channel, or a nil channel if triggers
+// are not configured. A nil channel in a select never fires.
+func (e *Engine) triggerChanOrNil() <-chan TriggerEvent {
+	return e.triggerCh
+}
+
+// tryDriftCheckpoint creates a drift checkpoint when fsnotify detects changes
+// but no semantic trigger has fired recently. Uses the normal rate limit.
+func (e *Engine) tryDriftCheckpoint(ctx context.Context) {
+	e.mu.Lock()
+	timeSinceLast := e.clock().Sub(e.lastCheckpoint)
+	if timeSinceLast < e.config.RateLimit {
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+
+	trigger := &TriggerEvent{Kind: TriggerDrift}
+	if err := e.createCheckpointWithMetadata(ctx, trigger); err != nil {
+		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
+			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
+		}
+	}
 }
 
 // tryCheckpoint attempts to create a checkpoint, respecting rate limiting.
@@ -374,8 +446,15 @@ func (e *Engine) CreateCheckpoint(ctx context.Context) error {
 	return e.createCheckpointInternal(ctx)
 }
 
-// createCheckpointInternal is the actual checkpoint creation logic.
+// createCheckpointInternal is the actual checkpoint creation logic (no semantic metadata).
 func (e *Engine) createCheckpointInternal(ctx context.Context) error {
+	return e.createCheckpointWithMetadata(ctx, nil)
+}
+
+// createCheckpointWithMetadata is the core checkpoint creation logic.
+// If trigger is non-nil, semantic metadata (Trigger, ToolName, StreamSeq, Description)
+// is attached to the checkpoint.
+func (e *Engine) createCheckpointWithMetadata(ctx context.Context, trigger *TriggerEvent) error {
 	// 1. Check if sandbox is dirty
 	dirty, err := e.isDirty(ctx)
 	if err != nil {
@@ -524,7 +603,7 @@ func (e *Engine) createCheckpointInternal(ctx context.Context) error {
 	// 10. Compute diffstat
 	diffstat := e.computeDiffstat(ctx, sandboxHeadSHA, snapshotCommit)
 
-	// 11. Add checkpoint to file
+	// 11. Add checkpoint to file with optional semantic metadata
 	now := e.clock()
 	cp := Checkpoint{
 		ID:                checkpointID,
@@ -535,6 +614,12 @@ func (e *Engine) createCheckpointInternal(ctx context.Context) error {
 		IncludesUntracked: includeUntracked,
 		Diffstat:          diffstat,
 		TreeSHA:           treeHash,
+	}
+	if trigger != nil {
+		cp.Trigger = trigger.Kind
+		cp.ToolName = trigger.ToolName
+		cp.StreamSeq = trigger.Seq
+		cp.Description = describeTrigger(trigger)
 	}
 	cpFile.Checkpoints = append(cpFile.Checkpoints, cp)
 
@@ -716,6 +801,10 @@ func (e *Engine) loadCheckpoints() (*CheckpointsFile, error) {
 		return nil, err
 	}
 
+	if !ValidSchemaVersion(cpFile.SchemaVersion) {
+		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
+	}
+
 	return &cpFile, nil
 }
 
@@ -723,6 +812,30 @@ func (e *Engine) loadCheckpoints() (*CheckpointsFile, error) {
 func (e *Engine) saveCheckpoints(cpFile *CheckpointsFile) error {
 	cpPath := filepath.Join(e.checkpointsDir, "checkpoints.json")
 	return fs.WriteJSONAtomic(cpPath, cpFile, 0o644)
+}
+
+// describeTrigger generates a human-readable description from a trigger event.
+func describeTrigger(trigger *TriggerEvent) string {
+	if trigger == nil {
+		return ""
+	}
+	switch trigger.Kind {
+	case TriggerToolEnd:
+		if trigger.ToolName != "" {
+			return "After " + trigger.ToolName
+		}
+		return "After tool completion"
+	case TriggerDrift:
+		return "Drift checkpoint"
+	case TriggerShutdown:
+		return "Final checkpoint"
+	case TriggerPoll:
+		return "Poll checkpoint"
+	case TriggerManual:
+		return "Manual checkpoint"
+	default:
+		return "Checkpoint"
+	}
 }
 
 // emitCheckpointCreated emits a checkpoint_created event.

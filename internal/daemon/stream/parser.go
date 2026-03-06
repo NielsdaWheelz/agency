@@ -68,6 +68,14 @@ type Parser struct {
 
 	// stopped indicates the parser has been stopped.
 	stopped bool
+
+	// checkpointNotify is called when a mutating tool completes.
+	// Set via SetCheckpointNotify before calling StreamAndParse.
+	checkpointNotify func(CheckpointNotification)
+
+	// pendingMutatingTools tracks mutating tool names from the latest assistant
+	// message, used to emit a checkpoint notification after the tool results arrive.
+	pendingMutatingTools []string
 }
 
 // NewParser creates a new parser for the given runner.
@@ -106,6 +114,14 @@ func (p *Parser) GetSemanticStatusUpdatedAt() time.Time {
 // GetLastOutputAt returns the last output timestamp as UnixNano.
 func (p *Parser) GetLastOutputAt() int64 {
 	return p.lastOutputAt.Load()
+}
+
+// SetCheckpointNotify registers a callback invoked when a mutating tool completes.
+// Must be called before StreamAndParse. Safe to call with nil (no-op).
+func (p *Parser) SetCheckpointNotify(fn func(CheckpointNotification)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.checkpointNotify = fn
 }
 
 // Stop stops the parser.
@@ -234,6 +250,9 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 		if writeErr := p.writeNormalizedEvent(event, streamFile); writeErr != nil {
 			return writeErr
 		}
+
+		// Detect mutating tools and emit checkpoint notification.
+		p.maybeNotifyCheckpoint(event)
 	}
 
 	// Update semantic status if provided
@@ -331,6 +350,63 @@ func (p *Parser) streamRawOnly(reader io.Reader, rawFile *os.File) error {
 				return nil
 			}
 			return err
+		}
+	}
+}
+
+// maybeNotifyCheckpoint checks if a normalized event represents a mutating tool
+// completion and emits a checkpoint notification if so.
+//
+// Strategy: when an assistant message with has_tool_use=true arrives, we record
+// the mutating tool names. When a subsequent user message (tool result) arrives,
+// we emit the notification. This ensures the checkpoint captures the tool's
+// effect on the filesystem.
+func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
+	p.mu.Lock()
+	notifyFn := p.checkpointNotify
+	p.mu.Unlock()
+
+	if notifyFn == nil {
+		return
+	}
+
+	if event.Kind == EventKindMessage {
+		role, _ := event.Data["role"].(string)
+		hasToolUse, _ := event.Data["has_tool_use"].(bool)
+
+		if role == "assistant" && hasToolUse {
+			// Record mutating tools from this assistant turn
+			var mutating []string
+			if toolNames, ok := event.Data["tool_names"].([]string); ok {
+				for _, name := range toolNames {
+					if MutatingStreamTools[name] {
+						mutating = append(mutating, name)
+					}
+				}
+			} else if toolNamesIface, ok := event.Data["tool_names"].([]interface{}); ok {
+				for _, nameIface := range toolNamesIface {
+					if name, ok := nameIface.(string); ok && MutatingStreamTools[name] {
+						mutating = append(mutating, name)
+					}
+				}
+			}
+			p.mu.Lock()
+			p.pendingMutatingTools = mutating
+			p.mu.Unlock()
+		} else if role == "user" {
+			// User message (tool result) — emit notification if we have pending tools
+			p.mu.Lock()
+			pending := p.pendingMutatingTools
+			p.pendingMutatingTools = nil
+			p.mu.Unlock()
+
+			if len(pending) > 0 {
+				notifyFn(CheckpointNotification{
+					ToolName:  pending[0],
+					ToolNames: pending,
+					Seq:       event.Seq,
+				})
+			}
 		}
 	}
 }

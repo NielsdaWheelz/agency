@@ -1396,6 +1396,7 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
 	if s.CheckpointDebounceOverride != nil {
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
+		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
 	}
 
 	cpEngine := checkpoint.NewEngineWithWriter(
@@ -1411,6 +1412,23 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		s.Clock,
 		s.InvocationEvents,
 	)
+
+	// Wire semantic trigger channel: parser notifies checkpoint engine on mutating tool completions.
+	triggerCh := make(chan checkpoint.TriggerEvent, 32)
+	cpEngine.SetTriggerChannel(triggerCh)
+	parser.SetCheckpointNotify(func(n stream.CheckpointNotification) {
+		select {
+		case triggerCh <- checkpoint.TriggerEvent{
+			Kind:      checkpoint.TriggerToolEnd,
+			ToolName:  n.ToolName,
+			ToolNames: n.ToolNames,
+			Seq:       n.Seq,
+		}:
+		default:
+			// Channel full — drop trigger rather than blocking stream parser.
+			// Drift checkpoint will catch up.
+		}
+	})
 
 	// Create supervised process record
 	proc := &SupervisedProcess{

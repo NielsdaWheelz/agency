@@ -35,7 +35,7 @@ internal/
 ├── cli/cobra/           Cobra command tree (flag parsing, dispatch)
 ├── commands/            command implementations (validate → RPC → format)
 ├── daemon/              daemon server, handlers, process supervision
-│   ├── checkpoint/      checkpoint engine (fsnotify, snapshots, rollback)
+│   ├── checkpoint/      checkpoint engine (semantic triggers, fsnotify, snapshots, rollback)
 │   ├── landing/         landing service (cherry-pick, apply, discard)
 │   └── stream/          stream parser (claude/codex output → normalized events)
 ├── daemonclient/        HTTP-over-Unix-socket RPC client
@@ -78,7 +78,7 @@ the daemon runs as a foreground process, listening on a Unix socket at `${AGENCY
 - **worktree management**: create and remove integration worktrees (single-writer)
 - **process supervision**: spawn runners, capture stdout/stderr, handle exit
 - **log streaming**: write `raw.jsonl`, `stderr.log`, `stream.jsonl` to disk
-- **checkpoint engine**: fsnotify-based snapshots with deduplication
+- **checkpoint engine**: semantic-trigger and fsnotify-based snapshots with deduplication
 - **stream parsing**: real-time parsing of runner output for semantic status
 - **headed reconciliation**: detect tmux session exit, update state
 - **read API**: serve list/show/diff/logs/timeline queries for the CLI
@@ -125,8 +125,8 @@ HTTP/1.1 over Unix socket.
 2. daemon resolves integration worktree, validates request
 3. daemon atomically creates sandbox worktree + invocation record
 4. daemon spawns runner process, streams stdout/stderr to log files
-5. daemon starts checkpoint engine (fsnotify watcher)
-6. daemon starts stream parser (normalized events + semantic status)
+5. daemon starts checkpoint engine (semantic triggers from stream parser + fsnotify drift safety net)
+6. daemon starts stream parser (normalized events + semantic status + checkpoint trigger notifications)
 7. CLI receives `invocation_id` and exits
 
 ### headed reconciliation
@@ -215,11 +215,21 @@ creates automatic snapshots of sandbox state during agent execution.
 
 ### creation
 
-- **trigger**: fsnotify watches sandbox tree + 30s polling fallback
-- **debounce**: 3 seconds after last file change
-- **rate limit**: max 1 checkpoint per 10 seconds
+- **primary trigger**: semantic events from the stream parser — a checkpoint is created each time a mutating tool (Edit, Write, MultiEdit, NotebookEdit, Bash) completes. semantic checkpoints are not rate-limited since each tool completion is a distinct user-visible action.
+- **drift safety net**: fsnotify watches sandbox tree with 60s debounce (catches changes not covered by semantic triggers). rate-limited to 1 per 10 seconds.
+- **polling fallback**: 30s polling check for changes missed by fsnotify.
 - **final**: created on invocation exit (only if content changed)
 - **deduplication**: tree-SHA comparison skips identical snapshots
+
+### schema
+
+checkpoints.json uses `schema_version: "1.1"` (semantic trigger metadata). version `"1.0"` is accepted on read for backwards compatibility. unknown versions are rejected per binding rule #4.
+
+semantic metadata fields (omitted for legacy checkpoints):
+- `trigger`: what caused the checkpoint (`tool_end`, `drift`, `poll`, `shutdown`, `manual`)
+- `tool_name`: the tool that completed (when trigger is `tool_end`)
+- `stream_seq`: the stream.jsonl sequence number of the triggering event
+- `description`: human-readable label (e.g., "After Edit", "Drift checkpoint")
 
 ### storage
 

@@ -711,6 +711,105 @@ func TestParser_StreamAndParse_RawWriteFailureReturnsError(t *testing.T) {
 	assert.True(t, stderrors.Is(err, ErrRawLogWriteFailed), "expected raw-log write failure classification")
 }
 
+func TestParser_CheckpointNotify_MutatingTool(t *testing.T) {
+	t.Parallel()
+
+	var notifications []CheckpointNotification
+	notifyFn := func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	}
+
+	parser := NewParser("test-inv-notify", "claude", fixedClock)
+	parser.SetCheckpointNotify(notifyFn)
+
+	rawFile, err := os.CreateTemp("", "raw-notify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-notify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	// Simulate a Claude assistant message with tool_use blocks for Edit
+	assistantMsg := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"editing file"},{"type":"tool_use","id":"t1","name":"Edit","input":{}}]}}` + "\n"
+	// Followed by a user message (tool result)
+	userMsg := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n"
+
+	reader := strings.NewReader(assistantMsg + userMsg)
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.NoError(t, err)
+
+	// Should have received at least one notification for the Edit tool
+	require.GreaterOrEqual(t, len(notifications), 1, "expected at least one checkpoint notification")
+	found := false
+	for _, n := range notifications {
+		if n.ToolName == "Edit" {
+			found = true
+			assert.Greater(t, n.Seq, uint64(0), "seq should be > 0")
+		}
+	}
+	assert.True(t, found, "expected notification for Edit tool")
+}
+
+func TestParser_CheckpointNotify_NonMutatingTool_NoNotification(t *testing.T) {
+	t.Parallel()
+
+	var notifications []CheckpointNotification
+	notifyFn := func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	}
+
+	parser := NewParser("test-inv-no-notify", "claude", fixedClock)
+	parser.SetCheckpointNotify(notifyFn)
+
+	rawFile, err := os.CreateTemp("", "raw-nonotify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-nonotify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	// Simulate a Claude assistant message with tool_use for Read (non-mutating)
+	assistantMsg := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}` + "\n"
+	userMsg := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file data"}]}}` + "\n"
+
+	reader := strings.NewReader(assistantMsg + userMsg)
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.NoError(t, err)
+
+	// No notifications for non-mutating tools
+	assert.Empty(t, notifications, "non-mutating tool should not trigger checkpoint notification")
+}
+
+func TestParser_CheckpointNotify_NilNotifyFn(t *testing.T) {
+	t.Parallel()
+
+	// Parser without checkpoint notify should not panic
+	parser := NewParser("test-inv-nil-notify", "claude", fixedClock)
+	// No SetCheckpointNotify call
+
+	rawFile, err := os.CreateTemp("", "raw-nilnotify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-nilnotify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	assistantMsg := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{}}]}}` + "\n"
+	reader := strings.NewReader(assistantMsg)
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.NoError(t, err)
+	// No panic = success
+}
+
 func TestParser_StreamAndParse_StreamWriteFailureReturnsError(t *testing.T) {
 	t.Parallel()
 

@@ -1598,3 +1598,295 @@ func TestEngine_createCheckpointInternal_EventAppendFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "checkpoint_created")
 }
+
+// ---------------------------------------------------------------------------
+// Semantic trigger tests (RED phase — new checkpoint trigger system)
+// ---------------------------------------------------------------------------
+
+func TestIsMutatingTool(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"Edit", true},
+		{"Write", true},
+		{"Bash", true},
+		{"NotebookEdit", true},
+		{"MultiEdit", true},
+		{"Read", false},
+		{"Glob", false},
+		{"Grep", false},
+		{"WebSearch", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsMutatingTool(tt.name))
+		})
+	}
+}
+
+func TestValidSchemaVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		v    string
+		want bool
+	}{
+		{"1.0", true},
+		{"1.1", true},
+		{"2.0", false},
+		{"", false},
+		{"0.9", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.v, func(t *testing.T) {
+			assert.Equal(t, tt.want, ValidSchemaVersion(tt.v))
+		})
+	}
+}
+
+func TestDefaultConfig_DriftInterval(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultConfig()
+	assert.Equal(t, 60*time.Second, cfg.DriftInterval, "DefaultConfig().DriftInterval")
+}
+
+func TestEngine_CreateSemanticCheckpoint_SetsMetadata(t *testing.T) {
+	t.Parallel()
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	e, _ := newTestEngine(t, sr, cfg)
+
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+
+	trigger := &TriggerEvent{
+		Kind:     TriggerToolEnd,
+		ToolName: "Edit",
+		Seq:      42,
+	}
+
+	err := e.CreateSemanticCheckpoint(context.Background(), trigger)
+	require.NoError(t, err)
+
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+
+	cp := cpFile.Checkpoints[0]
+	assert.Equal(t, TriggerToolEnd, cp.Trigger, "checkpoint should record trigger type")
+	assert.Equal(t, "Edit", cp.ToolName, "checkpoint should record tool name")
+	assert.Equal(t, uint64(42), cp.StreamSeq, "checkpoint should record stream seq")
+	assert.Contains(t, cp.Description, "Edit", "description should mention the tool")
+}
+
+func TestEngine_CreateSemanticCheckpoint_NotRateLimited(t *testing.T) {
+	t.Parallel()
+
+	// Semantic checkpoints should NOT be rate limited — each tool completion is distinct.
+	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	cfg.RateLimit = 10 * time.Second
+
+	sandboxPath := t.TempDir()
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	gitDir := filepath.Join(sandboxPath, ".git")
+	require.NoError(t, os.MkdirAll(gitDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "index"), []byte("fake"), 0o644))
+
+	e := NewEngine(
+		"test-inv-sem", "test-repo",
+		sandboxPath, sandboxPath,
+		checkpointsDir, eventsPath,
+		cfg, sr, fs.NewRealFS(), clock.Now,
+	)
+
+	ctx := context.Background()
+
+	// Create first semantic checkpoint at T=0
+	stubForSemanticCheckpoint(sr, sandboxPath, 1)
+	trigger1 := &TriggerEvent{Kind: TriggerToolEnd, ToolName: "Edit", Seq: 1}
+	require.NoError(t, e.CreateSemanticCheckpoint(ctx, trigger1))
+
+	// Advance only 2 seconds — within rate limit window for drift checkpoints.
+	clock.Advance(2 * time.Second)
+
+	// Create second semantic checkpoint — should succeed (not rate limited).
+	stubForSemanticCheckpoint(sr, sandboxPath, 2)
+	trigger2 := &TriggerEvent{Kind: TriggerToolEnd, ToolName: "Write", Seq: 2}
+	require.NoError(t, e.CreateSemanticCheckpoint(ctx, trigger2))
+
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 2, "both semantic checkpoints should be created despite rate limit window")
+	assert.Equal(t, "Edit", cpFile.Checkpoints[0].ToolName)
+	assert.Equal(t, "Write", cpFile.Checkpoints[1].ToolName)
+}
+
+func TestEngine_CreateSemanticCheckpoint_SkipsIfTreeUnchanged(t *testing.T) {
+	t.Parallel()
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	e, _ := newTestEngine(t, sr, cfg)
+
+	// First checkpoint
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+	trigger1 := &TriggerEvent{Kind: TriggerToolEnd, ToolName: "Edit", Seq: 1}
+	require.NoError(t, e.CreateSemanticCheckpoint(context.Background(), trigger1))
+
+	// Second checkpoint with same tree SHA (should be skipped)
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+	trigger2 := &TriggerEvent{Kind: TriggerToolEnd, ToolName: "Edit", Seq: 2}
+	require.NoError(t, e.CreateSemanticCheckpoint(context.Background(), trigger2))
+
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	assert.Len(t, cpFile.Checkpoints, 1, "duplicate tree should be skipped")
+}
+
+func TestEngine_CreateSemanticCheckpoint_NilTriggerFallsBack(t *testing.T) {
+	t.Parallel()
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	e, _ := newTestEngine(t, sr, cfg)
+
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+
+	// nil trigger should create a checkpoint without semantic metadata
+	err := e.CreateSemanticCheckpoint(context.Background(), nil)
+	require.NoError(t, err)
+
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+	assert.Empty(t, cpFile.Checkpoints[0].Trigger, "nil trigger should leave trigger empty")
+	assert.Empty(t, cpFile.Checkpoints[0].ToolName)
+}
+
+func TestEngine_RunWithTriggerChannel(t *testing.T) {
+	// Verify the engine processes TriggerEvents from a channel.
+	t.Parallel()
+
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	cfg.PollInterval = 100 * time.Millisecond // fast poll for test
+	e, _ := newTestEngine(t, sr, cfg)
+
+	triggerCh := make(chan TriggerEvent, 10)
+	e.SetTriggerChannel(triggerCh)
+
+	// Stub for one checkpoint
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- e.Run(ctx)
+	}()
+
+	// Send a semantic trigger
+	triggerCh <- TriggerEvent{
+		Kind:     TriggerToolEnd,
+		ToolName: "Edit",
+		Seq:      10,
+	}
+
+	// Allow engine to process; then stop
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	err := <-done
+	assert.ErrorIs(t, err, context.Canceled)
+
+	// Verify a checkpoint was created with semantic metadata
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(cpFile.Checkpoints), 1, "should have created at least one checkpoint from trigger")
+
+	// Find the semantic checkpoint
+	found := false
+	for _, cp := range cpFile.Checkpoints {
+		if cp.Trigger == TriggerToolEnd {
+			found = true
+			assert.Equal(t, "Edit", cp.ToolName)
+			assert.Equal(t, uint64(10), cp.StreamSeq)
+		}
+	}
+	assert.True(t, found, "should have found a semantic checkpoint")
+}
+
+func TestCheckpoint_SchemaVersion_Writes1_1(t *testing.T) {
+	t.Parallel()
+	f := NewCheckpointsFile()
+	assert.Equal(t, "1.1", f.SchemaVersion, "new checkpoints files should use schema 1.1")
+}
+
+func TestCheckpoint_SchemaVersion_Reads1_0(t *testing.T) {
+	t.Parallel()
+
+	// Simulate loading a legacy 1.0 checkpoints.json
+	legacy := `{"schema_version":"1.0","checkpoints":[{"id":1,"snapshot_ref":"refs/agency/snapshots/inv/1","snapshot_commit":"abc","sandbox_head_sha":"def","created_at":"2026-01-01T00:00:00Z","includes_untracked":true,"diffstat":"+1 -0 in 1 files","tree_sha":"tree1"}]}`
+
+	dir := t.TempDir()
+	cpPath := filepath.Join(dir, "checkpoints.json")
+	require.NoError(t, os.WriteFile(cpPath, []byte(legacy), 0o644))
+
+	cpFile, err := LoadCheckpointsFile(fs.NewRealFS(), dir)
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+
+	// Legacy checkpoints should load fine without trigger metadata
+	cp := cpFile.Checkpoints[0]
+	assert.Equal(t, 1, cp.ID)
+	assert.Empty(t, cp.Trigger, "legacy checkpoint should have no trigger metadata")
+	assert.Empty(t, cp.ToolName)
+}
+
+func TestCheckpoint_SchemaVersion_RejectsUnknown(t *testing.T) {
+	t.Parallel()
+
+	unknown := `{"schema_version":"2.0","checkpoints":[]}`
+	dir := t.TempDir()
+	cpPath := filepath.Join(dir, "checkpoints.json")
+	require.NoError(t, os.WriteFile(cpPath, []byte(unknown), 0o644))
+
+	_, err := LoadCheckpointsFile(fs.NewRealFS(), dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema_version")
+}
+
+// stubForSemanticCheckpoint stubs all git commands for checkpoint #id with unique tree/commit SHAs.
+func stubForSemanticCheckpoint(sr *stubRunner, sandboxPath string, id int) {
+	commitSHA := fmt.Sprintf("semantic_commit_%d", id)
+	treeSHA := fmt.Sprintf("semantic_tree_%04d", id)
+
+	sr.stub(fmt.Sprintf("git -C %s status --porcelain", sandboxPath),
+		exec.CmdResult{Stdout: " M main.go\n"})
+	sr.stub(fmt.Sprintf("git -C %s ls-files -o --exclude-standard", sandboxPath),
+		exec.CmdResult{Stdout: ""})
+	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath),
+		exec.CmdResult{Stdout: "head_sem\n"})
+	sr.stub(fmt.Sprintf("git -C %s rev-parse --git-dir", sandboxPath),
+		exec.CmdResult{Stdout: ".git\n"})
+	sr.stub(fmt.Sprintf("git -C %s add -A -- . :(exclude).agency :(exclude).git", sandboxPath),
+		exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s write-tree", sandboxPath),
+		exec.CmdResult{Stdout: treeSHA + "\n"})
+	sr.stub(fmt.Sprintf("git -C %s commit-tree %s -p HEAD -m agency snapshot test-inv-sem %d", sandboxPath, treeSHA, id),
+		exec.CmdResult{Stdout: commitSHA + "\n"})
+	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/snapshots/test-inv-sem/%d %s", sandboxPath, id, commitSHA),
+		exec.CmdResult{})
+	sr.stub(fmt.Sprintf("git -C %s diff --stat --stat-width=80 head_sem..%s", sandboxPath, commitSHA),
+		exec.CmdResult{Stdout: " main.go | 1 +\n 1 file changed, 1 insertion(+)\n"})
+}
