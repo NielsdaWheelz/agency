@@ -185,5 +185,9 @@ func LoadCheckpointsFile(fsys fs.FS, checkpointsDir string) (*CheckpointsFile, e
 		return nil, err
 	}
 
+	if !ValidSchemaVersion(cpFile.SchemaVersion) {
+		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
+	}
+
 	return &cpFile, nil
 }
