@@ -588,8 +588,9 @@ This remains the happy-path demo command.
 
 | Runner | Base Command | Notes |
 |--------|--------------|-------|
-| Claude Code | `claude -p --output-format stream-json --verbose` | JSONL to stdout |
-| Codex CLI | `codex exec -C <dir> --json` | JSONL to stdout |
+| Claude Code | `claude -p --output-format stream-json --verbose --dangerously-skip-permissions` | JSONL to stdout |
+| Codex CLI | `codex exec --cd <dir> --json --full-auto` | JSONL to stdout |
+| OpenCode | `opencode run --mode auto` | raw stdout |
 
 ### Claude Headless Invocation
 
@@ -598,6 +599,7 @@ cd <sandbox_path>
 claude -p \
   --output-format stream-json \
   --verbose \
+  --dangerously-skip-permissions \
   "<prompt>"
 ```
 
@@ -606,6 +608,7 @@ claude -p \
 - `-p` / `--print` — non-interactive mode, prompt as positional argument
 - `--output-format stream-json` — JSONL streaming output (**requires `--verbose`**)
 - `--verbose` — required by stream-json; without it claude exits with an error
+- `--dangerously-skip-permissions` — bypass all permission checks (required for headless; sandbox provides isolation)
 
 **Optional flags:**
 
@@ -613,7 +616,7 @@ claude -p \
 
 **CWD:** Always set to **sandbox** tree path. Never the integration tree.
 
-**Policy:** Agency does not set `--permission-mode` or impose safety policy. User's Claude config applies.
+**Policy:** Agency sets `--dangerously-skip-permissions` for headless mode. The sandbox worktree is the security boundary — the runner operates autonomously within it. Permission flags (`--dangerously-skip-permissions`, `--permission-mode`) are reserved in headless mode and cannot be overridden via `--runner-arg`.
 
 **JSONL event types (stdout):**
 
@@ -627,7 +630,7 @@ claude -p \
 ### Codex Headless Invocation
 
 ```bash
-codex exec -C <sandbox_path> --json "<prompt>"
+codex exec --cd <sandbox_path> --json --full-auto "<prompt>"
 ```
 
 **Flags (verified against codex 0.x):**
@@ -635,9 +638,10 @@ codex exec -C <sandbox_path> --json "<prompt>"
 - `exec` — non-interactive subcommand
 - `-C` / `--cd` — set working directory
 - `--json` — JSONL streaming output to stdout
+- `--full-auto` — auto-approve all tool actions (required for headless; sandbox provides isolation)
 - Prompt is a positional argument (or stdin if `-` or omitted)
 
-**Policy:** Preserve codex config defaults for sandbox and approval settings. Agency does not impose policy in v2.
+**Policy:** Agency sets `--full-auto` for headless mode. Approval flags (`--full-auto`, `--approval-mode`) are reserved in headless mode and cannot be overridden via `--runner-arg`.
 
 **JSONL event types (stdout):**
 
@@ -657,9 +661,11 @@ Use `--runner-arg` to pass through extra flags:
 ```bash
 agency agent start --worktree foo --headless \
   --prompt "Fix the bug" \
-  --runner-arg "--permission-mode" \
-  --runner-arg "allowedTools"
+  --runner-arg "--model" \
+  --runner-arg "opus"
 ```
+
+**Note:** Permission/approval flags (`--dangerously-skip-permissions`, `--permission-mode`, `--full-auto`, `--approval-mode`, `--mode`) are reserved in headless mode and cannot be passed via `--runner-arg`. Agency controls these automatically. In headed mode, all runner flags are allowed.
 
 ### Detached Semantics
 

@@ -97,7 +97,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			name:            "opencode canonical",
 			runnerInput:     "opencode",
 			canonicalRunner: "opencode",
-			runnerArg:       "--mode=safe",
+			runnerArg:       "--model=open",
 			prompt:          "cli e2e matrix opencode canonical",
 		},
 		{
@@ -364,13 +364,13 @@ func readLaunchCapture(t *testing.T, capturePath string) launchCapture {
 func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string) []string {
 	switch canonicalRunner {
 	case "claude-code":
-		return []string{"-p", "--output-format", "stream-json", "--verbose", runnerArg, prompt}
+		return []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", runnerArg, prompt}
 	case "codex":
-		return []string{"exec", "--cd", sandboxPath, "--json", runnerArg, prompt}
+		return []string{"exec", "--cd", sandboxPath, "--json", "--full-auto", runnerArg, prompt}
 	case "amp":
 		return []string{"-x", runnerArg, prompt}
 	case "opencode":
-		return []string{"run", runnerArg, prompt}
+		return []string{"run", "--mode", "auto", runnerArg, prompt}
 	case "cursor":
 		return []string{"-p", runnerArg, prompt}
 	case "droid":

@@ -984,8 +984,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 	req.Runner = canonicalRunner
 
-	// 4. Validate reserved flags in runner args
-	if err := validateRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
+	// 4. Validate reserved flags in runner args (headless includes permission flags)
+	if err := validateHeadlessRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerArgConflict
@@ -1228,9 +1228,15 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-// validateRunnerArgs checks for reserved flags in runner args.
+// validateRunnerArgs checks for universal reserved flags in runner args.
 func validateRunnerArgs(runner string, args []string) error {
 	return runners.ValidateArgs(runner, args)
+}
+
+// validateHeadlessRunnerArgs checks for all reserved flags including
+// headless-only permission/approval flags that Agency controls.
+func validateHeadlessRunnerArgs(runner string, args []string) error {
+	return runners.ValidateHeadlessArgs(runner, args)
 }
 
 // isInsideAgencyManagedWorktree checks if a path is inside an agency-managed worktree.

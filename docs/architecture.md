@@ -162,8 +162,9 @@ sandboxes/<invocation_id>/logs/
 
 ### runner commands
 
-- Claude Code: `claude -p --output-format stream-json --verbose`
-- Codex CLI: `codex exec --json`
+- Claude Code: `claude -p --output-format stream-json --verbose --dangerously-skip-permissions`
+- Codex CLI: `codex exec --cd <sandbox> --json --full-auto`
+- OpenCode: `opencode run --mode auto`
 
 ### normalized events
 
