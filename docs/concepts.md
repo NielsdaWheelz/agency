@@ -158,9 +158,14 @@ the daemon is the background supervisor for all agent invocations. it auto-start
 
 ```bash
 agency daemon status [--json]     # check health
-agency daemon start               # start in foreground
+agency daemon start               # start in background (default)
+agency daemon start --foreground  # start in foreground (for debugging/service managers)
 agency daemon stop [--force]      # stop (--force kills active agents)
+agency daemon install             # install as OS service (launchd/systemd)
+agency daemon uninstall           # remove OS service
 ```
+
+use `agency daemon install` to have the daemon start automatically on login. on macOS this creates a launchd plist; on Linux a systemd user unit. both are configured to restart on failure.
 
 see [architecture](architecture.md) for daemon internals.
 

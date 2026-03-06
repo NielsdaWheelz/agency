@@ -37,6 +37,7 @@ v2 commands (slice 8+):
                            land, discard, open, path, shell, chat, restart,
                            history, logs, review
   daemon      manage the agency daemon (headless supervision)
+              subcommands: start, stop, status, install, uninstall
   checkpoint  manage sandbox checkpoints for headless invocations
   repo        manage repository registry
   watch       full-screen readiness monitoring workspace
@@ -952,14 +953,25 @@ manages the agency daemon — the supervisor for headless agent invocations.
 
 ### `agency daemon start`
 
-starts the daemon in the foreground.
+starts the daemon. by default starts as a detached background process. use `--foreground` for service managers or debugging.
 
 **usage:**
 ```bash
-agency daemon start
+agency daemon start               # background (default)
+agency daemon start --foreground   # foreground (for launchd/systemd)
 ```
 
-**behavior:**
+**flags:**
+- `--foreground`: run in foreground (for service managers or debugging)
+
+**behavior (background, default):**
+1. checks if daemon already running via health endpoint → exits 0 if so (idempotent)
+2. cleans stale PID/socket if process is dead
+3. starts daemon as detached background process (re-execs with `--foreground`)
+4. waits up to 10s for health check to pass
+5. prints PID, socket path, and instance ID
+
+**behavior (foreground):**
 1. checks for existing daemon via PID file
 2. if daemon already running: prints message and exits 0 (idempotent)
 3. cleans up any stale socket file
@@ -1033,6 +1045,57 @@ Daemon shutdown initiated
 **error codes:**
 - `E_DAEMON_NOT_RUNNING` — daemon is not running
 - `E_DAEMON_BUSY` — active invocations exist (use `--force` to override)
+
+### `agency daemon install`
+
+installs the daemon as an OS-managed service that starts automatically on login.
+
+**usage:**
+```bash
+agency daemon install
+```
+
+**behavior:**
+- **macOS**: writes a launchd plist to `~/Library/LaunchAgents/com.agency.daemon.plist` and loads it with `launchctl load -w`
+- **Linux**: writes a systemd user unit to `~/.config/systemd/user/agency-daemon.service`, runs `daemon-reload`, `enable`, and `start`
+- the service runs `agency daemon start --foreground` and is configured to restart on failure
+
+**output:**
+```
+Daemon installed as launchd service
+  Service file: /Users/alice/Library/LaunchAgents/com.agency.daemon.plist
+  Binary:       /usr/local/bin/agency
+
+The daemon will start automatically on login.
+```
+
+**error codes:**
+- `E_DAEMON_SERVICE_ALREADY_INSTALLED` — service is already installed
+- `E_DAEMON_SERVICE_INSTALL_FAILED` — install operation failed
+- `E_DAEMON_SERVICE_UNSUPPORTED` — platform not supported (not macOS or Linux)
+
+### `agency daemon uninstall`
+
+removes the daemon OS service.
+
+**usage:**
+```bash
+agency daemon uninstall
+```
+
+**behavior:**
+- **macOS**: unloads with `launchctl unload -w` and removes the plist file
+- **Linux**: stops, disables, removes the unit file, and runs `daemon-reload`
+
+**output:**
+```
+Daemon launchd service uninstalled
+```
+
+**error codes:**
+- `E_DAEMON_SERVICE_NOT_INSTALLED` — service is not installed
+- `E_DAEMON_SERVICE_UNINSTALL_FAILED` — uninstall operation failed
+- `E_DAEMON_SERVICE_UNSUPPORTED` — platform not supported
 
 ## `agency checkpoint` (v2)
 

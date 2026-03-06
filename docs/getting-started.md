@@ -349,9 +349,18 @@ the daemon is the background supervisor for all agent invocations. it auto-start
 ```bash
 agency daemon status          # is it running?
 agency daemon status --json   # machine-readable
-agency daemon start           # start in foreground
+agency daemon start           # start in background (default)
+agency daemon start --foreground  # start in foreground (for debugging)
 agency daemon stop            # graceful shutdown
 agency daemon stop --force    # kill active agents and stop
+agency daemon install         # install as OS service (launchd/systemd)
+agency daemon uninstall       # remove OS service
+```
+
+to have the daemon start automatically on login, install it as an OS service:
+
+```bash
+agency daemon install         # writes launchd plist (macOS) or systemd unit (Linux)
 ```
 
 daemon responsibilities:
@@ -449,8 +458,11 @@ CHECKPOINTS (automatic sandbox snapshots)
 
 DAEMON (background supervisor)
   agency daemon status                      check daemon health
-  agency daemon start                       start daemon
+  agency daemon start                       start daemon (background)
+  agency daemon start --foreground          start daemon (foreground)
   agency daemon stop [--force]              stop daemon
+  agency daemon install                     install as OS service
+  agency daemon uninstall                   remove OS service
 
 PUSH & MERGE (v1 commands)
   agency push <ref>                         push + create PR
