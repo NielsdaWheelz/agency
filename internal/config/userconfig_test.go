@@ -37,6 +37,7 @@ func TestLoadUserConfig_MissingFile(t *testing.T) {
 	assert.False(t, found, "expected found=false for missing config")
 	assert.Equal(t, "claude", cfg.Defaults.Runner)
 	assert.Equal(t, "code", cfg.Defaults.Editor)
+	assert.Equal(t, "main", cfg.Defaults.ParentBranch)
 }
 
 func TestLoadUserConfig_InvalidJSON(t *testing.T) {
@@ -59,6 +60,40 @@ func TestLoadUserConfig_UnknownKeys(t *testing.T) {
 	_, _, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for unknown keys")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+}
+
+func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 1,
+  "defaults": { "runner": "claude", "editor": "code", "unknown": "nope" }
+}`)
+	_, _, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err, "expected error for unknown defaults keys")
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "defaults contains unknown field")
+}
+
+func TestLoadUserConfig_DefaultsModelAndThinking(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 1,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "model": "opus",
+    "thinking": "high"
+  }
+}`)
+	cfg, found, err := LoadUserConfig(stub, "/cfg")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
+	assert.Equal(t, "code", cfg.Defaults.Editor)
+	assert.Equal(t, "opus", cfg.Defaults.Model)
+	assert.Equal(t, "high", cfg.Defaults.Thinking)
 }
 
 func TestValidateUserConfig_RequiredFields(t *testing.T) {

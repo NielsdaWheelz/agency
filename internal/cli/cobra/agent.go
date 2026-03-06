@@ -84,6 +84,8 @@ func newAgentStartCmd() *cobra.Command {
 	var prompt string
 	var promptFile string
 	var runnerArgs []string
+	var model string
+	var thinking string
 	var noIncludeUntracked bool
 	var jsonOut bool
 
@@ -136,6 +138,8 @@ Example:
 				Prompt:             prompt,
 				PromptFile:         promptFile,
 				RunnerArgs:         runnerArgs,
+				Model:              model,
+				Thinking:           thinking,
 				JSON:               jsonOut,
 				NoIncludeUntracked: noIncludeUntracked,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -143,13 +147,15 @@ Example:
 	}
 
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Integration worktree to run against (required)")
-	cmd.Flags().StringVar(&runner, "runner", "claude-code", "Runner to use (claude-code, codex, amp, opencode, cursor, droid; legacy aliases: claude, cursor-cli)")
+	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use (defaults to config defaults.runner)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional name for the invocation")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Start but do not attach (headed mode only)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")
+	cmd.Flags().StringVar(&model, "model", "", "Model override (currently supported for runner claude-code)")
+	cmd.Flags().StringVar(&thinking, "thinking", "", "Thinking profile override (currently supported for runner claude-code)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from checkpoint snapshots")
 
@@ -754,6 +760,8 @@ func newAgentRestartCmd() *cobra.Command {
 	var checkpointID int
 	var historySelector bool
 	var runnerArgs []string
+	var model string
+	var thinking string
 	var envAssignments []string
 	var jsonOut bool
 
@@ -821,6 +829,8 @@ Example:
 				CheckpointID:       checkpointID,
 				InteractiveHistory: historySelector,
 				RunnerArgs:         runnerArgs,
+				Model:              model,
+				Thinking:           thinking,
 				Env:                envMap,
 				JSON:               jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -831,6 +841,8 @@ Example:
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
 	cmd.Flags().BoolVar(&historySelector, "history", false, "Select timeline history interactively (arrow keys)")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to restarted runner (repeatable)")
+	cmd.Flags().StringVar(&model, "model", "", "Model override for restart (currently supported for runner claude-code)")
+	cmd.Flags().StringVar(&thinking, "thinking", "", "Thinking profile override for restart (currently supported for runner claude-code)")
 	cmd.Flags().StringArrayVar(&envAssignments, "env", nil, "Environment override KEY=VALUE for restart (repeatable)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 

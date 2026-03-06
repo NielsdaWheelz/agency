@@ -22,10 +22,6 @@ the `agency.json` file configures agency for a repository. it is created by `age
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
-  },
-  "defaults": {
-    "runner": "claude",
-    "parent_branch": "main"
   }
 }
 ```
@@ -41,10 +37,6 @@ the `agency.json` file configures agency for a repository. it is created by `age
 | `scripts.verify.timeout` | no | `30m` | verify script timeout |
 | `scripts.archive.path` | yes | - | path to archive script |
 | `scripts.archive.timeout` | no | `5m` | archive script timeout |
-| `defaults.runner` | no | `claude-code` | default runner id (for example `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`) |
-| `defaults.parent_branch` | no | `main` | default branch to branch from |
-
-`defaults.runner` selects the runner id, but runner execution still requires explicit command mapping in user config (`config.runners.<id>`).
 
 ## user config (`config.json`)
 
@@ -61,7 +53,9 @@ minimal example:
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
-    "parent_branch": "main"
+    "parent_branch": "main",
+    "model": "opus",
+    "thinking": "high"
   },
   "runners": {
     "claude-code": "claude",
@@ -73,10 +67,14 @@ minimal example:
 }
 ```
 
+`defaults` keys are strict: unknown keys fail config parsing with `E_INVALID_USER_CONFIG`.
+
 runner policy:
 - runner ids are capability-based: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`
 - input aliases are accepted: `claude` -> `claude-code`, `cursor-cli` -> `cursor`
 - **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility keys like `runners.claude` / `runners.cursor-cli`) to an executable command
+- `defaults.runner` is used by `agency agent start` when `--runner` is omitted; if no user config exists, built-in default is `claude` (canonicalized to `claude-code`)
+- `defaults.model` and `defaults.thinking` are consumed by typed model/thinking flags for `claude-code` flows (`agent start`, `agent restart`)
 
 ### timeout format
 

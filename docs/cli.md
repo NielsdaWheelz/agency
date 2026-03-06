@@ -363,22 +363,30 @@ starts a new agent invocation with its sandbox worktree.
 
 **usage:**
 ```bash
-agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--runner-arg <arg>]... [--no-include-untracked] [--json]
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--model <name>] [--thinking <level>] [--runner-arg <arg>]... [--no-include-untracked] [--json]
 ```
 
 **flags:**
 - `--worktree`: integration worktree to run against (required)
-- `--runner`: runner id to use (`claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`; legacy aliases: `claude`, `cursor-cli`) (default: `claude-code`)
+- `--runner`: runner id to use (`claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`; legacy aliases: `claude`, `cursor-cli`)
+  - default resolution: `config.json defaults.runner` -> built-in fallback `claude-code`
 - `--headless`: run in headless mode (non-interactive, via daemon)
 - `--name`: optional human-readable label for the invocation (unique among active invocations)
 - `--detached`: start but do not attach (headed mode only; no-op for headless)
 - `--prompt`: prompt string for headless mode
 - `--prompt-file`: path to file containing prompt for headless mode
+- `--model`: model override (currently supported for `claude-code` only)
+- `--thinking`: thinking profile override (currently supported for `claude-code` only)
 - `--runner-arg`: additional argument to pass to the runner (repeatable)
 - `--no-include-untracked`: exclude untracked files from checkpoint snapshots (headless only)
 - `--json`: machine-readable mutation envelope output
 
 runner commands are resolved from user config (`config.runners`) and must be explicitly mapped.
+for `claude-code`, model/thinking are resolved deterministically as:
+- CLI flags (`--model`, `--thinking`)
+- then user defaults (`config.json defaults.model`, `defaults.thinking`)
+- then none.
+for `claude-code`, conflicting values between typed flags and `--runner-arg` are rejected with `E_USAGE`.
 
 **behavior (headed mode, default):**
 1. resolves integration worktree
@@ -847,7 +855,7 @@ applies a checkpoint and restarts the same headless invocation in one invocation
 
 **usage:**
 ```bash
-agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <name|id|prefix>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
+agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <name|id|prefix>] [--model <name>] [--thinking <level>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
 ```
 
 **arguments:**
@@ -856,6 +864,8 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 **flags:**
 - `--checkpoint`: checkpoint id to restore before restart (explicit/script-safe mode)
 - `--history`: open interactive TUI picker over timeline history (groups entries into conversation turns with checkpoint badges)
+- `--model`: model override for restarted runner (currently supported for `claude-code` only)
+- `--thinking`: thinking profile override for restarted runner (currently supported for `claude-code` only)
 - `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
 - `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
 - `--json`: machine-readable mutation envelope output

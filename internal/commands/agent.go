@@ -57,6 +57,12 @@ type AgentStartOpts struct {
 	// RunnerArgs are additional arguments to pass to the runner.
 	RunnerArgs []string
 
+	// Model selects the runner model (currently supported for Claude runner).
+	Model string
+
+	// Thinking selects the runner thinking profile (currently supported for Claude runner).
+	Thinking string
+
 	// JSON outputs as JSON.
 	JSON bool
 
@@ -77,6 +83,9 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 		return writeAgentMutationJSONError(stdout, err)
 	}
+	if fsys == nil {
+		fsys = fs.NewRealFS()
+	}
 
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
@@ -84,6 +93,10 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	if err != nil {
+		return fail(err)
+	}
 
 	// Get repo context
 	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -92,10 +105,15 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	// Validate runner
-	runner, err := resolveAgentRunner(opts.Runner)
+	runner, err := resolveAgentRunner(opts.Runner, userCfg.Defaults.Runner)
 	if err != nil {
 		return fail(err)
 	}
+	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, opts.Model, opts.Thinking, userCfg.Defaults)
+	if err != nil {
+		return fail(err)
+	}
+	opts.RunnerArgs = effectiveRunnerArgs
 
 	// For headless mode (PR-05): delegate everything to daemon control plane
 	if opts.Headless {
@@ -107,8 +125,11 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	return fail(agentStartHeadedControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr))
 }
 
-func resolveAgentRunner(input string) (string, error) {
-	runner := input
+func resolveAgentRunner(input, defaultRunner string) (string, error) {
+	runner := strings.TrimSpace(input)
+	if runner == "" {
+		runner = strings.TrimSpace(defaultRunner)
+	}
 	if runner == "" {
 		runner = runners.RunnerClaudeCode
 	}
@@ -125,6 +146,283 @@ func resolveAgentRunner(input string) (string, error) {
 		)
 	}
 	return canonicalRunner, nil
+}
+
+const (
+	claudeModelArgFlag    = "--model"
+	claudeThinkingArgFlag = "--thinking"
+)
+
+type runnerArgOccurrence struct {
+	tokens []string
+	value  string
+}
+
+type claudeRunnerArgsParse struct {
+	modelOccurrences    []runnerArgOccurrence
+	thinkingOccurrences []runnerArgOccurrence
+	otherArgs           []string
+}
+
+func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cliThinking string, defaults config.UserDefaults) ([]string, error) {
+	model := strings.TrimSpace(cliModel)
+	thinking := strings.TrimSpace(cliThinking)
+
+	canonicalRunner, err := runners.Canonicalize(runner)
+	if err != nil {
+		if model != "" || thinking != "" {
+			return nil, errors.NewWithDetails(
+				errors.EUsage,
+				"cannot apply --model/--thinking to unrecognized runner: "+runner,
+				map[string]string{
+					"runner": runner,
+					"valid":  strings.Join(runners.CanonicalIDs(), ", "),
+				},
+			)
+		}
+		return append([]string(nil), runnerArgs...), nil
+	}
+
+	if canonicalRunner != runners.RunnerClaudeCode {
+		if model != "" || thinking != "" {
+			return nil, errors.NewWithDetails(
+				errors.EUsage,
+				fmt.Sprintf("--model/--thinking are currently only supported for runner %q", runners.RunnerClaudeCode),
+				map[string]string{
+					"runner": canonicalRunner,
+					"hint":   "for other runners, pass model/thinking flags via --runner-arg",
+				},
+			)
+		}
+		return append([]string(nil), runnerArgs...), nil
+	}
+
+	if model == "" {
+		model = strings.TrimSpace(defaults.Model)
+	}
+	if thinking == "" {
+		thinking = strings.TrimSpace(defaults.Thinking)
+	}
+
+	return mergeClaudeRunnerArgs(runnerArgs, model, thinking)
+}
+
+func mergeClaudeRunnerArgs(runnerArgs []string, targetModel, targetThinking string) ([]string, error) {
+	parsed, err := parseClaudeRunnerArgs(runnerArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	existingModel, err := resolveSingleRunnerOption(claudeModelArgFlag, parsed.modelOccurrences)
+	if err != nil {
+		return nil, err
+	}
+	existingThinking, err := resolveSingleRunnerOption(claudeThinkingArgFlag, parsed.thinkingOccurrences)
+	if err != nil {
+		return nil, err
+	}
+
+	if targetModel != "" && existingModel != "" && existingModel != targetModel {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--model conflicts with value already provided via --runner-arg",
+			map[string]string{
+				"flag":       claudeModelArgFlag,
+				"from_flag":  targetModel,
+				"from_arg":   existingModel,
+				"hint":       "use one source of truth for model selection",
+				"runner_arg": claudeModelArgFlag,
+			},
+		)
+	}
+	if targetThinking != "" && existingThinking != "" && existingThinking != targetThinking {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--thinking conflicts with value already provided via --runner-arg",
+			map[string]string{
+				"flag":       claudeThinkingArgFlag,
+				"from_flag":  targetThinking,
+				"from_arg":   existingThinking,
+				"hint":       "use one source of truth for thinking selection",
+				"runner_arg": claudeThinkingArgFlag,
+			},
+		)
+	}
+
+	needsRebuild := targetModel != "" || targetThinking != ""
+	if !needsRebuild {
+		return append([]string(nil), runnerArgs...), nil
+	}
+
+	out := append([]string(nil), parsed.otherArgs...)
+	switch {
+	case targetModel != "":
+		out = append(out, claudeModelArgFlag, targetModel)
+	case len(parsed.modelOccurrences) == 1:
+		out = append(out, parsed.modelOccurrences[0].tokens...)
+	}
+	switch {
+	case targetThinking != "":
+		out = append(out, claudeThinkingArgFlag, targetThinking)
+	case len(parsed.thinkingOccurrences) == 1:
+		out = append(out, parsed.thinkingOccurrences[0].tokens...)
+	}
+	return out, nil
+}
+
+func resolveSingleRunnerOption(flag string, occurrences []runnerArgOccurrence) (string, error) {
+	if len(occurrences) == 0 {
+		return "", nil
+	}
+
+	value := occurrences[0].value
+	if len(occurrences) == 1 {
+		return value, nil
+	}
+
+	for _, occurrence := range occurrences[1:] {
+		if occurrence.value != value {
+			return "", errors.NewWithDetails(
+				errors.EUsage,
+				fmt.Sprintf("conflicting %s values passed via --runner-arg", flag),
+				map[string]string{
+					"flag": flag,
+					"hint": "pass this option only once",
+				},
+			)
+		}
+	}
+
+	return "", errors.NewWithDetails(
+		errors.EUsage,
+		fmt.Sprintf("duplicate %s passed via --runner-arg", flag),
+		map[string]string{
+			"flag": flag,
+			"hint": "pass this option only once",
+		},
+	)
+}
+
+func parseClaudeRunnerArgs(args []string) (claudeRunnerArgsParse, error) {
+	parsed := claudeRunnerArgsParse{
+		otherArgs: make([]string, 0, len(args)),
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			parsed.otherArgs = append(parsed.otherArgs, args[i:]...)
+			break
+		}
+
+		switch {
+		case arg == claudeModelArgFlag:
+			if i+1 >= len(args) {
+				return claudeRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					claudeModelArgFlag+" in --runner-arg requires a value",
+					map[string]string{
+						"flag": claudeModelArgFlag,
+						"hint": "pass --runner-arg \"--model=<value>\" or --runner-arg \"--model\" --runner-arg \"<value>\"",
+					},
+				)
+			}
+			value := strings.TrimSpace(args[i+1])
+			if value == "" {
+				return claudeRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					claudeModelArgFlag+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": claudeModelArgFlag,
+					},
+				)
+			}
+			parsed.modelOccurrences = append(parsed.modelOccurrences, runnerArgOccurrence{
+				tokens: []string{arg, args[i+1]},
+				value:  value,
+			})
+			i++
+
+		case strings.HasPrefix(arg, claudeModelArgFlag+"="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, claudeModelArgFlag+"="))
+			if value == "" {
+				return claudeRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					claudeModelArgFlag+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": claudeModelArgFlag,
+					},
+				)
+			}
+			parsed.modelOccurrences = append(parsed.modelOccurrences, runnerArgOccurrence{
+				tokens: []string{arg},
+				value:  value,
+			})
+
+		case arg == claudeThinkingArgFlag:
+			if i+1 >= len(args) {
+				return claudeRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					claudeThinkingArgFlag+" in --runner-arg requires a value",
+					map[string]string{
+						"flag": claudeThinkingArgFlag,
+						"hint": "pass --runner-arg \"--thinking=<value>\" or --runner-arg \"--thinking\" --runner-arg \"<value>\"",
+					},
+				)
+			}
+			value := strings.TrimSpace(args[i+1])
+			if value == "" {
+				return claudeRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					claudeThinkingArgFlag+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": claudeThinkingArgFlag,
+					},
+				)
+			}
+			parsed.thinkingOccurrences = append(parsed.thinkingOccurrences, runnerArgOccurrence{
+				tokens: []string{arg, args[i+1]},
+				value:  value,
+			})
+			i++
+
+		case strings.HasPrefix(arg, claudeThinkingArgFlag+"="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, claudeThinkingArgFlag+"="))
+			if value == "" {
+				return claudeRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					claudeThinkingArgFlag+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": claudeThinkingArgFlag,
+					},
+				)
+			}
+			parsed.thinkingOccurrences = append(parsed.thinkingOccurrences, runnerArgOccurrence{
+				tokens: []string{arg},
+				value:  value,
+			})
+
+		default:
+			parsed.otherArgs = append(parsed.otherArgs, arg)
+		}
+	}
+
+	return parsed, nil
+}
+
+func hasClaudeOptionRunnerArgs(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == claudeModelArgFlag || arg == claudeThinkingArgFlag {
+			return true
+		}
+		if strings.HasPrefix(arg, claudeModelArgFlag+"=") || strings.HasPrefix(arg, claudeThinkingArgFlag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 type agentMutationEnvelope struct {
@@ -1880,16 +2178,14 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	var dataDir string
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dataDir := dirs.DataDir
 	if opts.DataDirOverride != "" {
 		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
 	}
 
 	st := store.NewStore(fsys, dataDir, time.Now)
@@ -1975,6 +2271,12 @@ type AgentRestartOpts struct {
 	// RunnerArgs are additional arguments for restarted runner execution.
 	RunnerArgs []string
 
+	// Model selects the runner model for restart (currently supported for Claude runner).
+	Model string
+
+	// Thinking selects the runner thinking profile for restart (currently supported for Claude runner).
+	Thinking string
+
 	// Env are explicit environment overrides for restarted runner execution.
 	Env map[string]string
 
@@ -2010,6 +2312,9 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		}
 		return writeAgentMutationJSONError(stdout, err)
 	}
+	if fsys == nil {
+		fsys = fs.NewRealFS()
+	}
 
 	if opts.CheckpointID < 0 {
 		return fail(errors.New(errors.EUsage, "--checkpoint must be a positive integer"))
@@ -2036,16 +2341,18 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		}
 	}
 
-	var dataDir string
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dataDir := dirs.DataDir
 	if opts.DataDirOverride != "" {
 		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
+	}
+	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	if err != nil {
+		return fail(err)
 	}
 
 	st := store.NewStore(fsys, dataDir, time.Now)
@@ -2067,6 +2374,28 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	})
 	if err != nil {
 		return fail(err)
+	}
+	effectiveRunnerArgs := append([]string(nil), opts.RunnerArgs...)
+	needsRunnerOptionResolution := strings.TrimSpace(opts.Model) != "" ||
+		strings.TrimSpace(opts.Thinking) != "" ||
+		strings.TrimSpace(userCfg.Defaults.Model) != "" ||
+		strings.TrimSpace(userCfg.Defaults.Thinking) != "" ||
+		hasClaudeOptionRunnerArgs(opts.RunnerArgs)
+	if needsRunnerOptionResolution {
+		invocationResult, err := client.GetInvocationRich(ctx, opts.InvocationRef, repoCtx.RepoID)
+		if err != nil {
+			return fail(err)
+		}
+		effectiveRunnerArgs, err = resolveEffectiveRunnerArgs(
+			invocationResult.Invocation.Runner,
+			opts.RunnerArgs,
+			opts.Model,
+			opts.Thinking,
+			userCfg.Defaults,
+		)
+		if err != nil {
+			return fail(err)
+		}
 	}
 
 	if opts.InteractiveHistory {
@@ -2136,7 +2465,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	resp, err := client.RestartFromCheckpoint(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.RestartFromCheckpointOpts{
 		CheckpointID: opts.CheckpointID,
-		RunnerArgs:   opts.RunnerArgs,
+		RunnerArgs:   effectiveRunnerArgs,
 		Env:          opts.Env,
 	})
 	if err != nil {
