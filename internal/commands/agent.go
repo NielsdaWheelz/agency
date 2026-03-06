@@ -2569,6 +2569,10 @@ type AgentHistoryOpts struct {
 	// JSON outputs as JSON.
 	JSON bool
 
+	// Last requests only the chronologically last timeline entry.
+	// Mutually exclusive with Cursor.
+	Last bool
+
 	// Limit controls page size (must be in [1, 500]).
 	Limit int
 
@@ -2581,6 +2585,10 @@ type AgentHistoryOpts struct {
 
 // AgentHistory reads the unified invocation timeline via daemon read API.
 func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentHistoryOpts, stdout, stderr io.Writer) error {
+	if opts.Last && opts.Cursor != "" {
+		return errors.New(errors.EInvalidArgument, "--last cannot be used with --cursor")
+	}
+
 	if opts.Limit < 1 || opts.Limit > 500 {
 		return errors.NewWithDetails(
 			errors.EInvalidArgument,
@@ -2627,10 +2635,15 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	result, err := client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
+	timelineOpts := daemonclient.GetInvocationTimelineOpts{
 		Limit:  opts.Limit,
 		Cursor: opts.Cursor,
-	})
+	}
+	if opts.Last {
+		timelineOpts.Order = "desc"
+		timelineOpts.Limit = 1
+	}
+	result, err := client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, timelineOpts)
 	if err != nil {
 		return err
 	}

@@ -896,13 +896,14 @@ for runners with semantic adapters (claude, codex), the default output is a styl
 
 **usage:**
 ```bash
-agency agent history <invocation_ref> [--repo <name|id|prefix>] [--limit <n>] [--cursor <opaque>] [--json]
+agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limit <n>] [--cursor <opaque>] [--json]
 ```
 
 **arguments:**
 - `invocation_ref`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
+- `--last`: show only the most recent timeline entry (mutually exclusive with `--cursor`)
 - `--limit`: maximum entries returned per page (default: 100, required range: 1..500)
 - `--cursor`: opaque continuation cursor from prior response
 - `--json`: machine-readable output (includes full `content_blocks` in message entries)
@@ -924,6 +925,7 @@ agency agent history <invocation_ref> [--repo <name|id|prefix>] [--limit <n>] [-
 - deterministic keyset cursoring (no offset drift)
 - incremental continuation is stable across pages (no duplicate/skip drift)
 - invalid `--limit` values fail closed with `E_INVALID_ARGUMENT` (no silent coercion)
+- `--last` uses server-side reverse ordering (`order=desc`) with `limit=1`; cursor pagination is not supported with `--last`
 
 ### `agency agent logs`
 

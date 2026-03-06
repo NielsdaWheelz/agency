@@ -1384,6 +1384,7 @@ func (c *Client) GetInvocationLogsOffset(ctx context.Context, ref string, repoID
 type GetInvocationTimelineOpts struct {
 	Limit  int    // default 100, max 500
 	Cursor string // opaque pagination cursor
+	Order  string // "asc" (default) or "desc"
 }
 
 // GetInvocationTimelineResult wraps the timeline response.
@@ -1404,6 +1405,9 @@ func (c *Client) GetInvocationTimeline(ctx context.Context, ref string, repoID s
 	}
 	if opts.Cursor != "" {
 		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
+	}
+	if opts.Order != "" {
+		u += "order=" + url.QueryEscape(opts.Order) + "&"
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 

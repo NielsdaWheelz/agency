@@ -172,3 +172,55 @@ func TestDaemonClient_ReadAPIErrorPassthrough_NoDetails(t *testing.T) {
 	assert.Empty(t, dre.Hint)
 	assert.Nil(t, dre.Candidates())
 }
+
+func TestDaemonClient_GetInvocationTimeline_OrderParamSentInURL(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.String()
+		resp := daemon.APIResponse{
+			OK:   true,
+			Data: daemon.InvocationTimelineData{Entries: []daemon.TimelineEntryDTO{}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	socketPath := startFakeDaemon(t, handler)
+	client := NewClient(socketPath)
+
+	_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", GetInvocationTimelineOpts{
+		Limit: 1,
+		Order: "desc",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedPath, "order=desc", "Order param must be sent in URL")
+	assert.Contains(t, capturedPath, "limit=1")
+}
+
+func TestDaemonClient_GetInvocationTimeline_OrderOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.String()
+		resp := daemon.APIResponse{
+			OK:   true,
+			Data: daemon.InvocationTimelineData{Entries: []daemon.TimelineEntryDTO{}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	socketPath := startFakeDaemon(t, handler)
+	client := NewClient(socketPath)
+
+	_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", GetInvocationTimelineOpts{
+		Limit: 10,
+	})
+	require.NoError(t, err)
+
+	assert.NotContains(t, capturedPath, "order=", "Order param must not be sent when empty")
+}

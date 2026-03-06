@@ -107,7 +107,7 @@ HTTP/1.1 over Unix socket.
 - `GET /invocations/{ref}` — resolve invocation by name/id/prefix
 - `GET /invocations/{ref}/diff` — structured diff with commits
 - `GET /invocations/{ref}/logs` — log reads (offset/tail) with strict bound validation (`tail_bytes` in `1..1048576`)
-- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt seed/messages/tool-use/follow-up prompts/raw coverage + lifecycle events) with stable cursor pagination
+- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt seed/messages/tool-use/follow-up prompts/raw coverage + lifecycle events) with stable cursor pagination; supports `order=desc` for reverse chronological reads
 - `GET /invocations/{ref}/checkpoints` — checkpoint list
 
 ### invocation flow (headed)

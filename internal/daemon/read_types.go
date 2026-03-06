@@ -370,6 +370,7 @@ type TimelineCursor struct {
 type GetTimelineParams struct {
 	Limit  int    // default 100, max 500
 	Cursor string // opaque pagination cursor
+	Order  string // "asc" (default) or "desc"
 }
 
 // ----- S1 Release Gate DTOs (PR-05) -----

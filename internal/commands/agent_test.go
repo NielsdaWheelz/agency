@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -1495,6 +1496,69 @@ func TestAgentHistory_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
 		InvocationRef:   invocationID,
 		Limit:           0,
 		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last")
+	invocationID := "20260131180000-last"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+
+	// Write 5 stream messages.
+	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	var lines []string
+	for i := 1; i <= 5; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"schema_version":"1.0","seq":%d,"timestamp":"2026-02-05T11:50:%02dZ","invocation_id":"%s","runner":"claude","kind":"message","data":{"role":"assistant","text":"msg-%d"}}`,
+			i, 10+i, invocationID, i))
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Last:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var payload struct {
+		Entries []struct {
+			EntryID string                 `json:"entry_id"`
+			Kind    string                 `json:"kind"`
+			Data    map[string]interface{} `json:"data"`
+		} `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	require.Len(t, payload.Entries, 1, "--last must return exactly one entry")
+	assert.Equal(t, "stream:5", payload.Entries[0].EntryID, "--last must return the chronologically last entry")
+	assert.Equal(t, "msg-5", payload.Entries[0].Data["text"], "--last must return the last message content")
+}
+
+func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), nil, nil, "/tmp", AgentHistoryOpts{
+		InvocationRef: "some-inv",
+		Last:          true,
+		Cursor:        "some-cursor",
+		Limit:         100,
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
