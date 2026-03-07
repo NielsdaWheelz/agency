@@ -351,7 +351,12 @@ func TestFormatVerifyOutput_TimedOut_ReturnsEScriptTimeout(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EScriptTimeout, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "verify timed out")
-	assert.Contains(t, stderr.String(), "E_SCRIPT_TIMEOUT")
+	// Error details should be carried in the error, not printed to stderr
+	assert.Empty(t, stderr.String(), "errors must not be printed to stderr; main.go handles error printing")
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Contains(t, ae.Details["log"], "verify.log")
+	assert.Contains(t, ae.Details["record"], "verify_record.json")
 }
 
 // --- EScriptFailed (companion test for completeness) ---
@@ -373,7 +378,12 @@ func TestFormatVerifyOutput_ScriptFailed_ReturnsEScriptFailed(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EScriptFailed, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "verify failed")
-	assert.Contains(t, stderr.String(), "E_SCRIPT_FAILED")
+	// Error details should be carried in the error, not printed to stderr
+	assert.Empty(t, stderr.String(), "errors must not be printed to stderr; main.go handles error printing")
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Contains(t, ae.Details["log"], "verify.log")
+	assert.Contains(t, ae.Details["record"], "verify_record.json")
 }
 
 // --- EInvalidRepoPath via ResolveRunContext (runresolver.go) ---

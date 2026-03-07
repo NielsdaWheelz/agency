@@ -53,7 +53,8 @@ func TestWatchLoop_ErrorStopsLoop(t *testing.T) {
 	err := watchLoop(context.Background(), &stdout, &stderr, 10*time.Millisecond, func(d time.Duration) {}, 0, fetchAndRender)
 	require.Error(t, err)
 	assert.Equal(t, 2, calls)
-	assert.Contains(t, stderr.String(), "simulated error")
+	assert.Contains(t, err.Error(), "simulated error")
+	assert.Empty(t, stderr.String(), "errors must not be printed to stderr; main.go handles error printing")
 }
 
 func TestWatchLoop_ContextCancellation(t *testing.T) {
