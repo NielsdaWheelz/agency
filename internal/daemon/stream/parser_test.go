@@ -282,6 +282,44 @@ func TestCodexAdapter_ContentBlocks_AgentMessage(t *testing.T) {
 	assert.Equal(t, "Done!", blocks[0]["text"])
 }
 
+func TestCursorAdapter_ParseLine_ToolCallCompleted(t *testing.T) {
+	t.Parallel()
+	adapter := &CursorAdapter{}
+
+	input := `{"type":"tool_call","subtype":"completed","tool_call":{"editToolCall":{"target_file":"main.go"},"exitCode":0}}`
+
+	result, err := adapter.ParseLine([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+	require.NotNil(t, result.SemanticStatus)
+
+	ev := result.Events[0]
+	assert.Equal(t, EventKindToolEnd, ev.Kind)
+	assert.Equal(t, "Edit", ev.Data["name"])
+	assert.Equal(t, "main.go", ev.Data["command"])
+	assert.Equal(t, 0, ev.Data["exit_code"])
+	assert.Equal(t, runnerstatus.StatusWorking, *result.SemanticStatus)
+}
+
+func TestCursorAdapter_ParseLine_ToolCallCompleted_DeterministicKeyPriority(t *testing.T) {
+	t.Parallel()
+	adapter := &CursorAdapter{}
+
+	// Intentionally include multiple nested tool payloads to ensure stable
+	// canonical selection order across runs.
+	input := `{"type":"tool_call","subtype":"completed","tool_call":{"bashToolCall":{"command":"echo hi","exitCode":0},"editToolCall":{"target_file":"main.go","exitCode":0}}}`
+
+	result, err := adapter.ParseLine([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+
+	ev := result.Events[0]
+	assert.Equal(t, EventKindToolEnd, ev.Kind)
+	assert.Equal(t, "Bash", ev.Data["name"])
+	assert.Equal(t, "echo hi", ev.Data["command"])
+	assert.Equal(t, 0, ev.Data["exit_code"])
+}
+
 func TestParser_StreamAndParse_ClaudeFixture(t *testing.T) {
 	t.Parallel()
 	// Read fixture
@@ -378,6 +416,68 @@ func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
 	finalStatus := parser.GetSemanticStatus()
 	require.NotNil(t, finalStatus, "Final semantic status is nil")
 	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
+}
+
+func TestParser_StreamAndParse_CodexMutatingFixture_EmitsCheckpointNotification(t *testing.T) {
+	t.Parallel()
+
+	fixturePath := filepath.Join("testdata", "codex_mutating_stream.jsonl")
+	fixtureData, err := os.ReadFile(fixturePath)
+	require.NoError(t, err, "Failed to read fixture")
+
+	var notifications []CheckpointNotification
+	parser := NewParser("test-inv-codex-mut-fixture", "codex", fixedClock)
+	parser.SetCheckpointNotify(func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-codex-mut-fixture-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-codex-mut-fixture-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	err = parser.StreamAndParse(bytes.NewReader(fixtureData), rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, notifications, "mutating codex fixture should emit checkpoint notification")
+	assert.Equal(t, "Bash", notifications[0].ToolName)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
+}
+
+func TestParser_StreamAndParse_CursorToolCallFixture_EmitsCheckpointNotification(t *testing.T) {
+	t.Parallel()
+
+	fixturePath := filepath.Join("testdata", "cursor_tool_call_stream.jsonl")
+	fixtureData, err := os.ReadFile(fixturePath)
+	require.NoError(t, err, "Failed to read fixture")
+
+	var notifications []CheckpointNotification
+	parser := NewParser("test-inv-cursor-mut-fixture", "cursor", fixedClock)
+	parser.SetCheckpointNotify(func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-cursor-mut-fixture-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-cursor-mut-fixture-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	err = parser.StreamAndParse(bytes.NewReader(fixtureData), rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, notifications, "cursor tool_call fixture should emit checkpoint notification")
+	assert.Equal(t, "Bash", notifications[0].ToolName)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
 }
 
 func TestParser_StreamAndParse_MalformedMidStream(t *testing.T) {
@@ -808,6 +908,72 @@ func TestParser_CheckpointNotify_NilNotifyFn(t *testing.T) {
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
 	require.NoError(t, err)
 	// No panic = success
+}
+
+func TestParser_CheckpointNotify_CodexMutatingCommand_TriggersNotification(t *testing.T) {
+	t.Parallel()
+
+	var notifications []CheckpointNotification
+	parser := NewParser("test-inv-codex-checkpoint", "codex", fixedClock)
+	parser.SetCheckpointNotify(func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-codex-checkpoint-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-codex-checkpoint-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	input := strings.Join([]string{
+		`{"type":"item.started","item":{"type":"command_execution","command":"printf 'hello' > test-codex.txt"}}`,
+		`{"type":"item.completed","item":{"type":"command_execution","command":"printf 'hello' > test-codex.txt","exit_code":0}}`,
+		`{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"done"}]}}`,
+	}, "\n") + "\n"
+
+	err = parser.StreamAndParse(strings.NewReader(input), rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, notifications, "mutating codex command should emit checkpoint notification")
+	assert.Equal(t, "Bash", notifications[0].ToolName)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
+}
+
+func TestParser_CheckpointNotify_CursorMutatingToolCall_TriggersNotification(t *testing.T) {
+	t.Parallel()
+
+	var notifications []CheckpointNotification
+	parser := NewParser("test-inv-cursor-checkpoint", "cursor", fixedClock)
+	parser.SetCheckpointNotify(func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-cursor-checkpoint-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-cursor-checkpoint-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"writing file"}]}}`,
+		`{"type":"tool_call","subtype":"completed","tool_call":{"bashToolCall":{"command":"printf 'hello' > test-cursor.txt","exitCode":0}}}`,
+		`{"type":"result","subtype":"success"}`,
+	}, "\n") + "\n"
+
+	err = parser.StreamAndParse(strings.NewReader(input), rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, notifications, "mutating cursor tool call should emit checkpoint notification")
+	assert.Equal(t, "Bash", notifications[0].ToolName)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
 }
 
 func TestParser_SessionStartNotify_ExtractsResumeSessionID(t *testing.T) {

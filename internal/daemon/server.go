@@ -616,7 +616,7 @@ func (s *Server) writeErrorWithRequestID(w http.ResponseWriter, status int, requ
 
 // flushLastOutputAt writes the last_output_at to meta.json.
 func (s *Server) flushLastOutputAt(proc *SupervisedProcess) {
-	lastOutput := time.Unix(0, proc.lastOutputAt.Load())
+	lastOutput := time.Unix(0, s.latestOutputAtUnixNano(proc))
 	if lastOutput.IsZero() {
 		return
 	}
@@ -624,6 +624,19 @@ func (s *Server) flushLastOutputAt(proc *SupervisedProcess) {
 	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
 		meta.LastOutputAt = lastOutput.UTC().Format(time.RFC3339)
 	})
+}
+
+func (s *Server) latestOutputAtUnixNano(proc *SupervisedProcess) int64 {
+	if proc == nil {
+		return 0
+	}
+	lastOutput := proc.lastOutputAt.Load()
+	if proc.Parser != nil {
+		if parserLastOutput := proc.Parser.GetLastOutputAt(); parserLastOutput > lastOutput {
+			lastOutput = parserLastOutput
+		}
+	}
+	return lastOutput
 }
 
 // runRecoveryScan checks for orphaned invocations on daemon startup.

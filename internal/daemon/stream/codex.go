@@ -125,6 +125,7 @@ func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) ([]*NormalizedEvent
 		Kind: EventKindToolStart,
 		Data: make(map[string]interface{}),
 	}
+	event.Data["name"] = "Bash"
 
 	if raw.Item.Command != "" {
 		event.Data["command"] = raw.Item.Command
@@ -141,6 +142,7 @@ func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, 
 		Kind: EventKindToolEnd,
 		Data: make(map[string]interface{}),
 	}
+	event.Data["name"] = "Bash"
 
 	if raw.Item.Command != "" {
 		event.Data["command"] = raw.Item.Command

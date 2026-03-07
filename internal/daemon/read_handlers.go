@@ -544,7 +544,19 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 	checkpointsDir := s.Store.SandboxDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil {
-		// Return empty list if no checkpoints
+		if os.IsNotExist(err) {
+			// Return empty list if no checkpoints
+			s.writeAPIResponse(w, requestID, ListCheckpointsData{
+				Checkpoints: []CheckpointDTO{},
+				NextCursor:  "",
+			})
+			return
+		}
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		return
+	}
+
+	if cpFile == nil {
 		s.writeAPIResponse(w, requestID, ListCheckpointsData{
 			Checkpoints: []CheckpointDTO{},
 			NextCursor:  "",
@@ -557,16 +569,19 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 	for i := len(cpFile.Checkpoints) - 1; i >= 0; i-- {
 		cp := cpFile.Checkpoints[i]
 		allCheckpoints = append(allCheckpoints, CheckpointDTO{
-			ID:                cp.ID,
-			CreatedAt:         cp.CreatedAt,
-			Diffstat:          cp.Diffstat,
-			SnapshotCommit:    cp.SnapshotCommit,
-			IncludesUntracked: cp.IncludesUntracked,
-			Degraded:          !cp.IncludesUntracked,
-			Trigger:           cp.Trigger,
-			ToolName:          cp.ToolName,
-			StreamSeq:         cp.StreamSeq,
-			Description:       cp.Description,
+			ID:                   cp.ID,
+			CreatedAt:            cp.CreatedAt,
+			Diffstat:             cp.Diffstat,
+			SnapshotCommit:       cp.SnapshotCommit,
+			IncludesUntracked:    cp.IncludesUntracked,
+			Degraded:             !cp.IncludesUntracked,
+			Trigger:              cp.Trigger,
+			ToolName:             cp.ToolName,
+			StreamSeq:            cp.StreamSeq,
+			Description:          cp.Description,
+			ChangedPaths:         cp.ChangedPaths,
+			ChangedPathCount:     cp.ChangedPathCount,
+			ChangedPathTruncated: cp.ChangedPathTruncated,
 		})
 	}
 

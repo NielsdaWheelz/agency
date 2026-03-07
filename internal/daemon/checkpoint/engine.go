@@ -51,6 +51,8 @@ type Engine struct {
 	doneOnce sync.Once
 }
 
+const maxChangedPathsPreview = 20
+
 // NewEngine creates a new checkpoint engine for the given sandbox.
 func NewEngine(
 	invocationID, repoID, sandboxPath, repoRoot, checkpointsDir, eventsPath string,
@@ -610,20 +612,37 @@ func (e *Engine) createCheckpointWithMetadata(ctx context.Context, trigger *Trig
 		return fmt.Errorf("git update-ref failed: %s", updateRefResult.Stderr)
 	}
 
-	// 10. Compute diffstat
-	diffstat := e.computeDiffstat(ctx, sandboxHeadSHA, snapshotCommit)
+	// 10. Compute human-readable delta metadata using a deterministic base.
+	// First checkpoint is relative to sandbox HEAD; subsequent checkpoints are
+	// relative to the previous snapshot to provide interval-accurate context.
+	diffBaseCommit := sandboxHeadSHA
+	if n := len(cpFile.Checkpoints); n > 0 {
+		if prev := strings.TrimSpace(cpFile.Checkpoints[n-1].SnapshotCommit); prev != "" {
+			diffBaseCommit = prev
+		}
+	}
+	diffstat := e.computeDiffstat(ctx, diffBaseCommit, snapshotCommit)
+	changedPaths, changedPathCount, changedPathTruncated := e.computeChangedPaths(
+		ctx,
+		diffBaseCommit,
+		snapshotCommit,
+		maxChangedPathsPreview,
+	)
 
 	// 11. Add checkpoint to file with optional semantic metadata
 	now := e.clock()
 	cp := Checkpoint{
-		ID:                checkpointID,
-		SnapshotRef:       snapshotRef,
-		SnapshotCommit:    snapshotCommit,
-		SandboxHeadSHA:    sandboxHeadSHA,
-		CreatedAt:         now.UTC().Format(time.RFC3339),
-		IncludesUntracked: includeUntracked,
-		Diffstat:          diffstat,
-		TreeSHA:           treeHash,
+		ID:                   checkpointID,
+		SnapshotRef:          snapshotRef,
+		SnapshotCommit:       snapshotCommit,
+		SandboxHeadSHA:       sandboxHeadSHA,
+		CreatedAt:            now.UTC().Format(time.RFC3339),
+		IncludesUntracked:    includeUntracked,
+		Diffstat:             diffstat,
+		TreeSHA:              treeHash,
+		ChangedPaths:         changedPaths,
+		ChangedPathCount:     changedPathCount,
+		ChangedPathTruncated: changedPathTruncated,
 	}
 	if trigger != nil {
 		cp.Trigger = trigger.Kind
@@ -772,6 +791,66 @@ func (e *Engine) computeDiffstat(ctx context.Context, base, commit string) strin
 	}
 
 	return fmt.Sprintf("+%s -%s in %s files", insertions, deletions, files)
+}
+
+func (e *Engine) computeChangedPaths(ctx context.Context, base, commit string, maxPaths int) ([]string, int, bool) {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(commit) == "" || maxPaths <= 0 {
+		return nil, 0, false
+	}
+
+	result, err := e.runner.Run(ctx, "git", []string{
+		"-C", e.sandboxPath,
+		"diff", "--name-status", "--find-renames", base + ".." + commit,
+	}, exec.RunOpts{})
+	if err != nil || result.ExitCode != 0 {
+		return nil, 0, false
+	}
+
+	trimmed := strings.TrimSpace(result.Stdout)
+	if trimmed == "" {
+		return nil, 0, false
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	seen := make(map[string]struct{}, len(lines))
+	paths := make([]string, 0, maxPaths)
+	total := 0
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		status := fields[0]
+		path := ""
+		if strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C") {
+			if len(fields) >= 3 {
+				path = strings.TrimSpace(fields[2])
+			}
+		} else {
+			path = strings.TrimSpace(fields[1])
+		}
+		if path == "" {
+			continue
+		}
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		total++
+		if len(paths) < maxPaths {
+			paths = append(paths, path)
+		}
+	}
+
+	if total == 0 {
+		return nil, 0, false
+	}
+	return paths, total, total > len(paths)
 }
 
 // pruneCheckpoints removes the oldest checkpoints to stay under MaxCheckpoints.

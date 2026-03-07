@@ -385,6 +385,19 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 		return
 	}
 
+	if event.Kind == EventKindToolEnd {
+		toolName := checkpointToolNameFromEvent(event.Data)
+		if toolName == "" || !MutatingStreamTools[toolName] {
+			return
+		}
+		notifyFn(CheckpointNotification{
+			ToolName:  toolName,
+			ToolNames: []string{toolName},
+			Seq:       event.Seq,
+		})
+		return
+	}
+
 	if event.Kind == EventKindMessage {
 		role, _ := event.Data["role"].(string)
 		hasToolUse, _ := event.Data["has_tool_use"].(bool)
@@ -424,6 +437,26 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 			}
 		}
 	}
+}
+
+func checkpointToolNameFromEvent(data map[string]interface{}) string {
+	if data == nil {
+		return ""
+	}
+	if name, ok := data["name"].(string); ok {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			return name
+		}
+	}
+	if command, ok := data["command"].(string); ok {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			// command-based tool execution events are shell calls.
+			return "Bash"
+		}
+	}
+	return ""
 }
 
 func (p *Parser) maybeNotifySessionStart(event *NormalizedEvent) {

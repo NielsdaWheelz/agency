@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thread_mutating_001"}
+{"type":"item.started","item":{"type":"command_execution","command":"printf 'hello codex' > test-codex.txt"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"printf 'hello codex' > test-codex.txt","exit_code":0}}
+{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Wrote test-codex.txt"}]}}
+{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":7}}

@@ -787,7 +787,7 @@ func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
 		select {
 		case <-proc.done:
 			// Final flush
-			if proc.lastOutputAt.Load() > lastFlushed {
+			if current := s.latestOutputAtUnixNano(proc); current > lastFlushed {
 				s.flushLastOutputAt(proc)
 			}
 			return
@@ -795,7 +795,7 @@ func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
 			return
 		case <-ticker.C:
 			// Only flush if there's new output
-			if current := proc.lastOutputAt.Load(); current > lastFlushed {
+			if current := s.latestOutputAtUnixNano(proc); current > lastFlushed {
 				s.flushLastOutputAt(proc)
 				lastFlushed = current
 			}
@@ -1444,16 +1444,32 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	triggerCh := make(chan checkpoint.TriggerEvent, 32)
 	cpEngine.SetTriggerChannel(triggerCh)
 	parser.SetCheckpointNotify(func(n stream.CheckpointNotification) {
-		select {
-		case triggerCh <- checkpoint.TriggerEvent{
+		trigger := checkpoint.TriggerEvent{
 			Kind:      checkpoint.TriggerToolEnd,
 			ToolName:  n.ToolName,
 			ToolNames: n.ToolNames,
 			Seq:       n.Seq,
-		}:
+		}
+		select {
+		case triggerCh <- trigger:
+			return
 		default:
-			// Channel full — drop trigger rather than blocking stream parser.
-			// Drift checkpoint will catch up.
+		}
+
+		timer := time.NewTimer(250 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case triggerCh <- trigger:
+		case <-timer.C:
+			// Do not silently lose semantic checkpoint intent; emit a warning so
+			// operators can diagnose backpressure and tune queue sizing.
+			fmt.Fprintf(
+				os.Stderr,
+				"warning: checkpoint trigger queue full; dropped semantic trigger invocation=%s seq=%d tool=%s\n",
+				result.InvocationID,
+				n.Seq,
+				n.ToolName,
+			)
 		}
 	})
 

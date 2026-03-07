@@ -160,6 +160,36 @@ func main() {
 		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
 		os.Exit(0)
 
+	case "codex-mutate-then-exit-ok":
+		sleepDuration := 350 * time.Millisecond
+		if raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SLEEP_MS")); raw != "" {
+			if ms, err := strconv.Atoi(raw); err == nil && ms >= 0 {
+				sleepDuration = time.Duration(ms) * time.Millisecond
+			}
+		}
+		threadID := strings.TrimSpace(os.Getenv("FAKE_RUNNER_THREAD_ID"))
+		if threadID == "" {
+			threadID = "thread_fake_mutation"
+		}
+		targetFile := strings.TrimSpace(os.Getenv("FAKE_RUNNER_MUTATION_FILE"))
+		if targetFile == "" {
+			targetFile = "codex-mutated.txt"
+		}
+		payload := []byte("codex semantic mutation\n")
+		if err := os.WriteFile(targetFile, payload, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to write mutation file:", err)
+			os.Exit(2)
+		}
+		command := fmt.Sprintf("printf %q > %s", strings.TrimSpace(string(payload)), targetFile)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"thread.started\",\"thread_id\":%q}\n", threadID)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"item.started\",\"item\":{\"type\":\"command_execution\",\"command\":%q}}\n", command)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"command\":%q,\"exit_code\":0}}\n", command)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n", "Wrote "+targetFile)
+		time.Sleep(sleepDuration)
+		fmt.Fprintln(os.Stdout, `{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":2}}`)
+		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
+		os.Exit(0)
+
 	case "cursor-session-sleep-then-exit-ok":
 		sleepDuration := 1200 * time.Millisecond
 		if raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SLEEP_MS")); raw != "" {
@@ -173,6 +203,36 @@ func main() {
 		}
 		fmt.Fprintf(os.Stdout, "{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/sandbox\",\"model\":\"cursor-agent-test\",\"session_id\":%q}\n", sessionID)
 		time.Sleep(sleepDuration)
+		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
+		os.Exit(0)
+
+	case "cursor-mutate-toolcall-then-exit-ok":
+		sleepDuration := 350 * time.Millisecond
+		if raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SLEEP_MS")); raw != "" {
+			if ms, err := strconv.Atoi(raw); err == nil && ms >= 0 {
+				sleepDuration = time.Duration(ms) * time.Millisecond
+			}
+		}
+		sessionID := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SESSION_ID"))
+		if sessionID == "" {
+			sessionID = "sess_fake_mutation"
+		}
+		targetFile := strings.TrimSpace(os.Getenv("FAKE_RUNNER_MUTATION_FILE"))
+		if targetFile == "" {
+			targetFile = "cursor-mutated.txt"
+		}
+		payload := []byte("cursor semantic mutation\n")
+		if err := os.WriteFile(targetFile, payload, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to write mutation file:", err)
+			os.Exit(2)
+		}
+		command := fmt.Sprintf("printf %q > %s", strings.TrimSpace(string(payload)), targetFile)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/sandbox\",\"model\":\"cursor-agent-test\",\"session_id\":%q}\n", sessionID)
+		fmt.Fprintln(os.Stdout, `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Applying mutation"}]}}`)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"tool_call\",\"subtype\":\"started\",\"tool_call\":{\"bashToolCall\":{\"command\":%q}}}\n", command)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"tool_call\",\"subtype\":\"completed\",\"tool_call\":{\"bashToolCall\":{\"command\":%q,\"exitCode\":0}}}\n", command)
+		time.Sleep(sleepDuration)
+		fmt.Fprintln(os.Stdout, `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`)
 		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
 		os.Exit(0)
 
