@@ -197,6 +197,21 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	}
 	req.Runner = canonicalRunner
 
+	// Validation Gate 7: headless reserved runner args are rejected.
+	if err := validateHeadlessRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
+		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.ERunnerArgConflict
+		}
+		hint := "remove reserved flags from runner_args"
+		if code == errors.ERunnerNotFound {
+			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+		}
+		writeErr(http.StatusBadRequest, string(code), err.Error(), hint)
+		return
+	}
+
 	// Load user config for runner resolution
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
@@ -315,6 +330,20 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to start runner: "+err.Error(), "")
 		return
 	}
+	if err := sendInitialPromptIfRequired(req.Runner, req.Prompt, chatRelay); err != nil {
+		if chatRelay != nil {
+			_ = chatRelay.Close()
+		}
+		if startedProc.PGID > 0 {
+			_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
+		}
+		_ = rawFile.Close()
+		_ = stderrFile.Close()
+		_ = streamFile.Close()
+		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
+		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to deliver initial prompt: "+err.Error(), "")
+		return
+	}
 
 	stdoutPipe := startedProc.StdoutPipe
 	stderrPipe := startedProc.StderrPipe
@@ -329,18 +358,26 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 
 	// Create supervised process record
 	proc := &SupervisedProcess{
-		InvocationID:  req.InvocationID,
-		RepoID:        req.RepoID,
-		PID:           pid,
-		PGID:          pgid,
-		RawLogFile:    rawLogPath,
-		StderrFile:    stderrLogPath,
-		StreamLogFile: streamLogPath,
-		Runner:        req.Runner,
-		Parser:        parser,
-		Relay:         chatRelay,
-		done:          make(chan struct{}),
+		InvocationID:          req.InvocationID,
+		RepoID:                req.RepoID,
+		IntegrationWorktreeID: meta.IntegrationWorktreeID,
+		PID:                   pid,
+		PGID:                  pgid,
+		SandboxPath:           req.SandboxPath,
+		RawLogFile:            rawLogPath,
+		StderrFile:            stderrLogPath,
+		StreamLogFile:         streamLogPath,
+		Runner:                req.Runner,
+		RepoRoot:              req.SandboxPath, // Legacy path lacks repo_root; sandbox root is sufficient fallback.
+		RunnerArgs:            append([]string(nil), req.RunnerArgs...),
+		Env:                   copyStringMap(req.Env),
+		Parser:                parser,
+		Relay:                 chatRelay,
+		done:                  make(chan struct{}),
 	}
+	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
+		proc.SetResumeSessionID(n.SessionID)
+	})
 
 	// Register the process
 	s.mu.Lock()
@@ -385,7 +422,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	go s.streamOutput(proc, stderrPipe, stderrFile)
 
 	// Start goroutine to wait for process exit
-	go s.waitForExit(proc, startedProc, rawFile, stderrFile, streamFile)
+	go s.waitForExitWithFailureReason(proc, startedProc, rawFile, stderrFile, streamFile)
 
 	// Start goroutine to periodically flush lastOutputAt and semantic status
 	go s.runOutputFlushLoop(proc)
@@ -1334,6 +1371,42 @@ func (s *Server) checkInvocationNameUniqueness(repoID, name string) error {
 
 // startRunner starts the runner process and returns PID and PGID.
 func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest) (int, int, error) {
+	args, err := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to build runner args: %w", err)
+	}
+	return s.startRunnerWithArgs(ctx, repoID, result, repoRoot, integrationWorktreeID, req, args, "")
+}
+
+func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProcess, prompt string) (int, int, error) {
+	req := ControlPlaneStartRequest{
+		Runner:             proc.Runner,
+		Prompt:             prompt,
+		RunnerArgs:         append([]string(nil), proc.RunnerArgs...),
+		Env:                copyStringMap(proc.Env),
+		NoIncludeUntracked: proc.NoIncludeUntracked,
+	}
+	resumeSessionID := proc.GetResumeSessionID()
+	args, err := runners.BuildResumeArgs(proc.Runner, prompt, resumeSessionID, req.RunnerArgs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to build runner resume args: %w", err)
+	}
+	return s.startRunnerWithArgs(
+		ctx,
+		proc.RepoID,
+		&invocation.CreateResult{
+			InvocationID: proc.InvocationID,
+			SandboxPath:  proc.SandboxPath,
+		},
+		proc.RepoRoot,
+		proc.IntegrationWorktreeID,
+		req,
+		args,
+		resumeSessionID,
+	)
+}
+
+func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, args []string, resumeSessionID string) (int, int, error) {
 	// Load user config for runner resolution
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
@@ -1344,12 +1417,6 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to resolve runner command: %w", err)
-	}
-
-	// Build command arguments
-	args, err := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to build runner args: %w", err)
 	}
 
 	// Open log files
@@ -1405,6 +1472,18 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		_ = stderrFile.Close()
 		_ = streamFile.Close()
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
+	}
+	if err := sendInitialPromptIfRequired(req.Runner, req.Prompt, chatRelay); err != nil {
+		if chatRelay != nil {
+			_ = chatRelay.Close()
+		}
+		if startedProc.PGID > 0 {
+			_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
+		}
+		_ = rawFile.Close()
+		_ = stderrFile.Close()
+		_ = streamFile.Close()
+		return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
 	}
 
 	stdoutPipe := startedProc.StdoutPipe
@@ -1466,16 +1545,27 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 		IntegrationWorktreeID: integrationWorktreeID, // PR-06: track for worktree rm guard
 		PID:                   pid,
 		PGID:                  pgid,
+		SandboxPath:           result.SandboxPath,
 		RawLogFile:            rawLogPath,
 		StderrFile:            stderrLogPath,
 		StreamLogFile:         streamLogPath,
 		Runner:                req.Runner,
 		RepoRoot:              repoRoot, // PR-08: for checkpoint engine
+		RunnerArgs:            append([]string(nil), req.RunnerArgs...),
+		Env:                   copyStringMap(req.Env),
+		NoIncludeUntracked:    req.NoIncludeUntracked,
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,
 		Relay:                 chatRelay,
 		done:                  make(chan struct{}),
 	}
+	proc.SetResumeSessionID(resumeSessionID)
+
+	// Track any session_start identifier emitted by the runner so future
+	// resume turns can target the exact thread instead of relying on --last.
+	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
+		proc.SetResumeSessionID(n.SessionID)
+	})
 
 	// Register the process
 	s.mu.Lock()
@@ -1505,6 +1595,17 @@ func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []
 	return runners.BuildHeadlessArgs(runner, prompt, sandboxPath, extraArgs)
 }
 
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // createChatRelay creates a stdin pipe and chat relay for stdin-capable runners,
 // or a resume relay for session-resume runners.
 // Returns (stdinReader, relay). stdinReader is nil for resume relays (stdin stays /dev/null).
@@ -1531,6 +1632,20 @@ func createChatRelay(runner string) (*os.File, relay.ChatRelay) {
 	default:
 		return nil, nil
 	}
+}
+
+func sendInitialPromptIfRequired(runner, prompt string, chatRelay relay.ChatRelay) error {
+	if chatRelay == nil {
+		return nil
+	}
+	mode, err := runners.ResolveInitialPromptMode(runner)
+	if err != nil {
+		return err
+	}
+	if mode != runners.InitialPromptStdin {
+		return nil
+	}
+	return chatRelay.Send(context.Background(), prompt)
 }
 
 // buildRunnerArgsForHeaded builds interactive launch args for headed mode.
@@ -1605,6 +1720,11 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 		failureReason = override
 	}
 
+	var queuedResumePrompts []string
+	if resumeRelay, ok := proc.Relay.(*relay.ResumeRelay); ok {
+		queuedResumePrompts = resumeRelay.Drain()
+	}
+
 	// PR-07: Get final semantic status
 	var semanticStatus *string
 	var semanticStatusUpdatedAt string
@@ -1618,6 +1738,39 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 		if status == store.InvocationStatusFailed {
 			semanticStatus = nil
 			semanticStatusUpdatedAt = ""
+		}
+	}
+
+	// For resume-mode runners, a queued follow-up means "continue with next turn"
+	// rather than terminating the invocation lifecycle.
+	if status == store.InvocationStatusFinished && len(queuedResumePrompts) > 0 && runners.SupportsResumeTurns(proc.Runner) {
+		pid, pgid, resumeErr := s.startRunnerResumeTurn(context.Background(), proc, queuedResumePrompts[0])
+		if resumeErr != nil {
+			status = store.InvocationStatusFailed
+			failureReason = "runner_resume_failed"
+		} else {
+			if len(queuedResumePrompts) > 1 {
+				s.enqueueFollowUpPrompts(proc.InvocationID, queuedResumePrompts[1:])
+			}
+			now := s.Clock().UTC().Format(time.RFC3339)
+			daemonPID := os.Getpid()
+			_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Status = store.InvocationStatusRunning
+				meta.PID = &pid
+				meta.PGID = &pgid
+				meta.DaemonPID = &daemonPID
+				meta.DaemonInstanceID = s.InstanceID
+				meta.ClaimedAt = now
+				meta.ExitReason = ""
+				meta.FailureReason = ""
+				meta.ExitCode = nil
+				meta.FinishedAt = ""
+				meta.LifecycleOwner = "daemon"
+				meta.SemanticStatus = nil
+				meta.SemanticStatusUpdatedAt = ""
+				meta.Flags.NeedsAttention = false
+			})
+			return
 		}
 	}
 
@@ -1646,8 +1799,28 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 
 	// Remove from supervised processes
 	s.mu.Lock()
-	delete(s.processes, proc.InvocationID)
+	if current, ok := s.processes[proc.InvocationID]; ok && current == proc {
+		delete(s.processes, proc.InvocationID)
+	}
 	s.mu.Unlock()
+}
+
+func (s *Server) enqueueFollowUpPrompts(invocationID string, prompts []string) {
+	if len(prompts) == 0 {
+		return
+	}
+	s.mu.Lock()
+	proc, ok := s.processes[invocationID]
+	s.mu.Unlock()
+	if !ok || proc == nil || proc.Relay == nil {
+		return
+	}
+	for _, prompt := range prompts {
+		if strings.TrimSpace(prompt) == "" {
+			continue
+		}
+		_ = proc.Relay.Send(context.Background(), prompt)
+	}
 }
 
 // ----- PR-10: Headed (tmux) Control Plane Handler -----

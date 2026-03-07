@@ -99,11 +99,21 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	effectiveRunnerArgs := req.RunnerArgs
-	if len(effectiveRunnerArgs) == 0 && len(meta.RunnerArgs) > 0 {
-		effectiveRunnerArgs = append([]string(nil), meta.RunnerArgs...)
+	canonicalRunner, err := runners.Canonicalize(meta.Runner)
+	if err != nil {
+		s.writeRestartError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.ERunnerNotFound),
+			err.Error(),
+			"valid runners: "+strings.Join(runners.CanonicalIDs(), ", "),
+		)
+		return
 	}
-	if err := validateRunnerArgs(meta.Runner, effectiveRunnerArgs); err != nil {
+
+	effectiveRunnerArgs := mergeRestartRunnerArgs(canonicalRunner, meta.RunnerArgs, req.RunnerArgs)
+	if err := validateHeadlessRunnerArgs(canonicalRunner, effectiveRunnerArgs); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerArgConflict
@@ -119,18 +129,6 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 			string(code),
 			err.Error(),
 			hint,
-		)
-		return
-	}
-	canonicalRunner, err := runners.Canonicalize(meta.Runner)
-	if err != nil {
-		s.writeRestartError(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.ERunnerNotFound),
-			err.Error(),
-			"valid runners: "+strings.Join(runners.CanonicalIDs(), ", "),
 		)
 		return
 	}
@@ -317,6 +315,85 @@ func validateRestartEnvReplay(requiredKeys []string, provided map[string]string)
 			"provide --env KEY=VALUE for all required keys"
 	}
 	return "", ""
+}
+
+func mergeRestartRunnerArgs(runner string, storedArgs, requestArgs []string) []string {
+	stored := append([]string(nil), storedArgs...)
+	if len(requestArgs) == 0 {
+		return stored
+	}
+	requested := append([]string(nil), requestArgs...)
+	if restartRunnerArgsShouldReplaceStored(runner, requested) {
+		return requested
+	}
+	merged := append(stored, requested...)
+	return merged
+}
+
+func restartRunnerArgsShouldReplaceStored(runner string, args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return false
+		}
+		switch runner {
+		case runners.RunnerClaudeCode:
+			if arg == "--model" || arg == "--effort" ||
+				strings.HasPrefix(arg, "--model=") || strings.HasPrefix(arg, "--effort=") {
+				return true
+			}
+		case runners.RunnerCursor:
+			if arg == "--model" || strings.HasPrefix(arg, "--model=") {
+				return true
+			}
+		case runners.RunnerCodex:
+			if arg == "--model" || arg == "-m" ||
+				strings.HasPrefix(arg, "--model=") || strings.HasPrefix(arg, "-m=") {
+				return true
+			}
+			if arg == "--config" || arg == "-c" {
+				// Missing next token is invalid input, but treat as replace-mode for safety.
+				if i+1 >= len(args) {
+					return true
+				}
+				key, ok := parseRestartCodexConfigAssignment(args[i+1])
+				if ok && key == "model_reasoning_effort" {
+					return true
+				}
+				i++
+				continue
+			}
+			if strings.HasPrefix(arg, "--config=") {
+				key, ok := parseRestartCodexConfigAssignment(strings.TrimPrefix(arg, "--config="))
+				if ok && key == "model_reasoning_effort" {
+					return true
+				}
+			}
+			if strings.HasPrefix(arg, "-c=") {
+				key, ok := parseRestartCodexConfigAssignment(strings.TrimPrefix(arg, "-c="))
+				if ok && key == "model_reasoning_effort" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func parseRestartCodexConfigAssignment(raw string) (string, bool) {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return "", false
+	}
+	parts := strings.SplitN(token, "=", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	key := strings.TrimSpace(parts[0])
+	if key == "" {
+		return "", false
+	}
+	return key, true
 }
 
 func (s *Server) stopHeadlessForRestart(ctx context.Context, repoID, invocationID string, meta *store.InvocationMeta) error {
