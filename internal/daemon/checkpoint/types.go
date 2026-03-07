@@ -65,6 +65,17 @@ type Checkpoint struct {
 	// Description is a human-readable label auto-generated from trigger context (schema 1.1+).
 	// Examples: "After Edit", "After Bash", "Drift checkpoint", "Final checkpoint".
 	Description string `json:"description,omitempty"`
+
+	// ChangedPaths lists authoritative git-changed paths for this checkpoint's
+	// delta interval. The interval is sandbox_head_sha->snapshot_commit for the
+	// first checkpoint, then previous_snapshot_commit->snapshot_commit.
+	ChangedPaths []string `json:"changed_paths,omitempty"`
+
+	// ChangedPathCount is the total number of changed paths in the interval.
+	ChangedPathCount int `json:"changed_path_count,omitempty"`
+
+	// ChangedPathTruncated indicates ChangedPaths is a bounded preview.
+	ChangedPathTruncated bool `json:"changed_path_truncated,omitempty"`
 }
 
 // CheckpointsFile represents the checkpoints.json structure.

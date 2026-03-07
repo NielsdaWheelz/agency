@@ -107,7 +107,7 @@ HTTP/1.1 over Unix socket.
 - `GET /invocations/{ref}` — resolve invocation by name/id/prefix
 - `GET /invocations/{ref}/diff` — structured diff with commits
 - `GET /invocations/{ref}/logs` — log reads (offset/tail) with strict bound validation (`tail_bytes` in `1..1048576`)
-- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt seed/messages/tool-use/follow-up prompts/raw coverage + lifecycle events) with stable cursor pagination; supports `order=desc` for reverse chronological reads
+- `GET /invocations/{ref}/timeline` — unified typed timeline (prompt seed/messages/tool-use/follow-up prompts/raw coverage + lifecycle events) with stable cursor pagination; supports `order=desc` for reverse chronological reads. tool rows are derived from completed tool events to avoid duplicate start/end entries in history surfaces.
 - `GET /invocations/{ref}/checkpoints` — checkpoint list
 
 ### invocation flow (headed)
@@ -230,6 +230,13 @@ semantic metadata fields (omitted for legacy checkpoints):
 - `tool_name`: the tool that completed (when trigger is `tool_end`)
 - `stream_seq`: the stream.jsonl sequence number of the triggering event
 - `description`: human-readable label (e.g., "After Edit", "Drift checkpoint")
+- `changed_paths`: authoritative git path preview for the checkpoint interval
+- `changed_path_count`: total changed paths in that interval
+- `changed_path_truncated`: whether `changed_paths` is a bounded preview
+
+for changed-path metadata, the checkpoint interval is:
+- first checkpoint: `sandbox_head_sha -> snapshot_commit`
+- subsequent checkpoints: `previous_snapshot_commit -> snapshot_commit`
 
 ### storage
 

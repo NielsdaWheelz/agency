@@ -317,3 +317,110 @@ func TestGroupTimelineIntoTurns_CheckpointNotInListIgnored(t *testing.T) {
 	assert.False(t, turns[0].Restorable)
 	assert.Equal(t, 0, turns[0].CheckpointID)
 }
+
+func TestGroupTimelineIntoTurns_AssistantSummarySynthesizedFromContentBlocks(t *testing.T) {
+	t.Parallel()
+
+	entries := []TimelineEntry{
+		{
+			EntryID:   "e-1",
+			Kind:      "message",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data:      map[string]interface{}{"role": "assistant", "text": "", "content_blocks": []interface{}{map[string]interface{}{"type": "text", "text": "Updated auth middleware"}}},
+		},
+	}
+
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 1)
+	assert.Equal(t, "Updated auth middleware", turns[0].Summary)
+}
+
+func TestGroupTimelineIntoTurns_SparseSummaryIncludesToolHintsAndCheckpointMetadata(t *testing.T) {
+	t.Parallel()
+
+	entries := []TimelineEntry{
+		{
+			EntryID:   "e-1",
+			Kind:      "message",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data: map[string]interface{}{
+				"role":       "assistant",
+				"text":       "Done.",
+				"tool_names": []interface{}{"Edit", "Write"},
+				"content_blocks": []interface{}{
+					map[string]interface{}{"type": "tool_use", "name": "Edit"},
+					map[string]interface{}{"type": "tool_use", "name": "Write"},
+				},
+			},
+		},
+		{
+			EntryID:   "cp-1",
+			Kind:      "checkpoint_event",
+			Timestamp: "2026-02-05T11:50:11Z",
+			Data: map[string]interface{}{
+				"event_kind":    "agency.checkpoint_created",
+				"checkpoint_id": float64(1),
+			},
+		},
+	}
+	checkpoints := []CheckpointRef{
+		{
+			ID:                   1,
+			Description:          "Applied auth file edits",
+			Diffstat:             "2 files changed, 12 insertions(+), 3 deletions(-)",
+			ChangedPaths:         []string{"internal/auth/middleware.go", "internal/auth/middleware_test.go"},
+			ChangedPathCount:     2,
+			ChangedPathTruncated: false,
+		},
+	}
+
+	turns := GroupTimelineIntoTurns(entries, checkpoints)
+	require.Len(t, turns, 1)
+	assert.Contains(t, turns[0].Summary, "Done.")
+	assert.Contains(t, turns[0].Summary, "tools: Edit, Write")
+	assert.Contains(t, turns[0].Summary, "Applied auth file edits")
+	assert.Contains(t, turns[0].Summary, "2 files changed")
+	assert.Equal(t, []string{"internal/auth/middleware.go", "internal/auth/middleware_test.go"}, turns[0].CheckpointChangedPaths)
+	assert.Equal(t, 2, turns[0].CheckpointChangedCount)
+	assert.False(t, turns[0].CheckpointPathsTrimmed)
+}
+
+func TestGroupTimelineIntoTurns_EmptyAssistantSummaryFallsBackToTools(t *testing.T) {
+	t.Parallel()
+
+	entries := []TimelineEntry{
+		{
+			EntryID:   "e-1",
+			Kind:      "message",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data: map[string]interface{}{
+				"role":       "assistant",
+				"text":       "",
+				"tool_names": []interface{}{"Write", "Read"},
+			},
+		},
+	}
+
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 1)
+	assert.Equal(t, "tools: Write, Read", turns[0].Summary)
+}
+
+func TestGroupTimelineIntoTurns_SystemMessageIgnored(t *testing.T) {
+	t.Parallel()
+
+	entries := []TimelineEntry{
+		{
+			EntryID:   "e-1",
+			Kind:      "message",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data: map[string]interface{}{
+				"role": "system",
+				"text": "internal system note",
+			},
+		},
+	}
+
+	turns := GroupTimelineIntoTurns(entries, nil)
+	assert.Empty(t, turns)
+}

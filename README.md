@@ -92,6 +92,7 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
 `agent restart` replays the invocation's stored original prompt; use `agency checkpoint apply` when you want restore-only rollback without restarting prompt execution.
+`agent restart --history` shows checkpoint-aware turn summaries, completed tool calls, and authoritative changed-file previews from checkpoint-to-checkpoint git diffs.
 typed model/effort knobs are supported for `claude-code`, `codex`, and `cursor`.
 for `claude-code` and `codex`, `--model` and `--effort` apply.
 for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).

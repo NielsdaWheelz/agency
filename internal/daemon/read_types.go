@@ -108,6 +108,11 @@ type CheckpointDTO struct {
 	ToolName    string `json:"tool_name,omitempty"`
 	StreamSeq   uint64 `json:"stream_seq,omitempty"`
 	Description string `json:"description,omitempty"`
+
+	// Authoritative changed-path preview for the checkpoint interval.
+	ChangedPaths         []string `json:"changed_paths,omitempty"`
+	ChangedPathCount     int      `json:"changed_path_count,omitempty"`
+	ChangedPathTruncated bool     `json:"changed_path_truncated,omitempty"`
 }
 
 // ----- List Response Types -----

@@ -132,6 +132,42 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 }
 
+func TestDaemonControlPlaneStart_LastOutputAtCapturedForParserRunner(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "start-last-output-at")
+
+	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "emit output then exit",
+		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+
+	require.Eventually(t, func() bool {
+		meta, readErr := env.Store.ReadInvocationMeta(repoID, resp.InvocationID)
+		if readErr != nil {
+			return false
+		}
+		if strings.TrimSpace(meta.LastOutputAt) == "" {
+			return false
+		}
+		_, parseErr := time.Parse(time.RFC3339, meta.LastOutputAt)
+		return parseErr == nil
+	}, 5*time.Second, 50*time.Millisecond, "expected parser-driven invocation to persist last_output_at")
+}
+
 func TestDaemonControlPlaneStart_TargetRunnerSetLifecycle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -1058,6 +1094,112 @@ func TestDaemonCheckpointLifecycle(t *testing.T) {
 	restoredContent, err := os.ReadFile(testFilePath)
 	require.NoError(t, err, "failed to read restored file")
 	assert.Equal(t, "checkpoint test content\n", string(restoredContent))
+}
+
+func TestDaemonSemanticCheckpoint_CodexMutatingCommandCreatesCheckpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cp-codex-semantic")
+
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "codex",
+		Prompt:      "semantic checkpoint codex",
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "codex-mutate-then-exit-ok",
+		},
+	})
+	require.NoError(t, err, "start transport error")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
+	require.Equal(t, store.InvocationStatusFinished, meta.Status)
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var semanticCP *checkpoint.Checkpoint
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(data, &cpFile) != nil {
+			return false
+		}
+		for i := range cpFile.Checkpoints {
+			cp := cpFile.Checkpoints[i]
+			if cp.Trigger == checkpoint.TriggerToolEnd && cp.ToolName == "Bash" {
+				semanticCP = &cp
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond, "codex semantic checkpoint was not persisted")
+
+	require.NotNil(t, semanticCP)
+	assert.Greater(t, semanticCP.StreamSeq, uint64(0))
+	assert.GreaterOrEqual(t, semanticCP.ChangedPathCount, 1)
+	assert.Contains(t, semanticCP.ChangedPaths, "codex-mutated.txt")
+}
+
+func TestDaemonSemanticCheckpoint_CursorMutatingToolCallCreatesCheckpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cp-cursor-semantic")
+
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "cursor",
+		Prompt:      "semantic checkpoint cursor",
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "cursor-mutate-toolcall-then-exit-ok",
+		},
+	})
+	require.NoError(t, err, "start transport error")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
+	require.Equal(t, store.InvocationStatusFinished, meta.Status)
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var semanticCP *checkpoint.Checkpoint
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(data, &cpFile) != nil {
+			return false
+		}
+		for i := range cpFile.Checkpoints {
+			cp := cpFile.Checkpoints[i]
+			if cp.Trigger == checkpoint.TriggerToolEnd && cp.ToolName == "Bash" {
+				semanticCP = &cp
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond, "cursor semantic checkpoint was not persisted")
+
+	require.NotNil(t, semanticCP)
+	assert.Greater(t, semanticCP.StreamSeq, uint64(0))
+	assert.GreaterOrEqual(t, semanticCP.ChangedPathCount, 1)
+	assert.Contains(t, semanticCP.ChangedPaths, "cursor-mutated.txt")
 }
 
 // S3 PR-03: restart from checkpoint in one invocation-scoped flow.

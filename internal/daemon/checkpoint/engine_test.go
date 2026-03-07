@@ -1928,6 +1928,68 @@ func TestEngine_RunWithTriggerChannel(t *testing.T) {
 	assert.True(t, found, "should have found a semantic checkpoint")
 }
 
+func TestEngine_computeChangedPaths_TruncatesAndCountsUnique(t *testing.T) {
+	t.Parallel()
+
+	sr := newStubRunner()
+	e, _ := newTestEngine(t, sr, DefaultConfig())
+
+	base := "base123"
+	commit := "commit456"
+	sr.stub(
+		fmt.Sprintf("git -C %s diff --name-status --find-renames %s..%s", e.sandboxPath, base, commit),
+		exec.CmdResult{
+			Stdout: strings.Join([]string{
+				"A\tone.txt",
+				"M\ttwo.txt",
+				"R100\told-three.txt\tthree.txt",
+				"M\ttwo.txt", // duplicate should be de-duped
+				"D\tfour.txt",
+				"M\tfive.txt",
+			}, "\n") + "\n",
+		},
+	)
+
+	paths, count, truncated := e.computeChangedPaths(context.Background(), base, commit, 3)
+	assert.Equal(t, []string{"one.txt", "two.txt", "three.txt"}, paths)
+	assert.Equal(t, 5, count)
+	assert.True(t, truncated)
+}
+
+func TestEngine_CreateSemanticCheckpoint_PersistsChangedPathCountAndTruncation(t *testing.T) {
+	t.Parallel()
+
+	sr := newStubRunner()
+	cfg := DefaultConfig()
+	cfg.IncludeUntracked = true
+	e, _ := newTestEngine(t, sr, cfg)
+	stubFullCheckpointSequence(sr, e.sandboxPath, true)
+
+	var changedPathLines strings.Builder
+	for i := 1; i <= 25; i++ {
+		_, err := fmt.Fprintf(&changedPathLines, "M\tfile-%02d.txt\n", i)
+		require.NoError(t, err)
+	}
+	sr.stub(
+		fmt.Sprintf("git -C %s diff --name-status --find-renames aabbccdd00112233..ffffffffffffffff", e.sandboxPath),
+		exec.CmdResult{Stdout: changedPathLines.String()},
+	)
+
+	trigger := &TriggerEvent{Kind: TriggerToolEnd, ToolName: "Edit", Seq: 42}
+	require.NoError(t, e.CreateSemanticCheckpoint(context.Background(), trigger))
+
+	cpFile, err := e.loadCheckpoints()
+	require.NoError(t, err)
+	require.Len(t, cpFile.Checkpoints, 1)
+
+	cp := cpFile.Checkpoints[0]
+	assert.Equal(t, 25, cp.ChangedPathCount)
+	assert.Len(t, cp.ChangedPaths, maxChangedPathsPreview)
+	assert.True(t, cp.ChangedPathTruncated)
+	assert.Equal(t, "file-01.txt", cp.ChangedPaths[0])
+	assert.Equal(t, "file-20.txt", cp.ChangedPaths[maxChangedPathsPreview-1])
+}
+
 func TestCheckpoint_SchemaVersion_Writes1_1(t *testing.T) {
 	t.Parallel()
 	f := NewCheckpointsFile()

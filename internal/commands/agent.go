@@ -2975,7 +2975,14 @@ func convertToPickerTurns(entries []daemon.TimelineEntryDTO, checkpoints []daemo
 	}
 	pickerCheckpoints := make([]historypicker.CheckpointRef, len(checkpoints))
 	for i, cp := range checkpoints {
-		pickerCheckpoints[i] = historypicker.CheckpointRef{ID: cp.ID}
+		pickerCheckpoints[i] = historypicker.CheckpointRef{
+			ID:                   cp.ID,
+			Description:          cp.Description,
+			Diffstat:             cp.Diffstat,
+			ChangedPaths:         cp.ChangedPaths,
+			ChangedPathCount:     cp.ChangedPathCount,
+			ChangedPathTruncated: cp.ChangedPathTruncated,
+		}
 	}
 	return historypicker.GroupTimelineIntoTurns(pickerEntries, pickerCheckpoints)
 }

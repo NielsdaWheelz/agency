@@ -37,7 +37,7 @@ func GetAdapter(runner string) Adapter {
 	case runners.RunnerClaudeCode:
 		return &ClaudeAdapter{}
 	case runners.RunnerCursor:
-		return &ClaudeAdapter{}
+		return &CursorAdapter{}
 	case runners.RunnerCodex:
 		return &CodexAdapter{}
 	default:

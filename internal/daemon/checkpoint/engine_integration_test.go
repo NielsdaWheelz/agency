@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -496,6 +497,78 @@ func TestEngine_SemanticCheckpoints_NoRateLimit_RealGit(t *testing.T) {
 		assert.Equal(t, "Edit", cp.ToolName, "checkpoint[%d].ToolName", i)
 		assert.Equal(t, uint64(i+1), cp.StreamSeq, "checkpoint[%d].StreamSeq", i)
 	}
+}
+
+func TestEngine_CreateSemanticCheckpoint_PersistsAuthoritativeChangedPaths_RealGit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	repoDir := setupRealGitRepo(t)
+	e, checkpointsDir := newRealEngine(t, repoDir)
+	ctx := context.Background()
+
+	// Checkpoint 1: modify tracked file and add a new file.
+	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Changed once\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "docs", "note.txt"), []byte("note v1\n"), 0o644))
+	require.NoError(t, e.CreateSemanticCheckpoint(ctx, &TriggerEvent{
+		Kind:     TriggerToolEnd,
+		ToolName: "Edit",
+		Seq:      1,
+	}))
+
+	// Checkpoint 2: modify only README.md. docs/note.txt should not appear if
+	// changed paths are computed against previous checkpoint snapshot.
+	e.mu.Lock()
+	e.lastCheckpoint = time.Time{}
+	e.mu.Unlock()
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Changed twice\n"), 0o644))
+	require.NoError(t, e.CreateSemanticCheckpoint(ctx, &TriggerEvent{
+		Kind:     TriggerToolEnd,
+		ToolName: "Edit",
+		Seq:      2,
+	}))
+
+	checkpointsPath := filepath.Join(checkpointsDir, "checkpoints.json")
+	raw, err := os.ReadFile(checkpointsPath)
+	require.NoError(t, err)
+
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &payload))
+
+	rawCheckpoints, ok := payload["checkpoints"].([]interface{})
+	require.True(t, ok, "checkpoints must decode as array")
+	require.Len(t, rawCheckpoints, 2)
+
+	first, ok := rawCheckpoints[0].(map[string]interface{})
+	require.True(t, ok)
+	second, ok := rawCheckpoints[1].(map[string]interface{})
+	require.True(t, ok)
+
+	firstPaths, ok := first["changed_paths"].([]interface{})
+	require.True(t, ok, "checkpoint 1 must persist changed_paths")
+	secondPaths, ok := second["changed_paths"].([]interface{})
+	require.True(t, ok, "checkpoint 2 must persist changed_paths")
+
+	var firstPathStrings []string
+	for _, p := range firstPaths {
+		ps, ok := p.(string)
+		require.True(t, ok)
+		firstPathStrings = append(firstPathStrings, ps)
+	}
+	var secondPathStrings []string
+	for _, p := range secondPaths {
+		ps, ok := p.(string)
+		require.True(t, ok)
+		secondPathStrings = append(secondPathStrings, ps)
+	}
+
+	assert.Contains(t, firstPathStrings, "README.md")
+	assert.Contains(t, firstPathStrings, "docs/note.txt")
+
+	assert.Contains(t, secondPathStrings, "README.md")
+	assert.NotContains(t, secondPathStrings, "docs/note.txt", "checkpoint 2 paths should reflect delta from checkpoint 1, not cumulative workspace state")
 }
 
 // 4.11 TestEngine_pruneCheckpoints_RealGit
