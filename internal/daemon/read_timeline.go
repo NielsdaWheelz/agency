@@ -199,7 +199,10 @@ func readStreamTimelineEntries(path, fallbackTimestamp string) []timelineSortabl
 		switch event.Kind {
 		case "message":
 			kind = "message"
-		case "tool_start", "tool_end":
+		case "tool_start":
+			// Prefer completed tool records to avoid duplicate tool rows.
+			continue
+		case "tool_end":
 			kind = "tool_use"
 		}
 		entryID := "stream:" + strconv.FormatUint(event.Seq, 10)

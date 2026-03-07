@@ -517,7 +517,16 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	cpFile := &checkpoint.CheckpointsFile{
 		SchemaVersion: "1.0",
 		Checkpoints: []checkpoint.Checkpoint{
-			{ID: 1, CreatedAt: "2026-02-05T11:51:00Z", Diffstat: "+10 -5", SnapshotCommit: "aaa111", IncludesUntracked: true},
+			{
+				ID:                   1,
+				CreatedAt:            "2026-02-05T11:51:00Z",
+				Diffstat:             "+10 -5",
+				SnapshotCommit:       "aaa111",
+				IncludesUntracked:    true,
+				ChangedPaths:         []string{"README.md", "cmd/main.go"},
+				ChangedPathCount:     2,
+				ChangedPathTruncated: false,
+			},
 			{ID: 2, CreatedAt: "2026-02-05T11:52:00Z", Diffstat: "+20 -10", SnapshotCommit: "bbb222", IncludesUntracked: true},
 			{ID: 3, CreatedAt: "2026-02-05T11:53:00Z", Diffstat: "+30 -15", SnapshotCommit: "ccc333", IncludesUntracked: false},
 		},
@@ -541,6 +550,9 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	assert.Equal(t, 3, data.Checkpoints[0].ID)
 	assert.Equal(t, 2, data.Checkpoints[1].ID)
 	assert.Equal(t, 1, data.Checkpoints[2].ID)
+	assert.Equal(t, []string{"README.md", "cmd/main.go"}, data.Checkpoints[2].ChangedPaths)
+	assert.Equal(t, 2, data.Checkpoints[2].ChangedPathCount)
+	assert.False(t, data.Checkpoints[2].ChangedPathTruncated)
 }
 
 func TestHandleGetInvocationCheckpoints_Empty(t *testing.T) {
@@ -560,6 +572,22 @@ func TestHandleGetInvocationCheckpoints_Empty(t *testing.T) {
 
 	assert.NotNil(t, data.Checkpoints)
 	assert.Len(t, data.Checkpoints, 0)
+}
+
+func TestHandleGetInvocationCheckpoints_MalformedFileReturnsInternalError(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), []byte("{malformed"), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INTERNAL", resp.ErrorCode)
 }
 
 func TestResponseEnvelope_RequestID(t *testing.T) {
@@ -2266,8 +2294,9 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 
 	var data struct {
 		Entries []struct {
-			EntryID string `json:"entry_id"`
-			Kind    string `json:"kind"`
+			EntryID string         `json:"entry_id"`
+			Kind    string         `json:"kind"`
+			Data    map[string]any `json:"data"`
 		} `json:"entries"`
 		NextCursor string `json:"next_cursor"`
 	}
@@ -2275,13 +2304,23 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 
 	require.NotEmpty(t, data.Entries)
 	seenKinds := map[string]bool{}
+	toolUseCount := 0
+	var toolUseEntry map[string]any
 	for _, entry := range data.Entries {
 		seenKinds[entry.Kind] = true
+		if entry.Kind == "tool_use" {
+			toolUseCount++
+			toolUseEntry = entry.Data
+		}
 	}
 	assert.True(t, seenKinds["prompt_seed"], "timeline must include prompt seed context")
 	assert.True(t, seenKinds["message"], "timeline must include assistant/user messages")
 	assert.True(t, seenKinds["tool_use"], "timeline must include tool-use activity")
 	assert.True(t, seenKinds["raw_log_coverage"], "timeline must include raw-log coverage marker")
+	assert.Equal(t, 1, toolUseCount, "tool_start and tool_end should collapse to one tool_use entry")
+	require.NotNil(t, toolUseEntry)
+	assert.Equal(t, "go test ./...", toolUseEntry["command"])
+	assert.Equal(t, float64(0), toolUseEntry["exit_code"])
 }
 
 func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) {

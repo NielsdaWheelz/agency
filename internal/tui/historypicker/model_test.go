@@ -143,6 +143,30 @@ func TestModel_ViewShowsCheckpointBadge(t *testing.T) {
 	assert.Contains(t, content, "cp:3")
 }
 
+func TestModel_ViewShowsCheckpointChangedPaths(t *testing.T) {
+	t.Parallel()
+
+	turns := []Turn{
+		{
+			EntryID:                "e-1",
+			Kind:                   TurnAssistant,
+			Summary:                "Applied fix",
+			ShortTimestamp:         "11:50:10",
+			CheckpointID:           7,
+			Restorable:             true,
+			CheckpointChangedPaths: []string{"README.md", "docs/note.txt"},
+			CheckpointChangedCount: 2,
+		},
+	}
+	m := newModel(turns, Options{NoColor: true})
+	m.width = 120
+	m.height = 40
+	view := m.View()
+	content := view.Content
+
+	assert.Contains(t, content, "files: README.md, docs/note.txt")
+}
+
 func TestModel_ViewShowsSelectionMarker(t *testing.T) {
 	t.Parallel()
 	m := newModel(testTurns(), Options{NoColor: true})
@@ -251,6 +275,31 @@ func TestModel_SelectedTurnAfterConfirm(t *testing.T) {
 	require.True(t, m.confirmed)
 	selected := m.turns[m.selectedIndex]
 	assert.Equal(t, "e-4", selected.EntryID)
+}
+
+func TestTruncate_UTF8Safe(t *testing.T) {
+	t.Parallel()
+	input := "fix café résumé"
+	got := truncate(input, 8)
+	assert.Equal(t, "fix c...", got)
+	assert.NotContains(t, got, "\uFFFD", "truncate should not split utf-8 runes")
+}
+
+func TestFormatToolCall_EmptyNameUsesFallback(t *testing.T) {
+	t.Parallel()
+	got := formatToolCall(ToolCall{Name: "", Command: "echo hi"})
+	assert.Equal(t, "▶ tool echo hi", got)
+}
+
+func TestFormatCheckpointChangedPaths_InconsistentCounts(t *testing.T) {
+	t.Parallel()
+	turn := Turn{
+		CheckpointChangedPaths: []string{"a.go", "b.go"},
+		CheckpointChangedCount: 1,
+		CheckpointPathsTrimmed: true,
+	}
+	got := formatCheckpointChangedPaths(turn)
+	assert.Equal(t, "a.go, b.go", got)
 }
 
 // applyKey sends a named key press to the model.

@@ -1231,7 +1231,7 @@ func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
 	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
 	streamBytes := "" +
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"checking"}}` + "\n" +
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"shell","command":"go test ./..."}}` + "\n"
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"shell","command":"go test ./...","exit_code":0}}` + "\n"
 	require.NoError(t, os.WriteFile(streamPath, []byte(streamBytes), 0o644))
 
 	eventsPath := st.InvocationEventsPath(repoID, invocationID)
@@ -1918,4 +1918,49 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 	assert.Equal(t, invocationID, payload["invocation_id"])
 	// The followup turn inherits checkpoint 1 (the latest before it).
 	assert.Equal(t, float64(1), payload["checkpoint_id"])
+}
+
+func TestConvertToPickerTurns_SparseAssistantSummary_IncludesCheckpointMetadata(t *testing.T) {
+	t.Parallel()
+
+	entries := []daemon.TimelineEntryDTO{
+		{
+			EntryID:   "stream:1",
+			Kind:      "message",
+			Source:    "stream",
+			Timestamp: "2026-02-05T11:50:10Z",
+			Data: map[string]interface{}{
+				"role": "assistant",
+				"text": "Done.",
+			},
+		},
+		{
+			EntryID:   "inv_event:2:agency.checkpoint_created",
+			Kind:      "checkpoint_event",
+			Source:    "invocation_event",
+			Timestamp: "2026-02-05T11:50:11Z",
+			Data: map[string]interface{}{
+				"event_kind":    "agency.checkpoint_created",
+				"checkpoint_id": float64(1),
+			},
+		},
+	}
+	checkpoints := []daemon.CheckpointDTO{
+		{
+			ID:          1,
+			Description: "After Edit",
+			Diffstat:    "+12 -3 in 2 files",
+		},
+	}
+
+	turns := convertToPickerTurns(entries, checkpoints)
+	require.Len(t, turns, 1)
+	require.Equal(t, historypicker.TurnAssistant, turns[0].Kind)
+	assert.Equal(t, 1, turns[0].CheckpointID)
+	assert.True(t, turns[0].Restorable)
+
+	// A sparse summary like "Done." should still be informative by incorporating
+	// checkpoint metadata from the selected restore point.
+	assert.Contains(t, turns[0].Summary, "After Edit")
+	assert.Contains(t, turns[0].Summary, "+12 -3 in 2 files")
 }

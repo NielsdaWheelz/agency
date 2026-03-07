@@ -883,7 +883,7 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 **behavior:**
 1. resolves invocation through daemon-first navigation
 2. validates target is headless
-3. if `--history` is used, requires an interactive terminal and opens a full-screen TUI picker (`↑/↓` or `k/j`, `home/g`, `end/G`, `enter` to confirm, `q/esc` to cancel) that groups timeline entries into conversation turns (prompt, assistant + tool calls, follow-up) with checkpoint badges
+3. if `--history` is used, requires an interactive terminal and opens a full-screen TUI picker (`↑/↓` or `k/j`, `home/g`, `end/G`, `enter` to confirm, `q/esc` to cancel) that groups timeline entries into conversation turns (prompt, assistant + completed tool calls, follow-up) with checkpoint badges, checkpoint trigger metadata, and authoritative changed-path previews
 4. each turn carries the latest valid checkpoint at or before it; selecting a turn without a checkpoint returns deterministic error guidance
 5. if invocation has a stored custom-env profile, requires explicit replay of all required env keys
 6. if running, force-stops current process and waits for terminalization

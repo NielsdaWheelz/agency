@@ -211,6 +211,13 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 		b.WriteString("\n")
 	}
 
+	if turn.Restorable && len(turn.CheckpointChangedPaths) > 0 {
+		pathsSummary := formatCheckpointChangedPaths(turn)
+		pathsLine := "    files: " + truncate(pathsSummary, width-11)
+		b.WriteString(pathsLine)
+		b.WriteString("\n")
+	}
+
 	// Tool calls (indented)
 	for _, tc := range turn.ToolCalls {
 		tcLine := "    " + m.styleToolCall(formatToolCall(tc))
@@ -225,7 +232,11 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 }
 
 func formatToolCall(tc ToolCall) string {
-	parts := []string{"▶", tc.Name}
+	name := strings.TrimSpace(tc.Name)
+	if name == "" {
+		name = "tool"
+	}
+	parts := []string{"▶", name}
 	if tc.Command != "" {
 		parts = append(parts, tc.Command)
 	}
@@ -259,15 +270,33 @@ func formatHelp(keys keyMap) string {
 	return strings.Join(parts, " • ")
 }
 
+func formatCheckpointChangedPaths(turn Turn) string {
+	if len(turn.CheckpointChangedPaths) == 0 {
+		return ""
+	}
+	joined := strings.Join(turn.CheckpointChangedPaths, ", ")
+	if turn.CheckpointPathsTrimmed {
+		remaining := turn.CheckpointChangedCount - len(turn.CheckpointChangedPaths)
+		if remaining < 0 {
+			remaining = 0
+		}
+		if remaining > 0 {
+			joined += fmt.Sprintf(", ... (+%d more)", remaining)
+		}
+	}
+	return joined
+}
+
 func truncate(s string, max int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	if max <= 0 || len(s) <= max {
+	runes := []rune(s)
+	if max <= 0 || len(runes) <= max {
 		return s
 	}
 	if max <= 3 {
-		return s[:max]
+		return string(runes[:max])
 	}
-	return s[:max-3] + "..."
+	return string(runes[:max-3]) + "..."
 }
 
 func visibleLen(s string) int {
