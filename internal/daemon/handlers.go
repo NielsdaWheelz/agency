@@ -1711,7 +1711,7 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 
 	// Update invocation meta
 	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+	if err := s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
 		meta.Status = status
 		meta.ExitReason = exitReason
 		if failureReason != "" {
@@ -1730,7 +1730,9 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 			meta.SemanticStatus = nil
 			meta.SemanticStatusUpdatedAt = ""
 		}
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to update meta on exit for invocation %s: %v\n", proc.InvocationID, err)
+	}
 
 	// Remove from supervised processes
 	s.mu.Lock()

@@ -408,16 +408,17 @@ func TestReconcile_StartingGraceWindowReset(t *testing.T) {
 	assert.Empty(t, meta.LifecycleOwner)
 }
 
-func TestReconcile_HeadlessUnaffected(t *testing.T) {
+func TestReconcile_HeadlessNoPID_Unaffected(t *testing.T) {
 	t.Parallel()
-	// Test: Headless invocations are not affected by headed reconciliation
+	// Test: Headless invocations without PIDs are unaffected by reconciliation.
+	// No PID means no liveness check is possible; leave for recovery scan.
 	fakeTmux := testutil.NewFakeTmuxClient()
 	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
 	repoID := "test-repo-7"
 	invocationID := "20260205120006-m3n4"
 
-	// Setup: Create a running headless invocation
+	// Setup: Create a running headless invocation with no PID
 	ensureRepoDir(t, st, repoID)
 	_, err := st.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
@@ -433,6 +434,7 @@ func TestReconcile_HeadlessUnaffected(t *testing.T) {
 		Mode:                  store.RunnerModeHeadless, // Headless!
 		StartedAt:             time.Date(2026, 2, 5, 11, 59, 0, 0, time.UTC).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
+		// PID is nil — no liveness check possible
 	}
 	err = st.WriteInvocationMeta(repoID, invocationID, meta)
 	require.NoError(t, err)
@@ -442,6 +444,104 @@ func TestReconcile_HeadlessUnaffected(t *testing.T) {
 	defer cleanup()
 
 	// Verify headless invocation stays running through multiple ticks
+	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
+}
+
+func TestReconcile_HeadlessDeadPID(t *testing.T) {
+	t.Parallel()
+	// Test: Headless invocation with dead PID transitions to failed.
+	// This is the primary defense-in-depth fix for stale "running" status
+	// when waitForExitWithFailureReason() fails to update meta.
+	//
+	// The PID is alive during recovery scan but dies afterwards.
+	// The reconcile loop must detect the dead PID and mark as failed.
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	// PIDChecker: alive during recovery scan (call 1), dead on reconcile ticks
+	var pidCheckCount int64
+	srv.PIDChecker = func(pid int) bool {
+		c := atomic.AddInt64(&pidCheckCount, 1)
+		return c <= 1 // alive on first check (recovery), dead after
+	}
+
+	repoID := "test-repo-hl-dead"
+	invocationID := "20260205120006-dead"
+
+	ensureRepoDir(t, st, repoID)
+	_, err := st.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+
+	pid := 99999
+	meta := &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          invocationID,
+		IntegrationWorktreeID: "test-worktree",
+		SandboxPath:           "/tmp/sandbox",
+		SandboxBranch:         "agency/sandbox-" + invocationID,
+		BaseCommit:            "abc123",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             time.Date(2026, 2, 5, 11, 59, 0, 0, time.UTC).Format(time.RFC3339),
+		Status:                store.InvocationStatusRunning,
+		PID:                   &pid,
+	}
+	err = st.WriteInvocationMeta(repoID, invocationID, meta)
+	require.NoError(t, err)
+
+	// Start server (recovery scan sees PID as alive, leaves it running)
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Reconcile loop should detect dead PID and transition to failed
+	result := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "unknown", result.ExitReason)
+	assert.Equal(t, "runner_pid_dead", result.FailureReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", result.FinishedAt)
+	assert.True(t, result.Flags.NeedsAttention)
+	assert.Nil(t, result.PID)
+	assert.Empty(t, result.LifecycleOwner)
+}
+
+func TestReconcile_HeadlessAlivePID(t *testing.T) {
+	t.Parallel()
+	// Test: Headless invocation with alive PID stays running.
+	// The process is alive — don't touch it.
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	// Override PIDChecker to report all PIDs as alive
+	srv.PIDChecker = func(pid int) bool { return true }
+
+	repoID := "test-repo-hl-alive"
+	invocationID := "20260205120006-aliv"
+
+	ensureRepoDir(t, st, repoID)
+	_, err := st.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+
+	pid := 12345
+	meta := &store.InvocationMeta{
+		SchemaVersion:         "1.0",
+		InvocationID:          invocationID,
+		IntegrationWorktreeID: "test-worktree",
+		SandboxPath:           "/tmp/sandbox",
+		SandboxBranch:         "agency/sandbox-" + invocationID,
+		BaseCommit:            "abc123",
+		Runner:                "claude",
+		Mode:                  store.RunnerModeHeadless,
+		StartedAt:             time.Date(2026, 2, 5, 11, 59, 0, 0, time.UTC).Format(time.RFC3339),
+		Status:                store.InvocationStatusRunning,
+		PID:                   &pid,
+	}
+	err = st.WriteInvocationMeta(repoID, invocationID, meta)
+	require.NoError(t, err)
+
+	// Start server
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	// Verify headless invocation stays running (PID is alive)
 	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
 }
 
@@ -732,10 +832,11 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// inv-4: headless running → should be unaffected
+	// inv-4: headless running with alive PID → should be unaffected
 	inv4 := "20260205120033-mul4"
 	_, err = st.EnsureInvocationDir(repoID, inv4)
 	require.NoError(t, err)
+	inv4PID := 55555
 	err = st.WriteInvocationMeta(repoID, inv4, &store.InvocationMeta{
 		SchemaVersion:         "1.0",
 		InvocationID:          inv4,
@@ -747,8 +848,12 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             "2026-02-05T11:59:50Z",
 		Status:                store.InvocationStatusRunning,
+		PID:                   &inv4PID,
 	})
 	require.NoError(t, err)
+
+	// Override PIDChecker: inv4's PID (55555) is alive
+	srv.PIDChecker = func(pid int) bool { return pid == inv4PID }
 
 	// Start server
 	cleanup := startTestServer(t, srv)
@@ -769,10 +874,10 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 	assert.Equal(t, store.InvocationStatusFinished, meta3.Status, "inv-3 should remain finished")
 	assert.Equal(t, "2026-02-05T11:50:00Z", meta3.FinishedAt, "inv-3 finished_at should be unchanged")
 
-	// inv-4: still running (headless)
+	// inv-4: still running (headless with alive PID)
 	meta4, err := st.ReadInvocationMeta(repoID, inv4)
 	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusRunning, meta4.Status, "inv-4 headless should still be running")
+	assert.Equal(t, store.InvocationStatusRunning, meta4.Status, "inv-4 headless with alive PID should still be running")
 }
 
 func TestReconcile_EmptyTmuxSessionFallback(t *testing.T) {
