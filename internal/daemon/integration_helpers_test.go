@@ -39,9 +39,10 @@ type testDaemonEnv struct {
 }
 
 type fakeRunnerLaunchCapture struct {
-	Args []string `json:"args"`
-	CWD  string   `json:"cwd"`
-	Mode string   `json:"mode"`
+	Args           []string `json:"args"`
+	CWD            string   `json:"cwd"`
+	Mode           string   `json:"mode"`
+	FirstStdinLine string   `json:"first_stdin_line,omitempty"`
 }
 
 // startTestDaemon boots a real daemon server on a temp Unix socket and

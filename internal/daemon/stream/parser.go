@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +74,11 @@ type Parser struct {
 	// Set via SetCheckpointNotify before calling StreamAndParse.
 	checkpointNotify func(CheckpointNotification)
 
+	// sessionStartNotify is called when a session_start event contains an
+	// explicit session/thread identifier.
+	// Set via SetSessionStartNotify before calling StreamAndParse.
+	sessionStartNotify func(SessionStartNotification)
+
 	// pendingMutatingTools tracks mutating tool names from the latest assistant
 	// message, used to emit a checkpoint notification after the tool results arrive.
 	pendingMutatingTools []string
@@ -122,6 +128,14 @@ func (p *Parser) SetCheckpointNotify(fn func(CheckpointNotification)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.checkpointNotify = fn
+}
+
+// SetSessionStartNotify registers a callback invoked when a parsed session_start
+// event includes a session/thread identifier. Safe to call with nil (no-op).
+func (p *Parser) SetSessionStartNotify(fn func(SessionStartNotification)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sessionStartNotify = fn
 }
 
 // Stop stops the parser.
@@ -253,6 +267,7 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 
 		// Detect mutating tools and emit checkpoint notification.
 		p.maybeNotifyCheckpoint(event)
+		p.maybeNotifySessionStart(event)
 	}
 
 	// Update semantic status if provided
@@ -409,6 +424,37 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 			}
 		}
 	}
+}
+
+func (p *Parser) maybeNotifySessionStart(event *NormalizedEvent) {
+	if event.Kind != EventKindSessionStart {
+		return
+	}
+
+	p.mu.Lock()
+	notifyFn := p.sessionStartNotify
+	p.mu.Unlock()
+	if notifyFn == nil {
+		return
+	}
+
+	sessionID := ""
+	if v, ok := event.Data["session_id"].(string); ok {
+		sessionID = strings.TrimSpace(v)
+	}
+	if sessionID == "" {
+		if v, ok := event.Data["thread_id"].(string); ok {
+			sessionID = strings.TrimSpace(v)
+		}
+	}
+	if sessionID == "" {
+		return
+	}
+
+	notifyFn(SessionStartNotification{
+		SessionID: sessionID,
+		Seq:       event.Seq,
+	})
 }
 
 // ClearSemanticStatus clears the semantic status (called when lifecycle becomes failed).

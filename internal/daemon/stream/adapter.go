@@ -36,6 +36,8 @@ func GetAdapter(runner string) Adapter {
 	switch capability.ID {
 	case runners.RunnerClaudeCode:
 		return &ClaudeAdapter{}
+	case runners.RunnerCursor:
+		return &ClaudeAdapter{}
 	case runners.RunnerCodex:
 		return &CodexAdapter{}
 	default:

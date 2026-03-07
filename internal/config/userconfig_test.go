@@ -75,7 +75,28 @@ func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
 	assert.Contains(t, err.Error(), "defaults contains unknown field")
 }
 
-func TestLoadUserConfig_DefaultsModelAndThinking(t *testing.T) {
+func TestLoadUserConfig_DefaultsModelAndEffort(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 1,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "model": "opus",
+    "effort": "high"
+  }
+}`)
+	cfg, found, err := LoadUserConfig(stub, "/cfg")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
+	assert.Equal(t, "code", cfg.Defaults.Editor)
+	assert.Equal(t, "opus", cfg.Defaults.Model)
+	assert.Equal(t, "high", cfg.Defaults.Effort)
+}
+
+func TestLoadUserConfig_DefaultsThinkingRejected(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
@@ -87,13 +108,10 @@ func TestLoadUserConfig_DefaultsModelAndThinking(t *testing.T) {
     "thinking": "high"
   }
 }`)
-	cfg, found, err := LoadUserConfig(stub, "/cfg")
-	require.NoError(t, err)
-	assert.True(t, found)
-	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
-	assert.Equal(t, "code", cfg.Defaults.Editor)
-	assert.Equal(t, "opus", cfg.Defaults.Model)
-	assert.Equal(t, "high", cfg.Defaults.Thinking)
+	_, _, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "defaults contains unknown field")
 }
 
 func TestValidateUserConfig_RequiredFields(t *testing.T) {

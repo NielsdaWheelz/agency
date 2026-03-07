@@ -55,7 +55,7 @@ minimal example:
     "editor": "code",
     "parent_branch": "main",
     "model": "opus",
-    "thinking": "high"
+    "effort": "high"
   },
   "runners": {
     "claude-code": "claude",
@@ -74,7 +74,8 @@ runner policy:
 - input aliases are accepted: `claude` -> `claude-code`, `cursor-cli` -> `cursor`
 - **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility keys like `runners.claude` / `runners.cursor-cli`) to an executable command
 - `defaults.runner` is used by `agency agent start` when `--runner` is omitted; if no user config exists, built-in default is `claude` (canonicalized to `claude-code`)
-- `defaults.model` and `defaults.thinking` are consumed by typed model/thinking flags for `claude-code` flows (`agent start`, `agent restart`)
+- `defaults.model` is consumed by typed model flags for `claude-code`, `codex`, and `cursor` flows (`agent start`, `agent restart`)
+- `defaults.effort` is consumed by typed effort flags for `claude-code` and `codex` flows (`agent start`, `agent restart`)
 
 ### timeout format
 

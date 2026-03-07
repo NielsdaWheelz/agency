@@ -98,6 +98,16 @@ type SessionStartData struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
+// SessionStartNotification is emitted by the parser when a session_start event
+// carries an explicit session/thread identity.
+type SessionStartNotification struct {
+	// SessionID is the runner session/thread identifier used for resume turns.
+	SessionID string
+
+	// Seq is the stream.jsonl sequence number of the session_start event.
+	Seq uint64
+}
+
 // MessageData contains data for message events.
 // ContentBlocks, when present, preserves the full structure of content blocks
 // (text, tool_use, tool_result) with their complete fields. This is additive

@@ -665,8 +665,8 @@ func TestGetAdapter(t *testing.T) {
 		{"codex", false},
 		{"amp", true},
 		{"opencode", true},
-		{"cursor", true},
-		{"cursor-cli", true},
+		{"cursor", false},
+		{"cursor-cli", false},
 		{"droid", true},
 		{"unknown", true},
 		{"", true},
@@ -808,6 +808,64 @@ func TestParser_CheckpointNotify_NilNotifyFn(t *testing.T) {
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
 	require.NoError(t, err)
 	// No panic = success
+}
+
+func TestParser_SessionStartNotify_ExtractsResumeSessionID(t *testing.T) {
+	t.Parallel()
+
+	var notifications []SessionStartNotification
+	parser := NewParser("test-inv-session-notify", "codex", fixedClock)
+	parser.SetSessionStartNotify(func(n SessionStartNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-sessionnotify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-sessionnotify-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	// Codex emits thread.started with thread_id. Parser should map this to
+	// a session notification that daemon resume logic can consume.
+	reader := strings.NewReader(`{"type":"thread.started","thread_id":"thread_123"}` + "\n")
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.Len(t, notifications, 1)
+	assert.Equal(t, "thread_123", notifications[0].SessionID)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
+}
+
+func TestParser_SessionStartNotify_ExtractsCursorSessionID(t *testing.T) {
+	t.Parallel()
+
+	var notifications []SessionStartNotification
+	parser := NewParser("test-inv-session-notify-cursor", "cursor", fixedClock)
+	parser.SetSessionStartNotify(func(n SessionStartNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-sessionnotify-cursor-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-sessionnotify-cursor-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	reader := strings.NewReader(`{"type":"system","subtype":"init","cwd":"/sandbox","session_id":"sess_123"}` + "\n")
+	err = parser.StreamAndParse(reader, rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.Len(t, notifications, 1)
+	assert.Equal(t, "sess_123", notifications[0].SessionID)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
 }
 
 func TestParser_StreamAndParse_StreamWriteFailureReturnsError(t *testing.T) {

@@ -85,7 +85,7 @@ func newAgentStartCmd() *cobra.Command {
 	var promptFile string
 	var runnerArgs []string
 	var model string
-	var thinking string
+	var effort string
 	var noIncludeUntracked bool
 	var jsonOut bool
 
@@ -139,7 +139,7 @@ Example:
 				PromptFile:         promptFile,
 				RunnerArgs:         runnerArgs,
 				Model:              model,
-				Thinking:           thinking,
+				Effort:             effort,
 				JSON:               jsonOut,
 				NoIncludeUntracked: noIncludeUntracked,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -154,8 +154,8 @@ Example:
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")
-	cmd.Flags().StringVar(&model, "model", "", "Model override (currently supported for runner claude-code)")
-	cmd.Flags().StringVar(&thinking, "thinking", "", "Thinking profile override (currently supported for runner claude-code)")
+	cmd.Flags().StringVar(&model, "model", "", "Model override (supported for runners claude-code, codex, cursor)")
+	cmd.Flags().StringVar(&effort, "effort", "", "Effort override (claude-code: --effort, codex: model_reasoning_effort; cursor: choose thinking model via --model)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from checkpoint snapshots")
 
@@ -761,7 +761,7 @@ func newAgentRestartCmd() *cobra.Command {
 	var historySelector bool
 	var runnerArgs []string
 	var model string
-	var thinking string
+	var effort string
 	var envAssignments []string
 	var jsonOut bool
 
@@ -830,7 +830,7 @@ Example:
 				InteractiveHistory: historySelector,
 				RunnerArgs:         runnerArgs,
 				Model:              model,
-				Thinking:           thinking,
+				Effort:             effort,
 				Env:                envMap,
 				JSON:               jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -841,8 +841,8 @@ Example:
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
 	cmd.Flags().BoolVar(&historySelector, "history", false, "Select timeline history interactively (arrow keys)")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to restarted runner (repeatable)")
-	cmd.Flags().StringVar(&model, "model", "", "Model override for restart (currently supported for runner claude-code)")
-	cmd.Flags().StringVar(&thinking, "thinking", "", "Thinking profile override for restart (currently supported for runner claude-code)")
+	cmd.Flags().StringVar(&model, "model", "", "Model override for restart (supported for runners claude-code, codex, cursor)")
+	cmd.Flags().StringVar(&effort, "effort", "", "Effort override for restart (claude-code: --effort, codex: model_reasoning_effort; cursor: choose thinking model via --model)")
 	cmd.Flags().StringArrayVar(&envAssignments, "env", nil, "Environment override KEY=VALUE for restart (repeatable)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
@@ -878,7 +878,7 @@ func newAgentHistoryCmd() *cobra.Command {
 
 By default, renders a human-readable transcript with styled output showing
 assistant messages, tool use, prompts, and results. For runners with semantic
-adapters (Claude, Codex), the transcript includes full content blocks with
+adapters (Claude, Codex, Cursor), the transcript includes full content blocks with
 tool inputs and results. For other runners, falls back to a sparse timeline.
 
 Use --last to show only the most recent timeline entry.

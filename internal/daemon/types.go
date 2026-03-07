@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -234,11 +235,15 @@ type SupervisedProcess struct {
 	PID                   int    // Headless only
 	PGID                  int    // Headless only
 	TmuxSession           string // PR-10: Headed only - tmux session name
+	SandboxPath           string // Headless only: runner working directory
 	RawLogFile            string
 	StderrFile            string
 	StreamLogFile         string // PR-07: path to stream.jsonl for normalized events
 	Runner                string // PR-07: runner type for stream parsing
 	RepoRoot              string // PR-08: repo root path for checkpoint engine
+	RunnerArgs            []string
+	Env                   map[string]string
+	NoIncludeUntracked    bool
 
 	// Parser handles stream parsing and semantic status (PR-07).
 	// May be nil for headed invocations or unsupported runners.
@@ -264,6 +269,10 @@ type SupervisedProcess struct {
 	// failureReason is set alongside exitReason for the same purpose.
 	failureReason atomic.Value
 
+	// resumeSessionID tracks the runner session/thread identifier used for
+	// explicit resume turns (for resume-mode runners like codex).
+	resumeSessionID atomic.Value // string
+
 	// done channel is closed when the process exits.
 	done chan struct{}
 
@@ -274,6 +283,28 @@ type SupervisedProcess struct {
 // CloseDone safely closes the done channel, ensuring it is only closed once.
 func (p *SupervisedProcess) CloseDone() {
 	p.doneOnce.Do(func() { close(p.done) })
+}
+
+// SetResumeSessionID stores an explicit resume session/thread identifier.
+func (p *SupervisedProcess) SetResumeSessionID(sessionID string) {
+	trimmed := strings.TrimSpace(sessionID)
+	if trimmed == "" {
+		return
+	}
+	p.resumeSessionID.Store(trimmed)
+}
+
+// GetResumeSessionID returns the stored explicit resume session/thread identifier.
+func (p *SupervisedProcess) GetResumeSessionID() string {
+	raw := p.resumeSessionID.Load()
+	if raw == nil {
+		return ""
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }
 
 // CheckpointEngine is the interface for the checkpoint engine.

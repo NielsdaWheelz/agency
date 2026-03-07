@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgentModelThinkingFlagsParse(t *testing.T) {
+func TestAgentModelEffortFlagsParse(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -23,7 +23,8 @@ func TestAgentModelThinkingFlagsParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := tt.newCmd()
-			require.NoError(t, cmd.ParseFlags([]string{"--model", "opus", "--thinking", "high"}))
+			require.NoError(t, cmd.ParseFlags([]string{"--model", "opus", "--effort", "high"}))
+			require.Error(t, cmd.ParseFlags([]string{"--model", "opus", "--thinking", "high"}))
 		})
 	}
 }
