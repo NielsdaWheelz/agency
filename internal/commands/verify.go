@@ -69,9 +69,9 @@ func Verify(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 //
 // Output contract (v1):
 //   - success: stdout "ok verify <id> record=<path> log=<path>"
-//   - failure: stderr "E_SCRIPT_FAILED: verify failed (<reason>) record=<path> log=<path>"
-//   - timeout: stderr "E_SCRIPT_TIMEOUT: verify timed out record=<path> log=<path>"
-func formatVerifyOutput(result *verifyservice.VerifyRunResult, err error, stdout, stderr io.Writer) error {
+//   - failure: returns error with details (record, log) for main.go to print
+//   - timeout: returns error with details (record, log) for main.go to print
+func formatVerifyOutput(result *verifyservice.VerifyRunResult, err error, stdout, _ io.Writer) error {
 	// If we have no result, this is an infrastructure error
 	if result == nil || result.Record == nil {
 		return err
@@ -90,14 +90,17 @@ func formatVerifyOutput(result *verifyservice.VerifyRunResult, err error, stdout
 	// Handle failed verification - derive reason from record fields
 	reason := deriveFailureReason(record)
 
-	// Choose error code based on timed_out
-	if record.TimedOut {
-		_, _ = fmt.Fprintf(stderr, "E_SCRIPT_TIMEOUT: verify timed out record=%s log=%s\n", recordPath, logPath)
-		return errors.New(errors.EScriptTimeout, "verify timed out")
+	details := map[string]string{
+		"record": recordPath,
+		"log":    logPath,
 	}
 
-	_, _ = fmt.Fprintf(stderr, "E_SCRIPT_FAILED: verify failed (%s) record=%s log=%s\n", reason, recordPath, logPath)
-	return errors.New(errors.EScriptFailed, fmt.Sprintf("verify failed (%s)", reason))
+	// Choose error code based on timed_out
+	if record.TimedOut {
+		return errors.NewWithDetails(errors.EScriptTimeout, "verify timed out", details)
+	}
+
+	return errors.NewWithDetails(errors.EScriptFailed, fmt.Sprintf("verify failed (%s)", reason), details)
 }
 
 // deriveFailureReason derives the human-readable failure reason from the verify record.

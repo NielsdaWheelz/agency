@@ -239,8 +239,6 @@ func RepoS1Readiness(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 			if opts.JSON {
 				return writeJSONError(stdout, string(code), err.Error())
 			}
-			_, _ = fmt.Fprintf(stderr, "Release readiness: BLOCKED\n")
-			_, _ = fmt.Fprintf(stderr, "%s\n", err.Error())
 			return errors.WithExitCode(err, 1)
 		}
 		return err
@@ -334,8 +332,6 @@ func RepoS1FreezeReadiness(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 			if opts.JSON {
 				return writeJSONError(stdout, string(code), err.Error())
 			}
-			_, _ = fmt.Fprintf(stderr, "Freeze readiness: BLOCKED\n")
-			_, _ = fmt.Fprintf(stderr, "%s\n", err.Error())
 			return errors.WithExitCode(err, 1)
 		}
 		return err

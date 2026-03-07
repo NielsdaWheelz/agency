@@ -52,8 +52,6 @@ func watchLoop(ctx context.Context, stdout, stderr io.Writer, interval time.Dura
 
 		// Render into buffer
 		if err := fetchAndRender(&buf); err != nil {
-			// On error mid-watch: print error to stderr, exit nonzero
-			_, _ = fmt.Fprintf(stderr, "\nerror: %v\n", err)
 			return err
 		}
 

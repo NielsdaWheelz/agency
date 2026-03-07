@@ -492,12 +492,6 @@ func gitPushBranch(ctx context.Context, cr exec.CommandRunner, workDir, branch s
 
 		// Check for non-fast-forward rejection (only hint when not using --force-with-lease)
 		if !forceWithLease && render.IsNonFastForwardError(stderrStr) {
-			// Print structured error with hint
-			_, _ = fmt.Fprintln(stderr, "error_code: E_GIT_PUSH_FAILED")
-			_, _ = fmt.Fprintln(stderr, "push rejected (non-fast-forward)")
-			_, _ = fmt.Fprintln(stderr)
-			_, _ = fmt.Fprint(stderr, render.FormatNonFastForwardHint(runRef))
-
 			return errors.NewWithDetails(
 				errors.EGitPushFailed,
 				"push rejected (non-fast-forward)",

@@ -3423,8 +3423,6 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 			Limit:  65536,
 		})
 		if err != nil {
-			// On error during follow, print and exit
-			_, _ = fmt.Fprintf(stderr, "\nerror: %v\n", err)
 			return err
 		}
 
