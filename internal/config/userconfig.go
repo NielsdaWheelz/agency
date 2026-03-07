@@ -24,7 +24,7 @@ type UserDefaults struct {
 	Editor       string `json:"editor"`
 	ParentBranch string `json:"parent_branch,omitempty"`
 	Model        string `json:"model,omitempty"`
-	Thinking     string `json:"thinking,omitempty"`
+	Effort       string `json:"effort,omitempty"`
 }
 
 // DefaultUserConfig returns built-in defaults used when config.json is missing.
@@ -120,7 +120,7 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			"editor":        true,
 			"parent_branch": true,
 			"model":         true,
-			"thinking":      true,
+			"effort":        true,
 		}
 		for key := range defaultsMap {
 			if !allowedDefaultKeys[key] {
@@ -155,12 +155,12 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			}
 			cfg.Defaults.Model = model
 		}
-		if rawThinking, ok := defaultsMap["thinking"]; ok {
-			var thinking string
-			if err := json.Unmarshal(rawThinking, &thinking); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.thinking must be a string")
+		if rawEffort, ok := defaultsMap["effort"]; ok {
+			var effort string
+			if err := json.Unmarshal(rawEffort, &effort); err != nil {
+				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.effort must be a string")
 			}
-			cfg.Defaults.Thinking = thinking
+			cfg.Defaults.Effort = effort
 		}
 	}
 

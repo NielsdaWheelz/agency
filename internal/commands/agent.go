@@ -57,11 +57,12 @@ type AgentStartOpts struct {
 	// RunnerArgs are additional arguments to pass to the runner.
 	RunnerArgs []string
 
-	// Model selects the runner model (currently supported for Claude runner).
+	// Model selects the runner model (supported for claude-code, codex, and cursor runners).
 	Model string
 
-	// Thinking selects the runner thinking profile (currently supported for Claude runner).
-	Thinking string
+	// Effort selects the typed effort level (claude-code: --effort, codex: model_reasoning_effort).
+	// Cursor runner does not support effort and expects thinking-capable model IDs via --model.
+	Effort string
 
 	// JSON outputs as JSON.
 	JSON bool
@@ -109,7 +110,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if err != nil {
 		return fail(err)
 	}
-	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, opts.Model, opts.Thinking, userCfg.Defaults)
+	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, opts.Model, opts.Effort, userCfg.Defaults)
 	if err != nil {
 		return fail(err)
 	}
@@ -149,8 +150,17 @@ func resolveAgentRunner(input, defaultRunner string) (string, error) {
 }
 
 const (
-	claudeModelArgFlag    = "--model"
-	claudeThinkingArgFlag = "--thinking"
+	claudeModelArgFlag  = "--model"
+	claudeEffortArgFlag = "--effort"
+
+	cursorModelArgFlag = "--model"
+
+	codexModelArgFlag              = "--model"
+	codexModelShortArgFlag         = "-m"
+	codexConfigArgFlag             = "--config"
+	codexConfigShortArgFlag        = "-c"
+	codexReasoningEffortConfigKey  = "model_reasoning_effort"
+	codexReasoningEffortConfigFlag = "--config " + codexReasoningEffortConfigKey
 )
 
 type runnerArgOccurrence struct {
@@ -159,21 +169,29 @@ type runnerArgOccurrence struct {
 }
 
 type claudeRunnerArgsParse struct {
-	modelOccurrences    []runnerArgOccurrence
-	thinkingOccurrences []runnerArgOccurrence
-	otherArgs           []string
+	modelOccurrences  []runnerArgOccurrence
+	effortOccurrences []runnerArgOccurrence
+	otherArgs         []string
 }
 
-func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cliThinking string, defaults config.UserDefaults) ([]string, error) {
+type codexRunnerArgsParse struct {
+	modelOccurrences  []runnerArgOccurrence
+	effortOccurrences []runnerArgOccurrence
+	otherArgs         []string
+}
+
+func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cliEffort string, defaults config.UserDefaults) ([]string, error) {
 	model := strings.TrimSpace(cliModel)
-	thinking := strings.TrimSpace(cliThinking)
+	effort := strings.TrimSpace(cliEffort)
+	supportedModelRunners := []string{runners.RunnerClaudeCode, runners.RunnerCodex, runners.RunnerCursor}
+	supportedEffortRunners := []string{runners.RunnerClaudeCode, runners.RunnerCodex}
 
 	canonicalRunner, err := runners.Canonicalize(runner)
 	if err != nil {
-		if model != "" || thinking != "" {
+		if model != "" || effort != "" {
 			return nil, errors.NewWithDetails(
 				errors.EUsage,
-				"cannot apply --model/--thinking to unrecognized runner: "+runner,
+				"cannot apply --model/--effort to unrecognized runner: "+runner,
 				map[string]string{
 					"runner": runner,
 					"valid":  strings.Join(runners.CanonicalIDs(), ", "),
@@ -183,14 +201,20 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cl
 		return append([]string(nil), runnerArgs...), nil
 	}
 
-	if canonicalRunner != runners.RunnerClaudeCode {
-		if model != "" || thinking != "" {
+	supportsModel := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex || canonicalRunner == runners.RunnerCursor
+	supportsEffort := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex
+
+	if !supportsModel {
+		if model != "" || effort != "" {
 			return nil, errors.NewWithDetails(
 				errors.EUsage,
-				fmt.Sprintf("--model/--thinking are currently only supported for runner %q", runners.RunnerClaudeCode),
+				fmt.Sprintf("--model is supported for runners %s; --effort is supported for runners %s",
+					strings.Join(supportedModelRunners, ", "),
+					strings.Join(supportedEffortRunners, ", "),
+				),
 				map[string]string{
 					"runner": canonicalRunner,
-					"hint":   "for other runners, pass model/thinking flags via --runner-arg",
+					"hint":   "for other runners, pass model/effort flags via --runner-arg",
 				},
 			)
 		}
@@ -200,14 +224,33 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cl
 	if model == "" {
 		model = strings.TrimSpace(defaults.Model)
 	}
-	if thinking == "" {
-		thinking = strings.TrimSpace(defaults.Thinking)
+	if supportsEffort && effort == "" {
+		effort = strings.TrimSpace(defaults.Effort)
+	}
+	if !supportsEffort && effort != "" {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--effort is not supported for runner "+canonicalRunner,
+			map[string]string{
+				"runner": canonicalRunner,
+				"hint":   "select thinking-capable models via --model (for example: sonnet-4.6-thinking)",
+			},
+		)
 	}
 
-	return mergeClaudeRunnerArgs(runnerArgs, model, thinking)
+	switch canonicalRunner {
+	case runners.RunnerClaudeCode:
+		return mergeClaudeRunnerArgs(runnerArgs, model, effort)
+	case runners.RunnerCodex:
+		return mergeCodexRunnerArgs(runnerArgs, model, effort)
+	case runners.RunnerCursor:
+		return mergeCursorRunnerArgs(runnerArgs, model, effort)
+	default:
+		return append([]string(nil), runnerArgs...), nil
+	}
 }
 
-func mergeClaudeRunnerArgs(runnerArgs []string, targetModel, targetThinking string) ([]string, error) {
+func mergeClaudeRunnerArgs(runnerArgs []string, targetModel, targetEffort string) ([]string, error) {
 	parsed, err := parseClaudeRunnerArgs(runnerArgs)
 	if err != nil {
 		return nil, err
@@ -217,7 +260,7 @@ func mergeClaudeRunnerArgs(runnerArgs []string, targetModel, targetThinking stri
 	if err != nil {
 		return nil, err
 	}
-	existingThinking, err := resolveSingleRunnerOption(claudeThinkingArgFlag, parsed.thinkingOccurrences)
+	existingEffort, err := resolveSingleRunnerOption(claudeEffortArgFlag, parsed.effortOccurrences)
 	if err != nil {
 		return nil, err
 	}
@@ -235,21 +278,21 @@ func mergeClaudeRunnerArgs(runnerArgs []string, targetModel, targetThinking stri
 			},
 		)
 	}
-	if targetThinking != "" && existingThinking != "" && existingThinking != targetThinking {
+	if targetEffort != "" && existingEffort != "" && existingEffort != targetEffort {
 		return nil, errors.NewWithDetails(
 			errors.EUsage,
-			"--thinking conflicts with value already provided via --runner-arg",
+			"--effort conflicts with value already provided via --runner-arg",
 			map[string]string{
-				"flag":       claudeThinkingArgFlag,
-				"from_flag":  targetThinking,
-				"from_arg":   existingThinking,
-				"hint":       "use one source of truth for thinking selection",
-				"runner_arg": claudeThinkingArgFlag,
+				"flag":       claudeEffortArgFlag,
+				"from_flag":  targetEffort,
+				"from_arg":   existingEffort,
+				"hint":       "use one source of truth for effort selection",
+				"runner_arg": claudeEffortArgFlag,
 			},
 		)
 	}
 
-	needsRebuild := targetModel != "" || targetThinking != ""
+	needsRebuild := targetModel != "" || targetEffort != ""
 	if !needsRebuild {
 		return append([]string(nil), runnerArgs...), nil
 	}
@@ -262,10 +305,133 @@ func mergeClaudeRunnerArgs(runnerArgs []string, targetModel, targetThinking stri
 		out = append(out, parsed.modelOccurrences[0].tokens...)
 	}
 	switch {
-	case targetThinking != "":
-		out = append(out, claudeThinkingArgFlag, targetThinking)
-	case len(parsed.thinkingOccurrences) == 1:
-		out = append(out, parsed.thinkingOccurrences[0].tokens...)
+	case targetEffort != "":
+		out = append(out, claudeEffortArgFlag, targetEffort)
+	case len(parsed.effortOccurrences) == 1:
+		out = append(out, parsed.effortOccurrences[0].tokens...)
+	}
+	return out, nil
+}
+
+func mergeCodexRunnerArgs(runnerArgs []string, targetModel, targetEffort string) ([]string, error) {
+	targetModel = strings.TrimSpace(targetModel)
+	targetEffort = normalizeRunnerArgValue(targetEffort)
+
+	parsed, err := parseCodexRunnerArgs(runnerArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	existingModel, err := resolveSingleRunnerOption(codexModelArgFlag, parsed.modelOccurrences)
+	if err != nil {
+		return nil, err
+	}
+	existingEffort, err := resolveSingleRunnerOption(codexReasoningEffortConfigFlag, parsed.effortOccurrences)
+	if err != nil {
+		return nil, err
+	}
+
+	if targetModel != "" && existingModel != "" && existingModel != targetModel {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--model conflicts with value already provided via --runner-arg",
+			map[string]string{
+				"flag":       codexModelArgFlag,
+				"from_flag":  targetModel,
+				"from_arg":   existingModel,
+				"hint":       "use one source of truth for model selection",
+				"runner_arg": codexModelArgFlag,
+			},
+		)
+	}
+	if targetEffort != "" && existingEffort != "" && existingEffort != targetEffort {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--effort conflicts with value already provided via --runner-arg",
+			map[string]string{
+				"flag":       codexReasoningEffortConfigFlag,
+				"from_flag":  targetEffort,
+				"from_arg":   existingEffort,
+				"hint":       "use one source of truth for effort selection",
+				"runner_arg": codexReasoningEffortConfigFlag,
+			},
+		)
+	}
+
+	needsRebuild := targetModel != "" || targetEffort != ""
+	if !needsRebuild {
+		return append([]string(nil), runnerArgs...), nil
+	}
+
+	out := append([]string(nil), parsed.otherArgs...)
+	switch {
+	case targetModel != "":
+		out = append(out, codexModelArgFlag, targetModel)
+	case len(parsed.modelOccurrences) == 1:
+		out = append(out, parsed.modelOccurrences[0].tokens...)
+	}
+	switch {
+	case targetEffort != "":
+		out = append(out, codexConfigArgFlag, fmt.Sprintf("%s=%s", codexReasoningEffortConfigKey, targetEffort))
+	case len(parsed.effortOccurrences) == 1:
+		out = append(out, parsed.effortOccurrences[0].tokens...)
+	}
+	return out, nil
+}
+
+func mergeCursorRunnerArgs(runnerArgs []string, targetModel, targetEffort string) ([]string, error) {
+	targetModel = strings.TrimSpace(targetModel)
+	targetEffort = strings.TrimSpace(targetEffort)
+
+	parsed, err := parseClaudeRunnerArgs(runnerArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	existingModel, err := resolveSingleRunnerOption(cursorModelArgFlag, parsed.modelOccurrences)
+	if err != nil {
+		return nil, err
+	}
+	existingEffort, err := resolveSingleRunnerOption(claudeEffortArgFlag, parsed.effortOccurrences)
+	if err != nil {
+		return nil, err
+	}
+
+	if targetEffort != "" || existingEffort != "" {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--effort is not supported for runner "+runners.RunnerCursor,
+			map[string]string{
+				"runner": runners.RunnerCursor,
+				"hint":   "select thinking-capable models via --model (for example: sonnet-4.6-thinking)",
+			},
+		)
+	}
+	if targetModel != "" && existingModel != "" && existingModel != targetModel {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--model conflicts with value already provided via --runner-arg",
+			map[string]string{
+				"flag":       cursorModelArgFlag,
+				"from_flag":  targetModel,
+				"from_arg":   existingModel,
+				"hint":       "use one source of truth for model selection",
+				"runner_arg": cursorModelArgFlag,
+			},
+		)
+	}
+
+	needsRebuild := targetModel != ""
+	if !needsRebuild {
+		return append([]string(nil), runnerArgs...), nil
+	}
+
+	out := append([]string(nil), parsed.otherArgs...)
+	switch {
+	case targetModel != "":
+		out = append(out, cursorModelArgFlag, targetModel)
+	case len(parsed.modelOccurrences) == 1:
+		out = append(out, parsed.modelOccurrences[0].tokens...)
 	}
 	return out, nil
 }
@@ -301,6 +467,17 @@ func resolveSingleRunnerOption(flag string, occurrences []runnerArgOccurrence) (
 			"hint": "pass this option only once",
 		},
 	)
+}
+
+func normalizeRunnerArgValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) >= 2 {
+		if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
+			(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
+			return strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		}
+	}
+	return trimmed
 }
 
 func parseClaudeRunnerArgs(args []string) (claudeRunnerArgsParse, error) {
@@ -359,14 +536,14 @@ func parseClaudeRunnerArgs(args []string) (claudeRunnerArgsParse, error) {
 				value:  value,
 			})
 
-		case arg == claudeThinkingArgFlag:
+		case arg == claudeEffortArgFlag:
 			if i+1 >= len(args) {
 				return claudeRunnerArgsParse{}, errors.NewWithDetails(
 					errors.EUsage,
-					claudeThinkingArgFlag+" in --runner-arg requires a value",
+					claudeEffortArgFlag+" in --runner-arg requires a value",
 					map[string]string{
-						"flag": claudeThinkingArgFlag,
-						"hint": "pass --runner-arg \"--thinking=<value>\" or --runner-arg \"--thinking\" --runner-arg \"<value>\"",
+						"flag": claudeEffortArgFlag,
+						"hint": "pass --runner-arg \"--effort=<value>\" or --runner-arg \"--effort\" --runner-arg \"<value>\"",
 					},
 				)
 			}
@@ -374,30 +551,30 @@ func parseClaudeRunnerArgs(args []string) (claudeRunnerArgsParse, error) {
 			if value == "" {
 				return claudeRunnerArgsParse{}, errors.NewWithDetails(
 					errors.EUsage,
-					claudeThinkingArgFlag+" in --runner-arg requires a non-empty value",
+					claudeEffortArgFlag+" in --runner-arg requires a non-empty value",
 					map[string]string{
-						"flag": claudeThinkingArgFlag,
+						"flag": claudeEffortArgFlag,
 					},
 				)
 			}
-			parsed.thinkingOccurrences = append(parsed.thinkingOccurrences, runnerArgOccurrence{
-				tokens: []string{arg, args[i+1]},
+			parsed.effortOccurrences = append(parsed.effortOccurrences, runnerArgOccurrence{
+				tokens: []string{claudeEffortArgFlag, args[i+1]},
 				value:  value,
 			})
 			i++
 
-		case strings.HasPrefix(arg, claudeThinkingArgFlag+"="):
-			value := strings.TrimSpace(strings.TrimPrefix(arg, claudeThinkingArgFlag+"="))
+		case strings.HasPrefix(arg, claudeEffortArgFlag+"="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, claudeEffortArgFlag+"="))
 			if value == "" {
 				return claudeRunnerArgsParse{}, errors.NewWithDetails(
 					errors.EUsage,
-					claudeThinkingArgFlag+" in --runner-arg requires a non-empty value",
+					claudeEffortArgFlag+" in --runner-arg requires a non-empty value",
 					map[string]string{
-						"flag": claudeThinkingArgFlag,
+						"flag": claudeEffortArgFlag,
 					},
 				)
 			}
-			parsed.thinkingOccurrences = append(parsed.thinkingOccurrences, runnerArgOccurrence{
+			parsed.effortOccurrences = append(parsed.effortOccurrences, runnerArgOccurrence{
 				tokens: []string{arg},
 				value:  value,
 			})
@@ -410,16 +587,220 @@ func parseClaudeRunnerArgs(args []string) (claudeRunnerArgsParse, error) {
 	return parsed, nil
 }
 
-func hasClaudeOptionRunnerArgs(args []string) bool {
-	for _, arg := range args {
+func parseCodexRunnerArgs(args []string) (codexRunnerArgsParse, error) {
+	parsed := codexRunnerArgsParse{
+		otherArgs: make([]string, 0, len(args)),
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			parsed.otherArgs = append(parsed.otherArgs, args[i:]...)
+			break
+		}
+
+		switch {
+		case arg == codexModelArgFlag || arg == codexModelShortArgFlag:
+			if i+1 >= len(args) {
+				return codexRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					arg+" in --runner-arg requires a value",
+					map[string]string{
+						"flag": arg,
+						"hint": "pass --runner-arg \"--model=<value>\" or --runner-arg \"-m\" --runner-arg \"<value>\"",
+					},
+				)
+			}
+			value := strings.TrimSpace(args[i+1])
+			if value == "" {
+				return codexRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					arg+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": arg,
+					},
+				)
+			}
+			parsed.modelOccurrences = append(parsed.modelOccurrences, runnerArgOccurrence{
+				tokens: []string{arg, args[i+1]},
+				value:  value,
+			})
+			i++
+
+		case strings.HasPrefix(arg, codexModelArgFlag+"="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, codexModelArgFlag+"="))
+			if value == "" {
+				return codexRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					codexModelArgFlag+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": codexModelArgFlag,
+					},
+				)
+			}
+			parsed.modelOccurrences = append(parsed.modelOccurrences, runnerArgOccurrence{
+				tokens: []string{arg},
+				value:  value,
+			})
+
+		case strings.HasPrefix(arg, codexModelShortArgFlag+"="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, codexModelShortArgFlag+"="))
+			if value == "" {
+				return codexRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					codexModelShortArgFlag+" in --runner-arg requires a non-empty value",
+					map[string]string{
+						"flag": codexModelShortArgFlag,
+					},
+				)
+			}
+			parsed.modelOccurrences = append(parsed.modelOccurrences, runnerArgOccurrence{
+				tokens: []string{arg},
+				value:  value,
+			})
+
+		case arg == codexConfigArgFlag || arg == codexConfigShortArgFlag:
+			if i+1 >= len(args) {
+				return codexRunnerArgsParse{}, errors.NewWithDetails(
+					errors.EUsage,
+					arg+" in --runner-arg requires a value",
+					map[string]string{
+						"flag": arg,
+						"hint": "pass --runner-arg \"--config=" + codexReasoningEffortConfigKey + "=<value>\"",
+					},
+				)
+			}
+			configToken := args[i+1]
+			key, value, ok := parseCodexConfigAssignment(configToken)
+			if ok && key == codexReasoningEffortConfigKey {
+				normalized := normalizeRunnerArgValue(value)
+				if normalized == "" {
+					return codexRunnerArgsParse{}, errors.NewWithDetails(
+						errors.EUsage,
+						codexReasoningEffortConfigFlag+" in --runner-arg requires a non-empty value",
+						map[string]string{
+							"flag": codexReasoningEffortConfigFlag,
+							"hint": "pass --runner-arg \"--config " + codexReasoningEffortConfigKey + "=<value>\"",
+						},
+					)
+				}
+				parsed.effortOccurrences = append(parsed.effortOccurrences, runnerArgOccurrence{
+					tokens: []string{arg, configToken},
+					value:  normalized,
+				})
+			} else {
+				parsed.otherArgs = append(parsed.otherArgs, arg, configToken)
+			}
+			i++
+
+		case strings.HasPrefix(arg, codexConfigArgFlag+"="):
+			configToken := strings.TrimPrefix(arg, codexConfigArgFlag+"=")
+			key, value, ok := parseCodexConfigAssignment(configToken)
+			if ok && key == codexReasoningEffortConfigKey {
+				normalized := normalizeRunnerArgValue(value)
+				if normalized == "" {
+					return codexRunnerArgsParse{}, errors.NewWithDetails(
+						errors.EUsage,
+						codexReasoningEffortConfigFlag+" in --runner-arg requires a non-empty value",
+						map[string]string{
+							"flag": codexReasoningEffortConfigFlag,
+							"hint": "pass --runner-arg \"--config=" + codexReasoningEffortConfigKey + "=<value>\"",
+						},
+					)
+				}
+				parsed.effortOccurrences = append(parsed.effortOccurrences, runnerArgOccurrence{
+					tokens: []string{arg},
+					value:  normalized,
+				})
+			} else {
+				parsed.otherArgs = append(parsed.otherArgs, arg)
+			}
+
+		case strings.HasPrefix(arg, codexConfigShortArgFlag+"="):
+			configToken := strings.TrimPrefix(arg, codexConfigShortArgFlag+"=")
+			key, value, ok := parseCodexConfigAssignment(configToken)
+			if ok && key == codexReasoningEffortConfigKey {
+				normalized := normalizeRunnerArgValue(value)
+				if normalized == "" {
+					return codexRunnerArgsParse{}, errors.NewWithDetails(
+						errors.EUsage,
+						codexReasoningEffortConfigFlag+" in --runner-arg requires a non-empty value",
+						map[string]string{
+							"flag": codexReasoningEffortConfigFlag,
+							"hint": "pass --runner-arg \"-c " + codexReasoningEffortConfigKey + "=<value>\"",
+						},
+					)
+				}
+				parsed.effortOccurrences = append(parsed.effortOccurrences, runnerArgOccurrence{
+					tokens: []string{arg},
+					value:  normalized,
+				})
+			} else {
+				parsed.otherArgs = append(parsed.otherArgs, arg)
+			}
+
+		default:
+			parsed.otherArgs = append(parsed.otherArgs, arg)
+		}
+	}
+
+	return parsed, nil
+}
+
+func parseCodexConfigAssignment(raw string) (string, string, bool) {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return "", "", false
+	}
+	parts := strings.SplitN(token, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	key := strings.TrimSpace(parts[0])
+	if key == "" {
+		return "", "", false
+	}
+	value := strings.TrimSpace(parts[1])
+	return key, value, true
+}
+
+func hasTypedOptionRunnerArgs(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--" {
 			return false
 		}
-		if arg == claudeModelArgFlag || arg == claudeThinkingArgFlag {
+		if arg == claudeModelArgFlag || arg == claudeEffortArgFlag || arg == codexModelArgFlag || arg == codexModelShortArgFlag {
 			return true
 		}
-		if strings.HasPrefix(arg, claudeModelArgFlag+"=") || strings.HasPrefix(arg, claudeThinkingArgFlag+"=") {
+		if strings.HasPrefix(arg, claudeModelArgFlag+"=") ||
+			strings.HasPrefix(arg, claudeEffortArgFlag+"=") ||
+			strings.HasPrefix(arg, codexModelArgFlag+"=") ||
+			strings.HasPrefix(arg, codexModelShortArgFlag+"=") {
 			return true
+		}
+		if arg == codexConfigArgFlag || arg == codexConfigShortArgFlag {
+			if i+1 >= len(args) {
+				return true
+			}
+			key, _, ok := parseCodexConfigAssignment(args[i+1])
+			if ok && key == codexReasoningEffortConfigKey {
+				return true
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, codexConfigArgFlag+"=") {
+			key, _, ok := parseCodexConfigAssignment(strings.TrimPrefix(arg, codexConfigArgFlag+"="))
+			if ok && key == codexReasoningEffortConfigKey {
+				return true
+			}
+		}
+		if strings.HasPrefix(arg, codexConfigShortArgFlag+"=") {
+			key, _, ok := parseCodexConfigAssignment(strings.TrimPrefix(arg, codexConfigShortArgFlag+"="))
+			if ok && key == codexReasoningEffortConfigKey {
+				return true
+			}
 		}
 	}
 	return false
@@ -2271,11 +2652,12 @@ type AgentRestartOpts struct {
 	// RunnerArgs are additional arguments for restarted runner execution.
 	RunnerArgs []string
 
-	// Model selects the runner model for restart (currently supported for Claude runner).
+	// Model selects the runner model for restart (supported for claude-code, codex, and cursor runners).
 	Model string
 
-	// Thinking selects the runner thinking profile for restart (currently supported for Claude runner).
-	Thinking string
+	// Effort selects the typed effort level for restart (claude-code: --effort, codex: model_reasoning_effort).
+	// Cursor runner does not support effort and expects thinking-capable model IDs via --model.
+	Effort string
 
 	// Env are explicit environment overrides for restarted runner execution.
 	Env map[string]string
@@ -2377,10 +2759,10 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 	effectiveRunnerArgs := append([]string(nil), opts.RunnerArgs...)
 	needsRunnerOptionResolution := strings.TrimSpace(opts.Model) != "" ||
-		strings.TrimSpace(opts.Thinking) != "" ||
+		strings.TrimSpace(opts.Effort) != "" ||
 		strings.TrimSpace(userCfg.Defaults.Model) != "" ||
-		strings.TrimSpace(userCfg.Defaults.Thinking) != "" ||
-		hasClaudeOptionRunnerArgs(opts.RunnerArgs)
+		strings.TrimSpace(userCfg.Defaults.Effort) != "" ||
+		hasTypedOptionRunnerArgs(opts.RunnerArgs)
 	if needsRunnerOptionResolution {
 		invocationResult, err := client.GetInvocationRich(ctx, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
@@ -2390,7 +2772,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			invocationResult.Invocation.Runner,
 			opts.RunnerArgs,
 			opts.Model,
-			opts.Thinking,
+			opts.Effort,
 			userCfg.Defaults,
 		)
 		if err != nil {

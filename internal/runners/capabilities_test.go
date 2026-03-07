@@ -60,12 +60,17 @@ func TestValidateArgs(t *testing.T) {
 	require.Error(t, ValidateArgs("claude-code", []string{"--output-format", "json"}))
 	require.Error(t, ValidateArgs("claude-code", []string{"--input-format", "text"}))
 	require.Error(t, ValidateArgs("codex", []string{"--json"}))
+	require.Error(t, ValidateArgs("codex", []string{"resume"}))
+	require.Error(t, ValidateArgs("codex", []string{"--last"}))
 	require.Error(t, ValidateArgs("amp", []string{"-x"}))
 	require.Error(t, ValidateArgs("amp", []string{"--stream-json"}))
 	require.Error(t, ValidateArgs("amp", []string{"--stream-json-input"}))
 	require.Error(t, ValidateArgs("opencode", []string{"run"}))
 	require.Error(t, ValidateArgs("cursor", []string{"-p"}))
 	require.Error(t, ValidateArgs("cursor", []string{"--output-format", "json"}))
+	require.Error(t, ValidateArgs("cursor", []string{"--resume", "abc-123"}))
+	require.Error(t, ValidateArgs("cursor", []string{"--continue"}))
+	require.Error(t, ValidateArgs("cursor", []string{"--workspace", "/tmp/outside"}))
 	require.Error(t, ValidateArgs("droid", []string{"exec"}))
 	require.Error(t, ValidateArgs("droid", []string{"--output-format", "text"}))
 	require.Error(t, ValidateArgs("droid", []string{"--input-format", "text"}))
@@ -74,6 +79,7 @@ func TestValidateArgs(t *testing.T) {
 	// Permission flags are allowed in headed mode (user at terminal).
 	require.NoError(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
 	require.NoError(t, ValidateArgs("codex", []string{"--full-auto"}))
+	require.NoError(t, ValidateArgs("cursor", []string{"--force"}))
 	require.NoError(t, ValidateArgs("opencode", []string{"--mode", "safe"}))
 }
 
@@ -90,8 +96,12 @@ func TestValidateHeadlessArgs(t *testing.T) {
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "default"}))
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode=acceptEdits"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--full-auto"}))
-	require.Error(t, ValidateHeadlessArgs("codex", []string{"--approval-mode", "suggest"}))
-	require.Error(t, ValidateHeadlessArgs("codex", []string{"--approval-mode=auto-edit"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--yolo"}))
+	require.Error(t, ValidateHeadlessArgs("cursor", []string{"--force"}))
+	require.Error(t, ValidateHeadlessArgs("cursor", []string{"-f"}))
+	require.Error(t, ValidateHeadlessArgs("cursor", []string{"--yolo"}))
+	require.Error(t, ValidateHeadlessArgs("cursor", []string{"--trust"}))
 	require.Error(t, ValidateHeadlessArgs("opencode", []string{"--mode", "safe"}))
 	require.Error(t, ValidateHeadlessArgs("opencode", []string{"--mode=auto"}))
 
@@ -106,7 +116,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	claudeArgs, err := BuildHeadlessArgs("claude", "fix bug", "/sandbox", []string{"--model", "opus"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"}, claudeArgs)
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
@@ -114,7 +124,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-x", "--stream-json", "--stream-json-input", "--model", "amp-fast", "fix bug"}, ampArgs)
+	assert.Equal(t, []string{"-x", "--stream-json", "--stream-json-input", "--model", "amp-fast"}, ampArgs)
 
 	opencodeArgs, err := BuildHeadlessArgs("opencode", "fix bug", "/sandbox", []string{"--model", "open"})
 	require.NoError(t, err)
@@ -122,11 +132,47 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	cursorArgs, err := BuildHeadlessArgs("cursor", "fix bug", "/sandbox", []string{"--model", "cursor-fast"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--model", "cursor-fast", "fix bug"}, cursorArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--force", "--workspace", "/sandbox", "--model", "cursor-fast", "fix bug"}, cursorArgs)
 
 	droidArgs, err := BuildHeadlessArgs("droid", "fix bug", "/sandbox", []string{"--model", "droid-1"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", "--model", "droid-1", "fix bug"}, droidArgs)
+	assert.Equal(t, []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", "--model", "droid-1"}, droidArgs)
+}
+
+func TestBuildHeadlessArgs_RequiresPrompt(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildHeadlessArgs("claude-code", "   ", "/sandbox", nil)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestBuildResumeArgs(t *testing.T) {
+	t.Parallel()
+
+	codexArgs, err := BuildResumeArgs("codex", "continue from previous turn", "", []string{"--model", "gpt-5"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"exec", "resume", "--last", "--json", "--full-auto", "--model", "gpt-5", "continue from previous turn"}, codexArgs)
+
+	codexExplicitArgs, err := BuildResumeArgs("codex", "continue from previous turn", "thread_abc123", []string{"--model", "gpt-5"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"exec", "resume", "thread_abc123", "--json", "--full-auto", "--model", "gpt-5", "continue from previous turn"}, codexExplicitArgs)
+
+	cursorArgs, err := BuildResumeArgs("cursor", "continue from previous turn", "", []string{"--model", "sonnet-4.6-thinking"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--force", "--continue", "--model", "sonnet-4.6-thinking", "continue from previous turn"}, cursorArgs)
+
+	cursorExplicitArgs, err := BuildResumeArgs("cursor", "continue from previous turn", "sess_abc123", []string{"--model", "sonnet-4.6-thinking"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_abc123", "--model", "sonnet-4.6-thinking", "continue from previous turn"}, cursorExplicitArgs)
+
+	_, err = BuildResumeArgs("amp", "continue", "", nil)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
+
+	assert.True(t, SupportsResumeTurns("codex"))
+	assert.True(t, SupportsResumeTurns("cursor"))
+	assert.False(t, SupportsResumeTurns("amp"))
 }
 
 func TestBuildHeadedArgs(t *testing.T) {
@@ -183,6 +229,32 @@ func TestChatMode(t *testing.T) {
 	}
 }
 
+func TestInitialPromptMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		runner string
+		want   InitialPromptMode
+	}{
+		{"claude-code", InitialPromptStdin},
+		{"claude", InitialPromptStdin},
+		{"codex", InitialPromptPositional},
+		{"amp", InitialPromptStdin},
+		{"opencode", InitialPromptPositional},
+		{"cursor", InitialPromptPositional},
+		{"cursor-cli", InitialPromptPositional},
+		{"droid", InitialPromptStdin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.runner, func(t *testing.T) {
+			t.Parallel()
+			mode, err := ResolveInitialPromptMode(tt.runner)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, mode)
+		})
+	}
+}
+
 func TestChatMode_UnknownRunner(t *testing.T) {
 	t.Parallel()
 	_, err := ResolveChatMode("unknown")
@@ -196,9 +268,9 @@ func TestHasSemanticAdapter(t *testing.T) {
 	assert.True(t, HasSemanticAdapter("claude"))
 	assert.True(t, HasSemanticAdapter("claude-code"))
 	assert.True(t, HasSemanticAdapter("codex"))
+	assert.True(t, HasSemanticAdapter("cursor"))
+	assert.True(t, HasSemanticAdapter("cursor-cli"))
 	assert.False(t, HasSemanticAdapter("amp"))
 	assert.False(t, HasSemanticAdapter("opencode"))
-	assert.False(t, HasSemanticAdapter("cursor"))
-	assert.False(t, HasSemanticAdapter("cursor-cli"))
 	assert.False(t, HasSemanticAdapter("droid"))
 }

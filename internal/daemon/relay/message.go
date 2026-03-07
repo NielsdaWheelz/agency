@@ -7,7 +7,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
-// FormatStdinMessage builds the JSONL byte payload for a user follow-up message,
+// FormatStdinMessage builds the JSONL byte payload for a user message,
 // formatted per the runner's stdin streaming protocol.
 //
 // Supported runners and their formats:

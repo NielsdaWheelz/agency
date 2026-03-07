@@ -2,7 +2,7 @@
 //
 // Each runner has a different mechanism for multi-turn headless conversations:
 //   - StdinRelay: writes JSONL user messages to the runner's stdin pipe (claude-code, amp, droid)
-//   - ResumeRelay: queues messages and delivers them by spawning a new process with --resume (codex, opencode, cursor)
+//   - ResumeRelay: queues messages for session-resume delivery (codex and other resume-style runners)
 package relay
 
 import (
@@ -22,9 +22,9 @@ const (
 	ModeResume Mode = "resume"
 )
 
-// ChatRelay delivers follow-up prompts to a running or recently-stopped agent.
+// ChatRelay delivers user prompts to a running or recently-stopped agent.
 type ChatRelay interface {
-	// Send delivers a follow-up prompt.
+	// Send delivers a user prompt.
 	// For stdin relays, the message is written immediately.
 	// For resume relays, the message is queued for delivery on next turn boundary.
 	Send(ctx context.Context, prompt string) error
@@ -47,7 +47,7 @@ func NewStdinRelay(w io.WriteCloser, runner string) *StdinRelay {
 	}
 }
 
-// StdinRelay delivers follow-up messages by writing JSONL to the runner's stdin.
+// StdinRelay delivers user messages by writing JSONL to the runner's stdin.
 type StdinRelay struct {
 	mu     sync.Mutex
 	w      io.WriteCloser
@@ -97,7 +97,7 @@ func NewResumeRelay(runner string) *ResumeRelay {
 }
 
 // ResumeRelay queues follow-up messages for delivery when the current process exits.
-// The daemon's process exit handler drains the queue and spawns a resume process.
+// Runners with configured resume templates are restarted by the daemon with the queued prompt.
 type ResumeRelay struct {
 	mu        sync.Mutex
 	runner    string

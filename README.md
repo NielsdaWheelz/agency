@@ -38,7 +38,7 @@ runner commands must be configured in `config.json` under your agency config dir
     "runner": "claude-code",
     "editor": "code",
     "model": "opus",
-    "thinking": "high"
+    "effort": "high"
   },
   "runners": {
     "claude-code": "claude",
@@ -67,7 +67,7 @@ headless (fire-and-forget):
 
 ```bash
 agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
-agency agent start --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --thinking high
+agency agent start --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
 agency agent logs <invocation-id> --follow
 agency agent chat <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
@@ -80,7 +80,7 @@ agency worktree merge <worktree-ref> --yes        # verify + merge worktree PR
 agency worktree update <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
 agency checkpoint ls --invocation <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
-agency agent restart <invocation-id> --checkpoint 3 --model opus --thinking high
+agency agent restart <invocation-id> --checkpoint 3 --model opus --effort high
 agency agent restart <invocation-id> --history     # interactive history selector (tty only)
 ```
 
@@ -92,7 +92,10 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
 `agent restart` replays the invocation's stored original prompt; use `agency checkpoint apply` when you want restore-only rollback without restarting prompt execution.
-typed model/thinking knobs are currently claude-focused (`claude` / `claude-code`). for other runners, keep using `--runner-arg`.
+typed model/effort knobs are supported for `claude-code`, `codex`, and `cursor`.
+for `claude-code` and `codex`, `--model` and `--effort` apply.
+for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).
+for other runners, keep using `--runner-arg`.
 
 legacy `run` surface supports open-on-create:
 

@@ -33,6 +33,17 @@ const (
 	ChatModeResume ChatMode = "resume"
 )
 
+// InitialPromptMode describes how a runner expects the first prompt in headless mode.
+type InitialPromptMode string
+
+const (
+	// InitialPromptPositional passes the initial prompt as a CLI positional argument.
+	InitialPromptPositional InitialPromptMode = "positional"
+
+	// InitialPromptStdin passes the initial prompt as the first stdin JSONL message.
+	InitialPromptStdin InitialPromptMode = "stdin"
+)
+
 // Capability defines launch/validation policy for a runner identity.
 type Capability struct {
 	ID                 string
@@ -40,11 +51,13 @@ type Capability struct {
 	SupportsHeaded     bool
 	HasSemanticAdapter bool
 	ChatMode           ChatMode // how follow-up messages are delivered in headless mode
+	InitialPromptMode  InitialPromptMode
 
 	reservedArgs         []string // flags reserved in both headless and headed modes
 	reservedHeadlessArgs []string // flags reserved only in headless mode (permission/approval)
 	aliases              []string
 	headlessTemplate     []string
+	resumeTemplate       []string // template for session-resume follow-up turns (if supported)
 	headedTemplate       []string
 }
 
@@ -64,6 +77,7 @@ var capabilityByID = map[string]Capability{
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
 		ChatMode:             ChatModeStdin,
+		InitialPromptMode:    InitialPromptStdin,
 		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose"},
 		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
 		aliases:              []string{LegacyRunnerClaude},
@@ -74,7 +88,6 @@ var capabilityByID = map[string]Capability{
 			"--verbose",
 			"--dangerously-skip-permissions",
 			launchTokenExtraArgs,
-			launchTokenPrompt,
 		},
 		headedTemplate: []string{launchTokenExtraArgs},
 	},
@@ -84,8 +97,9 @@ var capabilityByID = map[string]Capability{
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
 		ChatMode:             ChatModeResume,
-		reservedArgs:         []string{"exec", "--json", "-C", "--cd"},
-		reservedHeadlessArgs: []string{"--full-auto", "--approval-mode"},
+		InitialPromptMode:    InitialPromptPositional,
+		reservedArgs:         []string{"exec", "resume", "--json", "-C", "--cd", "--last"},
+		reservedHeadlessArgs: []string{"--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
 		headlessTemplate: []string{
 			"exec",
 			"--cd", launchTokenSandboxPath,
@@ -94,16 +108,26 @@ var capabilityByID = map[string]Capability{
 			launchTokenExtraArgs,
 			launchTokenPrompt,
 		},
+		resumeTemplate: []string{
+			"exec",
+			"resume",
+			"--last",
+			"--json",
+			"--full-auto",
+			launchTokenExtraArgs,
+			launchTokenPrompt,
+		},
 		headedTemplate: []string{launchTokenExtraArgs},
 	},
 	RunnerAmp: {
-		ID:               RunnerAmp,
-		SupportsHeadless: true,
-		SupportsHeaded:   true,
-		ChatMode:         ChatModeStdin,
-		reservedArgs:     []string{"-x", "--execute", "--stream-json", "--stream-json-input"},
-		headlessTemplate: []string{"-x", "--stream-json", "--stream-json-input", launchTokenExtraArgs, launchTokenPrompt},
-		headedTemplate:   []string{launchTokenExtraArgs},
+		ID:                RunnerAmp,
+		SupportsHeadless:  true,
+		SupportsHeaded:    true,
+		ChatMode:          ChatModeStdin,
+		InitialPromptMode: InitialPromptStdin,
+		reservedArgs:      []string{"-x", "--execute", "--stream-json", "--stream-json-input"},
+		headlessTemplate:  []string{"-x", "--stream-json", "--stream-json-input", launchTokenExtraArgs},
+		headedTemplate:    []string{launchTokenExtraArgs},
 		// TODO: verify upstream amp CLI auto-approve flags for headless mode.
 	},
 	RunnerOpenCode: {
@@ -111,30 +135,50 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		ChatMode:             ChatModeResume,
+		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"run"},
 		reservedHeadlessArgs: []string{"--mode"},
 		headlessTemplate:     []string{"run", "--mode", "auto", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:       []string{launchTokenExtraArgs},
 	},
 	RunnerCursor: {
-		ID:               RunnerCursor,
-		SupportsHeadless: true,
-		SupportsHeaded:   true,
-		ChatMode:         ChatModeResume,
-		reservedArgs:     []string{"-p", "--print", "--output-format"},
-		aliases:          []string{LegacyRunnerCursorCLI},
-		headlessTemplate: []string{"-p", "--output-format", "stream-json", launchTokenExtraArgs, launchTokenPrompt},
-		headedTemplate:   []string{launchTokenExtraArgs},
-		// TODO: verify upstream cursor/agent CLI auto-approve flags for headless mode.
+		ID:                   RunnerCursor,
+		SupportsHeadless:     true,
+		SupportsHeaded:       true,
+		HasSemanticAdapter:   true,
+		ChatMode:             ChatModeResume,
+		InitialPromptMode:    InitialPromptPositional,
+		reservedArgs:         []string{"-p", "--print", "--output-format", "--resume", "--continue", "--workspace"},
+		reservedHeadlessArgs: []string{"--force", "-f", "--yolo", "--trust"},
+		aliases:              []string{LegacyRunnerCursorCLI},
+		headlessTemplate: []string{
+			"-p",
+			"--output-format", "stream-json",
+			"--force",
+			"--workspace", launchTokenSandboxPath,
+			launchTokenExtraArgs,
+			launchTokenPrompt,
+		},
+		resumeTemplate: []string{
+			"-p",
+			"--output-format", "stream-json",
+			"--force",
+			"--continue",
+			launchTokenExtraArgs,
+			launchTokenPrompt,
+		},
+		headedTemplate: []string{launchTokenExtraArgs},
+		// TODO: verify upstream cursor/agent CLI sandbox/approval flags for headless mode.
 	},
 	RunnerDroid: {
-		ID:               RunnerDroid,
-		SupportsHeadless: true,
-		SupportsHeaded:   true,
-		ChatMode:         ChatModeStdin,
-		reservedArgs:     []string{"exec", "--output-format", "--input-format"},
-		headlessTemplate: []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs, launchTokenPrompt},
-		headedTemplate:   []string{launchTokenExtraArgs},
+		ID:                RunnerDroid,
+		SupportsHeadless:  true,
+		SupportsHeaded:    true,
+		ChatMode:          ChatModeStdin,
+		InitialPromptMode: InitialPromptStdin,
+		reservedArgs:      []string{"exec", "--output-format", "--input-format"},
+		headlessTemplate:  []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs},
+		headedTemplate:    []string{launchTokenExtraArgs},
 		// TODO: verify upstream droid CLI auto-approve flags for headless mode.
 	},
 }
@@ -252,6 +296,13 @@ func BuildHeadlessArgs(runner, prompt, sandboxPath string, extraArgs []string) (
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(prompt) == "" {
+		return nil, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"prompt is required to render runner launch plan",
+			map[string]string{"field": "prompt"},
+		)
+	}
 	if !capability.SupportsHeadless {
 		return nil, errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
@@ -263,6 +314,70 @@ func BuildHeadlessArgs(runner, prompt, sandboxPath string, extraArgs []string) (
 		)
 	}
 	return renderLaunchTemplate(capability.headlessTemplate, prompt, sandboxPath, extraArgs)
+}
+
+// BuildResumeArgs builds canonical follow-up resume argv for a runner.
+// resumeSessionID is optional; when provided, runners that support explicit
+// session targeting use it instead of generic "last session" semantics.
+func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string) ([]string, error) {
+	capability, err := Resolve(runner)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return nil, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"prompt is required to render runner launch plan",
+			map[string]string{"field": "prompt"},
+		)
+	}
+	if len(capability.resumeTemplate) == 0 {
+		return nil, errors.NewWithDetails(
+			errors.EInvocationInvalidMode,
+			"runner '"+capability.ID+"' does not support session-resume chat mode",
+			map[string]string{
+				"runner": capability.ID,
+				"mode":   "resume",
+			},
+		)
+	}
+	args, err := renderLaunchTemplate(capability.resumeTemplate, prompt, "", extraArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	resumeSessionID = strings.TrimSpace(resumeSessionID)
+	if capability.ID == RunnerCodex && resumeSessionID != "" {
+		for i := range args {
+			if args[i] == "--last" {
+				args[i] = resumeSessionID
+				break
+			}
+		}
+	}
+	if capability.ID == RunnerCursor && resumeSessionID != "" {
+		rewritten := make([]string, 0, len(args)+1)
+		replaced := false
+		for _, arg := range args {
+			if !replaced && arg == "--continue" {
+				rewritten = append(rewritten, "--resume", resumeSessionID)
+				replaced = true
+				continue
+			}
+			rewritten = append(rewritten, arg)
+		}
+		args = rewritten
+	}
+	return args, nil
+}
+
+// SupportsResumeTurns reports whether runner has a configured resume launch template.
+func SupportsResumeTurns(runner string) bool {
+	capability, err := Resolve(runner)
+	if err != nil {
+		return false
+	}
+	return len(capability.resumeTemplate) > 0
 }
 
 // BuildHeadedArgs builds canonical headed argv for a runner.
@@ -291,6 +406,15 @@ func ResolveChatMode(runner string) (ChatMode, error) {
 		return "", err
 	}
 	return capability.ChatMode, nil
+}
+
+// ResolveInitialPromptMode returns how the runner expects the first headless prompt.
+func ResolveInitialPromptMode(runner string) (InitialPromptMode, error) {
+	capability, err := Resolve(runner)
+	if err != nil {
+		return "", err
+	}
+	return capability.InitialPromptMode, nil
 }
 
 // HasSemanticAdapter reports whether semantic parsing is supported for runner.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -273,7 +274,6 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			case "claude-code":
 				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
-				wantArgs = append(wantArgs, tc.prompt)
 			case "codex":
 				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json", "--full-auto")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
@@ -281,19 +281,17 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			case "amp":
 				wantArgs = append(wantArgs, "-x", "--stream-json", "--stream-json-input")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
-				wantArgs = append(wantArgs, tc.prompt)
 			case "opencode":
 				wantArgs = append(wantArgs, "run", "--mode", "auto")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "cursor":
-				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json")
+				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--force", "--workspace", resp.SandboxPath)
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "droid":
 				wantArgs = append(wantArgs, "exec", "--output-format", "stream-json", "--input-format", "stream-json")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
-				wantArgs = append(wantArgs, tc.prompt)
 			default:
 				t.Fatalf("unexpected canonical runner %q", tc.canonicalRunner)
 			}
@@ -307,6 +305,167 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			assert.Equal(t, wantArgs, capture.Args)
 		})
 	}
+}
+
+func TestDaemonControlPlaneStart_InitialPromptDeliveredViaStdinForStdinRunners(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+	repoRoot := setupTestGitRepo(t)
+
+	tests := []struct {
+		name        string
+		inputRunner string
+		prompt      string
+	}{
+		{
+			name:        "claude",
+			inputRunner: "claude",
+			prompt:      "reply with only stdin for claude",
+		},
+		{
+			name:        "amp",
+			inputRunner: "amp",
+			prompt:      "reply with only stdin for amp",
+		},
+		{
+			name:        "droid",
+			inputRunner: "droid",
+			prompt:      "reply with only stdin for droid",
+		},
+	}
+
+	for i, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			wtName := fmt.Sprintf("start-stdin-initial-%02d", i)
+			wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, wtName)
+
+			capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
+			resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+				RepoRoot:    repoRoot,
+				WorktreeRef: wtID,
+				Runner:      tc.inputRunner,
+				Prompt:      tc.prompt,
+				Env: map[string]string{
+					"FAKE_RUNNER_MODE":         "capture-stdin-line",
+					"FAKE_RUNNER_CAPTURE_PATH": capturePath,
+				},
+			})
+			require.NoError(t, err, "start")
+			require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+
+			meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+			assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+
+			capture := readFakeRunnerLaunchCapture(t, capturePath)
+			assert.Equal(t, "capture-stdin-line", capture.Mode)
+			assert.NotContains(t, capture.Args, tc.prompt, "stdin-mode runners must not receive initial prompt as positional arg")
+
+			expected, formatErr := relay.FormatStdinMessage(meta.Runner, tc.prompt)
+			require.NoError(t, formatErr)
+			assert.Equal(t, string(expected), strings.TrimSpace(capture.FirstStdinLine))
+		})
+	}
+}
+
+func TestDaemonControlPlaneFollowUpPrompt_CodexQueuedPromptResumesNextTurn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "codex-resume-followup")
+
+	capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "codex",
+		Prompt:      "first codex turn",
+		RunnerArgs:  []string{"--model", "gpt-5-codex"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE":         "codex-thread-sleep-then-exit-ok",
+			"FAKE_RUNNER_SLEEP_MS":     "1200",
+			"FAKE_RUNNER_THREAD_ID":    "thread_resume_test",
+			"FAKE_RUNNER_CAPTURE_PATH": capturePath,
+		},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+		Prompt: "second codex turn",
+	})
+	require.NoError(t, err, "follow-up transport error")
+	require.True(t, followResp.OK, "follow-up failed: %s - %s", followResp.ErrorCode, followResp.Message)
+	assert.Equal(t, "queued", followResp.DeliveryMode)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 8*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Empty(t, meta.FailureReason)
+
+	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, readErr, "read raw log")
+	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful codex turns")
+
+	// Capture file is overwritten per launch; after resume it reflects the second turn launch args.
+	capture := readFakeRunnerLaunchCapture(t, capturePath)
+	assert.Equal(t, "codex-thread-sleep-then-exit-ok", capture.Mode)
+	assert.Equal(t, []string{"exec", "resume", "thread_resume_test", "--json", "--full-auto", "--model", "gpt-5-codex", "second codex turn"}, capture.Args)
+}
+
+func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cursor-resume-followup")
+
+	capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "cursor",
+		Prompt:      "first cursor turn",
+		RunnerArgs:  []string{"--model", "sonnet-4.6-thinking"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE":         "cursor-session-sleep-then-exit-ok",
+			"FAKE_RUNNER_SLEEP_MS":     "1200",
+			"FAKE_RUNNER_SESSION_ID":   "sess_cursor_resume_test",
+			"FAKE_RUNNER_CAPTURE_PATH": capturePath,
+		},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+		Prompt: "second cursor turn",
+	})
+	require.NoError(t, err, "follow-up transport error")
+	require.True(t, followResp.OK, "follow-up failed: %s - %s", followResp.ErrorCode, followResp.Message)
+	assert.Equal(t, "queued", followResp.DeliveryMode)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 8*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Empty(t, meta.FailureReason)
+
+	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, readErr, "read raw log")
+	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful cursor turns")
+
+	// Capture file is overwritten per launch; after resume it reflects the second turn launch args.
+	capture := readFakeRunnerLaunchCapture(t, capturePath)
+	assert.Equal(t, "cursor-session-sleep-then-exit-ok", capture.Mode)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"}, capture.Args)
 }
 
 func TestDaemonControlPlaneStart_ClaudeAliasCanonicalizesRunnerIdentity(t *testing.T) {
@@ -1046,6 +1205,123 @@ func TestDaemonRestartFromCheckpoint_ReusesStoredRunnerArgsWhenNotProvided(t *te
 	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
 }
 
+func TestDaemonRestartFromCheckpoint_RequestRunnerArgsAreAppended(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-append-args")
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "runner arg append",
+		RunnerArgs:  []string{"--allowed-extra"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "start transport error")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	testFilePath := filepath.Join(startResp.SandboxPath, "restart-append-args.txt")
+	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var cpData []byte
+	require.Eventually(t, func() bool {
+		var readErr error
+		cpData, readErr = os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(cpData, &cpFile) != nil {
+			return false
+		}
+		return len(cpFile.Checkpoints) > 0
+	}, 10*time.Second, 100*time.Millisecond, "checkpoint not created for restart arg append test")
+
+	var cpFile checkpoint.CheckpointsFile
+	require.NoError(t, json.Unmarshal(cpData, &cpFile), "failed to parse checkpoints.json")
+	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: latestCP.ID,
+		RunnerArgs:   []string{"--second-extra"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
+
+	require.Eventually(t, func() bool {
+		meta, readErr := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
+		if readErr != nil {
+			return false
+		}
+		return meta.Status == store.InvocationStatusRunning &&
+			len(meta.RunnerArgs) == 2 &&
+			meta.RunnerArgs[0] == "--allowed-extra" &&
+			meta.RunnerArgs[1] == "--second-extra"
+	}, 5*time.Second, 50*time.Millisecond, "restart did not append runner args")
+
+	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
+func TestDaemonRestartFromCheckpoint_RejectsHeadlessReservedRunnerArgs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-headless-reserved-args")
+	startResp := startTestInvocation(t, env.Client, repoRoot, "restart-headless-reserved-args", "sleep")
+
+	testFilePath := filepath.Join(startResp.SandboxPath, "restart-headless-reserved-args.txt")
+	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
+
+	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	var cpData []byte
+	require.Eventually(t, func() bool {
+		var readErr error
+		cpData, readErr = os.ReadFile(checkpointsPath)
+		if readErr != nil {
+			return false
+		}
+		var cpFile checkpoint.CheckpointsFile
+		if json.Unmarshal(cpData, &cpFile) != nil {
+			return false
+		}
+		return len(cpFile.Checkpoints) > 0
+	}, 10*time.Second, 100*time.Millisecond, "checkpoint not created for restart reserved-arg validation test")
+
+	var cpFile checkpoint.CheckpointsFile
+	require.NoError(t, json.Unmarshal(cpData, &cpFile), "failed to parse checkpoints.json")
+	latestCP := cpFile.Checkpoints[len(cpFile.Checkpoints)-1]
+
+	restartResp, err := env.Client.RestartFromCheckpoint(ctx, startResp.InvocationID, repoID, daemonclient.RestartFromCheckpointOpts{
+		CheckpointID: latestCP.ID,
+		RunnerArgs:   []string{"--dangerously-skip-permissions"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE": "sleep",
+		},
+	})
+	require.NoError(t, err, "restart transport error")
+	require.False(t, restartResp.OK, "restart should reject headless reserved args")
+	assert.Equal(t, "E_RUNNER_ARG_CONFLICT", restartResp.ErrorCode)
+
+	_, _ = env.Client.Kill(ctx, repoID, startResp.InvocationID)
+}
+
 // S3 PR-03: restart from checkpoint in one invocation-scoped flow.
 func TestDaemonRestartFromCheckpoint_OneFlowMaintainsInvocationContinuity(t *testing.T) {
 	if testing.Short() {
@@ -1353,6 +1629,77 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 		assert.Greater(t, seqs[i], seqs[i-1], "stream seq must remain strictly increasing for legacy start")
 	}
 	assert.GreaterOrEqual(t, seqs[len(seqs)-1], seededMaxSeq+1, "new events should continue after preexisting max seq")
+}
+
+func TestDaemonLegacyStartHeadless_CursorQueuedPromptResumesNextTurn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoID := "repo-legacy-cursor-resume"
+	invocationID := "20260302161000-c3d4"
+	sandboxPath := env.Store.SandboxTreePath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Join(sandboxPath, ".agency"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, ".agency", "SANDBOX_MARKER"), []byte(""), 0o644))
+
+	_, err := env.Store.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	meta := store.NewInvocationMeta(
+		invocationID,
+		"",
+		"wt-legacy-cursor-resume",
+		sandboxPath,
+		"agency/sandbox-"+invocationID,
+		"deadbeef",
+		"cursor",
+		store.RunnerModeHeadless,
+		time.Now(),
+	)
+	require.NoError(t, env.Store.WriteInvocationMeta(repoID, invocationID, meta))
+
+	capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
+	startResp, err := env.Client.StartHeadless(ctx, &daemon.StartHeadlessRequest{
+		RepoID:       repoID,
+		InvocationID: invocationID,
+		Runner:       "cursor",
+		SandboxPath:  sandboxPath,
+		Prompt:       "first cursor turn",
+		RunnerArgs:   []string{"--model", "sonnet-4.6-thinking"},
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE":         "cursor-session-sleep-then-exit-ok",
+			"FAKE_RUNNER_SLEEP_MS":     "1200",
+			"FAKE_RUNNER_SESSION_ID":   "sess_legacy_cursor_resume_test",
+			"FAKE_RUNNER_CAPTURE_PATH": capturePath,
+		},
+	})
+	require.NoError(t, err, "legacy start transport error")
+	require.True(t, startResp.OK, "legacy start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+
+	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, invocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+		Prompt: "second cursor turn",
+	})
+	require.NoError(t, err, "follow-up transport error")
+	require.True(t, followResp.OK, "follow-up failed: %s - %s", followResp.ErrorCode, followResp.Message)
+	assert.Equal(t, "queued", followResp.DeliveryMode)
+
+	metaAfter := waitForInvocationTerminal(t, env.Store, repoID, invocationID, 8*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, metaAfter.Status)
+	assert.Empty(t, metaAfter.FailureReason)
+
+	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, invocationID))
+	require.NoError(t, readErr, "read raw log")
+	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful cursor turns")
+
+	capture := readFakeRunnerLaunchCapture(t, capturePath)
+	assert.Equal(t, "cursor-session-sleep-then-exit-ok", capture.Mode)
+	assert.Equal(
+		t,
+		[]string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_legacy_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"},
+		capture.Args,
+	)
 }
 
 // ---------------------------------------------------------------------------

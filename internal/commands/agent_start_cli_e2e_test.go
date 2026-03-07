@@ -364,17 +364,17 @@ func readLaunchCapture(t *testing.T, capturePath string) launchCapture {
 func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string) []string {
 	switch canonicalRunner {
 	case "claude-code":
-		return []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", runnerArg, prompt}
+		return []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", runnerArg}
 	case "codex":
 		return []string{"exec", "--cd", sandboxPath, "--json", "--full-auto", runnerArg, prompt}
 	case "amp":
-		return []string{"-x", "--stream-json", "--stream-json-input", runnerArg, prompt}
+		return []string{"-x", "--stream-json", "--stream-json-input", runnerArg}
 	case "opencode":
 		return []string{"run", "--mode", "auto", runnerArg, prompt}
 	case "cursor":
-		return []string{"-p", "--output-format", "stream-json", runnerArg, prompt}
+		return []string{"-p", "--output-format", "stream-json", "--force", "--workspace", sandboxPath, runnerArg, prompt}
 	case "droid":
-		return []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", runnerArg, prompt}
+		return []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", runnerArg}
 	default:
 		return nil
 	}

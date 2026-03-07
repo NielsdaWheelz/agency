@@ -363,7 +363,7 @@ starts a new agent invocation with its sandbox worktree.
 
 **usage:**
 ```bash
-agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--model <name>] [--thinking <level>] [--runner-arg <arg>]... [--no-include-untracked] [--json]
+agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] [--name <name>] [--detached] [--prompt <string>] [--prompt-file <path>] [--model <name>] [--effort <level>] [--runner-arg <arg>]... [--no-include-untracked] [--json]
 ```
 
 **flags:**
@@ -375,18 +375,22 @@ agency agent start --worktree <name|id|prefix> [--runner <runner>] [--headless] 
 - `--detached`: start but do not attach (headed mode only; no-op for headless)
 - `--prompt`: prompt string for headless mode
 - `--prompt-file`: path to file containing prompt for headless mode
-- `--model`: model override (currently supported for `claude-code` only)
-- `--thinking`: thinking profile override (currently supported for `claude-code` only)
+- `--model`: model override (supported for `claude-code`, `codex`, and `cursor`)
+- `--effort`: effort override (supported for `claude-code` and `codex`; `cursor` uses thinking-capable model ids via `--model`)
 - `--runner-arg`: additional argument to pass to the runner (repeatable)
 - `--no-include-untracked`: exclude untracked files from checkpoint snapshots (headless only)
 - `--json`: machine-readable mutation envelope output
 
 runner commands are resolved from user config (`config.runners`) and must be explicitly mapped.
-for `claude-code`, model/thinking are resolved deterministically as:
-- CLI flags (`--model`, `--thinking`)
-- then user defaults (`config.json defaults.model`, `defaults.thinking`)
-- then none.
-for `claude-code`, conflicting values between typed flags and `--runner-arg` are rejected with `E_USAGE`.
+typed model/effort resolution is deterministic:
+- model (`claude-code`, `codex`, `cursor`): CLI `--model` -> `config.json defaults.model` -> none.
+- effort (`claude-code`, `codex`): CLI `--effort` -> `config.json defaults.effort` -> none.
+runner-specific mapping:
+- `claude-code`: `--model <value>`, `--effort <value>`
+- `codex`: `--model <value>`, `--config model_reasoning_effort=<value>`
+- `cursor`: `--model <value>` (use thinking model variants such as `sonnet-4.6-thinking` when needed)
+
+conflicting values between typed flags and `--runner-arg` are rejected with `E_USAGE`.
 
 **behavior (headed mode, default):**
 1. resolves integration worktree
@@ -855,7 +859,7 @@ applies a checkpoint and restarts the same headless invocation in one invocation
 
 **usage:**
 ```bash
-agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <name|id|prefix>] [--model <name>] [--thinking <level>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
+agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <name|id|prefix>] [--model <name>] [--effort <level>] [--runner-arg <arg>]... [--env KEY=VALUE]... [--json]
 ```
 
 **arguments:**
@@ -864,8 +868,8 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 **flags:**
 - `--checkpoint`: checkpoint id to restore before restart (explicit/script-safe mode)
 - `--history`: open interactive TUI picker over timeline history (groups entries into conversation turns with checkpoint badges)
-- `--model`: model override for restarted runner (currently supported for `claude-code` only)
-- `--thinking`: thinking profile override for restarted runner (currently supported for `claude-code` only)
+- `--model`: model override for restarted runner (supported for `claude-code`, `codex`, and `cursor`)
+- `--effort`: effort override for restarted runner (supported for `claude-code` and `codex`; `cursor` uses thinking-capable model ids via `--model`)
 - `--runner-arg`: additional argument to pass to the restarted runner (repeatable)
 - `--env`: explicit env override for restarted runner, format `KEY=VALUE` (repeatable)
 - `--json`: machine-readable mutation envelope output
@@ -904,7 +908,7 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 
 shows a rich transcript of the agent's conversation for an invocation.
 
-for runners with semantic adapters (claude, codex), the default output is a styled, human-readable transcript showing assistant messages, tool use with inputs, prompts, and results. for other runners, falls back to a sparse timeline format.
+for runners with semantic adapters (claude, codex, cursor), the default output is a styled, human-readable transcript showing assistant messages, tool use with inputs, prompts, and results. for other runners, falls back to a sparse timeline format.
 
 **usage:**
 ```bash
@@ -922,7 +926,7 @@ agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limi
 - `--repo`: repo name, key, id, or prefix
 
 **output modes:**
-- **human** (default): rich transcript with styled headers, tool use blocks, and exit codes. adapters that produce `content_blocks` (claude, codex) get full rendering; non-adapted runners fall back to sparse one-liners.
+- **human** (default): rich transcript with styled headers, tool use blocks, and exit codes. adapters that produce `content_blocks` (claude, codex, cursor) get full rendering; non-adapted runners fall back to sparse one-liners.
 - **json** (`--json`): structured output with full `content_blocks` data for programmatic consumption.
 
 **entry coverage:**
