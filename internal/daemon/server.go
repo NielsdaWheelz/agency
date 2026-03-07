@@ -862,6 +862,7 @@ func (s *Server) LoadUserConfig() (config.UserConfig, error) {
 
 // streamOutput copies data from reader to writer while updating lastOutputAt.
 func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *os.File) {
+	defer proc.streamWg.Done()
 	buf := make([]byte, 4096)
 	for {
 		n, err := reader.Read(buf)
@@ -878,6 +879,7 @@ func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *o
 // streamAndParseOutput streams stdout while parsing for normalized events (PR-07).
 // Writes verbatim to rawFile, normalized events to streamFile.
 func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader, rawFile, streamFile *os.File) {
+	defer proc.streamWg.Done()
 	if proc.Parser == nil {
 		// No parser - fall back to simple streaming
 		s.streamOutput(proc, reader, rawFile)

@@ -273,6 +273,11 @@ type SupervisedProcess struct {
 	// explicit resume turns (for resume-mode runners like codex).
 	resumeSessionID atomic.Value // string
 
+	// streamWg tracks active streaming goroutines (stdout, stderr).
+	// waitForExit* must Wait() on this before setting terminal status
+	// to ensure all pipe data is flushed to log files.
+	streamWg sync.WaitGroup
+
 	// done channel is closed when the process exits.
 	done chan struct{}
 

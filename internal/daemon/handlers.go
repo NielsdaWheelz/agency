@@ -417,6 +417,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 	}
 
 	// PR-07: Start goroutine to stream and parse stdout
+	proc.streamWg.Add(2)
 	go s.streamAndParseOutput(proc, stdoutPipe, rawFile, streamFile)
 	// Stderr is still streamed without parsing
 	go s.streamOutput(proc, stderrPipe, stderrFile)
@@ -1508,6 +1509,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	s.mu.Unlock()
 
 	// PR-07: Start goroutine to stream and parse stdout
+	proc.streamWg.Add(2)
 	go s.streamAndParseOutput(proc, stdoutPipe, rawFile, streamFile)
 	// Stderr is still streamed without parsing
 	go s.streamOutput(proc, stderrPipe, stderrFile)
@@ -1629,6 +1631,12 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 
 	// Wait for process to exit
 	exitResult, waitErr := startedProc.WaitExit()
+
+	// Wait for streaming goroutines to finish draining stdout/stderr pipes
+	// to the log files before processing exit status. Without this, the meta
+	// status can be set to terminal before all output is flushed, causing
+	// readers to miss the final output.
+	proc.streamWg.Wait()
 
 	// Stop the parser
 	if proc.Parser != nil {
