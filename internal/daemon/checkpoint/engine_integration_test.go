@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
@@ -642,4 +644,122 @@ func TestEngine_pruneCheckpoints_RealGit(t *testing.T) {
 		require.NoError(t, err, "show-ref exec error for %s", cp.SnapshotRef)
 		assert.Equal(t, 0, result.ExitCode, "ref %s should still exist", cp.SnapshotRef)
 	}
+}
+
+// TestEngine_setupInitialWatches_SkipsGitIgnoredDirs verifies that the fsnotify
+// watch setup skips gitignored directories (node_modules, .venv, build) while
+// watching legitimate source directories.
+func TestEngine_setupInitialWatches_SkipsGitIgnoredDirs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// NOTE: setupRealGitRepo uses HermeticGitEnv(t) which calls t.Setenv().
+	// This is incompatible with t.Parallel(). Do NOT add t.Parallel() here.
+
+	repoDir := setupRealGitRepo(t)
+	cr := exec.NewRealRunner()
+	ctx := context.Background()
+
+	// Create .gitignore listing dirs to ignore
+	gitignoreContent := "node_modules/\n.venv/\nbuild/\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte(gitignoreContent), 0o644))
+
+	// Commit the .gitignore
+	result, err := cr.Run(ctx, "git", []string{"-C", repoDir, "add", ".gitignore"}, exec.RunOpts{})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git add .gitignore failed: %s", result.Stderr)
+	result, err = cr.Run(ctx, "git", []string{"-C", repoDir, "commit", "-m", "add gitignore"}, exec.RunOpts{})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git commit failed: %s", result.Stderr)
+
+	// Create the gitignored directories with files inside
+	for _, dir := range []string{"node_modules/express", ".venv/lib/python3", "build/dist"} {
+		fullDir := filepath.Join(repoDir, dir)
+		require.NoError(t, os.MkdirAll(fullDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(fullDir, "file.txt"), []byte("content"), 0o644))
+	}
+
+	// Create legitimate source directories
+	for _, dir := range []string{"src/components", "lib/utils"} {
+		fullDir := filepath.Join(repoDir, dir)
+		require.NoError(t, os.MkdirAll(fullDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(fullDir, "file.go"), []byte("package main"), 0o644))
+	}
+
+	// Compute gitignored dirs using git ls-files (full-fidelity approach)
+	lsResult, err := cr.Run(ctx, "git", []string{
+		"-C", repoDir,
+		"ls-files", "--others", "--ignored", "--exclude-standard", "--directory",
+	}, exec.RunOpts{})
+	require.NoError(t, err)
+	require.Equal(t, 0, lsResult.ExitCode, "git ls-files failed: %s", lsResult.Stderr)
+
+	gitIgnoredDirs := ParseGitIgnoredDirs(repoDir, lsResult.Stdout)
+	require.NotEmpty(t, gitIgnoredDirs, "expected gitignored dirs to be computed")
+
+	// Also verify the in-process ReadGitIgnoredDirs approach (used by daemon handler)
+	inProcessIgnored := ReadGitIgnoredDirs(repoDir)
+	require.NotEmpty(t, inProcessIgnored, "expected ReadGitIgnoredDirs to find dirs")
+	assert.True(t, inProcessIgnored[filepath.Join(repoDir, "node_modules")], "ReadGitIgnoredDirs: node_modules")
+	assert.True(t, inProcessIgnored[filepath.Join(repoDir, ".venv")], "ReadGitIgnoredDirs: .venv")
+	assert.True(t, inProcessIgnored[filepath.Join(repoDir, "build")], "ReadGitIgnoredDirs: build")
+
+	// Verify git-based parsing got the right dirs
+	assert.True(t, gitIgnoredDirs[filepath.Join(repoDir, "node_modules")], "node_modules should be gitignored")
+	assert.True(t, gitIgnoredDirs[filepath.Join(repoDir, ".venv")], ".venv should be gitignored")
+	assert.True(t, gitIgnoredDirs[filepath.Join(repoDir, "build")], "build should be gitignored")
+
+	// Create engine with the gitignored dirs
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	cfg := DefaultConfig()
+	e := NewEngineWithWriter(
+		"test-inv-ignored",
+		"test-repo",
+		repoDir,
+		repoDir,
+		checkpointsDir,
+		eventsPath,
+		cfg,
+		cr,
+		fs.NewRealFS(),
+		time.Now,
+		nil, // eventWriter
+	)
+	e.SetGitIgnoredDirs(gitIgnoredDirs)
+
+	// Initialize the fsnotify watcher (normally done in Run())
+	watcher, err := fsnotify.NewWatcher()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = watcher.Close() })
+	e.watcher = watcher
+
+	// Run setupInitialWatches
+	require.NoError(t, e.setupInitialWatches())
+
+	// Assert: gitignored dirs should NOT be in watchedDirs
+	e.mu.Lock()
+	watched := make(map[string]bool)
+	for k, v := range e.watchedDirs {
+		watched[k] = v
+	}
+	e.mu.Unlock()
+
+	assert.False(t, watched[filepath.Join(repoDir, "node_modules")], "node_modules should not be watched")
+	assert.False(t, watched[filepath.Join(repoDir, "node_modules", "express")], "node_modules/express should not be watched")
+	assert.False(t, watched[filepath.Join(repoDir, ".venv")], ".venv should not be watched")
+	assert.False(t, watched[filepath.Join(repoDir, ".venv", "lib")], ".venv/lib should not be watched")
+	assert.False(t, watched[filepath.Join(repoDir, ".venv", "lib", "python3")], ".venv/lib/python3 should not be watched")
+	assert.False(t, watched[filepath.Join(repoDir, "build")], "build should not be watched")
+	assert.False(t, watched[filepath.Join(repoDir, "build", "dist")], "build/dist should not be watched")
+
+	// Assert: legitimate dirs SHOULD be in watchedDirs
+	assert.True(t, watched[repoDir], "repo root should be watched")
+	assert.True(t, watched[filepath.Join(repoDir, "src")], "src should be watched")
+	assert.True(t, watched[filepath.Join(repoDir, "src", "components")], "src/components should be watched")
+	assert.True(t, watched[filepath.Join(repoDir, "lib")], "lib should be watched")
+	assert.True(t, watched[filepath.Join(repoDir, "lib", "utils")], "lib/utils should be watched")
 }

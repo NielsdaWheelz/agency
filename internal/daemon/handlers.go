@@ -1427,6 +1427,12 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
 	}
 
+	// Pre-compute gitignored directories so the checkpoint engine's fsnotify
+	// watcher skips them, avoiding FD exhaustion on large ignored trees
+	// (e.g., node_modules). Uses fast in-process .gitignore parsing to avoid
+	// subprocess overhead during invocation startup.
+	gitIgnoredDirs := checkpoint.ReadGitIgnoredDirs(result.SandboxPath)
+
 	cpEngine := checkpoint.NewEngineWithWriter(
 		result.InvocationID,
 		repoID,
@@ -1440,6 +1446,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		s.Clock,
 		s.InvocationEvents,
 	)
+	cpEngine.SetGitIgnoredDirs(gitIgnoredDirs)
 
 	// Wire semantic trigger channel: parser notifies checkpoint engine on mutating tool completions.
 	triggerCh := make(chan checkpoint.TriggerEvent, 32)
