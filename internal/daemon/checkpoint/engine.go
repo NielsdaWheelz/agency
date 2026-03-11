@@ -41,6 +41,12 @@ type Engine struct {
 	watcher        *fsnotify.Watcher
 	watchedDirs    map[string]bool
 
+	// gitIgnoredDirs is a pre-computed set of absolute directory paths that are
+	// gitignored. These directories (and their subtrees) are skipped during
+	// fsnotify watch setup to avoid FD exhaustion on large ignored trees like
+	// node_modules.
+	gitIgnoredDirs map[string]bool
+
 	// Semantic trigger channel (optional). When set, the engine creates
 	// checkpoints in response to TriggerEvents (tool completions, commits)
 	// in addition to the fsnotify drift safety net.
@@ -107,10 +113,75 @@ func NewEngineWithWriter(
 	return engine
 }
 
+// ParseGitIgnoredDirs parses the output of `git ls-files --others --ignored
+// --exclude-standard --directory` into a set of absolute directory paths.
+// Lines with a trailing `/` are directories; lines without are files (skipped).
+func ParseGitIgnoredDirs(sandboxPath, gitOutput string) map[string]bool {
+	result := make(map[string]bool)
+	for _, line := range strings.Split(gitOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// git ls-files --directory appends / to directory entries
+		if !strings.HasSuffix(line, "/") {
+			continue
+		}
+		dir := strings.TrimSuffix(line, "/")
+		result[filepath.Join(sandboxPath, dir)] = true
+	}
+	return result
+}
+
+// ReadGitIgnoredDirs reads the .gitignore file in sandboxPath and returns
+// a set of absolute directory paths that match existing gitignored directories.
+// This is a fast in-process alternative to running `git ls-files` as a subprocess.
+// It handles simple directory patterns (e.g., "node_modules/", "build/", ".venv/")
+// from the root .gitignore only. Returns an empty map on any error.
+func ReadGitIgnoredDirs(sandboxPath string) map[string]bool {
+	data, err := os.ReadFile(filepath.Join(sandboxPath, ".gitignore"))
+	if err != nil {
+		return map[string]bool{}
+	}
+
+	result := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+			continue
+		}
+
+		// We only care about directory patterns (trailing /) or bare names
+		// that could be directories
+		dirName := strings.TrimSuffix(line, "/")
+		if dirName == "" || strings.Contains(dirName, "*") || strings.Contains(dirName, "?") {
+			continue // skip glob patterns
+		}
+
+		// Check if this is actually a directory in the sandbox
+		absPath := filepath.Join(sandboxPath, dirName)
+		info, err := os.Stat(absPath)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+
+		result[absPath] = true
+	}
+	return result
+}
+
 // SetTriggerChannel sets the semantic trigger channel for tool-completion-based
 // checkpoints. Must be called before Run.
 func (e *Engine) SetTriggerChannel(ch <-chan TriggerEvent) {
 	e.triggerCh = ch
+}
+
+// SetGitIgnoredDirs sets the pre-computed gitignored directory set.
+// Must be called before Run.
+func (e *Engine) SetGitIgnoredDirs(dirs map[string]bool) {
+	if len(dirs) > 0 {
+		e.gitIgnoredDirs = dirs
+	}
 }
 
 // CreateSemanticCheckpoint creates a checkpoint with semantic metadata from a
@@ -245,6 +316,21 @@ func (e *Engine) Stop() {
 	})
 }
 
+// isSkippedDir returns true if the given directory path should be skipped
+// during fsnotify watch setup. A directory is skipped if:
+//   - Its base name is ".git" or ".agency" (always skipped)
+//   - Its absolute path is in the pre-computed gitIgnoredDirs set
+func (e *Engine) isSkippedDir(path string) bool {
+	base := filepath.Base(path)
+	if base == ".git" || base == ".agency" {
+		return true
+	}
+	if len(e.gitIgnoredDirs) > 0 {
+		return e.gitIgnoredDirs[path]
+	}
+	return false
+}
+
 // setupInitialWatches walks the sandbox tree and adds watches for all directories.
 func (e *Engine) setupInitialWatches() error {
 	return filepath.WalkDir(e.sandboxPath, func(path string, d os.DirEntry, err error) error {
@@ -252,10 +338,8 @@ func (e *Engine) setupInitialWatches() error {
 			return nil // Skip inaccessible paths
 		}
 
-		// Skip .git and .agency directories
 		if d.IsDir() {
-			base := filepath.Base(path)
-			if base == ".git" || base == ".agency" {
+			if e.isSkippedDir(path) {
 				return filepath.SkipDir
 			}
 
@@ -284,8 +368,7 @@ func (e *Engine) addWatchRecursive(dir string) {
 		}
 
 		if d.IsDir() {
-			base := filepath.Base(path)
-			if base == ".git" || base == ".agency" {
+			if e.isSkippedDir(path) {
 				return filepath.SkipDir
 			}
 
@@ -312,13 +395,25 @@ func (e *Engine) shouldIgnorePath(path string) bool {
 		return false
 	}
 
-	// Check each path component
+	// Check each path component for always-skip dirs
 	parts := strings.Split(rel, string(filepath.Separator))
 	for _, p := range parts {
 		if p == ".git" || p == ".agency" {
 			return true
 		}
 	}
+
+	// Walk ancestor paths against gitIgnoredDirs
+	if len(e.gitIgnoredDirs) > 0 {
+		current := e.sandboxPath
+		for _, p := range parts {
+			current = filepath.Join(current, p)
+			if e.gitIgnoredDirs[current] {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 

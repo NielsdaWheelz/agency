@@ -331,16 +331,26 @@ func TestEngine_shouldIgnorePath(t *testing.T) {
 	t.Parallel()
 	e := &Engine{
 		sandboxPath: "/sandbox/tree",
+		gitIgnoredDirs: map[string]bool{
+			"/sandbox/tree/node_modules": true,
+			"/sandbox/tree/.venv":        true,
+		},
 	}
 
 	tests := []struct {
 		path string
 		want bool
 	}{
+		// Always-skip dirs
 		{"/sandbox/tree/.git/index", true},
 		{"/sandbox/tree/.git", true},
 		{"/sandbox/tree/.agency/state/runner_status.json", true},
 		{"/sandbox/tree/.agency", true},
+		// Gitignored dirs
+		{"/sandbox/tree/node_modules/express/index.js", true},
+		{"/sandbox/tree/node_modules", true},
+		{"/sandbox/tree/.venv/lib/python3/site.py", true},
+		// Non-ignored paths
 		{"/sandbox/tree/src/main.go", false},
 		{"/sandbox/tree/README.md", false},
 		{"/sandbox/tree/subdir/.env", false}, // .env file itself is not ignored (denylist handles it)
@@ -354,6 +364,153 @@ func TestEngine_shouldIgnorePath(t *testing.T) {
 			assert.Equal(t, tt.want, got, "shouldIgnorePath(%q)", tt.path)
 		})
 	}
+}
+
+func TestEngine_isSkippedDir(t *testing.T) {
+	t.Parallel()
+	e := &Engine{
+		sandboxPath: "/sandbox/tree",
+		gitIgnoredDirs: map[string]bool{
+			"/sandbox/tree/node_modules": true,
+			"/sandbox/tree/build":        true,
+		},
+	}
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Always-skip by base name
+		{"/sandbox/tree/.git", true},
+		{"/sandbox/tree/.agency", true},
+		{"/sandbox/tree/sub/.git", true},
+		{"/sandbox/tree/sub/.agency", true},
+		// Gitignored by absolute path
+		{"/sandbox/tree/node_modules", true},
+		{"/sandbox/tree/build", true},
+		// Not skipped
+		{"/sandbox/tree/src", false},
+		{"/sandbox/tree/src/components", false},
+		{"/sandbox/tree", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			got := e.isSkippedDir(tt.path)
+			assert.Equal(t, tt.want, got, "isSkippedDir(%q)", tt.path)
+		})
+	}
+}
+
+func TestParseGitIgnoredDirs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		sandboxPath string
+		gitOutput   string
+		want        map[string]bool
+	}{
+		{
+			name:        "typical gitignored dirs",
+			sandboxPath: "/sandbox/tree",
+			gitOutput:   "node_modules/\nvendor/\n",
+			want: map[string]bool{
+				"/sandbox/tree/node_modules": true,
+				"/sandbox/tree/vendor":       true,
+			},
+		},
+		{
+			name:        "empty output",
+			sandboxPath: "/sandbox/tree",
+			gitOutput:   "",
+			want:        map[string]bool{},
+		},
+		{
+			name:        "mixed with blank lines",
+			sandboxPath: "/sandbox/tree",
+			gitOutput:   "build/\n\n.venv/\n",
+			want: map[string]bool{
+				"/sandbox/tree/build": true,
+				"/sandbox/tree/.venv": true,
+			},
+		},
+		{
+			name:        "files without trailing slash are skipped",
+			sandboxPath: "/sandbox/tree",
+			gitOutput:   "node_modules/\nsome-file.txt\nvendor/\n",
+			want: map[string]bool{
+				"/sandbox/tree/node_modules": true,
+				"/sandbox/tree/vendor":       true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ParseGitIgnoredDirs(tt.sandboxPath, tt.gitOutput)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestReadGitIgnoredDirs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reads gitignore and finds directories", func(t *testing.T) {
+		t.Parallel()
+		sandbox := t.TempDir()
+
+		// Create .gitignore
+		gitignoreContent := "node_modules/\nbuild/\n# comment\n*.log\n.venv/\n"
+		require.NoError(t, os.WriteFile(filepath.Join(sandbox, ".gitignore"), []byte(gitignoreContent), 0o644))
+
+		// Create matching directories
+		require.NoError(t, os.MkdirAll(filepath.Join(sandbox, "node_modules", "express"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(sandbox, "build"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(sandbox, ".venv", "lib"), 0o755))
+		// Create non-matching directory
+		require.NoError(t, os.MkdirAll(filepath.Join(sandbox, "src"), 0o755))
+
+		got := ReadGitIgnoredDirs(sandbox)
+		assert.True(t, got[filepath.Join(sandbox, "node_modules")], "node_modules should be found")
+		assert.True(t, got[filepath.Join(sandbox, "build")], "build should be found")
+		assert.True(t, got[filepath.Join(sandbox, ".venv")], ".venv should be found")
+		assert.False(t, got[filepath.Join(sandbox, "src")], "src should not be in result")
+	})
+
+	t.Run("no gitignore file returns empty", func(t *testing.T) {
+		t.Parallel()
+		sandbox := t.TempDir()
+		got := ReadGitIgnoredDirs(sandbox)
+		assert.Empty(t, got)
+	})
+
+	t.Run("skips glob patterns and negation", func(t *testing.T) {
+		t.Parallel()
+		sandbox := t.TempDir()
+		gitignoreContent := "*.log\n!important.log\nnode_modules/\n"
+		require.NoError(t, os.WriteFile(filepath.Join(sandbox, ".gitignore"), []byte(gitignoreContent), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(sandbox, "node_modules"), 0o755))
+
+		got := ReadGitIgnoredDirs(sandbox)
+		assert.Len(t, got, 1)
+		assert.True(t, got[filepath.Join(sandbox, "node_modules")])
+	})
+
+	t.Run("dir pattern without trailing slash matches existing dir", func(t *testing.T) {
+		t.Parallel()
+		sandbox := t.TempDir()
+		gitignoreContent := "dist\n"
+		require.NoError(t, os.WriteFile(filepath.Join(sandbox, ".gitignore"), []byte(gitignoreContent), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(sandbox, "dist"), 0o755))
+
+		got := ReadGitIgnoredDirs(sandbox)
+		assert.True(t, got[filepath.Join(sandbox, "dist")], "dist should be found even without trailing /")
+	})
 }
 
 func TestDefaultConfig(t *testing.T) {
