@@ -347,8 +347,8 @@
    `loadCheckpoints`/`LoadCheckpointsFile` accept any schema_version.
 5. **medium** denylist is hardcoded and non-configurable.
    no way to tune for enterprise policies; also only matches basenames.
-6. **medium** fsnotify + polling can thrash large repos.
-   initial `WalkDir` and directory watching are unbounded and ignore .gitignore.
+6. ~~**medium** fsnotify + polling can thrash large repos.~~
+   **resolved**: gitignored directories are now excluded from fsnotify watches. the ignored set is pre-computed from `.gitignore` at invocation start, avoiding FD exhaustion on large trees.
 7. **medium** prune errors are ignored.
    `update-ref -d` failures are dropped, leaving orphaned refs.
 8. **medium** temp index location is unscoped.

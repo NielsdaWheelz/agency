@@ -216,7 +216,7 @@ creates automatic snapshots of sandbox state during agent execution.
 ### creation
 
 - **primary trigger**: semantic events from the stream parser — a checkpoint is created each time a mutating tool (Edit, Write, MultiEdit, NotebookEdit, Bash) completes. semantic checkpoints are not rate-limited since each tool completion is a distinct user-visible action.
-- **drift safety net**: fsnotify watches sandbox tree with 60s debounce (catches changes not covered by semantic triggers). rate-limited to 1 per 10 seconds.
+- **drift safety net**: fsnotify watches sandbox tree with 60s debounce (catches changes not covered by semantic triggers). rate-limited to 1 per 10 seconds. gitignored directories (e.g., `node_modules`, `.venv`, `build`) are excluded from watches to avoid FD exhaustion on macOS kqueue. the ignored set is pre-computed from `.gitignore` at invocation start.
 - **polling fallback**: 30s polling check for changes missed by fsnotify.
 - **final**: created on invocation exit (only if content changed)
 - **deduplication**: tree-SHA comparison skips identical snapshots
