@@ -265,8 +265,8 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		PGID:             pgid,
 		DaemonInstanceID: s.InstanceID,
 		LogPaths: &LogPaths{
-			Raw:    s.Store.SandboxRawLogPath(record.RepoID, record.InvocationID),
-			Stderr: s.Store.SandboxStderrLogPath(record.RepoID, record.InvocationID),
+			Raw:    s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw"),
+			Stderr: s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stderr"),
 		},
 	}
 	s.writeJSON(w, http.StatusOK, resp)

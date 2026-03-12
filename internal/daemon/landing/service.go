@@ -520,10 +520,19 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	// 4. Remove sandbox directory (but keep logs/checkpoints in invocation dir)
-	sandboxDir := s.store.SandboxDir(repoID, invocationID)
-	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
-		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
+	// 4. Preserve any legacy sandbox-owned logs before removing the sandbox dir.
+	logsPromoted := true
+	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
+		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
+		logsPromoted = false
+	}
+
+	// 5. Remove sandbox directory once log preservation is safe.
+	if logsPromoted {
+		sandboxDir := s.store.SandboxDir(repoID, invocationID)
+		if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
+			errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -678,10 +687,19 @@ func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repo
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	// 4. Remove sandbox directory
-	sandboxDir := s.store.SandboxDir(repoID, invocationID)
-	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
-		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
+	// 4. Preserve any legacy sandbox-owned logs before removing the sandbox dir.
+	logsPromoted := true
+	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
+		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
+		logsPromoted = false
+	}
+
+	// 5. Remove sandbox directory once log preservation is safe.
+	if logsPromoted {
+		sandboxDir := s.store.SandboxDir(repoID, invocationID)
+		if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
+			errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
+		}
 	}
 
 	if len(errs) > 0 {

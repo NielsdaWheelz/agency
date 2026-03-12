@@ -276,7 +276,7 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			logsDir := s.Store.SandboxLogsDir(repoID, r.InvocationID)
+			logsDir := s.preferredInvocationLogsDir(repoID, r.InvocationID)
 			dto := InvocationMetaToDTO(r.Meta, repoID, logsDir, now)
 			allInvocations = append(allInvocations, dto)
 		}
@@ -333,7 +333,7 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 	}
 
 	now := s.Clock()
-	logsDir := s.Store.SandboxLogsDir(record.RepoID, record.InvocationID)
+	logsDir := s.preferredInvocationLogsDir(record.RepoID, record.InvocationID)
 	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, now)
 	s.writeAPIResponse(w, requestID, dto)
 }
@@ -457,11 +457,11 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 	var logPath string
 	switch params.Kind {
 	case "stderr":
-		logPath = s.Store.SandboxStderrLogPath(record.RepoID, record.InvocationID)
+		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stderr")
 	case "stream":
-		logPath = s.Store.SandboxStreamLogPath(record.RepoID, record.InvocationID)
+		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream")
 	default:
-		logPath = s.Store.SandboxRawLogPath(record.RepoID, record.InvocationID)
+		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw")
 		params.Kind = "raw"
 	}
 

@@ -126,6 +126,8 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 	assert.Equal(t, repoID, resp.RepoID)
 	assert.NotEmpty(t, resp.DaemonInstanceID, "expected daemon_instance_id to be set")
 	assert.NotNil(t, resp.LogPaths, "expected log_paths to be set")
+	assert.Equal(t, env.Store.InvocationRawLogPath(repoID, resp.InvocationID), resp.LogPaths.Raw)
+	assert.Equal(t, env.Store.InvocationStderrLogPath(repoID, resp.InvocationID), resp.LogPaths.Stderr)
 
 	// Wait for the exit-ok runner to finish.
 	meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
@@ -446,7 +448,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CodexQueuedPromptResumesNextTurn(t *te
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 	assert.Empty(t, meta.FailureReason)
 
-	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, startResp.InvocationID))
+	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
 	require.NoError(t, readErr, "read raw log")
 	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful codex turns")
 
@@ -494,7 +496,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *t
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 	assert.Empty(t, meta.FailureReason)
 
-	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, startResp.InvocationID))
+	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
 	require.NoError(t, readErr, "read raw log")
 	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful cursor turns")
 
@@ -555,11 +557,11 @@ func TestDaemonControlPlaneStart_RawLogFallback_NoSemanticAdapter(t *testing.T) 
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 	assert.Nil(t, meta.SemanticStatus)
 
-	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, resp.InvocationID))
+	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, resp.InvocationID))
 	require.NoError(t, readErr, "read raw log")
 	assert.NotEmpty(t, strings.TrimSpace(string(rawData)))
 
-	streamData, readErr := os.ReadFile(env.Store.SandboxStreamLogPath(repoID, resp.InvocationID))
+	streamData, readErr := os.ReadFile(env.Store.InvocationStreamLogPath(repoID, resp.InvocationID))
 	require.NoError(t, readErr, "read stream log")
 	assert.Empty(t, strings.TrimSpace(string(streamData)))
 }
@@ -1652,7 +1654,7 @@ func TestDaemonRestartFromCheckpoint_StreamSeqRemainsMonotonic(t *testing.T) {
 	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
 	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
 
-	streamData, err := os.ReadFile(env.Store.SandboxStreamLogPath(repoID, startResp.InvocationID))
+	streamData, err := os.ReadFile(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID))
 	require.NoError(t, err, "read stream log")
 	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
 	require.GreaterOrEqual(t, len(lines), 2, "expected stream events from initial run + restart run")
@@ -1687,8 +1689,8 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(sandboxPath, ".agency"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, ".agency", "SANDBOX_MARKER"), []byte(""), 0o644))
 
-	streamPath := env.Store.SandboxStreamLogPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(streamPath), 0o700))
+	legacyStreamPath := env.Store.SandboxStreamLogPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyStreamPath), 0o700))
 	seededMaxSeq := uint64(7)
 	seededLine := fmt.Sprintf(
 		`{"ts":"%s","invocation_id":"%s","kind":"lifecycle","source":"runner_stdout","payload":{"message":"seed"},"seq":%d}`+"\n",
@@ -1696,7 +1698,7 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 		invocationID,
 		seededMaxSeq,
 	)
-	require.NoError(t, os.WriteFile(streamPath, []byte(seededLine), 0o644))
+	require.NoError(t, os.WriteFile(legacyStreamPath, []byte(seededLine), 0o644))
 
 	_, err := env.Store.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
@@ -1712,6 +1714,8 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 		time.Now(),
 	)
 	require.NoError(t, env.Store.WriteInvocationMeta(repoID, invocationID, meta))
+
+	streamPath := env.Store.InvocationStreamLogPath(repoID, invocationID)
 
 	startResp, err := env.Client.StartHeadless(ctx, &daemon.StartHeadlessRequest{
 		RepoID:       repoID,
@@ -1831,7 +1835,7 @@ func TestDaemonLegacyStartHeadless_CursorQueuedPromptResumesNextTurn(t *testing.
 	assert.Equal(t, store.InvocationStatusFinished, metaAfter.Status)
 	assert.Empty(t, metaAfter.FailureReason)
 
-	rawData, readErr := os.ReadFile(env.Store.SandboxRawLogPath(repoID, invocationID))
+	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, invocationID))
 	require.NoError(t, readErr, "read raw log")
 	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful cursor turns")
 
@@ -1894,6 +1898,20 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	meta, err := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
 	require.NoError(t, err)
 	assert.Equal(t, store.LandingStatusLanded, meta.LandingStatus)
+
+	// Invocation-owned logs and timeline must remain readable after sandbox cleanup.
+	_, err = os.Stat(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "invocation-owned raw log should survive landing cleanup")
+	_, err = os.Stat(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "invocation-owned stream log should survive landing cleanup")
+
+	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
+	require.NoError(t, err, "logs API should still work after landing cleanup")
+	assert.NotEmpty(t, strings.TrimSpace(logsResp.Logs.Content))
+
+	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
+	require.NoError(t, err, "timeline API should still work after landing cleanup")
+	assert.NotEmpty(t, timelineResp.Entries)
 }
 
 func TestDaemonLandApply(t *testing.T) {
@@ -2163,6 +2181,13 @@ func TestDaemonDiscard(t *testing.T) {
 
 	sandboxPath := startResp.SandboxPath
 
+	// Simulate a legacy invocation whose logs still live only in the sandbox.
+	legacyRawPath := env.Store.SandboxRawLogPath(repoID, startResp.InvocationID)
+	legacyStreamPath := env.Store.SandboxStreamLogPath(repoID, startResp.InvocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyRawPath), 0o700))
+	require.NoError(t, os.Rename(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID), legacyRawPath))
+	require.NoError(t, os.Rename(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID), legacyStreamPath))
+
 	resp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
 	require.NoError(t, err)
 
@@ -2176,6 +2201,20 @@ func TestDaemonDiscard(t *testing.T) {
 	// Verify sandbox was cleaned up.
 	_, err = os.Stat(sandboxPath)
 	assert.True(t, os.IsNotExist(err), "sandbox should be removed after discard")
+
+	// Invocation-owned logs and timeline must remain readable after sandbox cleanup.
+	_, err = os.Stat(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "invocation-owned raw log should survive discard cleanup")
+	_, err = os.Stat(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "invocation-owned stream log should survive discard cleanup")
+
+	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
+	require.NoError(t, err, "logs API should still work after discard cleanup")
+	assert.NotEmpty(t, strings.TrimSpace(logsResp.Logs.Content))
+
+	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
+	require.NoError(t, err, "timeline API should still work after discard cleanup")
+	assert.NotEmpty(t, timelineResp.Entries)
 }
 
 func TestDaemonDiscardRunning(t *testing.T) {

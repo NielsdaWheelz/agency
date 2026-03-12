@@ -109,8 +109,8 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 					AlreadyRunning:   true,
 					Orphaned:         false,
 					LogPaths: &LogPaths{
-						Raw:    s.Store.SandboxRawLogPath(req.RepoID, req.InvocationID),
-						Stderr: s.Store.SandboxStderrLogPath(req.RepoID, req.InvocationID),
+						Raw:    s.readableInvocationLogPath(req.RepoID, req.InvocationID, "raw"),
+						Stderr: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stderr"),
 					},
 				}
 				s.writeJSON(w, http.StatusOK, resp)
@@ -133,8 +133,8 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 				AlreadyRunning:   true,
 				Orphaned:         true,
 				LogPaths: &LogPaths{
-					Raw:    s.Store.SandboxRawLogPath(req.RepoID, req.InvocationID),
-					Stderr: s.Store.SandboxStderrLogPath(req.RepoID, req.InvocationID),
+					Raw:    s.readableInvocationLogPath(req.RepoID, req.InvocationID, "raw"),
+					Stderr: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stderr"),
 				},
 			}
 			s.writeJSON(w, http.StatusOK, resp)
@@ -248,8 +248,8 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	// Create logs directory
-	logsDir := s.Store.SandboxLogsDir(req.RepoID, req.InvocationID)
+	// Create invocation-owned logs directory
+	logsDir := s.Store.InvocationLogsDir(req.RepoID, req.InvocationID)
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to create logs directory: "+err.Error(), "")
@@ -267,35 +267,18 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	// Open log files
-	rawLogPath := s.Store.SandboxRawLogPath(req.RepoID, req.InvocationID)
-	stderrLogPath := s.Store.SandboxStderrLogPath(req.RepoID, req.InvocationID)
-	streamLogPath := s.Store.SandboxStreamLogPath(req.RepoID, req.InvocationID)
-
-	rawFile, err := os.OpenFile(rawLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logFiles, err := s.openInvocationLogFiles(req.RepoID, req.InvocationID)
 	if err != nil {
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open raw log file: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open invocation log files: "+err.Error(), "")
 		return
 	}
-
-	stderrFile, err := os.OpenFile(stderrLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		_ = rawFile.Close()
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open stderr log file: "+err.Error(), "")
-		return
-	}
-
-	// PR-07: Open stream.jsonl for normalized events
-	streamFile, err := os.OpenFile(streamLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open stream log file: "+err.Error(), "")
-		return
-	}
+	rawLogPath := logFiles.RawPath
+	stderrLogPath := logFiles.StderrPath
+	streamLogPath := logFiles.StreamPath
+	rawFile := logFiles.RawFile
+	stderrFile := logFiles.StderrFile
+	streamFile := logFiles.StreamFile
 
 	// Set up deterministic, automation-safe environment for headless runner starts.
 	envOverlay := nonInteractiveRunnerEnv()
@@ -323,9 +306,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		if chatRelay != nil {
 			_ = chatRelay.Close()
 		}
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
+		logFiles.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to start runner: "+err.Error(), "")
 		return
@@ -337,9 +318,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		if startedProc.PGID > 0 {
 			_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
 		}
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
+		logFiles.Close()
 		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
 		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to deliver initial prompt: "+err.Error(), "")
 		return
@@ -1094,8 +1073,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// 14a. Create logs directory (headless-specific, not handled by invocation.Service.Create)
-	logsDir := s.Store.SandboxLogsDir(repoIdentity.RepoID, createResult.InvocationID)
+	// 14a. Create invocation-owned logs directory (headless-specific, not handled by invocation.Service.Create)
+	logsDir := s.Store.InvocationLogsDir(repoIdentity.RepoID, createResult.InvocationID)
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
 		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
@@ -1196,8 +1175,8 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 	}
 
 	resp.LogPaths = &LogPaths{
-		Raw:    s.Store.SandboxRawLogPath(repoID, invocationID),
-		Stderr: s.Store.SandboxStderrLogPath(repoID, invocationID),
+		Raw:    s.readableInvocationLogPath(repoID, invocationID, "raw"),
+		Stderr: s.readableInvocationLogPath(repoID, invocationID, "stderr"),
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -1339,29 +1318,16 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		return 0, 0, fmt.Errorf("failed to resolve runner command: %w", err)
 	}
 
-	// Open log files
-	rawLogPath := s.Store.SandboxRawLogPath(repoID, result.InvocationID)
-	stderrLogPath := s.Store.SandboxStderrLogPath(repoID, result.InvocationID)
-	streamLogPath := s.Store.SandboxStreamLogPath(repoID, result.InvocationID)
-
-	rawFile, err := os.OpenFile(rawLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logFiles, err := s.openInvocationLogFiles(repoID, result.InvocationID)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to open raw log file: %w", err)
+		return 0, 0, fmt.Errorf("failed to open invocation log files: %w", err)
 	}
-
-	stderrFile, err := os.OpenFile(stderrLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		_ = rawFile.Close()
-		return 0, 0, fmt.Errorf("failed to open stderr log file: %w", err)
-	}
-
-	// PR-07: Open stream.jsonl for normalized events
-	streamFile, err := os.OpenFile(streamLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		return 0, 0, fmt.Errorf("failed to open stream log file: %w", err)
-	}
+	rawLogPath := logFiles.RawPath
+	stderrLogPath := logFiles.StderrPath
+	streamLogPath := logFiles.StreamPath
+	rawFile := logFiles.RawFile
+	stderrFile := logFiles.StderrFile
+	streamFile := logFiles.StreamFile
 
 	// Set up deterministic environment overlays.
 	envOverlay := nonInteractiveRunnerEnv()
@@ -1388,9 +1354,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		if chatRelay != nil {
 			_ = chatRelay.Close()
 		}
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
+		logFiles.Close()
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
 	}
 	if err := sendInitialPromptIfRequired(req.Runner, req.Prompt, chatRelay); err != nil {
@@ -1400,9 +1364,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		if startedProc.PGID > 0 {
 			_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
 		}
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
+		logFiles.Close()
 		return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
 	}
 

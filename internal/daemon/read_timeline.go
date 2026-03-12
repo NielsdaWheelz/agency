@@ -145,13 +145,13 @@ func (s *Server) collectTimelineEntries(record *resolvedInvocation) []timelineSo
 	}
 
 	// Stream entries (message/tool activity and other normalized events).
-	result = append(result, readStreamTimelineEntries(s.Store.SandboxStreamLogPath(record.RepoID, record.InvocationID), baseTimestamp)...)
+	result = append(result, readStreamTimelineEntries(s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream"), baseTimestamp)...)
 
 	// Invocation events (checkpoint lifecycle, landing events, etc).
 	result = append(result, readInvocationEventTimelineEntries(s.Store.InvocationEventsPath(record.RepoID, record.InvocationID), baseTimestamp)...)
 
 	// Raw-log coverage marker.
-	if info, err := os.Stat(s.Store.SandboxRawLogPath(record.RepoID, record.InvocationID)); err == nil && info.Size() > 0 {
+	if info, err := os.Stat(s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw")); err == nil && info.Size() > 0 {
 		result = append(result, newTimelineEntry(
 			TimelineEntryDTO{
 				EntryID:   "raw:" + strconv.FormatInt(info.Size(), 10),

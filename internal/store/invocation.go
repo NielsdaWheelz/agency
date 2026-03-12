@@ -1,5 +1,5 @@
 // Package store provides persistence for agency data.
-// This file implements invocation metadata and operations (Slice 8 PR-02).
+// This file implements invocation metadata and operations (Slice 8 PR-01).
 package store
 
 import (
@@ -288,6 +288,96 @@ func (s *Store) EnsureSandboxDir(repoID, invocationID string) (string, error) {
 	return sandboxDir, nil
 }
 
+// EnsureInvocationLogsDir creates the invocation-owned logs directory.
+func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, error) {
+	logsDir := s.InvocationLogsDir(repoID, invocationID)
+	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to create invocation logs directory",
+			err,
+			map[string]string{"logs_dir": logsDir},
+		)
+	}
+	return logsDir, nil
+}
+
+// ResolveInvocationLogsDir returns the best logs directory for an invocation.
+// Invocation-owned logs are preferred, but sandbox logs remain readable for
+// historical invocations created before durable log ownership.
+func (s *Store) ResolveInvocationLogsDir(repoID, invocationID string) string {
+	preferred := s.InvocationLogsDir(repoID, invocationID)
+	if s.logPathExists(preferred, true) {
+		return preferred
+	}
+
+	legacy := s.SandboxLogsDir(repoID, invocationID)
+	if s.logPathExists(legacy, true) {
+		return legacy
+	}
+
+	return preferred
+}
+
+// ResolveInvocationLogPath returns the best log file path for reads.
+// Invocation-owned logs are preferred, with sandbox logs as a compatibility
+// fallback for historical invocations.
+func (s *Store) ResolveInvocationLogPath(repoID, invocationID, kind string) string {
+	preferred := s.invocationLogPathForKind(repoID, invocationID, kind)
+	if s.logPathExists(preferred, false) {
+		return preferred
+	}
+
+	legacy := s.sandboxLogPathForKind(repoID, invocationID, kind)
+	if s.logPathExists(legacy, false) {
+		return legacy
+	}
+
+	return preferred
+}
+
+// PrepareInvocationLogPath ensures the invocation-owned logs directory exists
+// and promotes a legacy sandbox-owned log file into invocation storage when
+// needed before returning the invocation-owned path.
+func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (string, error) {
+	if _, err := s.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
+		return "", err
+	}
+
+	dst := s.invocationLogPathForKind(repoID, invocationID, kind)
+	if s.logPathExists(dst, false) {
+		return dst, nil
+	}
+
+	src := s.sandboxLogPathForKind(repoID, invocationID, kind)
+	if s.logPathExists(src, false) {
+		if err := s.FS.Rename(src, dst); err != nil {
+			return "", errors.WrapWithDetails(
+				errors.EInvocationCreateFailed,
+				"failed to promote legacy sandbox log into invocation storage",
+				err,
+				map[string]string{
+					"source": src,
+					"dest":   dst,
+				},
+			)
+		}
+	}
+
+	return dst, nil
+}
+
+// PromoteSandboxLogsToInvocation migrates any legacy sandbox-owned invocation
+// logs into the invocation record directory. It is safe to call repeatedly.
+func (s *Store) PromoteSandboxLogsToInvocation(repoID, invocationID string) error {
+	for _, kind := range []string{"raw", "stderr", "stream"} {
+		if _, err := s.PrepareInvocationLogPath(repoID, invocationID, kind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteInvocationMeta writes the meta.json for an invocation atomically.
 func (s *Store) WriteInvocationMeta(repoID, invocationID string, meta *InvocationMeta) error {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
@@ -378,4 +468,37 @@ func (s *Store) RemoveInvocationDir(repoID, invocationID string) error {
 func (s *Store) RemoveSandboxDir(repoID, invocationID string) error {
 	sandboxDir := s.SandboxDir(repoID, invocationID)
 	return os.RemoveAll(sandboxDir)
+}
+
+func (s *Store) invocationLogPathForKind(repoID, invocationID, kind string) string {
+	switch kind {
+	case "stderr":
+		return s.InvocationStderrLogPath(repoID, invocationID)
+	case "stream":
+		return s.InvocationStreamLogPath(repoID, invocationID)
+	default:
+		return s.InvocationRawLogPath(repoID, invocationID)
+	}
+}
+
+func (s *Store) sandboxLogPathForKind(repoID, invocationID, kind string) string {
+	switch kind {
+	case "stderr":
+		return s.SandboxStderrLogPath(repoID, invocationID)
+	case "stream":
+		return s.SandboxStreamLogPath(repoID, invocationID)
+	default:
+		return s.SandboxRawLogPath(repoID, invocationID)
+	}
+}
+
+func (s *Store) logPathExists(path string, wantDir bool) bool {
+	if s == nil || s.FS == nil || path == "" {
+		return false
+	}
+	info, err := s.FS.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir() == wantDir
 }

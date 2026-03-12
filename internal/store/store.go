@@ -114,7 +114,7 @@ func (s *Store) IntegrationWorktreeLogsDir(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "logs")
 }
 
-// ----- V2 Invocation paths (Slice 8 PR-02) -----
+// ----- V2 Invocation paths (Slice 8 PR-01/PR-02) -----
 
 // InvocationsDir returns the invocations directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/
@@ -144,6 +144,30 @@ func (s *Store) InvocationEventsPath(repoID, invocationID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/prompt.txt
 func (s *Store) InvocationPromptPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationDir(repoID, invocationID), "prompt.txt")
+}
+
+// InvocationLogsDir returns the logs directory for an invocation.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/
+func (s *Store) InvocationLogsDir(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationDir(repoID, invocationID), "logs")
+}
+
+// InvocationRawLogPath returns the path to an invocation's raw.jsonl log file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/raw.jsonl
+func (s *Store) InvocationRawLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "raw.jsonl")
+}
+
+// InvocationStderrLogPath returns the path to an invocation's stderr.log file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/stderr.log
+func (s *Store) InvocationStderrLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "stderr.log")
+}
+
+// InvocationStreamLogPath returns the path to an invocation's stream.jsonl file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/stream.jsonl
+func (s *Store) InvocationStreamLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "stream.jsonl")
 }
 
 // ----- V2 Sandbox paths (Slice 8 PR-02) -----

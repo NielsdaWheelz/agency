@@ -45,6 +45,81 @@ func TestRepoRecordPath(t *testing.T) {
 	assert.Equal(t, want, got, "RepoRecordPath()")
 }
 
+func TestInvocationLogPaths(t *testing.T) {
+	t.Parallel()
+	s := NewStore(nil, "/data/agency", nil)
+
+	assert.Equal(t,
+		"/data/agency/repos/repo123/invocations/inv456/logs",
+		s.InvocationLogsDir("repo123", "inv456"),
+	)
+	assert.Equal(t,
+		"/data/agency/repos/repo123/invocations/inv456/logs/raw.jsonl",
+		s.InvocationRawLogPath("repo123", "inv456"),
+	)
+	assert.Equal(t,
+		"/data/agency/repos/repo123/invocations/inv456/logs/stderr.log",
+		s.InvocationStderrLogPath("repo123", "inv456"),
+	)
+	assert.Equal(t,
+		"/data/agency/repos/repo123/invocations/inv456/logs/stream.jsonl",
+		s.InvocationStreamLogPath("repo123", "inv456"),
+	)
+}
+
+func TestResolveInvocationLogPath_PrefersInvocationOwned(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	const repoID = "repo123"
+	const invocationID = "inv456"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(s.SandboxRawLogPath(repoID, invocationID)), 0o700))
+	require.NoError(t, os.WriteFile(s.SandboxRawLogPath(repoID, invocationID), []byte("legacy\n"), 0o644))
+	require.NoError(t, os.MkdirAll(s.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.WriteFile(s.InvocationRawLogPath(repoID, invocationID), []byte("canonical\n"), 0o644))
+
+	assert.Equal(t,
+		s.InvocationRawLogPath(repoID, invocationID),
+		s.ResolveInvocationLogPath(repoID, invocationID, "raw"),
+	)
+	assert.Equal(t,
+		s.InvocationLogsDir(repoID, invocationID),
+		s.ResolveInvocationLogsDir(repoID, invocationID),
+	)
+}
+
+func TestPrepareInvocationLogPath_PromotesLegacySandboxLog(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	const repoID = "repo123"
+	const invocationID = "inv456"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	legacyPath := s.SandboxRawLogPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
+	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy raw\n"), 0o644))
+
+	preparedPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "raw")
+	require.NoError(t, err)
+	assert.Equal(t, s.InvocationRawLogPath(repoID, invocationID), preparedPath)
+
+	data, err := os.ReadFile(preparedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy raw\n", string(data))
+
+	_, err = os.Stat(legacyPath)
+	assert.True(t, os.IsNotExist(err), "legacy sandbox log should be moved into invocation storage")
+}
+
 // TestLoadRepoIndex_MissingFile verifies empty index returned for missing file.
 func TestLoadRepoIndex_MissingFile(t *testing.T) {
 	t.Parallel()
