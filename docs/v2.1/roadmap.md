@@ -1,6 +1,6 @@
 # v2.1 Slice Roadmap
 
-Last updated: 2026-03-03
+Last updated: 2026-03-12
 Status: active
 Mode: L1-style product slice sequencing
 
@@ -29,6 +29,9 @@ S6 Reports v2 + CLI Ergonomics Cleanup
   |
   v
 S7 Full-Screen Watch/TUI Seed (Stretch)
+  |
+  v
+S8 Invocation History + Runner Log Convergence
 ```
 
 ## Slices
@@ -80,3 +83,9 @@ S7 Full-Screen Watch/TUI Seed (Stretch)
 - **Outcome**: users can monitor invocation/review/merge readiness in a richer terminal workspace without introducing GUI scope.
 - **Dependencies**: S6.
 - **Acceptance**: full-screen terminal watch shell exists and reuses S3 checks/readiness contracts without redefining CLI parity behavior.
+
+### Slice S8: Invocation History + Runner Log Convergence
+- **Goal**: make invocation history, checkpoints, logs, and live activity for Claude/Codex/Cursor durable, replayable, and consistent across human-facing surfaces.
+- **Outcome**: raw runner output is preserved under invocation ownership, runner conversion is replayable, and history, restart, checkpoint, diff, show, review, list, and watch surfaces share one turn/activity truth.
+- **Dependencies**: S7.
+- **Acceptance**: landed/discarded invocations retain replayable raw stdout/stderr, supported runners normalize into one canonical invocation event model, and all invocation-facing history/activity surfaces agree on turns, checkpoints, latest activity, and concise-vs-raw rendering behavior.

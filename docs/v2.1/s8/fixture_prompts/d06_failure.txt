@@ -1,0 +1,1 @@
+Run `./scripts/fail.sh`, do not edit any files, and briefly explain the failure.
