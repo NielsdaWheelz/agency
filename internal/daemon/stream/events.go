@@ -40,6 +40,10 @@ const (
 
 	// EventKindParseError indicates a parsing error for a raw line.
 	EventKindParseError EventKind = "parse_error"
+
+	// EventKindUnknown indicates a runner event shape we could not classify.
+	// The raw bytes remain in raw.jsonl, while data carries diagnostic metadata.
+	EventKindUnknown EventKind = "unknown"
 )
 
 // NormalizedEvent represents a normalized event written to stream.jsonl.
@@ -183,4 +187,5 @@ var MutatingStreamTools = map[string]bool{
 	"MultiEdit":    true,
 	"NotebookEdit": true,
 	"Bash":         true,
+	"FileChange":   true,
 }

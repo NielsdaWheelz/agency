@@ -28,6 +28,9 @@ type claudeRawEvent struct {
 	// For assistant/user messages
 	Message *claudeMessage `json:"message,omitempty"`
 
+	// Some tool results are also surfaced as a top-level structured field.
+	ToolUseResult interface{} `json:"tool_use_result,omitempty"`
+
 	// For result events
 	Result        string       `json:"result,omitempty"`
 	ErrorMessage  string       `json:"error,omitempty"`
@@ -73,8 +76,11 @@ func (a *ClaudeAdapter) ParseLine(line []byte) (*ParseResult, error) {
 	case "system":
 		if raw.Subtype == "init" {
 			result.Events = a.parseSystemInit(&raw)
+		} else {
+			result.Events = []*NormalizedEvent{
+				newUnknownRunnerEvent(raw.Type, "unsupported_system_subtype", line),
+			}
 		}
-		// Ignore other system subtypes
 
 	case "assistant":
 		events, status := a.parseAssistant(&raw)
@@ -90,8 +96,9 @@ func (a *ClaudeAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		result.SemanticStatus = status
 
 	default:
-		// Unknown event type - ignore
-		return &ParseResult{}, nil
+		result.Events = []*NormalizedEvent{
+			newUnknownRunnerEvent(raw.Type, "unsupported_event_type", line),
+		}
 	}
 
 	return result, nil
@@ -126,6 +133,7 @@ func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) ([]*NormalizedEvent,
 
 	event.Data["role"] = "assistant"
 	event.Data["has_tool_use"] = false
+	event.Data["message_family"] = MessageFamilyAssistant
 
 	if raw.Message != nil && len(raw.Message.Content) > 0 {
 		// Parse content blocks
@@ -209,6 +217,10 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 
 	event.Data["role"] = "user"
 	event.Data["has_tool_use"] = false
+	messageFamily := MessageFamilyPrompt
+	if raw.ToolUseResult != nil {
+		messageFamily = MessageFamilyToolResult
+	}
 
 	if raw.Message != nil && len(raw.Message.Content) > 0 {
 		// Try to extract text from content
@@ -223,11 +235,15 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 				if blocks, ok := content.([]interface{}); ok {
 					var textParts []string
 					var enrichedBlocks []map[string]interface{}
+					hasToolResult := false
 					for _, block := range blocks {
 						if blockMap, ok := block.(map[string]interface{}); ok {
 							enriched := map[string]interface{}{}
 							if t, ok := blockMap["type"].(string); ok {
 								enriched["type"] = t
+								if t == "tool_result" {
+									hasToolResult = true
+								}
 							}
 							if text, ok := blockMap["text"].(string); ok {
 								textParts = append(textParts, text)
@@ -243,6 +259,9 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 							enrichedBlocks = append(enrichedBlocks, enriched)
 						}
 					}
+					if hasToolResult {
+						messageFamily = MessageFamilyToolResult
+					}
 					if len(enrichedBlocks) > 0 {
 						event.Data["content_blocks"] = enrichedBlocks
 					}
@@ -253,6 +272,7 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 			}
 		}
 	}
+	event.Data["message_family"] = messageFamily
 
 	return []*NormalizedEvent{event}
 }

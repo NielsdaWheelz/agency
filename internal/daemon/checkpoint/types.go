@@ -256,6 +256,7 @@ var MutatingTools = map[string]bool{
 	"MultiEdit":    true,
 	"NotebookEdit": true,
 	"Bash":         true,
+	"FileChange":   true,
 }
 
 // IsMutatingTool reports whether the given tool name modifies the filesystem.

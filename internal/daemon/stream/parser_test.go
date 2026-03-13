@@ -597,11 +597,11 @@ func TestParser_SeqMonotonic(t *testing.T) {
 
 	// Verify seq is monotonically increasing starting at 1
 	for i, line := range lines {
-		expectedSeq := i + 1
-		if !strings.Contains(line, `"seq":`+string(rune('0'+expectedSeq))) {
-			// More robust check needed for multi-digit seq
-			assert.Contains(t, line, `"seq":`, "Line %d doesn't contain seq field", i)
+		var event struct {
+			Seq uint64 `json:"seq"`
 		}
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		assert.Equal(t, uint64(i+1), event.Seq)
 	}
 }
 
@@ -943,6 +943,38 @@ func TestParser_CheckpointNotify_CodexMutatingCommand_TriggersNotification(t *te
 	assert.Greater(t, notifications[0].Seq, uint64(0))
 }
 
+func TestParser_CheckpointNotify_CodexFileChange_TriggersNotification(t *testing.T) {
+	t.Parallel()
+
+	var notifications []CheckpointNotification
+	parser := NewParser("test-inv-codex-filechange-checkpoint", "codex", fixedClock)
+	parser.SetCheckpointNotify(func(n CheckpointNotification) {
+		notifications = append(notifications, n)
+	})
+
+	rawFile, err := os.CreateTemp("", "raw-codex-filechange-checkpoint-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-codex-filechange-checkpoint-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	input := strings.Join([]string{
+		`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"README.md","kind":"update"}]}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
+	}, "\n") + "\n"
+
+	err = parser.StreamAndParse(strings.NewReader(input), rawFile, streamFile)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, notifications, "codex file_change should emit checkpoint notification")
+	assert.Equal(t, "FileChange", notifications[0].ToolName)
+	assert.Greater(t, notifications[0].Seq, uint64(0))
+}
+
 func TestParser_CheckpointNotify_CursorMutatingToolCall_TriggersNotification(t *testing.T) {
 	t.Parallel()
 
@@ -1057,4 +1089,263 @@ func TestParser_StreamAndParse_StreamWriteFailureReturnsError(t *testing.T) {
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
 	require.Error(t, err)
 	assert.True(t, stderrors.Is(err, ErrNormalizedStreamWriteFailed), "expected normalized-stream write failure classification")
+}
+
+func TestParser_StreamAndParse_S8CodexD05_CanonicalFamilies(t *testing.T) {
+	t.Parallel()
+
+	events := parseS8FixtureEvents(t, "codex", "codex_d05_success.jsonl")
+	require.NotEmpty(t, events)
+
+	sawAssistantMessageText := false
+	sawCommandExecution := false
+	sawFileChange := false
+	sawUsage := false
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case string(EventKindMessage):
+			if dataStringValue(ev.Data, "role") != "assistant" {
+				continue
+			}
+			if strings.TrimSpace(dataStringValue(ev.Data, "text")) != "" {
+				sawAssistantMessageText = true
+			}
+		case string(EventKindToolStart), string(EventKindToolEnd):
+			switch dataStringValue(ev.Data, "action_family") {
+			case "command_execution":
+				sawCommandExecution = true
+				assert.NotEmpty(t, strings.TrimSpace(dataStringValue(ev.Data, "command")))
+			case "file_change":
+				sawFileChange = true
+			}
+		case string(EventKindUsage):
+			sawUsage = true
+		}
+	}
+
+	assert.True(t, sawAssistantMessageText, "codex agent_message.text should map to message text")
+	assert.True(t, sawCommandExecution, "codex command_execution should map to command_execution family")
+	assert.True(t, sawFileChange, "codex file_change should map to file_change family")
+	assert.True(t, sawUsage, "codex turn.completed should map to usage")
+}
+
+func TestParser_StreamAndParse_S8CursorD05_ParsesPromptAndNestedToolResults(t *testing.T) {
+	t.Parallel()
+
+	events := parseS8FixtureEvents(t, "cursor", "cursor_d05_success.jsonl")
+	require.NotEmpty(t, events)
+
+	sawPromptMessage := false
+	sawFileRead := false
+	sawFileChange := false
+	sawCommandExecution := false
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case string(EventKindMessage):
+			if dataStringValue(ev.Data, "role") == "user" &&
+				dataStringValue(ev.Data, "message_family") == "prompt" &&
+				strings.TrimSpace(dataStringValue(ev.Data, "text")) != "" {
+				sawPromptMessage = true
+			}
+		case string(EventKindToolEnd):
+			switch dataStringValue(ev.Data, "action_family") {
+			case "file_read":
+				sawFileRead = true
+			case "file_change":
+				sawFileChange = true
+			case "command_execution":
+				sawCommandExecution = true
+				exitCode, ok := dataFloatValue(ev.Data, "exit_code")
+				require.True(t, ok, "cursor shell completion should include exit code")
+				assert.Equal(t, float64(0), exitCode)
+			}
+		}
+	}
+
+	assert.True(t, sawPromptMessage, "cursor echoed user prompt should remain prompt, not tool_result")
+	assert.True(t, sawFileRead, "cursor read tool should map to file_read family")
+	assert.True(t, sawFileChange, "cursor edit tool should map to file_change family")
+	assert.True(t, sawCommandExecution, "cursor shell tool should map to command_execution family")
+}
+
+func TestParser_StreamAndParse_S8CursorD06_ExtractsFailureExitCode(t *testing.T) {
+	t.Parallel()
+
+	events := parseS8FixtureEvents(t, "cursor", "cursor_d06_failure.jsonl")
+	require.NotEmpty(t, events)
+
+	sawFailedCommand := false
+	for _, ev := range events {
+		if ev.Kind != string(EventKindToolEnd) {
+			continue
+		}
+		if dataStringValue(ev.Data, "action_family") != "command_execution" {
+			continue
+		}
+		exitCode, ok := dataFloatValue(ev.Data, "exit_code")
+		require.True(t, ok, "cursor failed shell result should expose exit_code")
+		if int(exitCode) == 7 {
+			sawFailedCommand = true
+		}
+	}
+
+	assert.True(t, sawFailedCommand, "cursor nested failure payload should preserve non-zero exit code")
+}
+
+func TestParser_StreamAndParse_S8ClaudeD05_UnknownEventDiagnosticEmitted(t *testing.T) {
+	t.Parallel()
+
+	events := parseS8FixtureEvents(t, "claude", "claude_d05_success.jsonl")
+	require.NotEmpty(t, events)
+
+	sawUnknownDiagnostic := false
+	sawFinal := false
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case "unknown":
+			if dataStringValue(ev.Data, "runner_event_type") == "rate_limit_event" {
+				sawUnknownDiagnostic = true
+			}
+		case string(EventKindFinal):
+			sawFinal = true
+		}
+	}
+
+	assert.True(t, sawUnknownDiagnostic, "unknown runner event shape should emit explicit diagnostic event")
+	assert.True(t, sawFinal, "parsing should continue after unknown runner event")
+}
+
+func TestCodexAdapter_ParseLine_ItemStartedNil_EmitsUnknownDiagnostic(t *testing.T) {
+	t.Parallel()
+	adapter := &CodexAdapter{}
+
+	result, err := adapter.ParseLine([]byte(`{"type":"item.started","item":null}`))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
+	assert.Equal(t, "missing_item", dataStringValue(result.Events[0].Data, "reason"))
+}
+
+func TestCodexAdapter_ParseLine_ItemCompletedNil_EmitsUnknownDiagnostic(t *testing.T) {
+	t.Parallel()
+	adapter := &CodexAdapter{}
+
+	result, err := adapter.ParseLine([]byte(`{"type":"item.completed","item":null}`))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
+	assert.Equal(t, "missing_item", dataStringValue(result.Events[0].Data, "reason"))
+}
+
+func TestCursorAdapter_ParseLine_UnrecognizedToolCall_EmitsUnknownDiagnostic(t *testing.T) {
+	t.Parallel()
+	adapter := &CursorAdapter{}
+
+	result, err := adapter.ParseLine([]byte(`{"type":"tool_call","subtype":"completed","tool_call":{"strangeToolCall":{"foo":"bar"}}}`))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
+	assert.Equal(t, "unrecognized_tool_structure", dataStringValue(result.Events[0].Data, "reason"))
+}
+
+func TestCursorAdapter_ParseLine_EmptyToolCall_EmitsUnknownDiagnostic(t *testing.T) {
+	t.Parallel()
+	adapter := &CursorAdapter{}
+
+	result, err := adapter.ParseLine([]byte(`{"type":"tool_call","subtype":"completed","tool_call":{}}`))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
+	assert.Equal(t, "unrecognized_tool_structure", dataStringValue(result.Events[0].Data, "reason"))
+}
+
+type parsedStreamEvent struct {
+	Kind string                 `json:"kind"`
+	Data map[string]interface{} `json:"data"`
+}
+
+func parseS8FixtureEvents(t *testing.T, runner, fixtureName string) []parsedStreamEvent {
+	t.Helper()
+
+	fixturePath := filepath.Join("testdata", "s8_20260312", fixtureName)
+	fixtureData, err := os.ReadFile(fixturePath)
+	require.NoError(t, err, "failed reading fixture: %s", fixturePath)
+
+	parser := NewParser("fixture-"+runner, runner, fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-s8-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-s8-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	err = parser.StreamAndParse(bytes.NewReader(fixtureData), rawFile, streamFile)
+	require.NoError(t, err)
+
+	streamData, err := os.ReadFile(streamFile.Name())
+	require.NoError(t, err)
+	trimmed := strings.TrimSpace(string(streamData))
+	if trimmed == "" {
+		return nil
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	events := make([]parsedStreamEvent, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var event parsedStreamEvent
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		events = append(events, event)
+	}
+	return events
+}
+
+func dataStringValue(data map[string]interface{}, key string) string {
+	if data == nil {
+		return ""
+	}
+	v, ok := data[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func dataFloatValue(data map[string]interface{}, key string) (float64, bool) {
+	if data == nil {
+		return 0, false
+	}
+	v, ok := data[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		parsed, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
 }
