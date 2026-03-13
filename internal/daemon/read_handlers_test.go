@@ -493,6 +493,86 @@ func TestHandleGetInvocation_HappyPath(t *testing.T) {
 	assert.Equal(t, "working", dto.DisplayStatus)
 }
 
+func TestInvocationActivityProjection_ConvergesAcrossListShowAndReview(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxPath := filepath.Join(t.TempDir(), "inv-1-activity-sandbox")
+	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
+	working := runnerstatus.StatusWorking
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.SandboxPath = sandboxPath
+		meta.Status = store.InvocationStatusRunning
+		meta.SemanticStatus = &working
+	}))
+
+	writeRunnerStatusForSandbox(t, sandboxPath, runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusWorking,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Summary:       "waiting on api contract",
+		Questions:     []string{},
+		Blockers:      []string{},
+		Risks:         []string{},
+	})
+
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
+	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(streamLine+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte(`{"raw":true}`+"\n"), 0o644))
+
+	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
+	require.True(t, listResp.OK)
+	var listData ListInvocationsData
+	decodeData(t, listResp, &listData)
+
+	var listed InvocationDTO
+	found := false
+	for _, inv := range listData.Invocations {
+		if inv.InvocationID == "inv-1" {
+			listed = inv
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected inv-1 in invocation list")
+	require.NotNil(t, listed.LatestActivity)
+	require.NotNil(t, listed.Navigation)
+	assert.Equal(t, "working", listed.DisplayStatus)
+	assert.Equal(t, "waiting on api contract", listed.StatusSummary)
+	assert.Equal(t, "stream:1", listed.LatestActivity.TurnID)
+	assert.Equal(t, "latest activity summary", listed.LatestActivity.Summary)
+	assert.Equal(t, "stream:1", listed.Navigation.LatestTurnID)
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	require.NotNil(t, shown.LatestActivity)
+	require.NotNil(t, shown.Navigation)
+	assert.Equal(t, listed.DisplayStatus, shown.DisplayStatus)
+	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
+	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
+	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
+	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
+	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
+	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
+
+	reviewResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID))
+	require.True(t, reviewResp.OK)
+	var review InvocationReviewData
+	decodeData(t, reviewResp, &review)
+	require.NotNil(t, review.LatestActivity)
+	assert.Equal(t, shown.DisplayStatus, review.DisplayStatus)
+	assert.Equal(t, shown.StatusSummary, review.StatusSummary)
+	assert.Equal(t, shown.LatestActivity.TurnID, review.LatestActivity.TurnID)
+	assert.Equal(t, shown.LatestActivity.Summary, review.LatestActivity.Summary)
+	assert.Equal(t, shown.Navigation.HistoryCommand, review.Navigation.HistoryCommand)
+	assert.Equal(t, shown.Navigation.DiffCommand, review.Navigation.DiffCommand)
+	assert.Equal(t, shown.Navigation.LatestTurnID, review.Navigation.LatestTurnID)
+}
+
 func TestHandleGetInvocation_NotFound(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -2350,20 +2430,34 @@ func TestHandleGetInvocationTimeline_RejectsUnsupportedSchemaVersions(t *testing
 
 	var data struct {
 		Entries []struct {
-			EntryID string `json:"entry_id"`
+			EntryID string         `json:"entry_id"`
+			Kind    string         `json:"kind"`
+			Source  string         `json:"source"`
+			Data    map[string]any `json:"data"`
 		} `json:"entries"`
 	}
 	decodeData(t, resp, &data)
 
 	entryIDs := make([]string, 0, len(data.Entries))
+	parseErrorSources := make(map[string]bool)
 	for _, entry := range data.Entries {
 		entryIDs = append(entryIDs, entry.EntryID)
+		if entry.Kind != "parse_error" {
+			continue
+		}
+		reason, _ := entry.Data["reason"].(string)
+		if reason != "unsupported_schema_version" {
+			continue
+		}
+		parseErrorSources[entry.Source] = true
 	}
 
 	assert.Contains(t, entryIDs, "stream:2")
 	assert.NotContains(t, entryIDs, "stream:1")
 	assert.Contains(t, entryIDs, "inv_event:2:agency.checkpoint_created")
 	assert.NotContains(t, entryIDs, "inv_event:1:agency.followup_prompt")
+	assert.True(t, parseErrorSources["stream"], "unsupported stream schema must produce parse_error timeline diagnostics")
+	assert.True(t, parseErrorSources["invocation_event"], "unsupported invocation-event schema must produce parse_error timeline diagnostics")
 }
 
 func TestHandleGetInvocationTimeline_InvocationEventIDsStayUniqueAcrossLineAndSeqFallback(t *testing.T) {

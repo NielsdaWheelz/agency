@@ -183,7 +183,9 @@ func readStreamTimelineEntries(path, fallbackTimestamp string) []timelineSortabl
 	entries := make([]timelineSortableEntry, 0)
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxTimelineLineBytes)
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		var event struct {
 			SchemaVersion string                 `json:"schema_version"`
 			Seq           uint64                 `json:"seq"`
@@ -195,6 +197,16 @@ func readStreamTimelineEntries(path, fallbackTimestamp string) []timelineSortabl
 			continue
 		}
 		if event.SchemaVersion != expectedTimelineSchema {
+			entries = append(entries, newSchemaMismatchTimelineEntry(
+				"stream",
+				timelineSourceRankStream,
+				lineNumber,
+				event.Seq,
+				event.Timestamp,
+				fallbackTimestamp,
+				event.SchemaVersion,
+				event.Kind,
+			))
 			continue
 		}
 		if event.Kind == "" {
@@ -252,6 +264,16 @@ func readInvocationEventTimelineEntries(path, fallbackTimestamp string) []timeli
 			continue
 		}
 		if event.SchemaVersion != expectedTimelineSchema {
+			entries = append(entries, newSchemaMismatchTimelineEntry(
+				"invocation_event",
+				timelineSourceRankEvent,
+				lineNumber,
+				event.Seq,
+				event.Timestamp,
+				fallbackTimestamp,
+				event.SchemaVersion,
+				nonEmpty(event.Kind, event.Event),
+			))
 			continue
 		}
 
@@ -291,6 +313,46 @@ func readInvocationEventTimelineEntries(path, fallbackTimestamp string) []timeli
 	}
 
 	return entries
+}
+
+func newSchemaMismatchTimelineEntry(
+	source string,
+	sourceRank int,
+	lineNumber int,
+	seq uint64,
+	timestamp string,
+	fallbackTimestamp string,
+	actualSchema string,
+	eventKind string,
+) timelineSortableEntry {
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "timeline"
+	}
+	entryID := fmt.Sprintf("%s:schema_mismatch:line:%d", normalizedSource, lineNumber)
+	if seq > 0 {
+		entryID = fmt.Sprintf("%s:schema_mismatch:%d", normalizedSource, seq)
+	}
+	trimmedSchema := strings.TrimSpace(actualSchema)
+	if trimmedSchema == "" {
+		trimmedSchema = "<empty>"
+	}
+	return newTimelineEntry(
+		TimelineEntryDTO{
+			EntryID:   entryID,
+			Kind:      "parse_error",
+			Source:    normalizedSource,
+			Timestamp: nonEmpty(timestamp, fallbackTimestamp),
+			Seq:       seq,
+			Data: map[string]interface{}{
+				"reason":                  "unsupported_schema_version",
+				"expected_schema_version": expectedTimelineSchema,
+				"actual_schema_version":   trimmedSchema,
+				"event_kind":              strings.TrimSpace(eventKind),
+			},
+		},
+		sourceRank,
+	)
 }
 
 func timelineBaseTimestamp(record *resolvedInvocation) string {

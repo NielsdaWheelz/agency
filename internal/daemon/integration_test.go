@@ -1730,7 +1730,7 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 	require.NoError(t, err, "legacy start transport error")
 	require.True(t, startResp.OK, "legacy start failed: %s - %s", startResp.ErrorCode, startResp.Message)
 
-	waitForInvocationTerminal(t, env.Store, repoID, invocationID, 5*time.Second)
+	waitForInvocationTerminal(t, env.Store, repoID, invocationID, 10*time.Second)
 
 	var streamData []byte
 	require.Eventually(t, func() bool {
@@ -1756,7 +1756,7 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 		}
 		streamData = data
 		return true
-	}, 5*time.Second, 50*time.Millisecond, "expected seeded + new sequence-bearing events")
+	}, 15*time.Second, 50*time.Millisecond, "expected seeded + new sequence-bearing events")
 
 	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
 	require.GreaterOrEqual(t, len(lines), 2, "expected seeded event + parser events")

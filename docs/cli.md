@@ -936,6 +936,7 @@ agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limi
 - follow-up prompts (`followup_prompt`)
 - raw-log coverage marker (`raw_log_coverage`)
 - invocation/checkpoint lifecycle events (`invocation_event` / `checkpoint_event`)
+- timeline diagnostics (`parse_error`) when stream or invocation-event rows use unsupported schema versions
 
 **pagination model:**
 - deterministic keyset cursoring (no offset drift)
