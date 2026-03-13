@@ -34,7 +34,7 @@ Make invocation history, checkpoints, logs, and live activity for Claude, Codex,
 ### unknown or partially parsed data never renders as misleading blanks
 - **given**: runner output that is new, malformed, oversized, or only partially understood by a converter
 - **when**: a user inspects the invocation through human or machine-readable read surfaces
-- **then**: Agency preserves the raw data, exposes parse or truncation diagnostics, and avoids mislabeling unknown content as a tool result or an empty message
+- **then**: Agency preserves the raw data, exposes parse or truncation diagnostics, avoids mislabeling unknown content as a tool result or an empty message, and preserves echoed user prompts as prompts rather than tool results
 
 ## Key Decisions
 
