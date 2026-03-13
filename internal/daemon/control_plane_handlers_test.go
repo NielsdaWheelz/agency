@@ -450,6 +450,105 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 	assert.False(t, resp.OK, "expected OK=false for nonexistent runner")
 }
 
+func TestControlPlaneStart_RespectsRepoLock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	testutil.HermeticGitEnv(t)
+
+	env := setupGitRepo(t)
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	createReq := WorktreeCreateRequest{
+		RepoRoot:     env.RepoPath,
+		Name:         "lock-test",
+		ParentBranch: "main",
+	}
+	createBody, _ := json.Marshal(createReq)
+	createHTTPReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(createBody))
+	createW := httptest.NewRecorder()
+	s.handleWorktreeCreate(createW, createHTTPReq)
+
+	var createResp WorktreeCreateResponse
+	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp), "failed to decode worktree create response")
+	require.True(t, createResp.OK, "create worktree failed: %s - %s", createResp.ErrorCode, createResp.Message)
+
+	unlock, err := s.repoLock.Lock(createResp.RepoID, "test-lock-holder")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = unlock() })
+
+	req := ControlPlaneStartRequest{
+		ClientRequestID: "test-uuid-lock",
+		RepoRoot:        env.RepoPath,
+		WorktreeRef:     "lock-test",
+		Runner:          "claude",
+		Prompt:          "test",
+	}
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleControlPlaneStartHeadless(w, httpReq)
+
+	var resp ControlPlaneStartResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.ERepoLocked), resp.ErrorCode)
+}
+
+func TestControlPlaneStartHeaded_RespectsRepoLock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	testutil.HermeticGitEnv(t)
+
+	env := setupGitRepo(t)
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	createReq := WorktreeCreateRequest{
+		RepoRoot:     env.RepoPath,
+		Name:         "lock-headed-test",
+		ParentBranch: "main",
+	}
+	createBody, _ := json.Marshal(createReq)
+	createHTTPReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(createBody))
+	createW := httptest.NewRecorder()
+	s.handleWorktreeCreate(createW, createHTTPReq)
+
+	var createResp WorktreeCreateResponse
+	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp), "failed to decode worktree create response")
+	require.True(t, createResp.OK, "create worktree failed: %s - %s", createResp.ErrorCode, createResp.Message)
+
+	unlock, err := s.repoLock.Lock(createResp.RepoID, "test-lock-holder")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = unlock() })
+
+	req := ControlPlaneStartHeadedRequest{
+		ClientRequestID: "test-uuid-lock-headed",
+		RepoRoot:        env.RepoPath,
+		WorktreeRef:     "lock-headed-test",
+		Runner:          "claude",
+	}
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headed", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleControlPlaneStartHeaded(w, httpReq)
+
+	var resp ControlPlaneStartHeadedResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.ERepoLocked), resp.ErrorCode)
+}
+
 func TestMergeEnvDeterministic_OverrideWinsNoDuplicatesSorted(t *testing.T) {
 	t.Parallel()
 

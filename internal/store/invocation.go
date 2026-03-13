@@ -299,6 +299,14 @@ func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, er
 			map[string]string{"logs_dir": logsDir},
 		)
 	}
+	if err := s.FS.Chmod(logsDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to enforce invocation logs directory permissions",
+			err,
+			map[string]string{"logs_dir": logsDir},
+		)
+	}
 	return logsDir, nil
 }
 
@@ -450,6 +458,24 @@ func (s *Store) ReadInvocationMeta(repoID, invocationID string) (*InvocationMeta
 			"failed to parse invocation meta.json",
 			err,
 			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.SchemaVersion == "" {
+		return nil, errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json missing schema_version",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.SchemaVersion != SchemaVersion {
+		return nil, errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json has unsupported schema_version",
+			map[string]string{
+				"meta_path":       metaPath,
+				"schema_version":  meta.SchemaVersion,
+				"expected_schema": SchemaVersion,
+			},
 		)
 	}
 

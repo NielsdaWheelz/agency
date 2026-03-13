@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
+	agencylock "github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -882,6 +884,29 @@ func loadMaxStreamSeq(path string) uint64 {
 	return maxSeq
 }
 
+const (
+	controlPlaneRepoLockAcquireTimeout = 2 * time.Second
+	controlPlaneRepoLockPollInterval   = 25 * time.Millisecond
+)
+
+func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, error) {
+	deadline := s.Clock().Add(controlPlaneRepoLockAcquireTimeout)
+	for {
+		unlock, err := s.repoLock.Lock(repoID, op)
+		if err == nil {
+			return unlock, nil
+		}
+		var lockedErr *agencylock.ErrLocked
+		if !stderrors.As(err, &lockedErr) {
+			return nil, err
+		}
+		if !s.Clock().Before(deadline) {
+			return nil, err
+		}
+		time.Sleep(controlPlaneRepoLockPollInterval)
+	}
+}
+
 // handleControlPlaneStartHeadless handles POST /invocations/start_headless (PR-05 control plane).
 // This is the new endpoint where daemon creates everything: invocation, sandbox, and starts runner.
 func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.Request) {
@@ -1042,6 +1067,31 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Serialize repo/worktree mutations with other mutating flows.
+	unlockRepo, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, "control_plane_start_headless")
+	if err != nil {
+		var lockedErr *agencylock.ErrLocked
+		if !stderrors.As(err, &lockedErr) {
+			writeControlPlaneErr(
+				http.StatusInternalServerError,
+				string(errors.EInternal),
+				"failed to acquire repository lock: "+err.Error(),
+				"",
+				req.ClientRequestID,
+			)
+			return
+		}
+		writeControlPlaneErr(
+			http.StatusConflict,
+			string(errors.ERepoLocked),
+			"repository is locked by another operation",
+			"wait for the other operation to complete",
+			req.ClientRequestID,
+		)
+		return
+	}
+	defer func() { _ = unlockRepo() }()
+
 	// 13. Check invocation name uniqueness if name provided
 	if req.InvocationName != "" {
 		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
@@ -1075,7 +1125,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	// 14a. Create invocation-owned logs directory (headless-specific, not handled by invocation.Service.Create)
 	logsDir := s.Store.InvocationLogsDir(repoIdentity.RepoID, createResult.InvocationID)
-	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
 		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
 			"failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
@@ -1084,7 +1134,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	// 14b. Write prompt file (headless-specific)
 	promptPath := s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
-	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
+	if err := s.FS.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
 		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
 			"failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
@@ -1907,6 +1957,35 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 			"integration worktree is archived", "use a present (non-archived) integration worktree", req.ClientRequestID, requestID)
 		return
 	}
+
+	// Serialize repo/worktree mutations with other mutating flows.
+	unlockRepo, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, "control_plane_start_headed")
+	if err != nil {
+		var lockedErr *agencylock.ErrLocked
+		if !stderrors.As(err, &lockedErr) {
+			s.writeHeadedError(
+				w,
+				http.StatusInternalServerError,
+				string(errors.EInternal),
+				"failed to acquire repository lock: "+err.Error(),
+				"",
+				req.ClientRequestID,
+				requestID,
+			)
+			return
+		}
+		s.writeHeadedError(
+			w,
+			http.StatusConflict,
+			string(errors.ERepoLocked),
+			"repository is locked by another operation",
+			"wait for the other operation to complete",
+			req.ClientRequestID,
+			requestID,
+		)
+		return
+	}
+	defer func() { _ = unlockRepo() }()
 
 	// 11. Check invocation name uniqueness if name provided
 	if req.InvocationName != "" {

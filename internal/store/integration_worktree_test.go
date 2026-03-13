@@ -276,6 +276,44 @@ func TestLoad_CorruptWorktreeMeta(t *testing.T) {
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err), "expected E_STORE_CORRUPT for corrupt meta.json")
 }
 
+func TestReadIntegrationWorktreeMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "abc123"
+	wtID := "20260131120000-a1b2"
+
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	metaPath := st.IntegrationWorktreeMetaPath(repoID, wtID)
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"worktree_id":"20260131120000-a1b2"}`), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMeta(repoID, wtID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestReadIntegrationWorktreeMeta_UnsupportedSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "abc123"
+	wtID := "20260131120000-a1b2"
+
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	metaPath := st.IntegrationWorktreeMetaPath(repoID, wtID)
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"schema_version":"9.9","worktree_id":"20260131120000-a1b2"}`), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMeta(repoID, wtID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
 // TestLoad_WorktreeNotFound verifies that reading a non-existent meta.json
 // returns E_WORKTREE_NOT_FOUND.
 func TestLoad_WorktreeNotFound(t *testing.T) {

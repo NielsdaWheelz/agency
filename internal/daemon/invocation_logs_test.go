@@ -31,4 +31,8 @@ func TestOpenInvocationLogFiles_CreatesPrivatePermissions(t *testing.T) {
 		require.NoError(t, statErr)
 		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
+
+	dirInfo, err := os.Stat(st.InvocationLogsDir(repoID, invocationID))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 }

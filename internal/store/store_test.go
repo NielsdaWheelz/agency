@@ -120,6 +120,44 @@ func TestPrepareInvocationLogPath_PromotesLegacySandboxLog(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "legacy sandbox log should be moved into invocation storage")
 }
 
+func TestReadInvocationMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+	const invocationID = "inv456"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+
+	metaPath := s.InvocationMetaPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"invocation_id":"inv456"}`), 0o644))
+
+	_, err = s.ReadInvocationMeta(repoID, invocationID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestReadInvocationMeta_UnsupportedSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+	const invocationID = "inv456"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+
+	metaPath := s.InvocationMetaPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"schema_version":"9.9","invocation_id":"inv456"}`), 0o644))
+
+	_, err = s.ReadInvocationMeta(repoID, invocationID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
 func TestRemoveInvocationDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
 	t.Parallel()
 
