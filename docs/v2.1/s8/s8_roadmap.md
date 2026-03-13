@@ -1,7 +1,7 @@
 # Slice S8: Invocation History and Runner Log Convergence - PR Roadmap
 
 Last updated: 2026-03-13
-Status: in progress
+Status: complete
 Upstream spec: `docs/v2.1/s8/s8_spec.md`
 Supporting context: `docs/v2.1/s8/s8_context.md`
 
@@ -12,8 +12,8 @@ Phase progress snapshot:
 - PR-02: done
 - PR-03: done
 - PR-04: done
-- PR-05: not started
-- PR-06: not started
+- PR-05: done
+- PR-06: done
 
 ### PR-01: invocation-owned raw capture and replay baseline
 - **goal**: make supported runner raw stdout and stderr durable under invocation ownership and establish a fixture capture protocol that future converter work can replay safely.

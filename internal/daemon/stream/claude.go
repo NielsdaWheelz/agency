@@ -296,19 +296,29 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 
 // parseResult handles result events (success/error).
 func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
-	if raw.Subtype == "error" || raw.Result == "error" {
+	success, failureReason := claudeResultSucceeded(raw)
+	if !success {
 		event := &NormalizedEvent{
 			Kind: EventKindError,
 			Data: make(map[string]interface{}),
 		}
 
-		if raw.ErrorMessage != "" {
-			event.Data["message"] = raw.ErrorMessage
-		} else {
-			event.Data["message"] = "unknown error"
+		message := strings.TrimSpace(raw.ErrorMessage)
+		if message == "" {
+			message = "runner reported non-success result"
+			if failureReason != "" {
+				message += ": " + failureReason
+			}
 		}
+		event.Data["message"] = message
 		if raw.ErrorCode != "" {
 			event.Data["code"] = raw.ErrorCode
+		}
+		if subtype := strings.TrimSpace(raw.Subtype); subtype != "" {
+			event.Data["result_subtype"] = subtype
+		}
+		if failureReason != "" {
+			event.Data["result_state"] = failureReason
 		}
 
 		// Error -> no semantic status (lifecycle handles it)
@@ -346,4 +356,27 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *r
 	// Success -> ready_for_review
 	status := runnerstatus.StatusReadyForReview
 	return []*NormalizedEvent{event}, &status
+}
+
+func claudeResultSucceeded(raw *claudeRawEvent) (bool, string) {
+	subtype := strings.ToLower(strings.TrimSpace(raw.Subtype))
+	switch subtype {
+	case "":
+		// Fall back to result status token checks below.
+	case "success":
+		return true, ""
+	case "error", "failed", "failure", "canceled", "cancelled", "timeout", "timed_out", "interrupted":
+		return false, subtype
+	default:
+		// Fail closed for unknown explicit subtypes to avoid misreporting success.
+		return false, subtype
+	}
+
+	resultState := strings.ToLower(strings.TrimSpace(raw.Result))
+	switch resultState {
+	case "error", "failed", "failure", "canceled", "cancelled", "timeout", "timed_out", "interrupted":
+		return false, resultState
+	default:
+		return true, ""
+	}
 }

@@ -884,12 +884,14 @@ tool inputs and results. For other runners, falls back to a sparse timeline.
 Use --last to show only the latest meaningful turn/activity.
 Use --json for machine-readable output with full content_blocks data.
 Use --limit and --cursor for stable paginated reads.
+Human-mode cursors are turn/timeline entry IDs (for example stream:5);
+--json cursors are opaque daemon timeline cursors from prior JSON pages.
 
 Example:
   agency agent history 20260131
   agency agent history --last 20260131
   agency agent history --repo abc123 my-invocation
-  agency agent history --limit 50 --cursor <opaque>
+  agency agent history --limit 50 --cursor stream:5
   agency agent history --json 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

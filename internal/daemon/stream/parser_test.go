@@ -93,6 +93,11 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 			wantKind: EventKindError,
 		},
 		{
+			name:     "result canceled",
+			input:    `{"type":"result","subtype":"canceled"}`,
+			wantKind: EventKindError,
+		},
+		{
 			name:    "malformed json",
 			input:   `{not valid json}`,
 			wantErr: true,
