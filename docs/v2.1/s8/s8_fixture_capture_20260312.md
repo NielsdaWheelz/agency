@@ -12,6 +12,14 @@ This note records the first real direct-runner corpus captured for Slice S8. It 
   - `D05` multi-file edit plus verification command
   - `D06` failure case
 
+## Coverage Gap Snapshot
+
+This capture revision intentionally focused on the highest-risk direct-runner shapes first.
+
+- Captured in this revision: `D05`, `D06`
+- Not yet captured in this revision: `D01`, `D02`, `D03`, `D04`
+- Agency-managed scenarios still pending: `A01`, `A02`, `A03`, `A04`
+
 ## Runner Versions
 
 - Claude: `2.1.72 (Claude Code)`

@@ -154,11 +154,13 @@ for headless invocations, the daemon parses runner output in real-time.
 ### log files
 
 ```
-sandboxes/<invocation_id>/logs/
+invocations/<invocation_id>/logs/
 ├── raw.jsonl        # verbatim stdout (exactly as emitted by runner)
 ├── stderr.log       # verbatim stderr
 └── stream.jsonl     # normalized events (daemon-generated)
 ```
+
+legacy invocations may still read from `sandboxes/<invocation_id>/logs/` as a compatibility fallback, but new writes are invocation-owned.
 
 ### runner commands
 
@@ -333,11 +335,12 @@ ${AGENCY_DATA_DIR}/
     │   └── tree/
     ├── invocations/<invocation_id>/
     │   ├── meta.json
-    │   └── events.jsonl
+    │   ├── events.jsonl
+    │   └── logs/{raw.jsonl, stderr.log, stream.jsonl}
     ├── sandboxes/<invocation_id>/
     │   ├── tree/
     │   ├── checkpoints.json
-    │   └── logs/{raw.jsonl, stderr.log, stream.jsonl}
+    │   └── logs/{raw.jsonl, stderr.log, stream.jsonl}   # legacy fallback reads
     └── runs/<run_id>/          (v1 legacy)
         ├── meta.json
         ├── events.jsonl

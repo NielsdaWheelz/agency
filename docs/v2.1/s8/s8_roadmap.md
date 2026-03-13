@@ -1,11 +1,19 @@
 # Slice S8: Invocation History and Runner Log Convergence - PR Roadmap
 
 Last updated: 2026-03-12
-Status: planned
+Status: in progress
 Upstream spec: `docs/v2.1/s8/s8_spec.md`
 Supporting context: `docs/v2.1/s8/s8_context.md`
 
 Current state: invocation history, restart-from-history, checkpoint listing, turn-aware diff, invocation list/watch, show, review, and raw log reads already exist, but they do not share one durable capture model or one derived turn/activity model. Sandbox-owned raw logs can disappear after cleanup, current Codex and Cursor adapters are behind current runner output, and multiple surfaces derive turn/activity truth independently. This roadmap is intentionally fuller than a normal L3 plan because this slice will span multiple sessions and needs a durable reference plan.
+
+Phase progress snapshot:
+- PR-01: done
+- PR-02: done
+- PR-03: done
+- PR-04: in progress
+- PR-05: not started
+- PR-06: not started
 
 ### PR-01: invocation-owned raw capture and replay baseline
 - **goal**: make supported runner raw stdout and stderr durable under invocation ownership and establish a fixture capture protocol that future converter work can replay safely.
