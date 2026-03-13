@@ -102,8 +102,14 @@ func renderEntry(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 		return renderFollowupPrompt(w, entry, opts)
 	case "final":
 		return renderFinal(w, entry, opts)
+	case "usage":
+		return renderUsage(w, entry, opts)
 	case "error":
 		return renderError(w, entry, opts)
+	case "parse_error":
+		return renderParseError(w, entry, opts)
+	case "unknown":
+		return renderUnknown(w, entry, opts)
 	case "checkpoint_event", "invocation_event":
 		return renderEvent(w, entry, opts)
 	case "raw_log_coverage":
@@ -196,6 +202,22 @@ func renderAssistantMessage(w io.Writer, entry TranscriptEntry, opts TranscriptO
 }
 
 func renderUserMessage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+	if !isToolResultMessage(entry.Data) {
+		_, err := fmt.Fprintln(w)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w, opts.style(ansiBold, "User"))
+		if err != nil {
+			return err
+		}
+		text := promptMessageText(entry.Data)
+		if text != "" {
+			_, err = fmt.Fprintln(w, text)
+		}
+		return err
+	}
+
 	// Prefer content_blocks
 	if blocks := entryContentBlocks(entry.Data); len(blocks) > 0 {
 		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
@@ -310,12 +332,54 @@ func renderFinal(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 	return err
 }
 
+func renderUsage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+	var parts []string
+	if in, ok := entryFloat(entry.Data, "input_tokens"); ok {
+		parts = append(parts, fmt.Sprintf("in=%d", int64(in)))
+	}
+	if out, ok := entryFloat(entry.Data, "output_tokens"); ok {
+		parts = append(parts, fmt.Sprintf("out=%d", int64(out)))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, opts.style(ansiDim, "Usage ("+strings.Join(parts, ", ")+")"))
+	return err
+}
+
 func renderError(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
 	msg := entryString(entry.Data, "message")
 	if msg == "" {
 		msg = "unknown error"
 	}
 	_, err := fmt.Fprintln(w, opts.style(ansiRed, "Error: "+msg))
+	return err
+}
+
+func renderParseError(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+	reason := strings.TrimSpace(entryString(entry.Data, "reason"))
+	if reason == "" {
+		reason = "unclassified"
+	}
+	line := "Parse diagnostic: " + reason
+	if count, ok := entryFloat(entry.Data, "parse_error_count"); ok && int(count) > 0 {
+		line += fmt.Sprintf(" (count=%d)", int(count))
+	}
+	_, err := fmt.Fprintln(w, opts.style(ansiDim, line))
+	return err
+}
+
+func renderUnknown(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+	eventType := strings.TrimSpace(entryString(entry.Data, "runner_event_type"))
+	reason := strings.TrimSpace(entryString(entry.Data, "reason"))
+	line := "Unknown runner event"
+	if eventType != "" {
+		line += ": " + eventType
+	}
+	if reason != "" {
+		line += " (" + reason + ")"
+	}
+	_, err := fmt.Fprintln(w, opts.style(ansiDim, line))
 	return err
 }
 
@@ -415,4 +479,51 @@ func renderJSONIndented(w io.Writer, v interface{}, prefix string) error {
 		_, err = fmt.Fprintln(w, prefix+string(data))
 	}
 	return err
+}
+
+func isToolResultMessage(data map[string]interface{}) bool {
+	family := strings.ToLower(strings.TrimSpace(entryString(data, "message_family")))
+	switch family {
+	case "prompt":
+		return false
+	case "tool_result":
+		return true
+	}
+
+	for _, block := range entryContentBlocks(data) {
+		if strings.EqualFold(strings.TrimSpace(entryString(block, "type")), "tool_result") {
+			return true
+		}
+	}
+	if family == "" && strings.TrimSpace(entryString(data, "text")) != "" && len(entryContentBlocks(data)) == 0 {
+		// Backwards-compatible fallback for older normalized streams that stored
+		// user tool-result text without content_blocks or message_family.
+		return true
+	}
+	return false
+}
+
+func promptMessageText(data map[string]interface{}) string {
+	if text := strings.TrimSpace(entryString(data, "text")); text != "" {
+		return text
+	}
+	blocks := entryContentBlocks(data)
+	if len(blocks) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		blockType := strings.TrimSpace(entryString(block, "type"))
+		if blockType != "" && blockType != "text" {
+			continue
+		}
+		if text := strings.TrimSpace(entryString(block, "text")); text != "" {
+			parts = append(parts, text)
+			continue
+		}
+		if content := strings.TrimSpace(entryString(block, "content")); content != "" {
+			parts = append(parts, content)
+		}
+	}
+	return strings.Join(parts, "\n")
 }

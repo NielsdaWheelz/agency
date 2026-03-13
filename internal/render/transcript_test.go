@@ -144,6 +144,23 @@ func TestWriteTranscript_FinalEntryWithUsage(t *testing.T) {
 	assert.Contains(t, out, "out=567")
 }
 
+func TestWriteTranscript_UsageEntry(t *testing.T) {
+	t.Parallel()
+	entries := []TranscriptEntry{
+		{
+			Kind: "usage",
+			Data: map[string]interface{}{
+				"input_tokens":  float64(42),
+				"output_tokens": float64(7),
+			},
+		},
+	}
+	var buf bytes.Buffer
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "Usage (in=42, out=7)")
+}
+
 func TestWriteTranscript_ErrorEntry(t *testing.T) {
 	t.Parallel()
 	entries := []TranscriptEntry{
@@ -283,6 +300,29 @@ func TestWriteTranscript_UserMessageWithTextFallback(t *testing.T) {
 	assert.Contains(t, buf.String(), "some tool output")
 }
 
+func TestWriteTranscript_UserPromptMessageRendersAsUser(t *testing.T) {
+	t.Parallel()
+	entries := []TranscriptEntry{
+		{
+			Kind: "message",
+			Data: map[string]interface{}{
+				"role":           "user",
+				"message_family": "prompt",
+				"text":           "please continue from checkpoint two",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "User")
+	assert.Contains(t, out, "please continue from checkpoint two")
+	assert.NotContains(t, out, "Tool Result")
+}
+
 func TestWriteTranscript_RawLogCoverageOmitted(t *testing.T) {
 	t.Parallel()
 	entries := []TranscriptEntry{
@@ -317,6 +357,33 @@ func TestWriteTranscript_UnknownKindSilentlySkipped(t *testing.T) {
 	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
 	require.NoError(t, err)
 	assert.Empty(t, buf.String())
+}
+
+func TestWriteTranscript_ParseErrorAndUnknownDiagnostics(t *testing.T) {
+	t.Parallel()
+	entries := []TranscriptEntry{
+		{
+			Kind: "parse_error",
+			Data: map[string]interface{}{
+				"parse_error_count": float64(2),
+				"reason":            "line_too_large",
+			},
+		},
+		{
+			Kind: "unknown",
+			Data: map[string]interface{}{
+				"runner_event_type": "rate_limit_event",
+				"reason":            "unsupported_event_type",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "line_too_large")
+	assert.Contains(t, out, "rate_limit_event")
 }
 
 func TestWriteRawTranscript_ValidJSONL(t *testing.T) {
