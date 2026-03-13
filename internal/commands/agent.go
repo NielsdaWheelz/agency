@@ -1265,6 +1265,25 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 			name,
 			attentionStr,
 		)
+
+		detailParts := make([]string, 0, 2)
+		if statusSummary := strings.TrimSpace(inv.StatusSummary); statusSummary != "" {
+			detailParts = append(detailParts, "summary: "+statusSummary)
+		}
+		if inv.LatestActivity != nil {
+			latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
+			if latestSummary != "" {
+				turnID := strings.TrimSpace(inv.LatestActivity.TurnID)
+				if turnID != "" {
+					detailParts = append(detailParts, "latest["+turnID+"]: "+latestSummary)
+				} else {
+					detailParts = append(detailParts, "latest: "+latestSummary)
+				}
+			}
+		}
+		if len(detailParts) > 0 {
+			_, _ = fmt.Fprintf(w, "    %s\n", strings.Join(detailParts, " | "))
+		}
 	}
 
 	return nil
@@ -1347,11 +1366,25 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	_, _ = fmt.Fprintf(w, "mode:                   %s\n", inv.Mode)
 	_, _ = fmt.Fprintf(w, "status:                 %s\n", inv.Status)
 	_, _ = fmt.Fprintf(w, "display_status:         %s\n", inv.DisplayStatus)
+	if strings.TrimSpace(inv.StatusSummary) != "" {
+		_, _ = fmt.Fprintf(w, "status_summary:         %s\n", inv.StatusSummary)
+	}
 	if inv.LandingStatus != "" {
 		_, _ = fmt.Fprintf(w, "landing_status:         %s\n", inv.LandingStatus)
 	}
 	if inv.SemanticStatus != "" {
 		_, _ = fmt.Fprintf(w, "semantic_status:        %s\n", inv.SemanticStatus)
+	}
+	if inv.LatestActivity != nil {
+		if strings.TrimSpace(inv.LatestActivity.TurnID) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_turn:   %s\n", inv.LatestActivity.TurnID)
+		}
+		if strings.TrimSpace(inv.LatestActivity.Kind) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_kind:   %s\n", inv.LatestActivity.Kind)
+		}
+		if strings.TrimSpace(inv.LatestActivity.Summary) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity:        %s\n", inv.LatestActivity.Summary)
+		}
 	}
 	if len(inv.AttentionFlags) > 0 {
 		_, _ = fmt.Fprintf(w, "attention_flags:        %v\n", inv.AttentionFlags)
@@ -1363,6 +1396,17 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	_, _ = fmt.Fprintf(w, "sandbox_path:           %s\n", inv.SandboxPath)
 	if inv.LogsDir != "" {
 		_, _ = fmt.Fprintf(w, "logs_dir:               %s\n", inv.LogsDir)
+	}
+	if inv.Navigation != nil {
+		if strings.TrimSpace(inv.Navigation.HistoryCommand) != "" {
+			_, _ = fmt.Fprintf(w, "history_command:        %s\n", inv.Navigation.HistoryCommand)
+		}
+		if strings.TrimSpace(inv.Navigation.DiffCommand) != "" {
+			_, _ = fmt.Fprintf(w, "diff_command:           %s\n", inv.Navigation.DiffCommand)
+		}
+		if strings.TrimSpace(inv.Navigation.LatestTurnID) != "" {
+			_, _ = fmt.Fprintf(w, "latest_turn_id:         %s\n", inv.Navigation.LatestTurnID)
+		}
 	}
 	return nil
 }
@@ -1789,8 +1833,12 @@ func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 }
 
 func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewData) error {
+	if review == nil {
+		return errors.New(errors.EInternal, "review payload is missing")
+	}
+
 	verdict := "BLOCKED"
-	if review.Ready {
+	if review.Ready || strings.EqualFold(strings.TrimSpace(review.Readiness), "ready") {
 		verdict = "READY"
 	}
 	prSyncEligible := "no"
@@ -1804,6 +1852,9 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", review.RepoID)
 	_, _ = fmt.Fprintf(w, "status:               %s\n", review.Status)
 	_, _ = fmt.Fprintf(w, "display_status:       %s\n", review.DisplayStatus)
+	if review.StatusSummary != "" {
+		_, _ = fmt.Fprintf(w, "status_summary:       %s\n", review.StatusSummary)
+	}
 	if review.LandingStatus != "" {
 		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", review.LandingStatus)
 	}
@@ -1818,6 +1869,17 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 	}
 	if review.RunnerSummary != "" {
 		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", review.RunnerSummary)
+	}
+	if review.LatestActivity != nil {
+		if strings.TrimSpace(review.LatestActivity.TurnID) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_turn: %s\n", review.LatestActivity.TurnID)
+		}
+		if strings.TrimSpace(review.LatestActivity.Kind) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_kind: %s\n", review.LatestActivity.Kind)
+		}
+		if strings.TrimSpace(review.LatestActivity.Summary) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", review.LatestActivity.Summary)
+		}
 	}
 	if review.HowToTest != "" {
 		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", review.HowToTest)

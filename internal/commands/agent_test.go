@@ -21,6 +21,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -503,6 +504,120 @@ func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 	assert.Equal(t, env.RepoID, dto.RepoID)
 	assert.Equal(t, "claude", dto.Runner)
 	assert.Equal(t, env.SandboxPath, dto.SandboxPath)
+}
+
+func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(t *testing.T) {
+	env := setupAgentNavEnv(t, "activity-converge", store.RunnerModeHeadless)
+
+	stateDir := filepath.Join(env.SandboxPath, ".agency", "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	runner := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusWorking,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Summary:       "waiting on api contract",
+		Questions:     []string{},
+		Blockers:      []string{},
+		Risks:         []string{},
+	}
+	runnerBytes, err := json.Marshal(runner)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), runnerBytes, 0o600))
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	logsDir := st.SandboxLogsDir(env.RepoID, env.InvocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
+
+	var lsJSON, showJSON, reviewJSON, watchOut, stderr bytes.Buffer
+
+	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &lsJSON, &stderr)
+	require.NoError(t, err)
+
+	var listedRows []daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(lsJSON.Bytes(), &listedRows))
+	require.Len(t, listedRows, 1)
+	listed := listedRows[0]
+	require.NotNil(t, listed.LatestActivity)
+	require.NotNil(t, listed.Navigation)
+
+	err = AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true}, &showJSON, &stderr)
+	require.NoError(t, err)
+	var shown daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(showJSON.Bytes(), &shown))
+	require.NotNil(t, shown.LatestActivity)
+	require.NotNil(t, shown.Navigation)
+
+	err = AgentReview(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentReviewOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &reviewJSON, &stderr)
+	require.NoError(t, err)
+	var review daemon.InvocationReviewData
+	require.NoError(t, json.Unmarshal(reviewJSON.Bytes(), &review))
+	require.NotNil(t, review.LatestActivity)
+
+	assert.Equal(t, listed.DisplayStatus, shown.DisplayStatus)
+	assert.Equal(t, shown.DisplayStatus, review.DisplayStatus)
+
+	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
+	assert.Equal(t, shown.StatusSummary, review.StatusSummary)
+	assert.Equal(t, "waiting on api contract", review.StatusSummary)
+
+	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
+	assert.Equal(t, shown.LatestActivity.TurnID, review.LatestActivity.TurnID)
+	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
+	assert.Equal(t, shown.LatestActivity.Summary, review.LatestActivity.Summary)
+	assert.Equal(t, "stream:1", review.LatestActivity.TurnID)
+	assert.Equal(t, "latest activity summary", review.LatestActivity.Summary)
+
+	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
+	assert.Equal(t, shown.Navigation.HistoryCommand, review.Navigation.HistoryCommand)
+	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
+	assert.Equal(t, shown.Navigation.DiffCommand, review.Navigation.DiffCommand)
+	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
+	assert.Equal(t, shown.Navigation.LatestTurnID, review.Navigation.LatestTurnID)
+
+	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{
+			RepoFlag:      env.RepoID,
+			Watch:         true,
+			Interval:      5 * time.Millisecond,
+			SleepFn:       func(time.Duration) {},
+			MaxIterations: 1,
+		}, &watchOut, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, watchOut.String(), "latest activity summary")
+	assert.Contains(t, watchOut.String(), "waiting on api contract")
+}
+
+func TestWriteAgentReviewHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	review := &daemon.InvocationReviewData{
+		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		Status:       "finished",
+		Readiness:    "ready",
+		Navigation: daemon.InvocationReviewNavigation{
+			HistoryCommand: "agency agent history inv-1 --repo repo-1",
+		},
+	}
+
+	err := writeAgentReviewHumanFromDTO(&out, review)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Review verdict:       READY")
+}
+
+func TestWriteAgentReviewHumanFromDTO_NilReviewReturnsInternalError(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := writeAgentReviewHumanFromDTO(&out, nil)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInternal, errors.GetCode(err))
 }
 
 func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {

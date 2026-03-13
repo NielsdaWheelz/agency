@@ -86,12 +86,6 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 	}
 
 	timelineEntries := s.collectTimelineEntries(record)
-	turns := s.collectCanonicalTurnsBestEffort(record, timelineEntries)
-	if len(turns) > 0 {
-		latestTurnID := turns[len(turns)-1].EntryID
-		data.Navigation.LatestTurnID = latestTurnID
-		data.Navigation.DiffCommand = fmt.Sprintf("agency agent diff %s --repo %s --turn %s", record.InvocationID, record.RepoID, latestTurnID)
-	}
 
 	sandboxPath := strings.TrimSpace(meta.SandboxPath)
 	if sandboxPath == "" {
@@ -125,6 +119,22 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 			data.RunnerUpdatedAt = runnerMeta.UpdatedAt
 			data.HowToTest = runnerMeta.HowToTest
 		}
+	}
+
+	activityProjection := s.buildInvocationActivityProjection(record, data.DisplayStatus, data.RunnerSummary, timelineEntries)
+	data.StatusSummary = activityProjection.StatusSummary
+	data.LatestActivity = activityProjection.LatestActivity
+	if strings.TrimSpace(data.RunnerSummary) == "" {
+		data.RunnerSummary = activityProjection.StatusSummary
+	}
+	if activityProjection.Navigation != nil {
+		if strings.TrimSpace(activityProjection.Navigation.HistoryCommand) != "" {
+			data.Navigation.HistoryCommand = activityProjection.Navigation.HistoryCommand
+		}
+		if strings.TrimSpace(activityProjection.Navigation.DiffCommand) != "" {
+			data.Navigation.DiffCommand = activityProjection.Navigation.DiffCommand
+		}
+		data.Navigation.LatestTurnID = activityProjection.Navigation.LatestTurnID
 	}
 
 	switch meta.Status {

@@ -278,6 +278,18 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 
 			logsDir := s.preferredInvocationLogsDir(repoID, r.InvocationID)
 			dto := InvocationMetaToDTO(r.Meta, repoID, logsDir, now)
+			resolved := &resolvedInvocation{
+				InvocationID: r.InvocationID,
+				RepoID:       repoID,
+				Meta:         r.Meta,
+			}
+			activityProjection := s.buildInvocationActivityProjection(
+				resolved,
+				dto.DisplayStatus,
+				loadRunnerSummaryBestEffort(r.Meta.SandboxPath),
+				nil,
+			)
+			applyInvocationActivityProjection(&dto, activityProjection)
 			allInvocations = append(allInvocations, dto)
 		}
 	}
@@ -335,6 +347,13 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 	now := s.Clock()
 	logsDir := s.preferredInvocationLogsDir(record.RepoID, record.InvocationID)
 	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, now)
+	activityProjection := s.buildInvocationActivityProjection(
+		record,
+		dto.DisplayStatus,
+		loadRunnerSummaryBestEffort(record.Meta.SandboxPath),
+		nil,
+	)
+	applyInvocationActivityProjection(&dto, activityProjection)
 	s.writeAPIResponse(w, requestID, dto)
 }
 

@@ -178,6 +178,57 @@ func TestModel_View_ShowsWatchActionSet(t *testing.T) {
 	assert.Contains(t, view.Content, "pr sync")
 }
 
+func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
+	m.width = 140
+	m.height = 28
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{
+				InvocationID:   "inv-1",
+				RepoID:         "repo-1",
+				WorktreeID:     "wt-1",
+				Runner:         "claude",
+				Mode:           "headless",
+				Status:         "running",
+				DisplayStatus:  "working",
+				StatusSummary:  "waiting on api contract",
+				LatestActivity: &daemon.InvocationLatestActivity{TurnID: "stream:1", Summary: "latest activity summary"},
+				Navigation: &daemon.InvocationActivityNavigation{
+					LatestTurnID:   "stream:1",
+					HistoryCommand: "agency agent history inv-1 --repo repo-1",
+					DiffCommand:    "agency agent diff inv-1 --repo repo-1 --turn stream:1",
+				},
+			},
+		},
+		Worktrees: []daemon.WorktreeDTO{
+			{WorktreeID: "wt-1", Name: "feature-auth"},
+		},
+		Reviews: map[string]daemon.InvocationReviewData{
+			"inv-1": {
+				InvocationID:   "inv-1",
+				Readiness:      "blocked",
+				Ready:          false,
+				PRSyncEligible: false,
+				Navigation: daemon.InvocationReviewNavigation{
+					HistoryCommand: "agency agent history inv-1 --repo repo-1",
+					DiffCommand:    "agency agent diff inv-1 --repo repo-1 --turn stream:1",
+					LatestTurnID:   "stream:1",
+				},
+			},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedIndex = 0
+
+	view := m.View()
+	assert.Contains(t, view.Content, "status_summary: waiting on api contract")
+	assert.Contains(t, view.Content, "latest_activity: [stream:1] latest activity summary")
+	assert.Contains(t, view.Content, "turn:    stream:1")
+}
+
 func TestModel_ActionEnter_SessionEndedIsRecoverable(t *testing.T) {
 	t.Parallel()
 

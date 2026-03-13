@@ -556,6 +556,16 @@ func (m model) renderInvocationsPanel(width int) string {
 		if strings.TrimSpace(displayStatus) == "" {
 			displayStatus = inv.Status
 		}
+		activitySummary := strings.TrimSpace(inv.StatusSummary)
+		if inv.LatestActivity != nil {
+			if latest := strings.TrimSpace(inv.LatestActivity.Summary); latest != "" {
+				activitySummary = latest
+			}
+		}
+		rowTail := worktreeName
+		if activitySummary != "" {
+			rowTail = worktreeName + " | " + activitySummary
+		}
 
 		row := fmt.Sprintf(
 			"%s %-8s %-10s %-9s %-14s %s",
@@ -564,7 +574,7 @@ func (m model) renderInvocationsPanel(width int) string {
 			shortID(inv.InvocationID, 10),
 			inv.Runner,
 			truncateWithEllipsis(displayStatus, 14),
-			truncateWithEllipsis(worktreeName, max(1, width-55)),
+			truncateWithEllipsis(rowTail, max(1, width-55)),
 		)
 		row = truncateWithEllipsis(row, width)
 		if idx == m.selectedIndex {
@@ -602,6 +612,20 @@ func (m model) renderDetailsPanel(width int) string {
 		displayStatus = selected.Status
 	}
 	lines = append(lines, fmt.Sprintf("status:        %s", displayStatus))
+	if summary := strings.TrimSpace(selected.StatusSummary); summary != "" {
+		lines = append(lines, fmt.Sprintf("status_summary: %s", summary))
+	}
+	if selected.LatestActivity != nil {
+		latestSummary := strings.TrimSpace(selected.LatestActivity.Summary)
+		latestTurnID := strings.TrimSpace(selected.LatestActivity.TurnID)
+		if latestSummary != "" {
+			if latestTurnID != "" {
+				lines = append(lines, fmt.Sprintf("latest_activity: [%s] %s", latestTurnID, latestSummary))
+			} else {
+				lines = append(lines, fmt.Sprintf("latest_activity: %s", latestSummary))
+			}
+		}
+	}
 	lines = append(lines, "")
 
 	if !hasReview {

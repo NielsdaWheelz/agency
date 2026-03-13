@@ -87,9 +87,30 @@ type InvocationDTO struct {
 	AttentionFlags []string `json:"attention_flags"` // daemon-derived flags
 	SortKey        int      `json:"sort_key"`        // daemon-derived priority for rendering
 
+	// Shared activity projection (PR-05)
+	StatusSummary  string                        `json:"status_summary,omitempty"`
+	LatestActivity *InvocationLatestActivity     `json:"latest_activity,omitempty"`
+	Navigation     *InvocationActivityNavigation `json:"navigation,omitempty"`
+
 	// Paths
 	SandboxPath string `json:"sandbox_path"`
 	LogsDir     string `json:"logs_dir,omitempty"`
+}
+
+// InvocationLatestActivity summarizes the latest meaningful invocation activity.
+// Shared across list/watch/show/review surfaces (PR-05).
+type InvocationLatestActivity struct {
+	TurnID    string `json:"turn_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+}
+
+// InvocationActivityNavigation links activity projections back to history/diff context.
+type InvocationActivityNavigation struct {
+	LatestTurnID   string `json:"latest_turn_id,omitempty"`
+	HistoryCommand string `json:"history_command,omitempty"`
+	DiffCommand    string `json:"diff_command,omitempty"`
 }
 
 // ----- CheckpointDTO -----
@@ -214,6 +235,8 @@ type InvocationReviewData struct {
 	LandingStatus     string                     `json:"landing_status,omitempty"`
 	RunnerStatus      string                     `json:"runner_status,omitempty"`
 	RunnerSummary     string                     `json:"runner_summary,omitempty"`
+	StatusSummary     string                     `json:"status_summary,omitempty"`
+	LatestActivity    *InvocationLatestActivity  `json:"latest_activity,omitempty"`
 	RunnerUpdatedAt   string                     `json:"runner_updated_at,omitempty"`
 	HowToTest         string                     `json:"how_to_test,omitempty"`
 	ReportDiagnostics []ReportDiagnostic         `json:"report_diagnostics,omitempty"`
