@@ -460,14 +460,14 @@ func (s *Store) ReadInvocationMeta(repoID, invocationID string) (*InvocationMeta
 // This is used for cleanup on failed creation.
 func (s *Store) RemoveInvocationDir(repoID, invocationID string) error {
 	invocationDir := s.InvocationDir(repoID, invocationID)
-	return os.RemoveAll(invocationDir)
+	return fs.SafeRemoveAll(invocationDir, s.DataDir)
 }
 
 // RemoveSandboxDir removes the sandbox directory completely.
 // This is used for cleanup on failed creation or after landing/discard.
 func (s *Store) RemoveSandboxDir(repoID, invocationID string) error {
 	sandboxDir := s.SandboxDir(repoID, invocationID)
-	return os.RemoveAll(sandboxDir)
+	return fs.SafeRemoveAll(sandboxDir, s.DataDir)
 }
 
 func (s *Store) invocationLogPathForKind(repoID, invocationID, kind string) string {

@@ -65,16 +65,16 @@ func (s *Server) openInvocationLogFiles(repoID, invocationID string) (*invocatio
 		StreamPath: streamPath,
 	}
 
-	files.RawFile, err = os.OpenFile(rawPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	files.RawFile, err = os.OpenFile(rawPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open raw log file: %w", err)
 	}
-	files.StderrFile, err = os.OpenFile(stderrPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	files.StderrFile, err = os.OpenFile(stderrPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		files.Close()
 		return nil, fmt.Errorf("open stderr log file: %w", err)
 	}
-	files.StreamFile, err = os.OpenFile(streamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	files.StreamFile, err = os.OpenFile(streamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		files.Close()
 		return nil, fmt.Errorf("open stream log file: %w", err)

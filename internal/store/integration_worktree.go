@@ -190,5 +190,5 @@ func (s *Store) ReadIntegrationWorktreeMeta(repoID, worktreeID string) (*Integra
 // This is used for cleanup on failed creation.
 func (s *Store) RemoveIntegrationWorktreeDir(repoID, worktreeID string) error {
 	worktreeDir := s.IntegrationWorktreeDir(repoID, worktreeID)
-	return os.RemoveAll(worktreeDir)
+	return fs.SafeRemoveAll(worktreeDir, s.DataDir)
 }

@@ -94,6 +94,32 @@ func TestEnsureIntegrationWorktreeDir(t *testing.T) {
 	require.Error(t, err, "expected error on duplicate")
 }
 
+func TestRemoveIntegrationWorktreeDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	outsideRoot := t.TempDir()
+	st := NewStore(fs.NewRealFS(), dataDir, time.Now)
+
+	reposDir := filepath.Join(dataDir, "repos")
+	repoID, err := filepath.Rel(reposDir, outsideRoot)
+	require.NoError(t, err)
+
+	const wtID = "wt-escape"
+	targetDir := filepath.Join(outsideRoot, "integration_worktrees", wtID)
+	require.NoError(t, os.MkdirAll(targetDir, 0o700))
+	marker := filepath.Join(targetDir, "keep.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("do-not-delete"), 0o600))
+
+	err = st.RemoveIntegrationWorktreeDir(repoID, wtID)
+	require.Error(t, err)
+	var guardErr *fs.ErrNotUnderPrefix
+	require.ErrorAs(t, err, &guardErr)
+
+	_, statErr := os.Stat(marker)
+	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
+}
+
 func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

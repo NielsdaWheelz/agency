@@ -21,6 +21,7 @@ const (
 	timelineSourceRankEvent     = 30
 	timelineSourceRankRawMarker = 40
 	maxTimelineLineBytes        = 4 * 1024 * 1024
+	expectedTimelineSchema      = "1.0"
 )
 
 type timelineSortKey struct {
@@ -184,12 +185,16 @@ func readStreamTimelineEntries(path, fallbackTimestamp string) []timelineSortabl
 	scanner.Buffer(make([]byte, 0, 64*1024), maxTimelineLineBytes)
 	for scanner.Scan() {
 		var event struct {
-			Seq       uint64                 `json:"seq"`
-			Timestamp string                 `json:"timestamp"`
-			Kind      string                 `json:"kind"`
-			Data      map[string]interface{} `json:"data"`
+			SchemaVersion string                 `json:"schema_version"`
+			Seq           uint64                 `json:"seq"`
+			Timestamp     string                 `json:"timestamp"`
+			Kind          string                 `json:"kind"`
+			Data          map[string]interface{} `json:"data"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.SchemaVersion != expectedTimelineSchema {
 			continue
 		}
 		if event.Kind == "" {
@@ -236,13 +241,17 @@ func readInvocationEventTimelineEntries(path, fallbackTimestamp string) []timeli
 	for scanner.Scan() {
 		lineNumber++
 		var event struct {
-			Seq       uint64                 `json:"seq"`
-			Timestamp string                 `json:"timestamp"`
-			Kind      string                 `json:"kind"`
-			Event     string                 `json:"event"`
-			Data      map[string]interface{} `json:"data"`
+			SchemaVersion string                 `json:"schema_version"`
+			Seq           uint64                 `json:"seq"`
+			Timestamp     string                 `json:"timestamp"`
+			Kind          string                 `json:"kind"`
+			Event         string                 `json:"event"`
+			Data          map[string]interface{} `json:"data"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.SchemaVersion != expectedTimelineSchema {
 			continue
 		}
 

@@ -2323,6 +2323,49 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 	assert.Equal(t, float64(0), toolUseEntry["exit_code"])
 }
 
+func TestHandleGetInvocationTimeline_RejectsUnsupportedSchemaVersions(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+
+	streamLines := strings.Join([]string{
+		`{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"supported schema"}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
+
+	eventLines := strings.Join([]string{
+		`{"schema_version":"","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"unsupported schema event"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+		} `json:"entries"`
+	}
+	decodeData(t, resp, &data)
+
+	entryIDs := make([]string, 0, len(data.Entries))
+	for _, entry := range data.Entries {
+		entryIDs = append(entryIDs, entry.EntryID)
+	}
+
+	assert.Contains(t, entryIDs, "stream:2")
+	assert.NotContains(t, entryIDs, "stream:1")
+	assert.Contains(t, entryIDs, "inv_event:2:agency.checkpoint_created")
+	assert.NotContains(t, entryIDs, "inv_event:1:agency.followup_prompt")
+}
+
 func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)

@@ -170,7 +170,7 @@ func (s *Store) InvocationStreamLogPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "stream.jsonl")
 }
 
-// ----- V2 Sandbox paths (Slice 8 PR-02) -----
+// ----- V2 Sandbox paths (legacy log fallback + sandbox state) -----
 
 // SandboxesDir returns the sandboxes directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/

@@ -120,6 +120,58 @@ func TestPrepareInvocationLogPath_PromotesLegacySandboxLog(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "legacy sandbox log should be moved into invocation storage")
 }
 
+func TestRemoveInvocationDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	outsideRoot := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	reposDir := filepath.Join(dataDir, "repos")
+	repoID, err := filepath.Rel(reposDir, outsideRoot)
+	require.NoError(t, err)
+
+	const invocationID = "inv-escape"
+	targetDir := filepath.Join(outsideRoot, "invocations", invocationID)
+	require.NoError(t, os.MkdirAll(targetDir, 0o700))
+	marker := filepath.Join(targetDir, "keep.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("do-not-delete"), 0o600))
+
+	err = s.RemoveInvocationDir(repoID, invocationID)
+	require.Error(t, err)
+	var guardErr *fs.ErrNotUnderPrefix
+	require.ErrorAs(t, err, &guardErr)
+
+	_, statErr := os.Stat(marker)
+	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
+}
+
+func TestRemoveSandboxDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	outsideRoot := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	reposDir := filepath.Join(dataDir, "repos")
+	repoID, err := filepath.Rel(reposDir, outsideRoot)
+	require.NoError(t, err)
+
+	const invocationID = "sandbox-escape"
+	targetDir := filepath.Join(outsideRoot, "sandboxes", invocationID)
+	require.NoError(t, os.MkdirAll(targetDir, 0o700))
+	marker := filepath.Join(targetDir, "keep.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("do-not-delete"), 0o600))
+
+	err = s.RemoveSandboxDir(repoID, invocationID)
+	require.Error(t, err)
+	var guardErr *fs.ErrNotUnderPrefix
+	require.ErrorAs(t, err, &guardErr)
+
+	_, statErr := os.Stat(marker)
+	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
+}
+
 // TestLoadRepoIndex_MissingFile verifies empty index returned for missing file.
 func TestLoadRepoIndex_MissingFile(t *testing.T) {
 	t.Parallel()
