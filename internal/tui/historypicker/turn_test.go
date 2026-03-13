@@ -99,6 +99,52 @@ func TestGroupTimelineIntoTurns_FollowupIsOwnTurn(t *testing.T) {
 	assert.True(t, turns[1].Restorable)
 }
 
+func TestGroupTimelineIntoTurns_UserPromptMessageFamilyBecomesFollowupTurn(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "Done fixing",
+		}},
+		{EntryID: "cp-1", Kind: "checkpoint_event", Timestamp: "2026-02-05T11:50:11Z", Data: map[string]interface{}{
+			"event_kind": "agency.checkpoint_created", "checkpoint_id": float64(1),
+		}},
+		{EntryID: "e-2", Kind: "message", Timestamp: "2026-02-05T11:50:12Z", Data: map[string]interface{}{
+			"role":           "user",
+			"message_family": "prompt",
+			"text":           "continue from checkpoint one",
+		}},
+	}
+	checkpoints := []CheckpointRef{{ID: 1}}
+	turns := GroupTimelineIntoTurns(entries, checkpoints)
+
+	require.Len(t, turns, 2)
+	assert.Equal(t, TurnAssistant, turns[0].Kind)
+	assert.Equal(t, TurnFollowup, turns[1].Kind)
+	assert.Equal(t, "continue from checkpoint one", turns[1].Summary)
+	assert.Equal(t, "e-2", turns[1].EntryID)
+	assert.Equal(t, 1, turns[1].CheckpointID)
+	assert.True(t, turns[1].Restorable)
+}
+
+func TestGroupTimelineIntoTurns_UserPromptMessageFamilyWithoutTextUsesFallbackSummary(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "Done fixing",
+		}},
+		{EntryID: "e-2", Kind: "message", Timestamp: "2026-02-05T11:50:12Z", Data: map[string]interface{}{
+			"role":           "user",
+			"message_family": "prompt",
+		}},
+	}
+	turns := GroupTimelineIntoTurns(entries, nil)
+
+	require.Len(t, turns, 2)
+	assert.Equal(t, TurnFollowup, turns[1].Kind)
+	assert.Equal(t, "e-2", turns[1].EntryID)
+	assert.Equal(t, "follow-up prompt", turns[1].Summary)
+}
+
 func TestGroupTimelineIntoTurns_NonRestorableTurnsMarked(t *testing.T) {
 	t.Parallel()
 	// The prompt has no checkpoint before it; the assistant turn gets

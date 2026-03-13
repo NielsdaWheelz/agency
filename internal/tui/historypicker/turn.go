@@ -120,7 +120,24 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 		case "message":
 			role := dataString(entry.Data, "role")
 			if role == "user" {
-				// Tool result — absorbed into the current assistant turn
+				// Cursor and future runners may echo prompts as user messages.
+				// Preserve those as prompt/followup turns instead of collapsing
+				// them into tool-result noise.
+				if strings.EqualFold(strings.TrimSpace(dataString(entry.Data, "message_family")), "prompt") {
+					kind := TurnFollowup
+					if len(turns) == 0 {
+						kind = TurnPrompt
+					}
+					turns = appendPromptLikeTurn(
+						turns,
+						entry,
+						kind,
+						promptLikeMessageSummary(entry.Data),
+						latestCheckpointID,
+						latestCheckpoint,
+					)
+				}
+				// Non-prompt user messages are tool results and are absorbed.
 				continue
 			}
 			if role != "assistant" {
@@ -138,25 +155,25 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 			continue
 
 		case "prompt_seed":
-			turns = append(turns, Turn{
-				EntryID:        entry.EntryID,
-				Kind:           TurnPrompt,
-				Timestamp:      entry.Timestamp,
-				ShortTimestamp: shortTimestamp(entry.Timestamp),
-				Summary:        strings.TrimSpace(dataString(entry.Data, "text")),
-			})
-			applyCheckpointMetadata(&turns[len(turns)-1], latestCheckpointID, latestCheckpoint)
+			turns = appendPromptLikeTurn(
+				turns,
+				entry,
+				TurnPrompt,
+				strings.TrimSpace(dataString(entry.Data, "text")),
+				latestCheckpointID,
+				latestCheckpoint,
+			)
 			continue
 
 		case "followup_prompt":
-			turns = append(turns, Turn{
-				EntryID:        entry.EntryID,
-				Kind:           TurnFollowup,
-				Timestamp:      entry.Timestamp,
-				ShortTimestamp: shortTimestamp(entry.Timestamp),
-				Summary:        strings.TrimSpace(dataString(entry.Data, "text")),
-			})
-			applyCheckpointMetadata(&turns[len(turns)-1], latestCheckpointID, latestCheckpoint)
+			turns = appendPromptLikeTurn(
+				turns,
+				entry,
+				TurnFollowup,
+				strings.TrimSpace(dataString(entry.Data, "text")),
+				latestCheckpointID,
+				latestCheckpoint,
+			)
 			continue
 
 		default:
@@ -165,6 +182,66 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 	}
 
 	return turns
+}
+
+func appendPromptLikeTurn(
+	turns []Turn,
+	entry TimelineEntry,
+	kind TurnKind,
+	summary string,
+	latestCheckpointID int,
+	latestCheckpoint CheckpointRef,
+) []Turn {
+	trimmedSummary := strings.TrimSpace(summary)
+	if trimmedSummary == "" {
+		if kind == TurnPrompt {
+			trimmedSummary = "prompt"
+		} else {
+			trimmedSummary = "follow-up prompt"
+		}
+	}
+
+	if len(turns) > 0 {
+		last := &turns[len(turns)-1]
+		if (last.Kind == TurnPrompt || last.Kind == TurnFollowup) && promptSummaryEqual(last.Summary, trimmedSummary) {
+			// Prefer explicit Agency followup events as canonical prompt turn IDs.
+			if entry.Kind == "followup_prompt" {
+				last.EntryID = entry.EntryID
+				last.Kind = kind
+				last.Timestamp = entry.Timestamp
+				last.ShortTimestamp = shortTimestamp(entry.Timestamp)
+			}
+			applyCheckpointMetadata(last, latestCheckpointID, latestCheckpoint)
+			return turns
+		}
+	}
+
+	turn := Turn{
+		EntryID:        entry.EntryID,
+		Kind:           kind,
+		Timestamp:      entry.Timestamp,
+		ShortTimestamp: shortTimestamp(entry.Timestamp),
+		Summary:        trimmedSummary,
+	}
+	applyCheckpointMetadata(&turn, latestCheckpointID, latestCheckpoint)
+	return append(turns, turn)
+}
+
+func promptLikeMessageSummary(data map[string]interface{}) string {
+	if text := strings.TrimSpace(dataString(data, "text")); text != "" {
+		return text
+	}
+	textHints, _ := summaryHintsFromContentBlocks(data)
+	for _, hint := range textHints {
+		if trimmed := strings.TrimSpace(hint); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func promptSummaryEqual(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint CheckpointRef) {

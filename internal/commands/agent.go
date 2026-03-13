@@ -23,7 +23,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
-	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -3122,23 +3121,55 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	timelineOpts := daemonclient.GetInvocationTimelineOpts{
-		Limit:  opts.Limit,
-		Cursor: opts.Cursor,
+	// JSON remains the machine-fidelity escape hatch for raw timeline entries.
+	// For default human history and --last resolution we project from shared turns
+	// so history aligns with restart --history semantics.
+	if opts.JSON && !opts.Last {
+		result, err := client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
+			Limit:  opts.Limit,
+			Cursor: opts.Cursor,
+		})
+		if err != nil {
+			return err
+		}
+		return writeAgentHistoryJSONFromDTO(stdout, result.Entries, result.NextCursor)
 	}
-	if opts.Last {
-		timelineOpts.Order = "desc"
-		timelineOpts.Limit = 1
-	}
-	result, err := client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, timelineOpts)
+
+	entries, turns, err := loadHistoryTimelineAndTurns(ctx, client, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
 
-	if opts.JSON {
-		return writeAgentHistoryJSONFromDTO(stdout, result.Entries, result.NextCursor)
+	if opts.Last {
+		if turn, ok := latestMeaningfulHistoryTurn(turns); ok {
+			if opts.JSON {
+				if entry, found := findTimelineEntryByID(entries, turn.EntryID); found {
+					return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
+				}
+			} else {
+				return writeAgentHistoryHumanFromTurns(stdout, []historypicker.Turn{turn}, "")
+			}
+		}
+
+		if entry, ok := latestMeaningfulTimelineEntry(entries); ok {
+			if opts.JSON {
+				return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
+			}
+			return writeAgentHistoryHumanFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
+		}
+		if opts.JSON {
+			return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{}, "")
+		}
+		return writeAgentHistoryHumanFromTurns(stdout, nil, "")
 	}
-	return writeAgentHistoryHumanFromDTO(stdout, result.Entries, result.NextCursor)
+
+	page, nextCursor := paginateHistoryTurns(turns, opts.Cursor, opts.Limit)
+	if len(turns) == 0 {
+		// Fallback when no turn projection is available.
+		entryPage, entryNextCursor := paginateTimelineEntries(entries, opts.Cursor, opts.Limit)
+		return writeAgentHistoryHumanFromDTO(stdout, entryPage, entryNextCursor)
+	}
+	return writeAgentHistoryHumanFromTurns(stdout, page, nextCursor)
 }
 
 func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
@@ -3153,38 +3184,159 @@ func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO
 	})
 }
 
-func writeAgentHistoryHumanFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
-	// Check if timeline has stream-sourced entries (semantic adapter output)
-	hasStreamEntries := false
-	for _, e := range entries {
-		if e.Source == "stream" {
-			hasStreamEntries = true
-			break
-		}
+func loadHistoryTimelineAndTurns(ctx context.Context, client *daemonclient.Client, invocationRef, repoID string) ([]daemon.TimelineEntryDTO, []historypicker.Turn, error) {
+	entries, err := fetchAllTimelineEntries(ctx, client, invocationRef, repoID)
+	if err != nil {
+		return nil, nil, err
 	}
+	checkpoints, err := fetchAllCheckpoints(ctx, client, invocationRef, repoID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return entries, convertToPickerTurns(entries, checkpoints), nil
+}
 
-	if hasStreamEntries {
-		// Convert to render.TranscriptEntry to avoid import cycle
-		transcriptEntries := make([]render.TranscriptEntry, len(entries))
-		for i, e := range entries {
-			transcriptEntries[i] = render.TranscriptEntry{
-				Kind:      e.Kind,
-				Timestamp: e.Timestamp,
-				Data:      e.Data,
+func paginateHistoryTurns(turns []historypicker.Turn, cursor string, limit int) ([]historypicker.Turn, string) {
+	if len(turns) == 0 {
+		return nil, ""
+	}
+	start := 0
+	cursor = strings.TrimSpace(cursor)
+	if cursor != "" {
+		for i, turn := range turns {
+			if turn.EntryID == cursor {
+				start = i + 1
+				break
 			}
 		}
-		opts := render.TranscriptOpts{
-			NoColor: os.Getenv("NO_COLOR") != "",
+	}
+	if start >= len(turns) {
+		return []historypicker.Turn{}, ""
+	}
+	end := start + limit
+	if end > len(turns) {
+		end = len(turns)
+	}
+	page := turns[start:end]
+	nextCursor := ""
+	if end < len(turns) && len(page) > 0 {
+		nextCursor = page[len(page)-1].EntryID
+	}
+	return page, nextCursor
+}
+
+func paginateTimelineEntries(entries []daemon.TimelineEntryDTO, cursor string, limit int) ([]daemon.TimelineEntryDTO, string) {
+	if len(entries) == 0 {
+		return nil, ""
+	}
+	start := 0
+	cursor = strings.TrimSpace(cursor)
+	if cursor != "" {
+		for i, entry := range entries {
+			if entry.EntryID == cursor {
+				start = i + 1
+				break
+			}
 		}
-		if err := render.WriteTranscript(w, transcriptEntries, opts); err != nil {
-			return err
+	}
+	if start >= len(entries) {
+		return []daemon.TimelineEntryDTO{}, ""
+	}
+	end := start + limit
+	if end > len(entries) {
+		end = len(entries)
+	}
+	page := entries[start:end]
+	nextCursor := ""
+	if end < len(entries) && len(page) > 0 {
+		nextCursor = page[len(page)-1].EntryID
+	}
+	return page, nextCursor
+}
+
+func latestMeaningfulHistoryTurn(turns []historypicker.Turn) (historypicker.Turn, bool) {
+	if len(turns) == 0 {
+		return historypicker.Turn{}, false
+	}
+	return turns[len(turns)-1], true
+}
+
+func findTimelineEntryByID(entries []daemon.TimelineEntryDTO, entryID string) (daemon.TimelineEntryDTO, bool) {
+	for _, entry := range entries {
+		if entry.EntryID == entryID {
+			return entry, true
 		}
-	} else if len(entries) == 0 {
+	}
+	return daemon.TimelineEntryDTO{}, false
+}
+
+func latestMeaningfulTimelineEntry(entries []daemon.TimelineEntryDTO) (daemon.TimelineEntryDTO, bool) {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if isMeaningfulTimelineEntry(entries[i].Kind) {
+			return entries[i], true
+		}
+	}
+	return daemon.TimelineEntryDTO{}, false
+}
+
+func isMeaningfulTimelineEntry(kind string) bool {
+	switch kind {
+	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
+		return false
+	default:
+		return true
+	}
+}
+
+func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, nextCursor string) error {
+	if len(turns) == 0 {
+		_, _ = fmt.Fprintln(w, "No timeline entries found.")
+		return nil
+	}
+	for _, turn := range turns {
+		timestamp := strings.TrimSpace(turn.ShortTimestamp)
+		if timestamp == "" {
+			timestamp = strings.TrimSpace(turn.Timestamp)
+		}
+		if timestamp == "" {
+			timestamp = "-"
+		}
+
+		summary := truncateTimelineText(turn.Summary, 160)
+		if strings.TrimSpace(summary) == "" {
+			switch turn.Kind {
+			case historypicker.TurnPrompt:
+				summary = "prompt"
+			case historypicker.TurnFollowup:
+				summary = "follow-up prompt"
+			default:
+				summary = "assistant turn"
+			}
+		}
+
+		meta := []string{string(turn.Kind)}
+		if len(turn.ToolCalls) > 0 {
+			meta = append(meta, fmt.Sprintf("tools=%d", len(turn.ToolCalls)))
+		}
+		if turn.Restorable && turn.CheckpointID > 0 {
+			meta = append(meta, fmt.Sprintf("checkpoint=%d", turn.CheckpointID))
+		}
+
+		_, _ = fmt.Fprintf(w, "%s  %s  %s  %s\n", timestamp, turn.EntryID, strings.Join(meta, ", "), summary)
+	}
+
+	if nextCursor != "" {
+		_, _ = fmt.Fprintf(w, "\nnext_cursor: %s\n", nextCursor)
+	}
+	return nil
+}
+
+func writeAgentHistoryHumanFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
+	if len(entries) == 0 {
 		_, _ = fmt.Fprintln(w, "No timeline entries found.")
 	} else {
-		// Fallback for non-adapted runners: sparse one-liner format
 		for _, entry := range entries {
-			_, _ = fmt.Fprintf(w, "%s  %s  %s\n", entry.Timestamp, entry.Kind, timelineEntrySummary(entry))
+			_, _ = fmt.Fprintf(w, "%s  %s  %s  %s\n", entry.Timestamp, entry.EntryID, entry.Kind, timelineEntrySummary(entry))
 		}
 	}
 

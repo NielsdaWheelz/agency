@@ -1564,6 +1564,236 @@ func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
+func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-turn-converge")
+	invocationID := "20260131200000-hturn"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("investigate restart convergence"), 0o600))
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"first assistant turn"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"Write","command":"internal/service.go","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"second assistant turn"}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	eventsLines := strings.Join([]string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:15Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","kind":"agency.followup_prompt","data":{"text":"continue from checkpoint one"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(eventsLines), 0o644))
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
+				SnapshotCommit:    "deadbeef",
+				SandboxHeadSHA:    "deadbeef",
+				CreatedAt:         "2026-02-05T11:50:15Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+			{
+				ID:                2,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/2",
+				SnapshotCommit:    "feedface",
+				SandboxHeadSHA:    "feedface",
+				CreatedAt:         "2026-02-05T11:50:30Z",
+				IncludesUntracked: true,
+				Diffstat:          "+2 -1 in 2 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var pickerTurns []historypicker.Turn
+	var restartOut, restartErr bytes.Buffer
+	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
+		InvocationRef:      invocationID,
+		InteractiveHistory: true,
+		IsInteractive:      func() bool { return true },
+		HistoryPickerRun: func(turns []historypicker.Turn, _ historypicker.RunOptions) (historypicker.Turn, error) {
+			pickerTurns = append([]historypicker.Turn(nil), turns...)
+			return historypicker.Turn{}, errors.New(errors.EAborted, "stop after capturing picker turns")
+		},
+		DataDirOverride: dataDir,
+	}, &restartOut, &restartErr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EAborted, errors.GetCode(err))
+	require.NotEmpty(t, pickerTurns)
+
+	var historyOut, historyErr bytes.Buffer
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &historyOut, &historyErr)
+	require.NoError(t, err)
+
+	human := historyOut.String()
+	for _, turn := range pickerTurns {
+		assert.Contains(t, human, turn.EntryID, "history output should expose the same turn id used by restart history")
+	}
+	assert.Contains(t, human, "checkpoint=1")
+	assert.Contains(t, human, "checkpoint=2")
+}
+
+func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-concise")
+	invocationID := "20260131201000-hconcise"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	payloadMarker := "S8_PR03_LARGE_TOOL_PAYLOAD_" + strings.Repeat("x", 256)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"applying edits","content_blocks":[{"type":"tool_use","name":"Edit","input":{"patch":"` + payloadMarker + `"}}]}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"Edit","command":"internal/service.go","exit_code":0}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var humanOut, jsonOut, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &humanOut, &stderr)
+	require.NoError(t, err)
+
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &stderr)
+	require.NoError(t, err)
+
+	assert.NotContains(t, humanOut.String(), payloadMarker, "default human history should summarize, not dump huge tool payloads")
+	assert.Contains(t, jsonOut.String(), payloadMarker, "json output must preserve full payload fidelity")
+}
+
+func TestAgentHistory_FallbackTimelinePaginationRespectsLimitAndCursor(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-fallback-pagination")
+	invocationID := "20260131201500-hfallback"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	// Use only non-turn event kinds so history falls back to raw timeline output.
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"status","data":{"state":"idle"}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var firstOut, secondOut, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           2,
+		DataDirOverride: dataDir,
+	}, &firstOut, &stderr)
+	require.NoError(t, err)
+
+	first := firstOut.String()
+	assert.Contains(t, first, "stream:1")
+	assert.Contains(t, first, "stream:2")
+	assert.NotContains(t, first, "stream:3", "first page should respect limit when no turn projection exists")
+	assert.Contains(t, first, "next_cursor: stream:2")
+
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Cursor:          "stream:2",
+		Limit:           2,
+		DataDirOverride: dataDir,
+	}, &secondOut, &stderr)
+	require.NoError(t, err)
+
+	second := secondOut.String()
+	assert.Contains(t, second, "stream:3")
+	assert.NotContains(t, second, "stream:1", "cursor continuation should advance past the previous page")
+	assert.NotContains(t, second, "stream:2", "cursor continuation should advance past the previous page")
+}
+
+func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last-meaningful")
+	invocationID := "20260131202000-hlast"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"meaningful assistant turn"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Last:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var payload struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+			Kind    string `json:"kind"`
+		} `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	require.Len(t, payload.Entries, 1)
+	assert.Equal(t, "stream:1", payload.Entries[0].EntryID)
+	assert.Equal(t, "message", payload.Entries[0].Kind)
+}
+
 func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-file-limit")
