@@ -495,11 +495,6 @@ func isToolResultMessage(data map[string]interface{}) bool {
 			return true
 		}
 	}
-	if family == "" && strings.TrimSpace(entryString(data, "text")) != "" && len(entryContentBlocks(data)) == 0 {
-		// Backwards-compatible fallback for older normalized streams that stored
-		// user tool-result text without content_blocks or message_family.
-		return true
-	}
 	return false
 }
 

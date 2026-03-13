@@ -178,6 +178,21 @@ func TestClaudeAdapter_ContentBlocks_User(t *testing.T) {
 	assert.Equal(t, "file contents here", blocks[0]["content"])
 }
 
+func TestClaudeAdapter_UserToolUseResultWithoutMessageContentFallback(t *testing.T) {
+	t.Parallel()
+	adapter := &ClaudeAdapter{}
+
+	result, err := adapter.ParseLine([]byte(`{"type":"user","tool_use_result":"command output"}`))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+
+	ev := result.Events[0]
+	assert.Equal(t, EventKindMessage, ev.Kind)
+	assert.Equal(t, "user", ev.Data["role"])
+	assert.Equal(t, "tool_result", ev.Data["message_family"])
+	assert.Equal(t, "command output", ev.Data["text"])
+}
+
 func TestCodexAdapter_ParseLine(t *testing.T) {
 	t.Parallel()
 	adapter := &CodexAdapter{}
@@ -1192,6 +1207,65 @@ func TestParser_StreamAndParse_S8CursorD06_ExtractsFailureExitCode(t *testing.T)
 	}
 
 	assert.True(t, sawFailedCommand, "cursor nested failure payload should preserve non-zero exit code")
+}
+
+func TestParser_StreamAndParse_S8CodexD06_PreservesFailedCommandExitCode(t *testing.T) {
+	t.Parallel()
+
+	events := parseS8FixtureEvents(t, "codex", "codex_d06_failure.jsonl")
+	require.NotEmpty(t, events)
+
+	sawFailedCommand := false
+	for _, ev := range events {
+		if ev.Kind != string(EventKindToolEnd) {
+			continue
+		}
+		if dataStringValue(ev.Data, "action_family") != "command_execution" {
+			continue
+		}
+		exitCode, ok := dataFloatValue(ev.Data, "exit_code")
+		require.True(t, ok, "codex failed command result should expose exit_code")
+		if int(exitCode) == 7 {
+			sawFailedCommand = true
+		}
+	}
+
+	assert.True(t, sawFailedCommand, "codex failure fixture should preserve non-zero command exit code")
+}
+
+func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testing.T) {
+	t.Parallel()
+
+	events := parseS8FixtureEvents(t, "claude", "claude_d06_failure.jsonl")
+	require.NotEmpty(t, events)
+
+	sawToolResultMessage := false
+	sawToolResultExitCode := false
+	sawUnknownDiagnostic := false
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case string(EventKindMessage):
+			if dataStringValue(ev.Data, "role") == "user" &&
+				dataStringValue(ev.Data, "message_family") == "tool_result" &&
+				strings.Contains(strings.ToLower(dataStringValue(ev.Data, "text")), "fixture failure") {
+				sawToolResultMessage = true
+			}
+			if dataStringValue(ev.Data, "role") == "user" &&
+				dataStringValue(ev.Data, "message_family") == "tool_result" &&
+				strings.Contains(strings.ToLower(dataStringValue(ev.Data, "text")), "exit code 7") {
+				sawToolResultExitCode = true
+			}
+		case string(EventKindUnknown):
+			if dataStringValue(ev.Data, "runner_event_type") == "rate_limit_event" {
+				sawUnknownDiagnostic = true
+			}
+		}
+	}
+
+	assert.True(t, sawToolResultMessage, "claude tool_result message should preserve failure text")
+	assert.True(t, sawToolResultExitCode, "claude tool_result message should preserve failure exit code text")
+	assert.True(t, sawUnknownDiagnostic, "unknown runner event shape should emit explicit diagnostic")
 }
 
 func TestParser_StreamAndParse_S8ClaudeD05_UnknownEventDiagnosticEmitted(t *testing.T) {

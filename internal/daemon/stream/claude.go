@@ -272,6 +272,23 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 			}
 		}
 	}
+	if messageFamily == MessageFamilyToolResult {
+		if _, hasText := event.Data["text"]; !hasText && raw.ToolUseResult != nil {
+			switch v := raw.ToolUseResult.(type) {
+			case string:
+				if strings.TrimSpace(v) != "" {
+					event.Data["text"] = v
+				}
+			default:
+				if encoded, err := json.Marshal(v); err == nil {
+					text := strings.TrimSpace(string(encoded))
+					if text != "" && text != "null" {
+						event.Data["text"] = text
+					}
+				}
+			}
+		}
+	}
 	event.Data["message_family"] = messageFamily
 
 	return []*NormalizedEvent{event}

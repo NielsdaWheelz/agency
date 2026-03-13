@@ -282,7 +282,7 @@ func TestWriteTranscript_SessionStartWithTimestamp(t *testing.T) {
 	assert.Contains(t, buf.String(), "model=claude-3")
 }
 
-func TestWriteTranscript_UserMessageWithTextFallback(t *testing.T) {
+func TestWriteTranscript_UserMessageWithTextAndNoFamilyRendersAsUser(t *testing.T) {
 	t.Parallel()
 	entries := []TranscriptEntry{
 		{
@@ -296,7 +296,8 @@ func TestWriteTranscript_UserMessageWithTextFallback(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Tool Result")
+	assert.Contains(t, buf.String(), "User")
+	assert.NotContains(t, buf.String(), "Tool Result")
 	assert.Contains(t, buf.String(), "some tool output")
 }
 
