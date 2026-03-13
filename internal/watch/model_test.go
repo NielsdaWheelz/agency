@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -195,7 +196,7 @@ func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
 				Status:         "running",
 				DisplayStatus:  "working",
 				StatusSummary:  "waiting on api contract",
-				LatestActivity: &daemon.InvocationLatestActivity{TurnID: "stream:1", Summary: "latest activity summary"},
+				LatestActivity: &daemon.InvocationLatestActivity{TurnID: "stream:1", Kind: "assistant", Summary: "latest activity summary"},
 				Navigation: &daemon.InvocationActivityNavigation{
 					LatestTurnID:   "stream:1",
 					HistoryCommand: "agency agent history inv-1 --repo repo-1",
@@ -225,7 +226,8 @@ func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
 
 	view := m.View()
 	assert.Contains(t, view.Content, "status_summary: waiting on api contract")
-	assert.Contains(t, view.Content, "latest_activity: [stream:1] latest activity summary")
+	assert.Contains(t, view.Content, "latest_activity: [stream:1] [assistant] latest activity summary")
+	assert.Contains(t, view.Content, "[assistant] latest activity summary")
 	assert.Contains(t, view.Content, "turn:    stream:1")
 }
 
@@ -358,4 +360,25 @@ func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
 	moved, _ := nextModel.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	movedModel := moved.(model)
 	assert.Equal(t, 1, movedModel.selectedIndex)
+}
+
+func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {
+	t.Parallel()
+
+	value := "café résumé"
+	truncated := truncateWithEllipsis(value, 7)
+	assert.Equal(t, "café...", truncated)
+	assert.True(t, utf8.ValidString(truncated), "truncated output must remain valid UTF-8")
+
+	tiny := truncateWithEllipsis("🙂🙂🙂🙂", 3)
+	assert.Equal(t, "🙂🙂🙂", tiny)
+	assert.True(t, utf8.ValidString(tiny), "tiny truncation must remain valid UTF-8")
+}
+
+func TestShortID_UTF8Safe(t *testing.T) {
+	t.Parallel()
+
+	short := shortID("résumé-123", 4)
+	assert.Equal(t, "résu", short)
+	assert.True(t, utf8.ValidString(short), "short id must remain valid UTF-8")
 }

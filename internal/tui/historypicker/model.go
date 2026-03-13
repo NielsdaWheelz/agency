@@ -7,6 +7,8 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
 // Options controls picker behavior.
@@ -177,7 +179,7 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 	}
 
 	// Build the header line: marker + kind label + timestamp + checkpoint badge
-	kindLabel := turnKindLabel(turn.Kind)
+	kindLabel := "[" + render.NormalizeActivityKind(string(turn.Kind)) + "]"
 	header := fmt.Sprintf("%s%s (%s)", marker, kindLabel, turn.ShortTimestamp)
 
 	if turn.Restorable && turn.CheckpointID > 0 {
@@ -201,8 +203,9 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 	b.WriteString("\n")
 
 	// Summary text (indented)
-	if turn.Summary != "" {
-		summary := truncate(turn.Summary, width-4)
+	summaryText := render.ActivitySummaryText(string(turn.Kind), turn.Summary)
+	if summaryText != "" {
+		summary := truncate(summaryText, width-4)
 		summaryLine := "    " + summary
 		if !turn.Restorable && !isSelected {
 			summaryLine = m.styleDim(summaryLine)
@@ -232,32 +235,7 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 }
 
 func formatToolCall(tc ToolCall) string {
-	name := strings.TrimSpace(tc.Name)
-	if name == "" {
-		name = "tool"
-	}
-	parts := []string{"▶", name}
-	if tc.Command != "" {
-		parts = append(parts, tc.Command)
-	}
-	result := strings.Join(parts, " ")
-	if tc.HasExit {
-		result += fmt.Sprintf(" (exit=%d)", tc.ExitCode)
-	}
-	return result
-}
-
-func turnKindLabel(kind TurnKind) string {
-	switch kind {
-	case TurnPrompt:
-		return "Prompt"
-	case TurnAssistant:
-		return "Assistant"
-	case TurnFollowup:
-		return "User"
-	default:
-		return string(kind)
-	}
+	return render.FormatToolCallSummary(tc.Name, tc.Command, tc.HasExit, tc.ExitCode)
 }
 
 func formatHelp(keys keyMap) string {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
 const defaultRefreshInterval = 2 * time.Second
@@ -558,8 +559,10 @@ func (m model) renderInvocationsPanel(width int) string {
 		}
 		activitySummary := strings.TrimSpace(inv.StatusSummary)
 		if inv.LatestActivity != nil {
-			if latest := strings.TrimSpace(inv.LatestActivity.Summary); latest != "" {
-				activitySummary = latest
+			latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
+			latestKind := strings.TrimSpace(inv.LatestActivity.Kind)
+			if latestSummary != "" || latestKind != "" {
+				activitySummary = render.FormatActivityLabel(latestKind, latestSummary)
 			}
 		}
 		rowTail := worktreeName
@@ -617,12 +620,14 @@ func (m model) renderDetailsPanel(width int) string {
 	}
 	if selected.LatestActivity != nil {
 		latestSummary := strings.TrimSpace(selected.LatestActivity.Summary)
+		latestKind := strings.TrimSpace(selected.LatestActivity.Kind)
 		latestTurnID := strings.TrimSpace(selected.LatestActivity.TurnID)
-		if latestSummary != "" {
+		if latestSummary != "" || latestKind != "" {
+			latestLabel := render.FormatActivityLabel(latestKind, latestSummary)
 			if latestTurnID != "" {
-				lines = append(lines, fmt.Sprintf("latest_activity: [%s] %s", latestTurnID, latestSummary))
+				lines = append(lines, fmt.Sprintf("latest_activity: [%s] %s", latestTurnID, latestLabel))
 			} else {
-				lines = append(lines, fmt.Sprintf("latest_activity: %s", latestSummary))
+				lines = append(lines, fmt.Sprintf("latest_activity: %s", latestLabel))
 			}
 		}
 	}
@@ -743,20 +748,22 @@ func truncateWithEllipsis(value string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	if len(value) <= maxWidth {
+	runes := []rune(value)
+	if len(runes) <= maxWidth {
 		return value
 	}
 	if maxWidth <= 3 {
-		return value[:maxWidth]
+		return string(runes[:maxWidth])
 	}
-	return value[:maxWidth-3] + "..."
+	return string(runes[:maxWidth-3]) + "..."
 }
 
 func shortID(value string, maxLen int) string {
-	if maxLen <= 0 || len(value) <= maxLen {
+	runes := []rune(value)
+	if maxLen <= 0 || len(runes) <= maxLen {
 		return value
 	}
-	return value[:maxLen]
+	return string(runes[:maxLen])
 }
 
 func clamp(value, low, high int) int {

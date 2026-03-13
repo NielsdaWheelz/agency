@@ -23,6 +23,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -1271,13 +1272,15 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 			detailParts = append(detailParts, "summary: "+statusSummary)
 		}
 		if inv.LatestActivity != nil {
+			latestKind := strings.TrimSpace(inv.LatestActivity.Kind)
 			latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
-			if latestSummary != "" {
+			if latestSummary != "" || latestKind != "" {
+				latestLabel := render.FormatActivityLabel(latestKind, latestSummary)
 				turnID := strings.TrimSpace(inv.LatestActivity.TurnID)
 				if turnID != "" {
-					detailParts = append(detailParts, "latest["+turnID+"]: "+latestSummary)
+					detailParts = append(detailParts, "latest["+turnID+"]: "+latestLabel)
 				} else {
-					detailParts = append(detailParts, "latest: "+latestSummary)
+					detailParts = append(detailParts, "latest: "+latestLabel)
 				}
 			}
 		}
@@ -1382,8 +1385,10 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 		if strings.TrimSpace(inv.LatestActivity.Kind) != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_kind:   %s\n", inv.LatestActivity.Kind)
 		}
-		if strings.TrimSpace(inv.LatestActivity.Summary) != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity:        %s\n", inv.LatestActivity.Summary)
+		latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
+		latestKind := strings.TrimSpace(inv.LatestActivity.Kind)
+		if latestSummary != "" || latestKind != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity:        %s\n", render.FormatActivityLabel(latestKind, latestSummary))
 		}
 	}
 	if len(inv.AttentionFlags) > 0 {
@@ -1877,8 +1882,10 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 		if strings.TrimSpace(review.LatestActivity.Kind) != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_kind: %s\n", review.LatestActivity.Kind)
 		}
-		if strings.TrimSpace(review.LatestActivity.Summary) != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", review.LatestActivity.Summary)
+		latestSummary := strings.TrimSpace(review.LatestActivity.Summary)
+		latestKind := strings.TrimSpace(review.LatestActivity.Kind)
+		if latestSummary != "" || latestKind != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", render.FormatActivityLabel(latestKind, latestSummary))
 		}
 	}
 	if review.HowToTest != "" {
@@ -3407,26 +3414,10 @@ func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, ne
 		}
 
 		summary := truncateTimelineText(turn.Summary, 160)
-		if strings.TrimSpace(summary) == "" {
-			switch turn.Kind {
-			case historypicker.TurnPrompt:
-				summary = "prompt"
-			case historypicker.TurnFollowup:
-				summary = "follow-up prompt"
-			default:
-				summary = "assistant turn"
-			}
-		}
+		activity := render.FormatActivityLabel(string(turn.Kind), summary)
+		activity += render.FormatTurnExtras(len(turn.ToolCalls), turn.CheckpointID, turn.Restorable)
 
-		meta := []string{string(turn.Kind)}
-		if len(turn.ToolCalls) > 0 {
-			meta = append(meta, fmt.Sprintf("tools=%d", len(turn.ToolCalls)))
-		}
-		if turn.Restorable && turn.CheckpointID > 0 {
-			meta = append(meta, fmt.Sprintf("checkpoint=%d", turn.CheckpointID))
-		}
-
-		_, _ = fmt.Fprintf(w, "%s  %s  %s  %s\n", timestamp, turn.EntryID, strings.Join(meta, ", "), summary)
+		_, _ = fmt.Fprintf(w, "%s  %s  %s\n", timestamp, turn.EntryID, activity)
 	}
 
 	if nextCursor != "" {

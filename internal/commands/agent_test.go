@@ -1767,6 +1767,9 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) 
 	for _, turn := range pickerTurns {
 		assert.Contains(t, human, turn.EntryID, "history output should expose the same turn id used by restart history")
 	}
+	assert.Contains(t, human, "[prompt]")
+	assert.Contains(t, human, "[assistant]")
+	assert.Contains(t, human, "[follow-up]")
 	assert.Contains(t, human, "checkpoint=1")
 	assert.Contains(t, human, "checkpoint=2")
 }

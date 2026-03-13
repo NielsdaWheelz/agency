@@ -31,6 +31,7 @@ func TestWriteTranscript_PromptSeed(t *testing.T) {
 
 func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 	t.Parallel()
+	payloadMarker := "S8_PR06_TOOL_INPUT_PAYLOAD_SHOULD_BE_HIDDEN"
 	entries := []TranscriptEntry{
 		{
 			Kind: "message",
@@ -39,7 +40,7 @@ func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 				"text": "Let me check",
 				"content_blocks": []map[string]interface{}{
 					{"type": "text", "text": "Let me check"},
-					{"type": "tool_use", "name": "Read", "id": "t1", "input": map[string]interface{}{"path": "/foo"}},
+					{"type": "tool_use", "name": "Read", "id": "t1", "input": map[string]interface{}{"path": "/foo", "payload": payloadMarker}},
 				},
 			},
 		},
@@ -51,7 +52,30 @@ func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 	assert.Contains(t, out, "Assistant")
 	assert.Contains(t, out, "Let me check")
 	assert.Contains(t, out, "▶ Tool: Read")
-	assert.Contains(t, out, "/foo")
+	assert.NotContains(t, out, payloadMarker, "default transcript rendering should not dump full tool input payloads")
+	assert.Contains(t, out, "input hidden", "default transcript rendering should make explicit that tool payloads are summarized")
+}
+
+func TestWriteTranscript_AssistantWithContentBlocks_ExpandedToolPayloads(t *testing.T) {
+	t.Parallel()
+	payloadMarker := "S8_PR06_TOOL_INPUT_PAYLOAD_SHOULD_BE_VISIBLE_WHEN_EXPANDED"
+	entries := []TranscriptEntry{
+		{
+			Kind: "message",
+			Data: map[string]interface{}{
+				"role": "assistant",
+				"content_blocks": []map[string]interface{}{
+					{"type": "tool_use", "name": "Read", "id": "t1", "input": map[string]interface{}{"path": "/foo", "payload": payloadMarker}},
+				},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true, ExpandToolPayloads: true})
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, payloadMarker)
+	assert.NotContains(t, out, "input hidden")
 }
 
 func TestWriteTranscript_AssistantWithoutContentBlocks(t *testing.T) {

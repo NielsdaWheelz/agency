@@ -20,6 +20,9 @@ type TranscriptEntry struct {
 // TranscriptOpts controls transcript rendering behavior.
 type TranscriptOpts struct {
 	NoColor bool // caller should check NO_COLOR env and set this
+	// ExpandToolPayloads renders full tool input payloads for tool_use blocks.
+	// Default false keeps human transcripts concise.
+	ExpandToolPayloads bool
 }
 
 // ANSI escape codes for terminal styling.
@@ -184,8 +187,15 @@ func renderAssistantMessage(w io.Writer, entry TranscriptEntry, opts TranscriptO
 					return err
 				}
 				if input, ok := block["input"]; ok {
-					if err := renderJSONIndented(w, input, "  "); err != nil {
-						return err
+					if opts.ExpandToolPayloads {
+						if err := renderJSONIndented(w, input, "  "); err != nil {
+							return err
+						}
+					} else {
+						_, err = fmt.Fprintln(w, opts.style(ansiDim, "  (input hidden; use raw/json to inspect)"))
+						if err != nil {
+							return err
+						}
 					}
 				}
 			}

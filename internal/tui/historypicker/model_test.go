@@ -105,6 +105,19 @@ func TestModel_ViewContainsTurnSummaries(t *testing.T) {
 	assert.Contains(t, content, "Tests are fixed")
 }
 
+func TestModel_ViewUsesSharedActivityKindLanguage(t *testing.T) {
+	t.Parallel()
+	m := newModel(testTurns(), Options{NoColor: true})
+	m.width = 120
+	m.height = 40
+	view := m.View()
+	content := view.Content
+
+	assert.Contains(t, content, "[prompt]")
+	assert.Contains(t, content, "[assistant]")
+	assert.Contains(t, content, "[follow-up]")
+}
+
 func TestModel_ViewContainsToolCalls(t *testing.T) {
 	t.Parallel()
 	m := newModel(testTurns(), Options{NoColor: true})
