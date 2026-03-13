@@ -71,7 +71,7 @@ agency agent start --worktree my-feature --headless --prompt "Fix auth edge case
 agency agent logs <invocation-id> --follow
 agency agent chat <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
-agency agent history <invocation-id> --last        # show only the last timeline entry
+agency agent history <invocation-id> --last        # show latest meaningful turn/activity
 agency agent review <invocation-id>               # review verdict + blocking reasons
 agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
 agency agent land <invocation-id> --apply         # land sandbox into integration worktree

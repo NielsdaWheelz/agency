@@ -2366,6 +2366,37 @@ func TestHandleGetInvocationTimeline_RejectsUnsupportedSchemaVersions(t *testing
 	assert.NotContains(t, entryIDs, "inv_event:1:agency.followup_prompt")
 }
 
+func TestHandleGetInvocationTimeline_InvocationEventIDsStayUniqueAcrossLineAndSeqFallback(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	eventLines := strings.Join([]string{
+		`{"schema_version":"1.0","seq":0,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"line-based-id"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"seq-based-id"}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=100")
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+		} `json:"entries"`
+	}
+	decodeData(t, resp, &data)
+
+	entryIDs := make([]string, 0, len(data.Entries))
+	for _, entry := range data.Entries {
+		entryIDs = append(entryIDs, entry.EntryID)
+	}
+
+	assert.Contains(t, entryIDs, "inv_event:line:1:agency.followup_prompt")
+	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt")
+}
+
 func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)

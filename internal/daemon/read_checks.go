@@ -86,8 +86,9 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 	}
 
 	timelineEntries := s.collectTimelineEntries(record)
-	if len(timelineEntries) > 0 {
-		latestTurnID := timelineEntries[len(timelineEntries)-1].dto.EntryID
+	turns := s.collectCanonicalTurnsBestEffort(record, timelineEntries)
+	if len(turns) > 0 {
+		latestTurnID := turns[len(turns)-1].EntryID
 		data.Navigation.LatestTurnID = latestTurnID
 		data.Navigation.DiffCommand = fmt.Sprintf("agency agent diff %s --repo %s --turn %s", record.InvocationID, record.RepoID, latestTurnID)
 	}

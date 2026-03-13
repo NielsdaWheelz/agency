@@ -266,7 +266,7 @@ func readInvocationEventTimelineEntries(path, fallbackTimestamp string) []timeli
 			entryKind = "followup_prompt"
 		}
 
-		entryID := "inv_event:" + strconv.Itoa(lineNumber) + ":" + kind
+		entryID := "inv_event:line:" + strconv.Itoa(lineNumber) + ":" + kind
 		if event.Seq > 0 {
 			entryID = "inv_event:" + strconv.FormatUint(event.Seq, 10) + ":" + kind
 		}

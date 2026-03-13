@@ -3163,6 +3163,30 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return writeAgentHistoryHumanFromTurns(stdout, nil, "")
 	}
 
+	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" {
+		if len(turns) > 0 {
+			if !historyTurnIDExists(turns, cursor) {
+				return errors.NewWithDetails(
+					errors.EInvalidArgument,
+					"invalid value for parameter 'cursor': turn id not found",
+					map[string]string{
+						"param":  "cursor",
+						"cursor": cursor,
+					},
+				)
+			}
+		} else if !timelineEntryIDExists(entries, cursor) {
+			return errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"invalid value for parameter 'cursor': timeline entry id not found",
+				map[string]string{
+					"param":  "cursor",
+					"cursor": cursor,
+				},
+			)
+		}
+	}
+
 	page, nextCursor := paginateHistoryTurns(turns, opts.Cursor, opts.Limit)
 	if len(turns) == 0 {
 		// Fallback when no turn projection is available.
@@ -3281,11 +3305,29 @@ func latestMeaningfulTimelineEntry(entries []daemon.TimelineEntryDTO) (daemon.Ti
 
 func isMeaningfulTimelineEntry(kind string) bool {
 	switch kind {
-	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
+	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status", "parse_error":
 		return false
 	default:
 		return true
 	}
+}
+
+func historyTurnIDExists(turns []historypicker.Turn, entryID string) bool {
+	for _, turn := range turns {
+		if turn.EntryID == entryID {
+			return true
+		}
+	}
+	return false
+}
+
+func timelineEntryIDExists(entries []daemon.TimelineEntryDTO, entryID string) bool {
+	for _, entry := range entries {
+		if entry.EntryID == entryID {
+			return true
+		}
+	}
+	return false
 }
 
 func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, nextCursor string) error {

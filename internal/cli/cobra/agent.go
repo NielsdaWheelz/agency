@@ -881,7 +881,7 @@ assistant messages, tool use, prompts, and results. For runners with semantic
 adapters (Claude, Codex, Cursor), the transcript includes full content blocks with
 tool inputs and results. For other runners, falls back to a sparse timeline.
 
-Use --last to show only the most recent timeline entry.
+Use --last to show only the latest meaningful turn/activity.
 Use --json for machine-readable output with full content_blocks data.
 Use --limit and --cursor for stable paginated reads.
 
@@ -915,7 +915,7 @@ Example:
 
 	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo name, key, id, or prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
-	cmd.Flags().BoolVar(&last, "last", false, "Show only the most recent timeline entry")
+	cmd.Flags().BoolVar(&last, "last", false, "Show only the latest meaningful turn/activity")
 	cmd.Flags().IntVar(&limit, "limit", 100, "Maximum entries to return (1-500)")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Pagination cursor from previous response")
 

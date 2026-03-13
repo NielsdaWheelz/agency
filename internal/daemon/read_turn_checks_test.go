@@ -147,6 +147,21 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 	}
 }
 
+func setupAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
+	t.Helper()
+	fixture := setupTurnDiffFixture(t)
+
+	require.NoError(t, os.MkdirAll(fixture.env.Store.SandboxLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.SandboxStreamLogPath(fixture.repoID, fixture.invocationID)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:09Z","invocation_id":"` + fixture.invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"assistant turn before checkpoint"}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	fixture.selectedTurnID = "stream:1"
+	return fixture
+}
+
 func writeRunnerStatusForSandbox(t *testing.T, sandboxPath string, status runnerstatus.RunnerStatus) {
 	t.Helper()
 	stateDir := filepath.Join(sandboxPath, ".agency", "state")
@@ -216,6 +231,39 @@ func TestHandleGetInvocationDiff_TurnSelectorDeterministicMapping(t *testing.T) 
 	assert.Equal(t, turnCtx1, turnCtx2, "turn selector mapping should be deterministic")
 }
 
+func TestHandleGetInvocationDiff_TurnSelectorRejectsNonTurnEntryIDs(t *testing.T) {
+	fixture := setupTurnDiffFixture(t)
+
+	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape("inv_event:1:agency.checkpoint_created")
+	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+}
+
+func TestHandleGetInvocationDiff_TurnSelectorAssistantTurnUsesCanonicalCheckpointAssociation(t *testing.T) {
+	fixture := setupAssistantTurnDiffFixture(t)
+
+	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
+	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+
+	turnCtx, ok := data["turn_context"].(map[string]any)
+	require.True(t, ok, "expected turn_context in diff response")
+	assert.Equal(t, float64(1), turnCtx["start_checkpoint_id"])
+	assert.Equal(t, float64(2), turnCtx["end_checkpoint_id"])
+	assert.Equal(t, fixture.cp1Commit, turnCtx["from_commit"])
+	assert.Equal(t, fixture.cp2Commit, turnCtx["to_commit"])
+}
+
 func TestHandleGetInvocationDiff_TurnSelectorUnknownTurnReturnsInvalidArgument(t *testing.T) {
 	fixture := setupTurnDiffFixture(t)
 
@@ -276,6 +324,33 @@ func TestHandleGetInvocationReview_BlockedIncludesReasonsAndNavigation(t *testin
 	assert.Equal(t, "inv-1", nav["invocation_ref"])
 	assert.NotEmpty(t, nav["history_command"])
 	assert.NotEmpty(t, nav["latest_turn_id"])
+}
+
+func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjection(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:00Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"canonical latest turn"}}`,
+	}
+	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte("{\"raw\":true}\n"), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+	nav, ok := data["navigation"].(map[string]any)
+	require.True(t, ok, "expected navigation context")
+
+	assert.Equal(t, "stream:1", nav["latest_turn_id"])
+	assert.Contains(t, nav["diff_command"], "--turn stream:1")
 }
 
 func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) {

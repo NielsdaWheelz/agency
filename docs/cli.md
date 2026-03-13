@@ -919,7 +919,7 @@ agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limi
 - `invocation_ref`: invocation identifier (name, id, or unique prefix)
 
 **flags:**
-- `--last`: show only the most recent timeline entry (mutually exclusive with `--cursor`)
+- `--last`: show only the latest meaningful turn/activity (mutually exclusive with `--cursor`)
 - `--limit`: maximum entries returned per page (default: 100, required range: 1..500)
 - `--cursor`: opaque continuation cursor from prior response
 - `--json`: machine-readable output (includes full `content_blocks` in message entries)
@@ -941,7 +941,8 @@ agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limi
 - deterministic keyset cursoring (no offset drift)
 - incremental continuation is stable across pages (no duplicate/skip drift)
 - invalid `--limit` values fail closed with `E_INVALID_ARGUMENT` (no silent coercion)
-- `--last` uses server-side reverse ordering (`order=desc`) with `limit=1`; cursor pagination is not supported with `--last`
+- invalid human-mode `--cursor` values fail closed with `E_INVALID_ARGUMENT` (no silent rewind to page 1)
+- `--last` resolves from the canonical turn projection first, then falls back to timeline entries when no turns exist; cursor pagination is not supported with `--last`
 
 ### `agency agent logs`
 

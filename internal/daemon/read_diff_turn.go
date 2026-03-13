@@ -78,37 +78,6 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		entryIndexByID[entry.dto.EntryID] = i
 	}
 
-	startIndex, ok := entryIndexByID[startTurnID]
-	if !ok {
-		return nil, errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"selected turn was not found in invocation timeline",
-			map[string]string{
-				"turn_id": startTurnID,
-			},
-		)
-	}
-	endIndex, ok := entryIndexByID[endTurnID]
-	if !ok {
-		return nil, errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"selected turn was not found in invocation timeline",
-			map[string]string{
-				"turn_id": endTurnID,
-			},
-		)
-	}
-	if startIndex > endIndex {
-		return nil, errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"turn range start occurs after turn range end",
-			map[string]string{
-				"turn_start": startTurnID,
-				"turn_end":   endTurnID,
-			},
-		)
-	}
-
 	checkpointsDir := s.Store.SandboxDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil || len(cpFile.Checkpoints) == 0 {
@@ -152,20 +121,56 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		)
 	}
 
-	startMarker, ok := latestCheckpointAtOrBefore(markers, startIndex)
+	turns := groupTimelineEntriesIntoTurns(entries, cpFile.Checkpoints)
+	turnIndexByID := make(map[string]int, len(turns))
+	for i, turn := range turns {
+		turnIndexByID[turn.EntryID] = i
+	}
+
+	startTurnIndex, ok := turnIndexByID[startTurnID]
 	if !ok {
 		return nil, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"selected turn was not found in invocation timeline",
+			map[string]string{
+				"turn_id": startTurnID,
+			},
+		)
+	}
+	endTurnIndex, ok := turnIndexByID[endTurnID]
+	if !ok {
+		return nil, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"selected turn was not found in invocation timeline",
+			map[string]string{
+				"turn_id": endTurnID,
+			},
+		)
+	}
+	if startTurnIndex > endTurnIndex {
+		return nil, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"turn range start occurs after turn range end",
+			map[string]string{
+				"turn_start": startTurnID,
+				"turn_end":   endTurnID,
+			},
+		)
+	}
+
+	startCheckpointID := turns[startTurnIndex].CheckpointID
+	if startCheckpointID <= 0 {
+		return nil, errors.NewWithDetails(
 			errors.ECheckpointNotFound,
-			"no checkpoint mapping exists at or before selected turn",
+			"no checkpoint mapping exists for selected turn",
 			map[string]string{
 				"turn_id": startTurnID,
 				"hint":    "select a later turn or use full invocation diff",
 			},
 		)
 	}
-
-	endMarker, ok := latestCheckpointAtOrBefore(markers, endIndex)
-	if !ok {
+	endCheckpointID := turns[endTurnIndex].CheckpointID
+	if endCheckpointID <= 0 {
 		return nil, errors.NewWithDetails(
 			errors.ECheckpointNotFound,
 			"no checkpoint mapping exists for selected turn range end",
@@ -178,21 +183,23 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 	// Single-turn and tight ranges can map to the same checkpoint. In that case,
 	// expand to the next checkpoint boundary when available so turn-aware diff
 	// context is meaningfully anchored to a stable interval.
-	if endMarker.CheckpointID == startMarker.CheckpointID {
-		if next, found := nextCheckpointAfter(markers, endIndex); found {
-			endMarker = next
+	if endCheckpointID == startCheckpointID {
+		if endIndex, exists := entryIndexByID[endTurnID]; exists {
+			if next, found := nextCheckpointAfter(markers, endIndex, endCheckpointID); found {
+				endCheckpointID = next.CheckpointID
+			}
 		}
 	}
 
-	fromCommit := checkpointCommitByID[startMarker.CheckpointID]
-	toCommit := checkpointCommitByID[endMarker.CheckpointID]
+	fromCommit := checkpointCommitByID[startCheckpointID]
+	toCommit := checkpointCommitByID[endCheckpointID]
 	if fromCommit == "" || toCommit == "" {
 		return nil, errors.NewWithDetails(
 			errors.ECheckpointNotFound,
 			"checkpoint mapping resolved to unavailable snapshot commits",
 			map[string]string{
-				"start_checkpoint_id": fmt.Sprintf("%d", startMarker.CheckpointID),
-				"end_checkpoint_id":   fmt.Sprintf("%d", endMarker.CheckpointID),
+				"start_checkpoint_id": fmt.Sprintf("%d", startCheckpointID),
+				"end_checkpoint_id":   fmt.Sprintf("%d", endCheckpointID),
 			},
 		)
 	}
@@ -202,8 +209,8 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		ToCommit:   toCommit,
 		TurnContext: DiffTurnContext{
 			Selector:          selector,
-			StartCheckpointID: startMarker.CheckpointID,
-			EndCheckpointID:   endMarker.CheckpointID,
+			StartCheckpointID: startCheckpointID,
+			EndCheckpointID:   endCheckpointID,
 			FromCommit:        fromCommit,
 			ToCommit:          toCommit,
 		},
@@ -225,24 +232,15 @@ func resolveTurnSelectorBounds(params GetDiffParams) (DiffTurnSelector, string, 
 	}, strings.TrimSpace(params.TurnStartID), strings.TrimSpace(params.TurnEndID)
 }
 
-func latestCheckpointAtOrBefore(markers []timelineCheckpointMarker, entryIndex int) (timelineCheckpointMarker, bool) {
-	var latest timelineCheckpointMarker
-	found := false
+func nextCheckpointAfter(markers []timelineCheckpointMarker, entryIndex int, currentCheckpointID int) (timelineCheckpointMarker, bool) {
 	for _, marker := range markers {
-		if marker.EntryIndex > entryIndex {
-			break
+		if marker.EntryIndex <= entryIndex {
+			continue
 		}
-		latest = marker
-		found = true
-	}
-	return latest, found
-}
-
-func nextCheckpointAfter(markers []timelineCheckpointMarker, entryIndex int) (timelineCheckpointMarker, bool) {
-	for _, marker := range markers {
-		if marker.EntryIndex > entryIndex {
-			return marker, true
+		if marker.CheckpointID == currentCheckpointID {
+			continue
 		}
+		return marker, true
 	}
 	return timelineCheckpointMarker{}, false
 }

@@ -1,6 +1,6 @@
 # Slice S8: Invocation History and Runner Log Convergence - PR Roadmap
 
-Last updated: 2026-03-12
+Last updated: 2026-03-13
 Status: in progress
 Upstream spec: `docs/v2.1/s8/s8_spec.md`
 Supporting context: `docs/v2.1/s8/s8_context.md`
@@ -11,7 +11,7 @@ Phase progress snapshot:
 - PR-01: done
 - PR-02: done
 - PR-03: done
-- PR-04: in progress
+- PR-04: done
 - PR-05: not started
 - PR-06: not started
 
