@@ -560,7 +560,7 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 	}
 
 	// Load checkpoints.json
-	checkpointsDir := s.Store.SandboxDir(record.RepoID, record.InvocationID)
+	checkpointsDir := s.Store.ResolveInvocationCheckpointsDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil {
 		if os.IsNotExist(err) {

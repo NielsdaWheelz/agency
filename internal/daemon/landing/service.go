@@ -520,15 +520,19 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	// 4. Preserve any legacy sandbox-owned logs before removing the sandbox dir.
-	logsPromoted := true
+	// 4. Preserve any legacy sandbox-owned artifacts before removing sandbox dir.
+	artifactsPromoted := true
 	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
 		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
-		logsPromoted = false
+		artifactsPromoted = false
+	}
+	if err := s.store.PromoteSandboxCheckpointsToInvocation(repoID, invocationID); err != nil {
+		errs = append(errs, fmt.Sprintf("checkpoint preservation: %v", err))
+		artifactsPromoted = false
 	}
 
-	// 5. Remove sandbox directory once log preservation is safe.
-	if logsPromoted {
+	// 5. Remove sandbox directory once artifact preservation is safe.
+	if artifactsPromoted {
 		sandboxDir := s.store.SandboxDir(repoID, invocationID)
 		if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
 			errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
@@ -687,15 +691,19 @@ func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repo
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	// 4. Preserve any legacy sandbox-owned logs before removing the sandbox dir.
-	logsPromoted := true
+	// 4. Preserve any legacy sandbox-owned artifacts before removing sandbox dir.
+	artifactsPromoted := true
 	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
 		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
-		logsPromoted = false
+		artifactsPromoted = false
+	}
+	if err := s.store.PromoteSandboxCheckpointsToInvocation(repoID, invocationID); err != nil {
+		errs = append(errs, fmt.Sprintf("checkpoint preservation: %v", err))
+		artifactsPromoted = false
 	}
 
-	// 5. Remove sandbox directory once log preservation is safe.
-	if logsPromoted {
+	// 5. Remove sandbox directory once artifact preservation is safe.
+	if artifactsPromoted {
 		sandboxDir := s.store.SandboxDir(repoID, invocationID)
 		if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
 			errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))

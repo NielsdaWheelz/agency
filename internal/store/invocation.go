@@ -344,6 +344,23 @@ func (s *Store) ResolveInvocationLogPath(repoID, invocationID, kind string) stri
 	return preferred
 }
 
+// ResolveInvocationCheckpointsDir returns the best checkpoints directory for reads.
+// Invocation-owned checkpoints are preferred, with sandbox checkpoints as a
+// compatibility fallback for historical invocations.
+func (s *Store) ResolveInvocationCheckpointsDir(repoID, invocationID string) string {
+	preferredDir := s.InvocationDir(repoID, invocationID)
+	if s.logPathExists(s.InvocationCheckpointsPath(repoID, invocationID), false) {
+		return preferredDir
+	}
+
+	legacyDir := s.SandboxDir(repoID, invocationID)
+	if s.logPathExists(s.SandboxCheckpointsPath(repoID, invocationID), false) {
+		return legacyDir
+	}
+
+	return preferredDir
+}
+
 // PrepareInvocationLogPath ensures the invocation-owned logs directory exists
 // and promotes a legacy sandbox-owned log file into invocation storage when
 // needed before returning the invocation-owned path.
@@ -375,6 +392,43 @@ func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (str
 	return dst, nil
 }
 
+// PrepareInvocationCheckpointsPath ensures invocation-owned checkpoints path is
+// available and promotes a legacy sandbox-owned checkpoints.json into invocation
+// storage when needed.
+func (s *Store) PrepareInvocationCheckpointsPath(repoID, invocationID string) (string, error) {
+	invocationDir := s.InvocationDir(repoID, invocationID)
+	if err := s.FS.MkdirAll(invocationDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to ensure invocation directory for checkpoint promotion",
+			err,
+			map[string]string{"invocation_dir": invocationDir},
+		)
+	}
+
+	dst := s.InvocationCheckpointsPath(repoID, invocationID)
+	if s.logPathExists(dst, false) {
+		return dst, nil
+	}
+
+	src := s.SandboxCheckpointsPath(repoID, invocationID)
+	if s.logPathExists(src, false) {
+		if err := s.FS.Rename(src, dst); err != nil {
+			return "", errors.WrapWithDetails(
+				errors.EInvocationCreateFailed,
+				"failed to promote legacy sandbox checkpoints into invocation storage",
+				err,
+				map[string]string{
+					"source": src,
+					"dest":   dst,
+				},
+			)
+		}
+	}
+
+	return dst, nil
+}
+
 // PromoteSandboxLogsToInvocation migrates any legacy sandbox-owned invocation
 // logs into the invocation record directory. It is safe to call repeatedly.
 func (s *Store) PromoteSandboxLogsToInvocation(repoID, invocationID string) error {
@@ -384,6 +438,13 @@ func (s *Store) PromoteSandboxLogsToInvocation(repoID, invocationID string) erro
 		}
 	}
 	return nil
+}
+
+// PromoteSandboxCheckpointsToInvocation migrates a legacy sandbox-owned
+// checkpoints.json into invocation storage. It is safe to call repeatedly.
+func (s *Store) PromoteSandboxCheckpointsToInvocation(repoID, invocationID string) error {
+	_, err := s.PrepareInvocationCheckpointsPath(repoID, invocationID)
+	return err
 }
 
 // WriteInvocationMeta writes the meta.json for an invocation atomically.

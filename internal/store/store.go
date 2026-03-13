@@ -146,6 +146,12 @@ func (s *Store) InvocationPromptPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationDir(repoID, invocationID), "prompt.txt")
 }
 
+// InvocationCheckpointsPath returns the path to an invocation's checkpoints.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/checkpoints.json
+func (s *Store) InvocationCheckpointsPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationDir(repoID, invocationID), "checkpoints.json")
+}
+
 // InvocationLogsDir returns the logs directory for an invocation.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/
 func (s *Store) InvocationLogsDir(repoID, invocationID string) string {

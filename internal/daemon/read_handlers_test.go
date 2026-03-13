@@ -635,6 +635,41 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	assert.False(t, data.Checkpoints[2].ChangedPathTruncated)
 }
 
+func TestHandleGetInvocationCheckpoints_UsesInvocationOwnedAfterSandboxCleanup(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed invocation-owned checkpoints and remove sandbox dir to simulate
+	// post-land/discard lifecycle cleanup.
+	cpFile := &checkpoint.CheckpointsFile{
+		SchemaVersion: "1.0",
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                9,
+				CreatedAt:         "2026-02-05T11:59:00Z",
+				SnapshotCommit:    "invocation-owned",
+				IncludesUntracked: true,
+			},
+		},
+	}
+	cpData, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
+	require.NoError(t, os.RemoveAll(env.Store.SandboxDir(env.RepoID, "inv-1")))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListCheckpointsData
+	decodeData(t, resp, &data)
+	require.Len(t, data.Checkpoints, 1)
+	assert.Equal(t, 9, data.Checkpoints[0].ID)
+	assert.Equal(t, "invocation-owned", data.Checkpoints[0].SnapshotCommit)
+}
+
 func TestHandleGetInvocationCheckpoints_Empty(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)

@@ -54,7 +54,7 @@ func groupTimelineEntriesIntoTurns(entries []timelineSortableEntry, checkpoints 
 }
 
 func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []historypicker.Turn {
-	checkpointsDir := s.Store.SandboxDir(record.RepoID, record.InvocationID)
+	checkpointsDir := s.Store.ResolveInvocationCheckpointsDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil && !os.IsNotExist(err) {
 		// Best-effort only: review/read surfaces should still work when

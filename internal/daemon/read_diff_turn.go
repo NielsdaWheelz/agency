@@ -78,7 +78,7 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		entryIndexByID[entry.dto.EntryID] = i
 	}
 
-	checkpointsDir := s.Store.SandboxDir(record.RepoID, record.InvocationID)
+	checkpointsDir := s.Store.ResolveInvocationCheckpointsDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil || len(cpFile.Checkpoints) == 0 {
 		return nil, errors.NewWithDetails(

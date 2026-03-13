@@ -1873,6 +1873,22 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	gitExec(t, sandboxPath, "add", "new-file.txt")
 	gitExec(t, sandboxPath, "commit", "-m", "sandbox commit")
 
+	// Seed legacy sandbox-owned checkpoints to validate post-cleanup durability.
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				CreatedAt:         time.Now().UTC().Format(time.RFC3339),
+				SnapshotCommit:    gitExec(t, sandboxPath, "rev-parse", "HEAD"),
+				IncludesUntracked: true,
+			},
+		},
+	}
+	cpData, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID), cpData, 0o644))
+
 	// Land via cherry-pick.
 	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
@@ -1904,6 +1920,8 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	require.NoError(t, err, "invocation-owned raw log should survive landing cleanup")
 	_, err = os.Stat(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID))
 	require.NoError(t, err, "invocation-owned stream log should survive landing cleanup")
+	_, err = os.Stat(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "invocation-owned checkpoints should survive landing cleanup")
 
 	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
 	require.NoError(t, err, "logs API should still work after landing cleanup")
@@ -1912,6 +1930,11 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
 	require.NoError(t, err, "timeline API should still work after landing cleanup")
 	assert.NotEmpty(t, timelineResp.Entries)
+
+	checkpointsResp, err := env.Client.ListCheckpoints(ctx, startResp.InvocationID, repoID, daemonclient.ListCheckpointsOpts{Limit: 50})
+	require.NoError(t, err, "checkpoints API should still work after landing cleanup")
+	require.Len(t, checkpointsResp.Checkpoints, 1)
+	assert.Equal(t, 1, checkpointsResp.Checkpoints[0].ID)
 }
 
 func TestDaemonLandApply(t *testing.T) {
@@ -2187,6 +2210,21 @@ func TestDaemonDiscard(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(legacyRawPath), 0o700))
 	require.NoError(t, os.Rename(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID), legacyRawPath))
 	require.NoError(t, os.Rename(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID), legacyStreamPath))
+	legacyCheckpointPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                7,
+				CreatedAt:         time.Now().UTC().Format(time.RFC3339),
+				SnapshotCommit:    "discarded-checkpoint",
+				IncludesUntracked: true,
+			},
+		},
+	}
+	cpData, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(legacyCheckpointPath, cpData, 0o644))
 
 	resp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
 	require.NoError(t, err)
@@ -2207,6 +2245,8 @@ func TestDaemonDiscard(t *testing.T) {
 	require.NoError(t, err, "invocation-owned raw log should survive discard cleanup")
 	_, err = os.Stat(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID))
 	require.NoError(t, err, "invocation-owned stream log should survive discard cleanup")
+	_, err = os.Stat(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID))
+	require.NoError(t, err, "invocation-owned checkpoints should survive discard cleanup")
 
 	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
 	require.NoError(t, err, "logs API should still work after discard cleanup")
@@ -2215,6 +2255,11 @@ func TestDaemonDiscard(t *testing.T) {
 	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
 	require.NoError(t, err, "timeline API should still work after discard cleanup")
 	assert.NotEmpty(t, timelineResp.Entries)
+
+	checkpointsResp, err := env.Client.ListCheckpoints(ctx, startResp.InvocationID, repoID, daemonclient.ListCheckpointsOpts{Limit: 50})
+	require.NoError(t, err, "checkpoints API should still work after discard cleanup")
+	require.Len(t, checkpointsResp.Checkpoints, 1)
+	assert.Equal(t, 7, checkpointsResp.Checkpoints[0].ID)
 }
 
 func TestDaemonDiscardRunning(t *testing.T) {

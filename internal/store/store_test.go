@@ -120,6 +120,60 @@ func TestPrepareInvocationLogPath_PromotesLegacySandboxLog(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "legacy sandbox log should be moved into invocation storage")
 }
 
+func TestResolveInvocationCheckpointsDir_PrefersInvocationOwned(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	const repoID = "repo123"
+	const invocationID = "inv456"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+
+	legacyPath := s.SandboxCheckpointsPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
+	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy checkpoints\n"), 0o644))
+
+	invocationPath := s.InvocationCheckpointsPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(invocationPath, []byte("invocation checkpoints\n"), 0o644))
+
+	assert.Equal(
+		t,
+		s.InvocationDir(repoID, invocationID),
+		s.ResolveInvocationCheckpointsDir(repoID, invocationID),
+	)
+}
+
+func TestPrepareInvocationCheckpointsPath_PromotesLegacySandboxCheckpoints(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	const repoID = "repo123"
+	const invocationID = "inv456"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+
+	legacyPath := s.SandboxCheckpointsPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
+	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy checkpoints\n"), 0o644))
+
+	preparedPath, err := s.PrepareInvocationCheckpointsPath(repoID, invocationID)
+	require.NoError(t, err)
+	assert.Equal(t, s.InvocationCheckpointsPath(repoID, invocationID), preparedPath)
+
+	data, err := os.ReadFile(preparedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy checkpoints\n", string(data))
+
+	_, err = os.Stat(legacyPath)
+	assert.True(t, os.IsNotExist(err), "legacy sandbox checkpoints should be moved into invocation storage")
+}
+
 func TestReadInvocationMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {
 	t.Parallel()
 
