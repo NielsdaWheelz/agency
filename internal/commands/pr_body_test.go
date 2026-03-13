@@ -134,7 +134,7 @@ func (r *boundedPRBodyCommandRunner) Run(ctx context.Context, name string, args 
 		if len(args) > 1 && strings.HasPrefix(args[1], "--stat=120,80,21") {
 			var b strings.Builder
 			for i := 1; i <= 21; i++ {
-				_, _ = b.WriteString(fmt.Sprintf("file-%02d.go | 1 +\n", i))
+				_, _ = fmt.Fprintf(&b, "file-%02d.go | 1 +\n", i)
 			}
 			_, _ = b.WriteString("21 files changed, 21 insertions(+)\n")
 			return exec.CmdResult{ExitCode: 0, Stdout: b.String()}, nil
@@ -217,7 +217,7 @@ func (r *unknownCountPRBodyCommandRunner) Run(ctx context.Context, name string, 
 		if len(args) > 1 && strings.HasPrefix(args[1], "--stat=120,80,21") {
 			var b strings.Builder
 			for i := 1; i <= 21; i++ {
-				_, _ = b.WriteString(fmt.Sprintf("file-%02d.go | 1 +\n", i))
+				_, _ = fmt.Fprintf(&b, "file-%02d.go | 1 +\n", i)
 			}
 			_, _ = b.WriteString("21 files changed, 21 insertions(+)\n")
 			return exec.CmdResult{ExitCode: 0, Stdout: b.String()}, nil

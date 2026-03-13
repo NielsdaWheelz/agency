@@ -87,7 +87,7 @@ func writeFallbackPRBody(ctx context.Context, cr exec.CommandRunner, fsys fs.FS,
 	b.WriteString("# " + title + "\n\n")
 	b.WriteString("## summary\n")
 	b.WriteString("- " + summaryLine + "\n")
-	b.WriteString(fmt.Sprintf("- %s commits, %s files changed\n\n", commitCountStr, fileCountStr))
+	_, _ = fmt.Fprintf(&b, "- %s commits, %s files changed\n\n", commitCountStr, fileCountStr)
 
 	b.WriteString("## commits\n")
 	appendList(&b, commitSubjects, commitsOK, commitsTruncated, maxPRBodyCommits, "commit list unavailable", commitCount, commitCountOK)

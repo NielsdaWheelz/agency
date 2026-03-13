@@ -336,9 +336,9 @@ func insertOutputBlock(output string, lines []string, maxLines int) string {
 	// Build the output block
 	var block strings.Builder
 	if len(lines) >= maxLines {
-		block.WriteString(fmt.Sprintf("\noutput (last %d lines):\n", len(lines)))
+		_, _ = fmt.Fprintf(&block, "\noutput (last %d lines):\n", len(lines))
 	} else {
-		block.WriteString(fmt.Sprintf("\noutput (%d lines):\n", len(lines)))
+		_, _ = fmt.Fprintf(&block, "\noutput (%d lines):\n", len(lines))
 	}
 	for _, line := range lines {
 		block.WriteString("  ")
