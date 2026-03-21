@@ -168,6 +168,7 @@ type StartHeadlessResponse struct {
 type LogPaths struct {
 	Raw    string `json:"raw"`
 	Stderr string `json:"stderr"`
+	Stream string `json:"stream"`
 }
 
 // StopResponse is the response body for POST /invocations/{id}/stop.

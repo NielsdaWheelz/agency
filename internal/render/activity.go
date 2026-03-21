@@ -43,6 +43,11 @@ func FormatActivityLabel(kind, summary string) string {
 	return fmt.Sprintf("[%s] %s", NormalizeActivityKind(kind), ActivitySummaryText(kind, summary))
 }
 
+// FormatActivityWithExtras returns activity label with tool/checkpoint suffix.
+func FormatActivityWithExtras(kind, summary string, toolCount int, checkpointID int, restorable bool) string {
+	return FormatActivityLabel(kind, summary) + FormatTurnExtras(toolCount, checkpointID, restorable)
+}
+
 // FormatTurnExtras returns concise turn metadata suffix, e.g.
 // "(tools=2, checkpoint=4)".
 func FormatTurnExtras(toolCount int, checkpointID int, restorable bool) string {
@@ -74,4 +79,31 @@ func FormatToolCallSummary(name, command string, hasExit bool, exitCode int) str
 		result += fmt.Sprintf(" (exit=%d)", exitCode)
 	}
 	return result
+}
+
+// FormatChangedPathSummary renders checkpoint changed-path previews consistently.
+func FormatChangedPathSummary(paths []string, totalCount int, trimmed bool) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	nonEmpty := make([]string, 0, len(paths))
+	for _, path := range paths {
+		trimmedPath := strings.TrimSpace(path)
+		if trimmedPath == "" {
+			continue
+		}
+		nonEmpty = append(nonEmpty, trimmedPath)
+	}
+	if len(nonEmpty) == 0 {
+		return ""
+	}
+	joined := strings.Join(nonEmpty, ", ")
+	if !trimmed {
+		return joined
+	}
+	remaining := totalCount - len(nonEmpty)
+	if remaining <= 0 {
+		return joined
+	}
+	return fmt.Sprintf("%s, ... (+%d more)", joined, remaining)
 }

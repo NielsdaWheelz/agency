@@ -366,7 +366,7 @@ func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string
 	case "claude-code":
 		return []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", runnerArg}
 	case "codex":
-		return []string{"exec", "--cd", sandboxPath, "--json", "--full-auto", runnerArg, prompt}
+		return []string{"exec", "--cd", sandboxPath, "--json", "--full-auto", runnerArg, "--disable", "unified_exec", prompt}
 	case "amp":
 		return []string{"-x", "--stream-json", "--stream-json-input", runnerArg}
 	case "opencode":

@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019d01ab-87b1-7162-8c10-63c7ce36b68e"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"This is a fixture-capture run. This is only a fixture-capture run."}}
+{"type":"turn.completed","usage":{"input_tokens":11762,"cached_input_tokens":0,"output_tokens":133}}

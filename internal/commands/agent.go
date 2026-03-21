@@ -1101,6 +1101,7 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 		_, _ = fmt.Fprintf(stdout, "  logs:\n")
 		_, _ = fmt.Fprintf(stdout, "    raw:    %s\n", resp.LogPaths.Raw)
 		_, _ = fmt.Fprintf(stdout, "    stderr: %s\n", resp.LogPaths.Stderr)
+		_, _ = fmt.Fprintf(stdout, "    stream: %s\n", resp.LogPaths.Stream)
 	}
 
 	if resp.AlreadyRunning {
@@ -1134,14 +1135,14 @@ type AgentLSOpts struct {
 	// JSON outputs as JSON.
 	JSON bool
 
-	// Watch mode (PR-B): re-render on interval with ANSI clear-screen.
+	// Watch is a deprecated legacy flag retained for explicit cutover errors.
 	Watch    bool
 	Interval time.Duration // default 500ms, min 250ms, max 5s
 
-	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
+	// SleepFn is retained for backward compatibility in tests.
 	SleepFn func(time.Duration)
 
-	// MaxIterations limits watch iterations for testing. 0 = unlimited.
+	// MaxIterations is retained for backward compatibility in tests.
 	MaxIterations int
 }
 
@@ -1149,6 +1150,10 @@ type AgentLSOpts struct {
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
 func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLSOpts, stdout, stderr io.Writer) error {
+	if opts.Watch {
+		return errors.New(errors.EUsage, "agent ls --watch was removed; use `agency watch` for the unified workspace")
+	}
+
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -1191,35 +1196,18 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		repoID = repoCtx.RepoID
 	}
 
-	// Non-watch mode
-	if !opts.Watch {
-		result, fetchErr := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-			RepoID:      repoID,
-			WorktreeRef: opts.WorktreeRef,
-			State:       state,
-		})
-		if fetchErr != nil {
-			return fetchErr
-		}
-		if opts.JSON {
-			return writeAgentLSJSONFromDTO(stdout, result.Invocations)
-		}
-		return writeAgentLSHumanFromDTO(stdout, result.Invocations)
+	result, fetchErr := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+		RepoID:      repoID,
+		WorktreeRef: opts.WorktreeRef,
+		State:       state,
+	})
+	if fetchErr != nil {
+		return fetchErr
 	}
-
-	// Watch mode (PR-B)
-	fetchAndRender := func(w io.Writer) error {
-		result, fetchErr := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-			RepoID:      repoID,
-			WorktreeRef: opts.WorktreeRef,
-			State:       state,
-		})
-		if fetchErr != nil {
-			return fetchErr
-		}
-		return writeAgentLSHumanFromDTO(w, result.Invocations)
+	if opts.JSON {
+		return writeAgentLSJSONFromDTO(stdout, result.Invocations)
 	}
-	return watchLoop(ctx, stdout, stderr, opts.Interval, opts.SleepFn, opts.MaxIterations, fetchAndRender)
+	return writeAgentLSHumanFromDTO(stdout, result.Invocations)
 }
 
 // writeAgentLSJSONFromDTO outputs invocation list as JSON from daemon DTOs.
@@ -1272,10 +1260,8 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 			detailParts = append(detailParts, "summary: "+statusSummary)
 		}
 		if inv.LatestActivity != nil {
-			latestKind := strings.TrimSpace(inv.LatestActivity.Kind)
-			latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
-			if latestSummary != "" || latestKind != "" {
-				latestLabel := render.FormatActivityLabel(latestKind, latestSummary)
+			latestLabel := formatLatestActivityLabel(inv.LatestActivity)
+			if latestLabel != "" {
 				turnID := strings.TrimSpace(inv.LatestActivity.TurnID)
 				if turnID != "" {
 					detailParts = append(detailParts, "latest["+turnID+"]: "+latestLabel)
@@ -1385,10 +1371,23 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 		if strings.TrimSpace(inv.LatestActivity.Kind) != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_kind:   %s\n", inv.LatestActivity.Kind)
 		}
-		latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
-		latestKind := strings.TrimSpace(inv.LatestActivity.Kind)
-		if latestSummary != "" || latestKind != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity:        %s\n", render.FormatActivityLabel(latestKind, latestSummary))
+		if latestLabel := formatLatestActivityLabel(inv.LatestActivity); latestLabel != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity:        %s\n", latestLabel)
+		}
+		for _, toolLine := range latestActivityToolSummaries(inv.LatestActivity) {
+			_, _ = fmt.Fprintf(w, "latest_activity_tool:   %s\n", toolLine)
+		}
+		if inv.LatestActivity.CheckpointID > 0 {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint: %d\n", inv.LatestActivity.CheckpointID)
+		}
+		if description := strings.TrimSpace(inv.LatestActivity.CheckpointDescription); description != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_description: %s\n", description)
+		}
+		if diffstat := strings.TrimSpace(inv.LatestActivity.CheckpointDiffstat); diffstat != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_diffstat: %s\n", diffstat)
+		}
+		if pathsSummary := latestActivityCheckpointPathSummary(inv.LatestActivity); pathsSummary != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_paths: %s\n", pathsSummary)
 		}
 	}
 	if len(inv.AttentionFlags) > 0 {
@@ -1882,10 +1881,23 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 		if strings.TrimSpace(review.LatestActivity.Kind) != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_kind: %s\n", review.LatestActivity.Kind)
 		}
-		latestSummary := strings.TrimSpace(review.LatestActivity.Summary)
-		latestKind := strings.TrimSpace(review.LatestActivity.Kind)
-		if latestSummary != "" || latestKind != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", render.FormatActivityLabel(latestKind, latestSummary))
+		if latestLabel := formatLatestActivityLabel(review.LatestActivity); latestLabel != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", latestLabel)
+		}
+		for _, toolLine := range latestActivityToolSummaries(review.LatestActivity) {
+			_, _ = fmt.Fprintf(w, "latest_activity_tool: %s\n", toolLine)
+		}
+		if review.LatestActivity.CheckpointID > 0 {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint: %d\n", review.LatestActivity.CheckpointID)
+		}
+		if description := strings.TrimSpace(review.LatestActivity.CheckpointDescription); description != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_description: %s\n", description)
+		}
+		if diffstat := strings.TrimSpace(review.LatestActivity.CheckpointDiffstat); diffstat != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_diffstat: %s\n", diffstat)
+		}
+		if pathsSummary := latestActivityCheckpointPathSummary(review.LatestActivity); pathsSummary != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_paths: %s\n", pathsSummary)
 		}
 	}
 	if review.HowToTest != "" {
@@ -3212,6 +3224,10 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if opts.Last {
 		if turn, ok := latestMeaningfulHistoryTurn(turns); ok {
 			if opts.JSON {
+				turnEntries := timelineEntriesForTurn(entries, turns, turn.EntryID)
+				if len(turnEntries) > 0 {
+					return writeAgentHistoryJSONFromDTO(stdout, turnEntries, "")
+				}
 				if entry, found := findTimelineEntryByID(entries, turn.EntryID); found {
 					return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
 				}
@@ -3363,6 +3379,67 @@ func findTimelineEntryByID(entries []daemon.TimelineEntryDTO, entryID string) (d
 	return daemon.TimelineEntryDTO{}, false
 }
 
+func timelineEntriesForTurn(entries []daemon.TimelineEntryDTO, turns []historypicker.Turn, turnEntryID string) []daemon.TimelineEntryDTO {
+	if len(entries) == 0 || len(turns) == 0 || strings.TrimSpace(turnEntryID) == "" {
+		return nil
+	}
+
+	turnIdx := -1
+	for i, turn := range turns {
+		if turn.EntryID == turnEntryID {
+			turnIdx = i
+			break
+		}
+	}
+	if turnIdx < 0 {
+		return nil
+	}
+
+	startIdx := -1
+	for i, entry := range entries {
+		if entry.EntryID == turnEntryID {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return nil
+	}
+
+	endIdx := len(entries)
+	if turnIdx+1 < len(turns) {
+		nextTurnEntryID := turns[turnIdx+1].EntryID
+		for i := startIdx + 1; i < len(entries); i++ {
+			if entries[i].EntryID == nextTurnEntryID {
+				endIdx = i
+				break
+			}
+		}
+	}
+	if startIdx >= endIdx {
+		return nil
+	}
+
+	segment := make([]daemon.TimelineEntryDTO, endIdx-startIdx)
+	copy(segment, entries[startIdx:endIdx])
+	filtered := make([]daemon.TimelineEntryDTO, 0, len(segment))
+	for _, entry := range segment {
+		if includeInLastTurnJSON(entry.Kind) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func includeInLastTurnJSON(kind string) bool {
+	switch kind {
+	case "session_start", "final", "raw_log_coverage", "usage", "status":
+		return false
+	default:
+		return true
+	}
+}
+
 func latestMeaningfulTimelineEntry(entries []daemon.TimelineEntryDTO) (daemon.TimelineEntryDTO, bool) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if isMeaningfulTimelineEntry(entries[i].Kind) {
@@ -3374,7 +3451,7 @@ func latestMeaningfulTimelineEntry(entries []daemon.TimelineEntryDTO) (daemon.Ti
 
 func isMeaningfulTimelineEntry(kind string) bool {
 	switch kind {
-	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status", "parse_error":
+	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
 		return false
 	default:
 		return true
@@ -3399,6 +3476,62 @@ func timelineEntryIDExists(entries []daemon.TimelineEntryDTO, entryID string) bo
 	return false
 }
 
+func latestActivityToolCount(activity *daemon.InvocationLatestActivity) int {
+	if activity == nil {
+		return 0
+	}
+	if activity.ToolCallCount > 0 {
+		return activity.ToolCallCount
+	}
+	return len(activity.ToolCalls)
+}
+
+func formatLatestActivityLabel(activity *daemon.InvocationLatestActivity) string {
+	if activity == nil {
+		return ""
+	}
+	kind := strings.TrimSpace(activity.Kind)
+	summary := strings.TrimSpace(activity.Summary)
+	toolCount := latestActivityToolCount(activity)
+	if kind == "" && summary == "" && toolCount == 0 && activity.CheckpointID <= 0 {
+		return ""
+	}
+	return render.FormatActivityWithExtras(
+		kind,
+		summary,
+		toolCount,
+		activity.CheckpointID,
+		activity.Restorable,
+	)
+}
+
+func latestActivityToolSummaries(activity *daemon.InvocationLatestActivity) []string {
+	if activity == nil || len(activity.ToolCalls) == 0 {
+		return nil
+	}
+	summaries := make([]string, 0, len(activity.ToolCalls))
+	for _, tool := range activity.ToolCalls {
+		summaries = append(summaries, render.FormatToolCallSummary(
+			tool.Name,
+			tool.Command,
+			tool.HasExit,
+			tool.ExitCode,
+		))
+	}
+	return summaries
+}
+
+func latestActivityCheckpointPathSummary(activity *daemon.InvocationLatestActivity) string {
+	if activity == nil {
+		return ""
+	}
+	return render.FormatChangedPathSummary(
+		activity.CheckpointChangedPaths,
+		activity.CheckpointChangedCount,
+		activity.CheckpointPathsTrimmed,
+	)
+}
+
 func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, nextCursor string) error {
 	if len(turns) == 0 {
 		_, _ = fmt.Fprintln(w, "No timeline entries found.")
@@ -3414,8 +3547,7 @@ func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, ne
 		}
 
 		summary := truncateTimelineText(turn.Summary, 160)
-		activity := render.FormatActivityLabel(string(turn.Kind), summary)
-		activity += render.FormatTurnExtras(len(turn.ToolCalls), turn.CheckpointID, turn.Restorable)
+		activity := render.FormatActivityWithExtras(string(turn.Kind), summary, len(turn.ToolCalls), turn.CheckpointID, turn.Restorable)
 
 		_, _ = fmt.Fprintf(w, "%s  %s  %s\n", timestamp, turn.EntryID, activity)
 	}

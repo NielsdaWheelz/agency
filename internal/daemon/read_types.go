@@ -104,6 +104,25 @@ type InvocationLatestActivity struct {
 	Kind      string `json:"kind,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
 	Summary   string `json:"summary,omitempty"`
+
+	ToolCallCount int                          `json:"tool_call_count,omitempty"`
+	ToolCalls     []InvocationActivityToolCall `json:"tool_calls,omitempty"`
+
+	CheckpointID           int      `json:"checkpoint_id,omitempty"`
+	Restorable             bool     `json:"restorable,omitempty"`
+	CheckpointDescription  string   `json:"checkpoint_description,omitempty"`
+	CheckpointDiffstat     string   `json:"checkpoint_diffstat,omitempty"`
+	CheckpointChangedPaths []string `json:"checkpoint_changed_paths,omitempty"`
+	CheckpointChangedCount int      `json:"checkpoint_changed_count,omitempty"`
+	CheckpointPathsTrimmed bool     `json:"checkpoint_paths_trimmed,omitempty"`
+}
+
+// InvocationActivityToolCall summarizes one tool call in latest_activity.
+type InvocationActivityToolCall struct {
+	Name     string `json:"name,omitempty"`
+	Command  string `json:"command,omitempty"`
+	HasExit  bool   `json:"has_exit,omitempty"`
+	ExitCode int    `json:"exit_code,omitempty"`
 }
 
 // InvocationActivityNavigation links activity projections back to history/diff context.

@@ -121,7 +121,8 @@ func newWorktreeLSCmd() *cobra.Command {
 By default, only shows non-archived worktrees for the current repo.
 Use --repo to specify a repo by id/prefix, or --all-repos to list globally.
 
-Use --watch to continuously redraw the list at a configurable interval.
+The legacy --watch list redraw mode is removed.
+Use 'agency watch' for the unified full-screen workspace.
 --watch is incompatible with --json.
 
 Example:
@@ -130,8 +131,7 @@ Example:
   agency worktree ls --repo abc123
   agency worktree ls --all-repos
   agency worktree ls --json
-  agency worktree ls --watch
-  agency worktree ls --watch --interval 1s`,
+  agency watch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if watch && jsonOut {
@@ -171,8 +171,8 @@ Example:
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	cmd.Flags().BoolVar(&watch, "watch", false, "Continuously redraw the list")
-	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Watch redraw interval (e.g. 500ms, 1s)")
+	cmd.Flags().BoolVar(&watch, "watch", false, "Deprecated: use 'agency watch'")
+	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Deprecated with --watch; use 'agency watch --interval'")
 
 	return cmd
 }

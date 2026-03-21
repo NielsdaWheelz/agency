@@ -1,16 +1,18 @@
 package worktreeevents
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
+	"github.com/NielsdaWheelz/agency/internal/jsonl"
 )
 
-const maxEventLineBytes = 4 * 1024 * 1024
+const maxEventLineBytes = stream.MaxLineSize
 
 // AppendOptions configures optional idempotency behavior for an append.
 type AppendOptions struct {
@@ -107,6 +109,9 @@ func (w *Writer) Append(eventsPath, worktreeID, kind string, data map[string]any
 	if err != nil {
 		return AppendResult{}, err
 	}
+	if len(payload)+1 > maxEventLineBytes {
+		return AppendResult{}, fmt.Errorf("event payload exceeds max line size of %d bytes", maxEventLineBytes)
+	}
 	payload = append(payload, '\n')
 
 	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -184,28 +189,38 @@ func scanExistingEvents(eventsPath, kind string, opts AppendOptions) (maxSeq, du
 	}
 	defer func() { _ = f.Close() }()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxEventLineBytes)
-	for scanner.Scan() {
-		var line eventLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+	visitErr := jsonl.Visit(f, maxEventLineBytes, jsonl.VisitOptions{OversizedPrefixBytes: 1024}, func(scanned jsonl.Line) error {
+		if scanned.Oversized {
+			if seq, ok := jsonl.ExtractUintField(scanned.Bytes, "seq"); ok && seq > maxSeq {
+				maxSeq = seq
+			}
+			return nil
 		}
-		if line.Seq > maxSeq {
-			maxSeq = line.Seq
+
+		var persisted eventLine
+		if err := json.Unmarshal(scanned.Bytes, &persisted); err != nil {
+			return nil
+		}
+		if persisted.Seq > maxSeq {
+			maxSeq = persisted.Seq
 		}
 		if opts.IdempotencyDataKey == "" {
-			continue
+			return nil
 		}
-		if line.Kind != kind || line.Data == nil {
-			continue
+		if persisted.Kind != kind || persisted.Data == nil {
+			return nil
 		}
-		if value, ok := line.Data[opts.IdempotencyDataKey].(string); ok && value == opts.IdempotencyDataValue {
-			return maxSeq, line.Seq, true, nil
+		if value, ok := persisted.Data[opts.IdempotencyDataKey].(string); ok && value == opts.IdempotencyDataValue {
+			duplicateFound = true
+			duplicateSeq = persisted.Seq
 		}
+		return nil
+	})
+	if visitErr != nil {
+		return 0, 0, false, visitErr
 	}
-	if err := scanner.Err(); err != nil {
-		return 0, 0, false, err
+	if duplicateFound {
+		return maxSeq, duplicateSeq, true, nil
 	}
 	return maxSeq, 0, false, nil
 }

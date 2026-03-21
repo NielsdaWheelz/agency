@@ -215,9 +215,11 @@ func TestCheckpointLS_TableOutput(t *testing.T) {
 
 	out := stdout.String()
 
-	// Verify header row
-	assert.Contains(t, out, "ID", "expected header row with ID")
-	assert.Contains(t, out, "Created", "expected header row with Created")
+	// Human output should use shared activity language, not a bespoke table.
+	assert.Contains(t, out, "[checkpoint]", "expected shared activity label in checkpoint ls output")
+	assert.Contains(t, out, "cp:1")
+	assert.Contains(t, out, "cp:2")
+	assert.NotContains(t, out, "ID", "checkpoint ls output should no longer render a custom table header")
 
 	// Verify data rows
 	assert.Contains(t, out, "+10 -5 in 3 files", "expected diffstat for checkpoint 1")
@@ -225,6 +227,69 @@ func TestCheckpointLS_TableOutput(t *testing.T) {
 
 	// Verify truncated snapshot commit SHAs (PR-12: uses SnapshotCommit, not SandboxHeadSHA)
 	assert.Contains(t, out, "aaa111bb", "expected truncated snapshot commit aaa111bb")
+}
+
+func TestCheckpointLS_TableOutput_UsesSharedChangedPathPreview(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	checkpoints := []checkpoint.Checkpoint{
+		{
+			ID:                   1,
+			SnapshotRef:          "refs/agency/snapshots/inv/1",
+			SnapshotCommit:       "aaa111bbb222",
+			SandboxHeadSHA:       "deadbeef12345678",
+			CreatedAt:            "2026-01-15T12:00:00Z",
+			IncludesUntracked:    true,
+			Diffstat:             "+10 -5 in 3 files",
+			ChangedPaths:         []string{"pkg/math/add.go", "pkg/math/subtract.go"},
+			ChangedPathCount:     3,
+			ChangedPathTruncated: true,
+		},
+	}
+
+	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
+	socketPath := startTestDaemonForCheckpoint(t, env)
+
+	var stdout, stderr bytes.Buffer
+	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
+		InvocationRef:        env.InvocationID,
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "CheckpointLS() error")
+
+	out := stdout.String()
+	assert.Contains(t, out, "paths:pkg/math/add.go, pkg/math/subtract.go, ... (+1 more)", "checkpoint ls changed-path preview must use shared renderer style")
+	assert.NotContains(t, out, "paths:pkg/math/add.go, pkg/math/subtract.go (+1 more)", "legacy bespoke preview format must not be used")
+}
+
+func TestCheckpointLS_RepoFlagResolvesOutsideGitContext(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	checkpoints := []checkpoint.Checkpoint{
+		{
+			ID:             1,
+			SnapshotCommit: "aaa111bbb222",
+			CreatedAt:      "2026-01-15T12:00:00Z",
+			Diffstat:       "+1 -0 in 1 files",
+		},
+	}
+	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
+	socketPath := startTestDaemonForCheckpoint(t, env)
+
+	var stdout, stderr bytes.Buffer
+	err := CheckpointLS(context.Background(), testutil.NewFakeCommandRunner(), env.FS, t.TempDir(), CheckpointLSOpts{
+		InvocationRef:        env.InvocationID,
+		RepoFlag:             env.RepoID,
+		DataDirOverride:      env.DataDir,
+		DaemonSocketOverride: socketPath,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "checkpoint ls with --repo should not depend on local git context")
+	assert.Contains(t, stdout.String(), "cp:1")
 }
 
 // 3.2 TestCheckpointLS_JSONOutput

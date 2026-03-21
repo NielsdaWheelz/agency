@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -530,7 +531,7 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
 	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
 
-	var lsJSON, showJSON, reviewJSON, watchOut, stderr bytes.Buffer
+	var lsJSON, showJSON, reviewJSON, stderr bytes.Buffer
 
 	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &lsJSON, &stderr)
@@ -586,10 +587,109 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 			Interval:      5 * time.Millisecond,
 			SleepFn:       func(time.Duration) {},
 			MaxIterations: 1,
-		}, &watchOut, &stderr)
+		}, io.Discard, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "agency watch")
+}
+
+func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := writeAgentLSHumanFromDTO(&out, []daemon.InvocationDTO{
+		{
+			InvocationID:  "inv-1",
+			Runner:        "claude",
+			Mode:          "headless",
+			Status:        "running",
+			DisplayStatus: "working",
+			LatestActivity: &daemon.InvocationLatestActivity{
+				TurnID:        "stream:9",
+				Kind:          "assistant",
+				Summary:       "applied migration",
+				ToolCallCount: 2,
+				CheckpointID:  4,
+				Restorable:    true,
+			},
+		},
+	})
 	require.NoError(t, err)
-	assert.Contains(t, watchOut.String(), "latest activity summary")
-	assert.Contains(t, watchOut.String(), "waiting on api contract")
+	assert.Contains(t, out.String(), "latest[stream:9]: [assistant] applied migration (tools=2, checkpoint=4)")
+}
+
+func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := writeAgentShowHumanFromDTO(&out, &daemon.InvocationDTO{
+		InvocationID:  "inv-1",
+		WorktreeID:    "wt-1",
+		Runner:        "claude",
+		Mode:          "headless",
+		Status:        "running",
+		DisplayStatus: "working",
+		StartedAt:     "2026-02-05T11:50:00Z",
+		SandboxPath:   "/tmp/sandbox/inv-1",
+		LatestActivity: &daemon.InvocationLatestActivity{
+			TurnID:                 "stream:9",
+			Kind:                   "assistant",
+			Summary:                "applied migration",
+			ToolCallCount:          1,
+			ToolCalls:              []daemon.InvocationActivityToolCall{{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1}},
+			CheckpointID:           4,
+			Restorable:             true,
+			CheckpointDescription:  "checkpoint after migration",
+			CheckpointDiffstat:     "2 files changed, 10 insertions(+), 2 deletions(-)",
+			CheckpointChangedPaths: []string{"internal/apply.go", "internal/apply_test.go"},
+			CheckpointChangedCount: 2,
+		},
+	})
+	require.NoError(t, err)
+	output := out.String()
+	assert.Contains(t, output, "latest_activity:        [assistant] applied migration (tools=1, checkpoint=4)")
+	assert.Contains(t, output, "latest_activity_tool:   ▶ Bash go test ./... (exit=1)")
+	assert.Contains(t, output, "latest_activity_checkpoint: 4")
+	assert.Contains(t, output, "latest_activity_checkpoint_description: checkpoint after migration")
+	assert.Contains(t, output, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
+	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
+}
+
+func TestWriteAgentReviewHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	review := &daemon.InvocationReviewData{
+		InvocationID:  "inv-1",
+		RepoID:        "repo-1",
+		Status:        "running",
+		DisplayStatus: "working",
+		Navigation: daemon.InvocationReviewNavigation{
+			HistoryCommand: "agency agent history inv-1 --repo repo-1",
+		},
+		LatestActivity: &daemon.InvocationLatestActivity{
+			TurnID:                 "stream:9",
+			Kind:                   "assistant",
+			Summary:                "applied migration",
+			ToolCallCount:          1,
+			ToolCalls:              []daemon.InvocationActivityToolCall{{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1}},
+			CheckpointID:           4,
+			Restorable:             true,
+			CheckpointDescription:  "checkpoint after migration",
+			CheckpointDiffstat:     "2 files changed, 10 insertions(+), 2 deletions(-)",
+			CheckpointChangedPaths: []string{"internal/apply.go", "internal/apply_test.go"},
+			CheckpointChangedCount: 2,
+		},
+	}
+	err := writeAgentReviewHumanFromDTO(&out, review)
+	require.NoError(t, err)
+	output := out.String()
+	assert.Contains(t, output, "latest_activity:      [assistant] applied migration (tools=1, checkpoint=4)")
+	assert.Contains(t, output, "latest_activity_tool: ▶ Bash go test ./... (exit=1)")
+	assert.Contains(t, output, "latest_activity_checkpoint: 4")
+	assert.Contains(t, output, "latest_activity_checkpoint_description: checkpoint after migration")
+	assert.Contains(t, output, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
+	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
 }
 
 func TestWriteAgentReviewHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *testing.T) {
@@ -1665,6 +1765,54 @@ func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
 	assert.Equal(t, "msg-5", payload.Entries[0].Data["text"], "--last must return the last message content")
 }
 
+func TestAgentHistory_LastJSONReturnsAllEntriesFromLatestTurn(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last-turn-entries")
+	invocationID := "20260131180001-last-turn"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"working"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"Bash","command":"echo hi"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"Bash","command":"echo hi","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Last:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var payload struct {
+		Entries []daemon.TimelineEntryDTO `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	entryIDs := make([]string, 0, len(payload.Entries))
+	for _, entry := range payload.Entries {
+		entryIDs = append(entryIDs, entry.EntryID)
+	}
+	assert.Contains(t, entryIDs, "stream:1")
+	assert.Contains(t, entryIDs, "stream:2")
+	assert.Contains(t, entryIDs, "stream:3")
+	assert.NotContains(t, entryIDs, "stream:4")
+}
+
 func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 
@@ -1978,7 +2126,7 @@ func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T
 	assert.Equal(t, "message", payload.Entries[0].Kind)
 }
 
-func TestAgentHistory_LastIgnoresParseErrorFallbackEntries(t *testing.T) {
+func TestAgentHistory_LastIncludesParseErrorFallbackEntries(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last-ignore-parse-error")
 	invocationID := "20260131202100-hparse"
@@ -2014,7 +2162,45 @@ func TestAgentHistory_LastIgnoresParseErrorFallbackEntries(t *testing.T) {
 		Entries []daemon.TimelineEntryDTO `json:"entries"`
 	}
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
-	assert.Empty(t, payload.Entries, "parse_error and final markers are not meaningful --last activity")
+	require.Len(t, payload.Entries, 1)
+	assert.Equal(t, "stream:1", payload.Entries[0].EntryID)
+	assert.Equal(t, "parse_error", payload.Entries[0].Kind)
+}
+
+func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-human-unknown")
+	invocationID := "20260131202101-hunknown"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"working"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"unknown","data":{"runner_event_type":"cursor.weird_event","reason":"unrecognized_event_shape"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	human := stdout.String()
+	assert.Contains(t, human, "stream:2", "unknown diagnostics must not disappear from turn-projected human history")
+	assert.Contains(t, human, "unknown runner event")
 }
 
 func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {

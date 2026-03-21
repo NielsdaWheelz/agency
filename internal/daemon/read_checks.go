@@ -14,7 +14,6 @@ import (
 const (
 	checkReasonInvocationActive       = "invocation_active"
 	checkReasonInvocationFailed       = "invocation_failed"
-	checkReasonInvocationMetaInvalid  = "invocation_metadata_invalid"
 	checkReasonLandingPending         = "landing_pending"
 	checkReasonAlreadyDiscarded       = "already_discarded"
 	checkReasonRunnerNeedsInput       = "runner_needs_input"
@@ -87,14 +86,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 
 	timelineEntries := s.collectTimelineEntries(record)
 
-	sandboxPath := strings.TrimSpace(meta.SandboxPath)
-	if sandboxPath == "" {
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
-			Code:    checkReasonInvocationMetaInvalid,
-			Message: "invocation metadata is missing sandbox path",
-			Hint:    "inspect invocation meta.json and recreate invocation if needed",
-		})
-	} else if runnerMeta, _, err := runnerstatus.LoadWithModTime(sandboxPath); err != nil {
+	if runnerMeta, _, err := s.loadRunnerStatusForInvocation(record); err != nil {
 		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
 			Code:    checkReasonRunnerStatusUnreadable,
 			Message: "runner status file could not be read",
@@ -201,8 +193,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 		meta.LandingStatus != store.LandingStatusDiscarded {
 		if effectiveSemantic == "" {
 			if !hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusUnreadable) &&
-				!hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusInvalid) &&
-				!hasCheckReason(data.BlockingReasons, checkReasonInvocationMetaInvalid) {
+				!hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusInvalid) {
 				data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
 					Code:    checkReasonRunnerStatusMissing,
 					Message: "no runner readiness status is available",

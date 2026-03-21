@@ -150,14 +150,14 @@ type WorktreeLSOpts struct {
 	All      bool
 	JSON     bool
 
-	// Watch mode (PR-B): re-render on interval with ANSI clear-screen.
+	// Watch is a deprecated legacy flag retained for explicit cutover errors.
 	Watch    bool
 	Interval time.Duration // default 500ms, min 250ms, max 5s
 
-	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
+	// SleepFn is retained for backward compatibility in tests.
 	SleepFn func(time.Duration)
 
-	// MaxIterations limits watch iterations for testing. 0 = unlimited.
+	// MaxIterations is retained for backward compatibility in tests.
 	MaxIterations int
 }
 
@@ -166,6 +166,10 @@ type WorktreeLSOpts struct {
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
 // PR-B: Supports --watch for ANSI clear-screen redraw polling.
 func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeLSOpts, stdout, stderr io.Writer) error {
+	if opts.Watch {
+		return errors.New(errors.EUsage, "worktree ls --watch was removed; use `agency watch` for the unified workspace")
+	}
+
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -220,33 +224,17 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		repoID = repoCtx.RepoID
 	}
 
-	// Non-watch mode
-	if !opts.Watch {
-		result, fetchErr := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
-			RepoID: repoID,
-			State:  state,
-		})
-		if fetchErr != nil {
-			return fetchErr
-		}
-		if opts.JSON {
-			return writeWorktreeLSJSONFromDTO(stdout, result.Worktrees)
-		}
-		return writeWorktreeLSHumanFromDTO(stdout, result.Worktrees)
+	result, fetchErr := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+		RepoID: repoID,
+		State:  state,
+	})
+	if fetchErr != nil {
+		return fetchErr
 	}
-
-	// Watch mode (PR-B)
-	fetchAndRender := func(w io.Writer) error {
-		result, fetchErr := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
-			RepoID: repoID,
-			State:  state,
-		})
-		if fetchErr != nil {
-			return fetchErr
-		}
-		return writeWorktreeLSHumanFromDTO(w, result.Worktrees)
+	if opts.JSON {
+		return writeWorktreeLSJSONFromDTO(stdout, result.Worktrees)
 	}
-	return watchLoop(ctx, stdout, stderr, opts.Interval, opts.SleepFn, opts.MaxIterations, fetchAndRender)
+	return writeWorktreeLSHumanFromDTO(stdout, result.Worktrees)
 }
 
 // writeWorktreeLSJSONFromDTO outputs worktree list as JSON from daemon DTOs.

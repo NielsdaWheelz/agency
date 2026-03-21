@@ -496,6 +496,13 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 // cleanupAfterLand performs cleanup after successful landing.
 func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta) error {
 	var errs []string
+	artifactsPromoted := true
+
+	// Preserve runner status before removing the sandbox worktree tree.
+	if err := s.store.PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, meta.SandboxPath); err != nil {
+		errs = append(errs, fmt.Sprintf("runner status preservation: %v", err))
+		artifactsPromoted = false
+	}
 
 	// 1. Remove sandbox git worktree
 	_, err := s.runner.Run(ctx, "git", []string{
@@ -521,7 +528,6 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 	}
 
 	// 4. Preserve any legacy sandbox-owned artifacts before removing sandbox dir.
-	artifactsPromoted := true
 	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
 		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
 		artifactsPromoted = false
@@ -663,6 +669,13 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 // cleanupSandbox removes the sandbox worktree, branch, and refs.
 func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta) error {
 	var errs []string
+	artifactsPromoted := true
+
+	// Preserve runner status before removing the sandbox worktree tree.
+	if err := s.store.PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, meta.SandboxPath); err != nil {
+		errs = append(errs, fmt.Sprintf("runner status preservation: %v", err))
+		artifactsPromoted = false
+	}
 
 	// 1. Remove sandbox git worktree
 	if meta.SandboxPath != "" {
@@ -692,7 +705,6 @@ func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repo
 	}
 
 	// 4. Preserve any legacy sandbox-owned artifacts before removing sandbox dir.
-	artifactsPromoted := true
 	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
 		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
 		artifactsPromoted = false

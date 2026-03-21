@@ -331,6 +331,80 @@ func TestGroupTimelineIntoTurns_ToolUseWithoutExitCode(t *testing.T) {
 	assert.False(t, turns[0].ToolCalls[0].HasExit)
 }
 
+func TestGroupTimelineIntoTurns_ToolStartAndEndMergeIntoSingleToolCall(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "Running command",
+		}},
+		{EntryID: "e-2", Kind: "tool_use", Timestamp: "2026-02-05T11:50:11Z", Data: map[string]interface{}{
+			"name": "Bash", "command": "echo hi", "in_progress": true,
+		}},
+		{EntryID: "e-3", Kind: "tool_use", Timestamp: "2026-02-05T11:50:12Z", Data: map[string]interface{}{
+			"name": "Bash", "command": "echo hi", "exit_code": float64(0),
+		}},
+	}
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 1)
+	require.Len(t, turns[0].ToolCalls, 1, "tool start + tool end should merge")
+	assert.Equal(t, "echo hi", turns[0].ToolCalls[0].Command)
+	assert.True(t, turns[0].ToolCalls[0].HasExit)
+	assert.Equal(t, 0, turns[0].ToolCalls[0].ExitCode)
+}
+
+func TestGroupTimelineIntoTurns_ParseErrorIncludedAsDiagnosticTurn(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "Working",
+		}},
+		{EntryID: "e-2", Kind: "parse_error", Timestamp: "2026-02-05T11:50:20Z", Data: map[string]interface{}{
+			"reason": "line_too_large",
+			"line":   float64(3),
+		}},
+	}
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 2)
+	assert.Equal(t, TurnAssistant, turns[1].Kind)
+	assert.Contains(t, turns[1].Summary, "parse error")
+	assert.Contains(t, turns[1].Summary, "line too large")
+}
+
+func TestGroupTimelineIntoTurns_UnknownEventIncludedAsDiagnosticTurn(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "working",
+		}},
+		{EntryID: "e-2", Kind: "unknown", Timestamp: "2026-02-05T11:50:20Z", Data: map[string]interface{}{
+			"runner_event_type": "cursor.weird_event",
+			"reason":            "unrecognized_event_shape",
+		}},
+	}
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 2)
+	assert.Equal(t, TurnAssistant, turns[1].Kind)
+	assert.Contains(t, turns[1].Summary, "unknown runner event")
+	assert.Contains(t, turns[1].Summary, "cursor.weird_event")
+}
+
+func TestGroupTimelineIntoTurns_UnrecognizedKindIncludedAsDiagnosticTurn(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "working",
+		}},
+		{EntryID: "e-2", Kind: "runner_notice", Timestamp: "2026-02-05T11:50:20Z", Data: map[string]interface{}{
+			"text": "unexpected status payload",
+		}},
+	}
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 2)
+	assert.Equal(t, TurnAssistant, turns[1].Kind)
+	assert.Contains(t, turns[1].Summary, "unrecognized timeline event")
+	assert.Contains(t, turns[1].Summary, "runner notice")
+}
+
 func TestGroupTimelineIntoTurns_ToolUseBeforeAssistantDropped(t *testing.T) {
 	t.Parallel()
 	entries := []TimelineEntry{

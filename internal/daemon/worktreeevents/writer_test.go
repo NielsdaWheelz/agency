@@ -3,8 +3,10 @@ package worktreeevents
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -160,4 +162,91 @@ func TestWriter_Append_UsesPrivatePermissions(t *testing.T) {
 
 	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+}
+
+func TestWriter_Append_ContinuesAfterOversizedLegacyRows(t *testing.T) {
+	t.Parallel()
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	legacyOversized := eventLine{
+		SchemaVersion: "1.0",
+		Seq:           4,
+		Timestamp:     "2026-03-01T12:00:00Z",
+		WorktreeID:    "wt-legacy",
+		Kind:          "agency.pr_sync_started",
+		Data: map[string]any{
+			"text": strings.Repeat("x", maxEventLineBytes+1024),
+		},
+	}
+	legacyLine, err := json.Marshal(legacyOversized)
+	require.NoError(t, err)
+	require.Greater(t, len(legacyLine), maxEventLineBytes)
+
+	validLine := []byte(`{"schema_version":"1.0","seq":6,"timestamp":"2026-03-01T12:00:01Z","worktree_id":"wt-legacy","kind":"agency.pr_sync_started","data":{"client_request_id":"req-existing"}}` + "\n")
+	require.NoError(t, os.WriteFile(eventsPath, append(append(legacyLine, '\n'), validLine...), 0o600))
+
+	writer := NewWriter(time.Now)
+	result, err := writer.Append(
+		eventsPath,
+		"wt-legacy",
+		"agency.pr_sync_started",
+		map[string]any{"client_request_id": "req-new"},
+		AppendOptions{
+			IdempotencyDataKey:   "client_request_id",
+			IdempotencyDataValue: "req-new",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(7), result.Seq)
+	assert.False(t, result.AlreadyApplied)
+}
+
+func TestWriter_Append_OversizedLegacyTailPreservesSeq(t *testing.T) {
+	t.Parallel()
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	legacyOversized := eventLine{
+		SchemaVersion: "1.0",
+		Seq:           9,
+		Timestamp:     "2026-03-01T12:00:00Z",
+		WorktreeID:    "wt-tail",
+		Kind:          "agency.pr_sync_started",
+		Data: map[string]any{
+			"text": strings.Repeat("y", maxEventLineBytes+1024),
+		},
+	}
+	legacyLine, err := json.Marshal(legacyOversized)
+	require.NoError(t, err)
+	require.Greater(t, len(legacyLine), maxEventLineBytes)
+	require.NoError(t, os.WriteFile(eventsPath, append(legacyLine, '\n'), 0o600))
+
+	writer := NewWriter(time.Now)
+	result, err := writer.Append(
+		eventsPath,
+		"wt-tail",
+		"agency.pr_sync_started",
+		map[string]any{"text": "fresh"},
+		AppendOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10), result.Seq)
+}
+
+func TestWriter_Append_RejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	writer := NewWriter(time.Now)
+
+	_, err := writer.Append(
+		eventsPath,
+		"wt-oversized",
+		"agency.pr_sync_started",
+		map[string]any{
+			"text": strings.Repeat("z", maxEventLineBytes+1024),
+		},
+		AppendOptions{},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d", maxEventLineBytes))
 }

@@ -162,9 +162,71 @@ func setupAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
 	return fixture
 }
 
+func setupLatestCheckpointAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
+	t.Helper()
+	fixture := setupTurnDiffFixture(t)
+
+	require.NoError(t, os.MkdirAll(fixture.env.Store.SandboxLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.SandboxStreamLogPath(fixture.repoID, fixture.invocationID)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn after checkpoint two"}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	fixture.selectedTurnID = "stream:1"
+	return fixture
+}
+
+func setupSingleCheckpointLatestAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
+	t.Helper()
+	fixture := setupTurnDiffFixture(t)
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + fixture.invocationID + "/1",
+				SnapshotCommit:    fixture.cp1Commit,
+				SandboxHeadSHA:    fixture.cp1Commit,
+				CreatedAt:         "2026-02-05T11:50:10Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(fixture.env.Store.SandboxDir(fixture.repoID, fixture.invocationID), "checkpoints.json"), cpBytes, 0o644))
+
+	events := strings.Join([]string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + fixture.invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationEventsPath(fixture.repoID, fixture.invocationID), []byte(events), 0o644))
+
+	require.NoError(t, os.MkdirAll(fixture.env.Store.SandboxLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.SandboxStreamLogPath(fixture.repoID, fixture.invocationID)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn on first checkpoint"}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	fixture.selectedTurnID = "stream:1"
+	return fixture
+}
+
 func writeRunnerStatusForSandbox(t *testing.T, sandboxPath string, status runnerstatus.RunnerStatus) {
 	t.Helper()
 	stateDir := filepath.Join(sandboxPath, ".agency", "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	payload, err := json.Marshal(status)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), payload, 0o600))
+}
+
+func writeRunnerStatusForInvocation(t *testing.T, st *store.Store, repoID, invocationID string, status runnerstatus.RunnerStatus) {
+	t.Helper()
+	stateDir := filepath.Join(st.InvocationDir(repoID, invocationID), ".agency", "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o700))
 	payload, err := json.Marshal(status)
 	require.NoError(t, err)
@@ -262,6 +324,58 @@ func TestHandleGetInvocationDiff_TurnSelectorAssistantTurnUsesCanonicalCheckpoin
 	assert.Equal(t, float64(2), turnCtx["end_checkpoint_id"])
 	assert.Equal(t, fixture.cp1Commit, turnCtx["from_commit"])
 	assert.Equal(t, fixture.cp2Commit, turnCtx["to_commit"])
+}
+
+func TestHandleGetInvocationDiff_TurnSelectorLatestAssistantTurnUsesPreviousCheckpointBoundary(t *testing.T) {
+	fixture := setupLatestCheckpointAssistantTurnDiffFixture(t)
+
+	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
+	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+
+	turnCtx, ok := data["turn_context"].(map[string]any)
+	require.True(t, ok, "expected turn_context in diff response")
+	assert.Equal(t, float64(1), turnCtx["start_checkpoint_id"])
+	assert.Equal(t, float64(2), turnCtx["end_checkpoint_id"])
+	assert.Equal(t, fixture.cp1Commit, turnCtx["from_commit"])
+	assert.Equal(t, fixture.cp2Commit, turnCtx["to_commit"])
+
+	committedRange, ok := data["committed_range"].(map[string]any)
+	require.True(t, ok, "expected committed_range for selected latest assistant turn")
+	assert.Equal(t, fixture.cp1Commit, committedRange["from"])
+	assert.Equal(t, fixture.cp2Commit, committedRange["to"])
+}
+
+func TestHandleGetInvocationDiff_TurnSelectorLatestAssistantTurnSingleCheckpointUsesBaseBoundary(t *testing.T) {
+	fixture := setupSingleCheckpointLatestAssistantTurnDiffFixture(t)
+
+	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
+	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+
+	turnCtx, ok := data["turn_context"].(map[string]any)
+	require.True(t, ok, "expected turn_context in diff response")
+	assert.Equal(t, float64(0), turnCtx["start_checkpoint_id"])
+	assert.Equal(t, float64(1), turnCtx["end_checkpoint_id"])
+	assert.Equal(t, fixture.baseCommit, turnCtx["from_commit"])
+	assert.Equal(t, fixture.cp1Commit, turnCtx["to_commit"])
+
+	committedRange, ok := data["committed_range"].(map[string]any)
+	require.True(t, ok, "expected committed_range for selected latest assistant turn")
+	assert.Equal(t, fixture.baseCommit, committedRange["from"])
+	assert.Equal(t, fixture.cp1Commit, committedRange["to"])
 }
 
 func TestHandleGetInvocationDiff_TurnSelectorUnknownTurnReturnsInvalidArgument(t *testing.T) {
@@ -413,6 +527,49 @@ go test ./...
 	require.True(t, ok, "expected navigation context")
 	assert.Equal(t, "inv-1", nav["invocation_ref"])
 	assert.NotEmpty(t, nav["history_command"])
+}
+
+func TestHandleGetInvocationReview_UsesInvocationOwnedRunnerStatusAfterSandboxCleanup(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxPath := filepath.Join(t.TempDir(), "checks-cleanup-sandbox")
+	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
+	readyStatus := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReadyForReview,
+		UpdatedAt:     "2026-02-05T12:00:00Z",
+		Summary:       "invocation-owned runner status",
+		HowToTest:     "go test ./...",
+		Questions:     []string{},
+		Blockers:      []string{},
+		Risks:         []string{},
+	}
+	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.SandboxPath = sandboxPath
+		meta.Status = store.InvocationStatusFinished
+		meta.LandingStatus = store.LandingStatusPending
+		meta.SemanticStatus = nil
+		meta.FinishedAt = "2026-02-05T11:59:00Z"
+	}))
+	require.NoError(t, os.RemoveAll(sandboxPath))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+
+	codes := blockingReasonCodes(data)
+	assert.NotContains(t, codes, "runner_status_unreadable")
+	assert.NotContains(t, codes, "runner_status_missing")
+	assert.Equal(t, "ready_for_review", data["runner_status"])
+	assert.Equal(t, "invocation-owned runner status", data["runner_summary"])
 }
 
 func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(t *testing.T) {

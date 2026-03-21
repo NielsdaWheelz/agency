@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -459,6 +460,23 @@ func TestWorktreeHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testi
 	require.Len(t, dtos, 1)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
 	assert.Equal(t, env.WorktreeID, dtos[0].WorktreeID)
+}
+
+func TestWorktreeLS_WatchModeRedirectsToUnifiedWorkspace(t *testing.T) {
+	env := setupWorktreeEnv(t, "watch-cutover")
+
+	var stderr bytes.Buffer
+	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreeLSOpts{
+			RepoFlag:      env.RepoID,
+			Watch:         true,
+			Interval:      5 * time.Millisecond,
+			SleepFn:       func(time.Duration) {},
+			MaxIterations: 1,
+		}, io.Discard, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "agency watch")
 }
 
 func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *testing.T) {

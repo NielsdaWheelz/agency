@@ -559,10 +559,8 @@ func (m model) renderInvocationsPanel(width int) string {
 		}
 		activitySummary := strings.TrimSpace(inv.StatusSummary)
 		if inv.LatestActivity != nil {
-			latestSummary := strings.TrimSpace(inv.LatestActivity.Summary)
-			latestKind := strings.TrimSpace(inv.LatestActivity.Kind)
-			if latestSummary != "" || latestKind != "" {
-				activitySummary = render.FormatActivityLabel(latestKind, latestSummary)
+			if latestLabel := formatLatestActivityLabel(inv.LatestActivity); latestLabel != "" {
+				activitySummary = latestLabel
 			}
 		}
 		rowTail := worktreeName
@@ -619,16 +617,28 @@ func (m model) renderDetailsPanel(width int) string {
 		lines = append(lines, fmt.Sprintf("status_summary: %s", summary))
 	}
 	if selected.LatestActivity != nil {
-		latestSummary := strings.TrimSpace(selected.LatestActivity.Summary)
-		latestKind := strings.TrimSpace(selected.LatestActivity.Kind)
 		latestTurnID := strings.TrimSpace(selected.LatestActivity.TurnID)
-		if latestSummary != "" || latestKind != "" {
-			latestLabel := render.FormatActivityLabel(latestKind, latestSummary)
+		if latestLabel := formatLatestActivityLabel(selected.LatestActivity); latestLabel != "" {
 			if latestTurnID != "" {
 				lines = append(lines, fmt.Sprintf("latest_activity: [%s] %s", latestTurnID, latestLabel))
 			} else {
 				lines = append(lines, fmt.Sprintf("latest_activity: %s", latestLabel))
 			}
+		}
+		for _, toolLine := range latestActivityToolSummaries(selected.LatestActivity) {
+			lines = append(lines, "latest_tool: "+toolLine)
+		}
+		if selected.LatestActivity.CheckpointID > 0 {
+			lines = append(lines, fmt.Sprintf("latest_checkpoint: %d", selected.LatestActivity.CheckpointID))
+		}
+		if description := strings.TrimSpace(selected.LatestActivity.CheckpointDescription); description != "" {
+			lines = append(lines, "latest_checkpoint_desc: "+description)
+		}
+		if diffstat := strings.TrimSpace(selected.LatestActivity.CheckpointDiffstat); diffstat != "" {
+			lines = append(lines, "latest_checkpoint_diff: "+diffstat)
+		}
+		if pathsSummary := latestActivityCheckpointPathSummary(selected.LatestActivity); pathsSummary != "" {
+			lines = append(lines, "latest_checkpoint_paths: "+pathsSummary)
 		}
 	}
 	lines = append(lines, "")
@@ -781,4 +791,55 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func latestActivityToolCount(activity *daemon.InvocationLatestActivity) int {
+	if activity == nil {
+		return 0
+	}
+	if activity.ToolCallCount > 0 {
+		return activity.ToolCallCount
+	}
+	return len(activity.ToolCalls)
+}
+
+func formatLatestActivityLabel(activity *daemon.InvocationLatestActivity) string {
+	if activity == nil {
+		return ""
+	}
+	kind := strings.TrimSpace(activity.Kind)
+	summary := strings.TrimSpace(activity.Summary)
+	toolCount := latestActivityToolCount(activity)
+	if kind == "" && summary == "" && toolCount == 0 && activity.CheckpointID <= 0 {
+		return ""
+	}
+	return render.FormatActivityWithExtras(
+		kind,
+		summary,
+		toolCount,
+		activity.CheckpointID,
+		activity.Restorable,
+	)
+}
+
+func latestActivityToolSummaries(activity *daemon.InvocationLatestActivity) []string {
+	if activity == nil || len(activity.ToolCalls) == 0 {
+		return nil
+	}
+	summaries := make([]string, 0, len(activity.ToolCalls))
+	for _, tool := range activity.ToolCalls {
+		summaries = append(summaries, render.FormatToolCallSummary(tool.Name, tool.Command, tool.HasExit, tool.ExitCode))
+	}
+	return summaries
+}
+
+func latestActivityCheckpointPathSummary(activity *daemon.InvocationLatestActivity) string {
+	if activity == nil {
+		return ""
+	}
+	return render.FormatChangedPathSummary(
+		activity.CheckpointChangedPaths,
+		activity.CheckpointChangedCount,
+		activity.CheckpointPathsTrimmed,
+	)
 }

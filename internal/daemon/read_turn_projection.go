@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
@@ -101,10 +102,19 @@ func (s *Server) buildInvocationActivityProjection(
 		latest := turns[len(turns)-1]
 		latestSummary := normalizeLatestTurnSummary(latest)
 		projection.LatestActivity = &InvocationLatestActivity{
-			TurnID:    latest.EntryID,
-			Kind:      string(latest.Kind),
-			Timestamp: latest.Timestamp,
-			Summary:   latestSummary,
+			TurnID:                 latest.EntryID,
+			Kind:                   string(latest.Kind),
+			Timestamp:              latest.Timestamp,
+			Summary:                latestSummary,
+			ToolCallCount:          len(latest.ToolCalls),
+			ToolCalls:              projectLatestActivityToolCalls(latest.ToolCalls),
+			CheckpointID:           latest.CheckpointID,
+			Restorable:             latest.Restorable,
+			CheckpointDescription:  latest.CheckpointDescription,
+			CheckpointDiffstat:     latest.CheckpointDiffstat,
+			CheckpointChangedPaths: append([]string(nil), latest.CheckpointChangedPaths...),
+			CheckpointChangedCount: latest.CheckpointChangedCount,
+			CheckpointPathsTrimmed: latest.CheckpointPathsTrimmed,
 		}
 		projection.Navigation.LatestTurnID = latest.EntryID
 		projection.Navigation.DiffCommand = fmt.Sprintf(
@@ -169,7 +179,7 @@ func latestMeaningfulTimelineEntry(entries []timelineSortableEntry) (timelineSor
 
 func isMeaningfulTimelineKind(kind string) bool {
 	switch kind {
-	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status", "parse_error":
+	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
 		return false
 	default:
 		return true
@@ -227,12 +237,19 @@ func timelineDataString(data map[string]interface{}, key string) string {
 	return value
 }
 
-func loadRunnerSummaryBestEffort(sandboxPath string) string {
-	sandboxPath = strings.TrimSpace(sandboxPath)
-	if sandboxPath == "" {
-		return ""
+func (s *Server) loadRunnerStatusForInvocation(record *resolvedInvocation) (*runnerstatus.RunnerStatus, time.Time, error) {
+	if s == nil || s.Store == nil || record == nil || record.Meta == nil {
+		return nil, time.Time{}, nil
 	}
-	statusMeta, _, err := runnerstatus.LoadWithModTime(sandboxPath)
+	if _, err := s.Store.PrepareInvocationRunnerStatusPath(record.RepoID, record.InvocationID, record.Meta.SandboxPath); err != nil {
+		return nil, time.Time{}, err
+	}
+	invocationRoot := s.Store.InvocationDir(record.RepoID, record.InvocationID)
+	return runnerstatus.LoadWithModTime(invocationRoot)
+}
+
+func (s *Server) loadRunnerSummaryBestEffort(record *resolvedInvocation) string {
+	statusMeta, _, err := s.loadRunnerStatusForInvocation(record)
 	if err != nil || statusMeta == nil {
 		return ""
 	}
@@ -264,4 +281,20 @@ func truncateActivitySummary(summary string) string {
 		return trimmed
 	}
 	return strings.TrimSpace(string(runes[:maxActivitySummaryChars])) + "..."
+}
+
+func projectLatestActivityToolCalls(calls []historypicker.ToolCall) []InvocationActivityToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	projected := make([]InvocationActivityToolCall, 0, len(calls))
+	for _, call := range calls {
+		projected = append(projected, InvocationActivityToolCall{
+			Name:     strings.TrimSpace(call.Name),
+			Command:  strings.TrimSpace(call.Command),
+			HasExit:  call.HasExit,
+			ExitCode: call.ExitCode,
+		})
+	}
+	return projected
 }

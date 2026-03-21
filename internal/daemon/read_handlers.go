@@ -286,7 +286,7 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 			activityProjection := s.buildInvocationActivityProjection(
 				resolved,
 				dto.DisplayStatus,
-				loadRunnerSummaryBestEffort(r.Meta.SandboxPath),
+				s.loadRunnerSummaryBestEffort(resolved),
 				nil,
 			)
 			applyInvocationActivityProjection(&dto, activityProjection)
@@ -350,7 +350,7 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 	activityProjection := s.buildInvocationActivityProjection(
 		record,
 		dto.DisplayStatus,
-		loadRunnerSummaryBestEffort(record.Meta.SandboxPath),
+		s.loadRunnerSummaryBestEffort(record),
 		nil,
 	)
 	applyInvocationActivityProjection(&dto, activityProjection)

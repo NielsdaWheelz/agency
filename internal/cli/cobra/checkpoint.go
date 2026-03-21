@@ -42,6 +42,7 @@ Subcommands:
 
 func newCheckpointLSCmd() *cobra.Command {
 	var invocationRef string
+	var repoFlag string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -53,7 +54,7 @@ Shows checkpoint history with timestamps and diffstats.
 
 Example:
   agency checkpoint ls --invocation 20260201
-  agency checkpoint ls --invocation my-inv --json`,
+  agency checkpoint ls --invocation my-inv --repo abc123 --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if invocationRef == "" {
@@ -71,12 +72,14 @@ Example:
 
 			return commands.CheckpointLS(ctx, cr, fsys, cwd, commands.CheckpointLSOpts{
 				InvocationRef: invocationRef,
+				RepoFlag:      repoFlag,
 				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&invocationRef, "invocation", "", "Invocation to list checkpoints for (required)")
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "Filter by repo name, key, id, or prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd

@@ -292,6 +292,29 @@ func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.Fil
 	if err != nil {
 		return fmt.Errorf("marshal normalized event: %w", err)
 	}
+	if len(data) > MaxLineSize {
+		overflowEvent := &NormalizedEvent{
+			SchemaVersion: event.SchemaVersion,
+			Seq:           event.Seq,
+			Timestamp:     event.Timestamp,
+			InvocationID:  event.InvocationID,
+			Runner:        event.Runner,
+			Kind:          EventKindParseError,
+			Data: map[string]interface{}{
+				"reason":      "normalized_event_too_large",
+				"event_kind":  string(event.Kind),
+				"event_bytes": len(data),
+				"max_bytes":   MaxLineSize,
+			},
+		}
+		data, err = overflowEvent.Marshal()
+		if err != nil {
+			return fmt.Errorf("marshal oversized normalized-event fallback: %w", err)
+		}
+		if len(data) > MaxLineSize {
+			return fmt.Errorf("%w: oversized fallback event exceeded max line size (%d bytes)", ErrNormalizedStreamWriteFailed, len(data))
+		}
+	}
 
 	if _, err := streamFile.Write(data); err != nil {
 		return fmt.Errorf("%w: %v", ErrNormalizedStreamWriteFailed, err)

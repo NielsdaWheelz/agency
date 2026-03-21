@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -19,12 +21,14 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // CheckpointLSOpts holds options for the checkpoint ls command.
 type CheckpointLSOpts struct {
 	InvocationRef string
+	RepoFlag      string
 	JSON          bool
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
@@ -51,17 +55,9 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		dataDir = dirs.DataDir
 	}
 
-	// 2. Get repo context
-	gitRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "not inside a git repository", err)
-	}
-
-	originInfo := git.GetOriginInfo(ctx, cr, gitRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(gitRoot.Path, originInfo.URL)
-
-	// 3. Ensure daemon is running
+	// 2. Ensure daemon is running
 	var client *daemonclient.Client
+	var err error
 	if opts.DaemonSocketOverride != "" {
 		client = daemonclient.NewClient(opts.DaemonSocketOverride)
 	} else {
@@ -75,8 +71,22 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		}
 	}
 
-	// PR-12: Call daemon ListCheckpoints endpoint
-	result, err := client.ListCheckpoints(ctx, opts.InvocationRef, repoIdentity.RepoID, daemonclient.ListCheckpointsOpts{})
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// 3. Resolve repo context through daemon-first contract.
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "checkpoint ls",
+	})
+	if err != nil {
+		return err
+	}
+
+	// 4. Call daemon ListCheckpoints endpoint.
+	result, err := client.ListCheckpoints(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.ListCheckpointsOpts{})
 	if err != nil {
 		return err
 	}
@@ -86,46 +96,74 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return json.NewEncoder(stdout).Encode(result.Checkpoints)
 	}
 
-	// Human-readable output
-	if len(result.Checkpoints) == 0 {
-		_, _ = fmt.Fprintln(stdout, "No checkpoints found.")
+	return writeCheckpointLSHumanFromDTO(stdout, result.Checkpoints)
+}
+
+func writeCheckpointLSHumanFromDTO(w io.Writer, checkpoints []daemon.CheckpointDTO) error {
+	if len(checkpoints) == 0 {
+		_, _ = fmt.Fprintln(w, "No checkpoints found.")
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Checkpoints:\n\n")
-	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-18s  %-10s  %s\n", "ID", "Created", "Trigger", "Commit", "Diffstat")
-	_, _ = fmt.Fprintf(stdout, "%-4s  %-20s  %-18s  %-10s  %s\n", "----", "--------------------", "------------------", "----------", "--------")
-
-	for _, cp := range result.Checkpoints {
-		// Parse and format timestamp
-		createdAt := cp.CreatedAt
-		if t, err := time.Parse(time.RFC3339, cp.CreatedAt); err == nil {
-			createdAt = t.Local().Format("2006-01-02 15:04:05")
+	for _, cp := range checkpoints {
+		timestamp := cp.CreatedAt
+		if parsed, err := time.Parse(time.RFC3339, cp.CreatedAt); err == nil {
+			timestamp = parsed.Local().Format("2006-01-02 15:04:05")
 		}
 
-		// Format trigger description
-		triggerDesc := cp.Description
-		if triggerDesc == "" && cp.ToolName != "" {
-			triggerDesc = "After " + cp.ToolName
+		triggerSummary := strings.TrimSpace(cp.Description)
+		if triggerSummary == "" && strings.TrimSpace(cp.ToolName) != "" {
+			triggerSummary = "after " + strings.TrimSpace(cp.ToolName)
 		}
-		if triggerDesc == "" {
-			triggerDesc = "-"
-		}
-		if len(triggerDesc) > 18 {
-			triggerDesc = triggerDesc[:15] + "..."
+		if triggerSummary == "" {
+			triggerSummary = "checkpoint snapshot"
 		}
 
-		// Truncate snapshot commit
-		snapshotCommit := cp.SnapshotCommit
-		if len(snapshotCommit) > 8 {
-			snapshotCommit = snapshotCommit[:8]
-		}
+		_, _ = fmt.Fprintf(w, "%s  cp:%d  %s\n",
+			timestamp,
+			cp.ID,
+			render.FormatActivityLabel("checkpoint", triggerSummary),
+		)
 
-		_, _ = fmt.Fprintf(stdout, "%-4d  %-20s  %-18s  %-10s  %s\n",
-			cp.ID, createdAt, triggerDesc, snapshotCommit, cp.Diffstat)
+		detailParts := make([]string, 0, 4)
+		if commit := strings.TrimSpace(cp.SnapshotCommit); commit != "" {
+			if len(commit) > 8 {
+				commit = commit[:8]
+			}
+			detailParts = append(detailParts, "commit:"+commit)
+		}
+		if cp.StreamSeq > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("stream:%d", cp.StreamSeq))
+		}
+		if diffstat := strings.TrimSpace(cp.Diffstat); diffstat != "" {
+			detailParts = append(detailParts, diffstat)
+		}
+		if pathDetail := checkpointChangedPathDetail(cp); pathDetail != "" {
+			detailParts = append(detailParts, pathDetail)
+		}
+		if len(detailParts) > 0 {
+			_, _ = fmt.Fprintf(w, "    %s\n", strings.Join(detailParts, " | "))
+		}
 	}
 
 	return nil
+}
+
+func checkpointChangedPathDetail(cp daemon.CheckpointDTO) string {
+	totalCount := cp.ChangedPathCount
+	if totalCount <= 0 {
+		totalCount = len(cp.ChangedPaths)
+	}
+	if totalCount <= 0 {
+		return ""
+	}
+
+	trimmed := cp.ChangedPathTruncated || totalCount > len(cp.ChangedPaths)
+	summary := render.FormatChangedPathSummary(cp.ChangedPaths, totalCount, trimmed)
+	if summary == "" {
+		return fmt.Sprintf("paths:%d", totalCount)
+	}
+	return "paths:" + summary
 }
 
 // CheckpointApplyOpts holds options for the checkpoint apply command.

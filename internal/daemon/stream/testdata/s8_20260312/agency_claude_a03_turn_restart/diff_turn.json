@@ -1,0 +1,17 @@
+{
+  "base_commit": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793",
+  "sandbox_branch_tip": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793",
+  "has_commits": false,
+  "has_uncommitted": false,
+  "patch_includes_uncommitted": false,
+  "turn_context": {
+    "selector": {
+      "kind": "single",
+      "turn_id": "stream:18"
+    },
+    "start_checkpoint_id": 3,
+    "end_checkpoint_id": 3,
+    "from_commit": "de19dfc0c676f9557e0e85c3c9da867cec92eecf",
+    "to_commit": "de19dfc0c676f9557e0e85c3c9da867cec92eecf"
+  }
+}

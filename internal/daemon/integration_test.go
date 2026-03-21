@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -21,9 +22,28 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
+
+func logPathFieldValue(t *testing.T, logPaths any, fieldName string) string {
+	t.Helper()
+	require.NotNil(t, logPaths, "expected log_paths to be set")
+
+	value := reflect.ValueOf(logPaths)
+	if value.Kind() == reflect.Pointer {
+		require.False(t, value.IsNil(), "expected non-nil log_paths pointer")
+		value = value.Elem()
+	}
+	require.Equal(t, reflect.Struct, value.Kind(), "log_paths must decode as a struct")
+
+	field := value.FieldByName(fieldName)
+	require.True(t, field.IsValid(), "log_paths must expose %s field", fieldName)
+	require.Equal(t, reflect.String, field.Kind(), "log_paths.%s must be a string", fieldName)
+
+	return field.String()
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle Tests
@@ -128,6 +148,7 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 	assert.NotNil(t, resp.LogPaths, "expected log_paths to be set")
 	assert.Equal(t, env.Store.InvocationRawLogPath(repoID, resp.InvocationID), resp.LogPaths.Raw)
 	assert.Equal(t, env.Store.InvocationStderrLogPath(repoID, resp.InvocationID), resp.LogPaths.Stderr)
+	assert.Equal(t, env.Store.InvocationStreamLogPath(repoID, resp.InvocationID), logPathFieldValue(t, resp.LogPaths, "Stream"))
 
 	// Wait for the exit-ok runner to finish.
 	meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
@@ -315,6 +336,7 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			case "codex":
 				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json", "--full-auto")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, "--disable", "unified_exec")
 				wantArgs = append(wantArgs, tc.prompt)
 			case "amp":
 				wantArgs = append(wantArgs, "-x", "--stream-json", "--stream-json-input")
@@ -455,7 +477,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CodexQueuedPromptResumesNextTurn(t *te
 	// Capture file is overwritten per launch; after resume it reflects the second turn launch args.
 	capture := readFakeRunnerLaunchCapture(t, capturePath)
 	assert.Equal(t, "codex-thread-sleep-then-exit-ok", capture.Mode)
-	assert.Equal(t, []string{"exec", "resume", "thread_resume_test", "--json", "--full-auto", "--model", "gpt-5-codex", "second codex turn"}, capture.Args)
+	assert.Equal(t, []string{"exec", "resume", "thread_resume_test", "--json", "--full-auto", "--model", "gpt-5-codex", "--disable", "unified_exec", "second codex turn"}, capture.Args)
 }
 
 func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *testing.T) {
@@ -1335,6 +1357,7 @@ func TestDaemonRestartFromCheckpoint_ReusesStoredRunnerArgsWhenNotProvided(t *te
 	})
 	require.NoError(t, err, "restart transport error")
 	require.True(t, restartResp.OK, "restart failed: %s - %s", restartResp.ErrorCode, restartResp.Message)
+	assert.Equal(t, env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID), logPathFieldValue(t, restartResp.LogPaths, "Stream"))
 
 	require.Eventually(t, func() bool {
 		meta, readErr := env.Store.ReadInvocationMeta(repoID, startResp.InvocationID)
@@ -1889,6 +1912,20 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID), cpData, 0o644))
 
+	// Seed sandbox-owned runner_status.json to validate post-cleanup durability.
+	landStatus := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReadyForReview,
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+		Summary:       "landed invocation runner status",
+		HowToTest:     "go test ./...",
+	}
+	landStatusBytes, err := json.Marshal(landStatus)
+	require.NoError(t, err)
+	landStatusPath := runnerstatus.StatusPath(sandboxPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(landStatusPath), 0o700))
+	require.NoError(t, os.WriteFile(landStatusPath, landStatusBytes, 0o600))
+
 	// Land via cherry-pick.
 	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
@@ -1922,6 +1959,14 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	require.NoError(t, err, "invocation-owned stream log should survive landing cleanup")
 	_, err = os.Stat(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID))
 	require.NoError(t, err, "invocation-owned checkpoints should survive landing cleanup")
+	invocationRunnerStatusPath := filepath.Join(
+		env.Store.InvocationDir(repoID, startResp.InvocationID),
+		".agency",
+		"state",
+		"runner_status.json",
+	)
+	_, err = os.Stat(invocationRunnerStatusPath)
+	require.NoError(t, err, "invocation-owned runner status should survive landing cleanup")
 
 	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
 	require.NoError(t, err, "logs API should still work after landing cleanup")
@@ -1935,6 +1980,15 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	require.NoError(t, err, "checkpoints API should still work after landing cleanup")
 	require.Len(t, checkpointsResp.Checkpoints, 1)
 	assert.Equal(t, 1, checkpointsResp.Checkpoints[0].ID)
+
+	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "review API should still work after landing cleanup")
+	reviewCodes := make([]string, 0, len(reviewResp.Review.BlockingReasons))
+	for _, reason := range reviewResp.Review.BlockingReasons {
+		reviewCodes = append(reviewCodes, reason.Code)
+	}
+	assert.NotContains(t, reviewCodes, "runner_status_unreadable")
+	assert.Equal(t, "ready_for_review", reviewResp.Review.RunnerStatus)
 }
 
 func TestDaemonLandApply(t *testing.T) {
@@ -2226,6 +2280,20 @@ func TestDaemonDiscard(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(legacyCheckpointPath, cpData, 0o644))
 
+	// Seed sandbox-owned runner_status.json to validate post-cleanup durability.
+	discardStatus := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReadyForReview,
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+		Summary:       "discarded invocation runner status",
+		HowToTest:     "go test ./...",
+	}
+	discardStatusBytes, err := json.Marshal(discardStatus)
+	require.NoError(t, err)
+	discardStatusPath := runnerstatus.StatusPath(sandboxPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(discardStatusPath), 0o700))
+	require.NoError(t, os.WriteFile(discardStatusPath, discardStatusBytes, 0o600))
+
 	resp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
 	require.NoError(t, err)
 
@@ -2247,6 +2315,14 @@ func TestDaemonDiscard(t *testing.T) {
 	require.NoError(t, err, "invocation-owned stream log should survive discard cleanup")
 	_, err = os.Stat(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID))
 	require.NoError(t, err, "invocation-owned checkpoints should survive discard cleanup")
+	invocationRunnerStatusPath := filepath.Join(
+		env.Store.InvocationDir(repoID, startResp.InvocationID),
+		".agency",
+		"state",
+		"runner_status.json",
+	)
+	_, err = os.Stat(invocationRunnerStatusPath)
+	require.NoError(t, err, "invocation-owned runner status should survive discard cleanup")
 
 	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
 	require.NoError(t, err, "logs API should still work after discard cleanup")
@@ -2260,6 +2336,15 @@ func TestDaemonDiscard(t *testing.T) {
 	require.NoError(t, err, "checkpoints API should still work after discard cleanup")
 	require.Len(t, checkpointsResp.Checkpoints, 1)
 	assert.Equal(t, 7, checkpointsResp.Checkpoints[0].ID)
+
+	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "review API should still work after discard cleanup")
+	reviewCodes := make([]string, 0, len(reviewResp.Review.BlockingReasons))
+	for _, reason := range reviewResp.Review.BlockingReasons {
+		reviewCodes = append(reviewCodes, reason.Code)
+	}
+	assert.NotContains(t, reviewCodes, "runner_status_unreadable")
+	assert.Equal(t, "ready_for_review", reviewResp.Review.RunnerStatus)
 }
 
 func TestDaemonDiscardRunning(t *testing.T) {

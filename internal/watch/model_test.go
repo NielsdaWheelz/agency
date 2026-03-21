@@ -183,20 +183,34 @@ func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
-	m.width = 140
+	m.width = 240
 	m.height = 28
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{
-				InvocationID:   "inv-1",
-				RepoID:         "repo-1",
-				WorktreeID:     "wt-1",
-				Runner:         "claude",
-				Mode:           "headless",
-				Status:         "running",
-				DisplayStatus:  "working",
-				StatusSummary:  "waiting on api contract",
-				LatestActivity: &daemon.InvocationLatestActivity{TurnID: "stream:1", Kind: "assistant", Summary: "latest activity summary"},
+				InvocationID:  "inv-1",
+				RepoID:        "repo-1",
+				WorktreeID:    "wt-1",
+				Runner:        "claude",
+				Mode:          "headless",
+				Status:        "running",
+				DisplayStatus: "working",
+				StatusSummary: "waiting on api contract",
+				LatestActivity: &daemon.InvocationLatestActivity{
+					TurnID:        "stream:1",
+					Kind:          "assistant",
+					Summary:       "latest activity summary",
+					ToolCallCount: 1,
+					ToolCalls: []daemon.InvocationActivityToolCall{
+						{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1},
+					},
+					CheckpointID:           3,
+					Restorable:             true,
+					CheckpointDescription:  "checkpoint after edits",
+					CheckpointDiffstat:     "2 files changed, 12 insertions(+), 3 deletions(-)",
+					CheckpointChangedPaths: []string{"internal/watch/model.go", "internal/watch/model_test.go"},
+					CheckpointChangedCount: 2,
+				},
 				Navigation: &daemon.InvocationActivityNavigation{
 					LatestTurnID:   "stream:1",
 					HistoryCommand: "agency agent history inv-1 --repo repo-1",
@@ -226,8 +240,13 @@ func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
 
 	view := m.View()
 	assert.Contains(t, view.Content, "status_summary: waiting on api contract")
-	assert.Contains(t, view.Content, "latest_activity: [stream:1] [assistant] latest activity summary")
-	assert.Contains(t, view.Content, "[assistant] latest activity summary")
+	assert.Contains(t, view.Content, "latest_activity: [stream:1] [assistant] latest activity summary (tools=1, checkpoint=3)")
+	assert.Contains(t, view.Content, "[assistant] latest activity summary (tools=1, checkpoint=3)")
+	assert.Contains(t, view.Content, "latest_tool: ▶ Bash go test ./... (exit=1)")
+	assert.Contains(t, view.Content, "latest_checkpoint: 3")
+	assert.Contains(t, view.Content, "latest_checkpoint_desc: checkpoint after edits")
+	assert.Contains(t, view.Content, "latest_checkpoint_diff: 2 files changed, 12 insertions(+), 3 deletions(-)")
+	assert.Contains(t, view.Content, "latest_checkpoint_paths: internal/watch/model.go, internal/watch/model_test.go")
 	assert.Contains(t, view.Content, "turn:    stream:1")
 }
 

@@ -1,0 +1,8 @@
+16:07:57  prompt_seed  [prompt] Run the shell command sleep 20, then reply with done.
+16:08:01  stream:2  [assistant] Running `sleep 20` now; I'll reply once it exits. (tools=1)
+16:08:02  inv_event:1:agency.followup_prompt  [follow-up] After that, append the line agency-followup: two to docs/notes.md and summarize.
+16:08:22  stream:5  [assistant] done - After Bash (checkpoint=1)
+16:08:26  stream:8  [assistant] I’m checking `docs/notes.md` first so I can append the line without disturbing any existing content. (tools=3, checkpoint=1)
+16:08:28  stream:15  [assistant] I found `docs/notes.md` with three existing lines. I’m appending the requested follow-up line now. (tools=1, checkpoint=2)
+16:08:30  stream:17  [assistant] The edit is in place. I’m verifying the final file contents before I summarize. (tools=1, checkpoint=2)
+16:08:34  stream:20  [assistant] Appended `agency-followup: two` to [docs/notes.md](/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318160757-2e69/... (checkpoint=2)

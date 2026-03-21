@@ -5,6 +5,8 @@ package store
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -310,6 +312,28 @@ func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, er
 	return logsDir, nil
 }
 
+// EnsureInvocationRunnerStatusDir creates the invocation-owned runner status directory.
+func (s *Store) EnsureInvocationRunnerStatusDir(repoID, invocationID string) (string, error) {
+	statusDir := filepath.Dir(s.InvocationRunnerStatusPath(repoID, invocationID))
+	if err := s.FS.MkdirAll(statusDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to create invocation runner status directory",
+			err,
+			map[string]string{"status_dir": statusDir},
+		)
+	}
+	if err := s.FS.Chmod(statusDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to enforce invocation runner status directory permissions",
+			err,
+			map[string]string{"status_dir": statusDir},
+		)
+	}
+	return statusDir, nil
+}
+
 // ResolveInvocationLogsDir returns the best logs directory for an invocation.
 // Invocation-owned logs are preferred, but sandbox logs remain readable for
 // historical invocations created before durable log ownership.
@@ -429,6 +453,21 @@ func (s *Store) PrepareInvocationCheckpointsPath(repoID, invocationID string) (s
 	return dst, nil
 }
 
+// PrepareInvocationRunnerStatusPath ensures invocation-owned runner status path
+// is available and best-effort syncs sandbox-owned runner status into invocation
+// storage when a sandbox status file exists.
+func (s *Store) PrepareInvocationRunnerStatusPath(repoID, invocationID, sandboxPath string) (string, error) {
+	if _, err := s.EnsureInvocationRunnerStatusDir(repoID, invocationID); err != nil {
+		return "", err
+	}
+
+	dst := s.InvocationRunnerStatusPath(repoID, invocationID)
+	if err := s.syncRunnerStatusFromSandbox(repoID, invocationID, sandboxPath, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
 // PromoteSandboxLogsToInvocation migrates any legacy sandbox-owned invocation
 // logs into the invocation record directory. It is safe to call repeatedly.
 func (s *Store) PromoteSandboxLogsToInvocation(repoID, invocationID string) error {
@@ -444,6 +483,13 @@ func (s *Store) PromoteSandboxLogsToInvocation(repoID, invocationID string) erro
 // checkpoints.json into invocation storage. It is safe to call repeatedly.
 func (s *Store) PromoteSandboxCheckpointsToInvocation(repoID, invocationID string) error {
 	_, err := s.PrepareInvocationCheckpointsPath(repoID, invocationID)
+	return err
+}
+
+// PromoteSandboxRunnerStatusToInvocation migrates sandbox-owned runner status
+// into invocation storage. It is safe to call repeatedly.
+func (s *Store) PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, sandboxPath string) error {
+	_, err := s.PrepareInvocationRunnerStatusPath(repoID, invocationID, sandboxPath)
 	return err
 }
 
@@ -588,4 +634,72 @@ func (s *Store) logPathExists(path string, wantDir bool) bool {
 		return false
 	}
 	return info.IsDir() == wantDir
+}
+
+func (s *Store) syncRunnerStatusFromSandbox(repoID, invocationID, sandboxPath, dst string) error {
+	src := runnerstatus.StatusPath(strings.TrimSpace(sandboxPath))
+	if strings.TrimSpace(sandboxPath) == "" {
+		src = s.SandboxRunnerStatusPath(repoID, invocationID)
+	}
+	srcInfo, err := s.FS.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to stat sandbox runner status during promotion",
+			err,
+			map[string]string{"source": src},
+		)
+	}
+	if srcInfo.IsDir() {
+		return errors.NewWithDetails(
+			errors.EInvocationCreateFailed,
+			"sandbox runner status path is a directory",
+			map[string]string{"source": src},
+		)
+	}
+
+	if dstInfo, statErr := s.FS.Stat(dst); statErr == nil {
+		if dstInfo.IsDir() {
+			return errors.NewWithDetails(
+				errors.EInvocationCreateFailed,
+				"invocation runner status path is a directory",
+				map[string]string{"dest": dst},
+			)
+		}
+		if !srcInfo.ModTime().After(dstInfo.ModTime()) {
+			return nil
+		}
+	} else if !os.IsNotExist(statErr) {
+		return errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to stat invocation runner status path",
+			statErr,
+			map[string]string{"dest": dst},
+		)
+	}
+
+	payload, err := s.FS.ReadFile(src)
+	if err != nil {
+		return errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to read sandbox runner status during promotion",
+			err,
+			map[string]string{"source": src},
+		)
+	}
+	if err := fs.WriteFileAtomic(s.FS, dst, payload, 0o600); err != nil {
+		return errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to write invocation-owned runner status",
+			err,
+			map[string]string{
+				"source": src,
+				"dest":   dst,
+			},
+		)
+	}
+	return nil
 }

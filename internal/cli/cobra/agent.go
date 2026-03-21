@@ -179,7 +179,8 @@ func newAgentLSCmd() *cobra.Command {
 By default, shows active invocations (not yet landed/discarded).
 Use --repo to specify a repo, or --all-repos to list globally.
 
-Use --watch to continuously redraw the list at a configurable interval.
+The legacy --watch list redraw mode is removed.
+Use 'agency watch' for the unified full-screen workspace.
 --watch is incompatible with --json.
 
 Example:
@@ -188,8 +189,7 @@ Example:
   agency agent ls --all-repos
   agency agent ls --worktree my-feature
   agency agent ls --all --json
-  agency agent ls --watch
-  agency agent ls --watch --interval 1s`,
+  agency watch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if watch && jsonOut {
@@ -231,8 +231,8 @@ Example:
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Filter by integration worktree")
 	cmd.Flags().BoolVar(&all, "all", false, "Include finished (landed/discarded) invocations")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
-	cmd.Flags().BoolVar(&watch, "watch", false, "Continuously redraw the list")
-	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Watch redraw interval (e.g. 500ms, 1s)")
+	cmd.Flags().BoolVar(&watch, "watch", false, "Deprecated: use 'agency watch'")
+	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Deprecated with --watch; use 'agency watch --interval'")
 
 	return cmd
 }
@@ -874,15 +874,15 @@ func newAgentHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history <invocation_ref>",
 		Short: "Show unified invocation timeline",
-		Long: `Show a rich transcript of the agent's conversation for an invocation.
+		Long: `Show unified invocation history for an invocation.
 
-By default, renders a human-readable transcript with styled output showing
-assistant messages, tool use, prompts, and results. For runners with semantic
-adapters (Claude, Codex, Cursor), the transcript includes full content blocks with
-tool inputs and results. For other runners, falls back to a sparse timeline.
+By default, renders concise turn-based output (prompt/follow-up/assistant turns,
+tool activity, checkpoints, and parse diagnostics) using shared history semantics.
+Use --json for machine-readable raw timeline entries with full payload data.
+With --json --last, history returns all timeline entries that belong to the latest
+meaningful turn/activity.
 
 Use --last to show only the latest meaningful turn/activity.
-Use --json for machine-readable output with full content_blocks data.
 Use --limit and --cursor for stable paginated reads.
 Human-mode cursors are turn/timeline entry IDs (for example stream:5);
 --json cursors are opaque daemon timeline cursors from prior JSON pages.

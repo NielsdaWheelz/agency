@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // Store handles persistence of repo index and repo records.
@@ -152,6 +153,12 @@ func (s *Store) InvocationCheckpointsPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationDir(repoID, invocationID), "checkpoints.json")
 }
 
+// InvocationRunnerStatusPath returns the invocation-owned runner status path.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/.agency/state/runner_status.json
+func (s *Store) InvocationRunnerStatusPath(repoID, invocationID string) string {
+	return runnerstatus.StatusPath(s.InvocationDir(repoID, invocationID))
+}
+
 // InvocationLogsDir returns the logs directory for an invocation.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/
 func (s *Store) InvocationLogsDir(repoID, invocationID string) string {
@@ -206,6 +213,12 @@ func (s *Store) SandboxLogsDir(repoID, invocationID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/checkpoints.json
 func (s *Store) SandboxCheckpointsPath(repoID, invocationID string) string {
 	return filepath.Join(s.SandboxDir(repoID, invocationID), "checkpoints.json")
+}
+
+// SandboxRunnerStatusPath returns the sandbox-owned runner status path.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tree/.agency/state/runner_status.json
+func (s *Store) SandboxRunnerStatusPath(repoID, invocationID string) string {
+	return runnerstatus.StatusPath(s.SandboxTreePath(repoID, invocationID))
 }
 
 // SandboxRawLogPath returns the path to a sandbox's raw.jsonl log file.

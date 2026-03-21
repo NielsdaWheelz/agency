@@ -2,6 +2,7 @@ package historypicker
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -98,8 +99,28 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 			}
 			continue
 
-		case "session_start", "final", "error", "raw_log_coverage", "invocation_event", "usage", "status", "parse_error":
+		case "session_start", "final", "error", "raw_log_coverage", "invocation_event", "usage", "status":
 			// Filtered out — not displayed as turns
+			continue
+
+		case "parse_error":
+			turns = appendDiagnosticTurn(
+				turns,
+				entry,
+				parseErrorSummary(entry.Data),
+				latestCheckpointID,
+				latestCheckpoint,
+			)
+			continue
+
+		case "unknown":
+			turns = appendDiagnosticTurn(
+				turns,
+				entry,
+				unknownRunnerEventSummary(entry.Data),
+				latestCheckpointID,
+				latestCheckpoint,
+			)
 			continue
 
 		case "tool_use":
@@ -113,7 +134,22 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 					tc.ExitCode = int(exitCode)
 					tc.HasExit = true
 				}
-				turns[len(turns)-1].ToolCalls = append(turns[len(turns)-1].ToolCalls, tc)
+				lastTurn := &turns[len(turns)-1]
+				if tc.HasExit && len(lastTurn.ToolCalls) > 0 {
+					lastTool := &lastTurn.ToolCalls[len(lastTurn.ToolCalls)-1]
+					if !lastTool.HasExit && sameToolIdentity(*lastTool, tc) {
+						if strings.TrimSpace(lastTool.Name) == "" {
+							lastTool.Name = tc.Name
+						}
+						if strings.TrimSpace(lastTool.Command) == "" {
+							lastTool.Command = tc.Command
+						}
+						lastTool.ExitCode = tc.ExitCode
+						lastTool.HasExit = true
+						continue
+					}
+				}
+				lastTurn.ToolCalls = append(lastTurn.ToolCalls, tc)
 			}
 			continue
 
@@ -177,6 +213,13 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 			continue
 
 		default:
+			turns = appendDiagnosticTurn(
+				turns,
+				entry,
+				unrecognizedTimelineEventSummary(entry.Kind, entry.Data),
+				latestCheckpointID,
+				latestCheckpoint,
+			)
 			continue
 		}
 	}
@@ -225,6 +268,24 @@ func appendPromptLikeTurn(
 	}
 	applyCheckpointMetadata(&turn, latestCheckpointID, latestCheckpoint)
 	return append(turns, turn)
+}
+
+func appendDiagnosticTurn(
+	turns []Turn,
+	entry TimelineEntry,
+	summary string,
+	latestCheckpointID int,
+	latestCheckpoint CheckpointRef,
+) []Turn {
+	turns = append(turns, Turn{
+		EntryID:        entry.EntryID,
+		Kind:           TurnAssistant,
+		Timestamp:      entry.Timestamp,
+		ShortTimestamp: shortTimestamp(entry.Timestamp),
+		Summary:        strings.TrimSpace(summary),
+	})
+	applyCheckpointMetadata(&turns[len(turns)-1], latestCheckpointID, latestCheckpoint)
+	return turns
 }
 
 func promptLikeMessageSummary(data map[string]interface{}) string {
@@ -474,4 +535,59 @@ func extractCheckpointID(data map[string]interface{}) int {
 		return 0
 	}
 	return int(f)
+}
+
+func sameToolIdentity(a, b ToolCall) bool {
+	aCommand := strings.TrimSpace(a.Command)
+	bCommand := strings.TrimSpace(b.Command)
+	if aCommand != "" && bCommand != "" {
+		return aCommand == bCommand
+	}
+	aName := strings.TrimSpace(a.Name)
+	bName := strings.TrimSpace(b.Name)
+	return aName != "" && aName == bName
+}
+
+func parseErrorSummary(data map[string]interface{}) string {
+	reason := strings.TrimSpace(dataString(data, "reason"))
+	if reason == "" {
+		reason = "unknown"
+	}
+	summary := "parse error: " + strings.ReplaceAll(reason, "_", " ")
+	if line, ok := dataFloat(data, "line"); ok && line > 0 {
+		summary = fmt.Sprintf("%s (line %d)", summary, int(line))
+	}
+	if detail := strings.TrimSpace(dataString(data, "error")); detail != "" {
+		summary += " - " + detail
+	}
+	return summary
+}
+
+func unknownRunnerEventSummary(data map[string]interface{}) string {
+	summary := "unknown runner event"
+	if eventType := strings.TrimSpace(dataString(data, "runner_event_type")); eventType != "" {
+		summary += ": " + eventType
+	}
+	if reason := strings.TrimSpace(dataString(data, "reason")); reason != "" {
+		summary += " (" + strings.ReplaceAll(reason, "_", " ") + ")"
+	}
+	if detail := strings.TrimSpace(dataString(data, "error")); detail != "" {
+		summary += " - " + detail
+	}
+	return summary
+}
+
+func unrecognizedTimelineEventSummary(kind string, data map[string]interface{}) string {
+	normalizedKind := strings.TrimSpace(strings.ReplaceAll(kind, "_", " "))
+	if normalizedKind == "" {
+		normalizedKind = "unknown"
+	}
+	summary := "unrecognized timeline event: " + normalizedKind
+	if reason := strings.TrimSpace(dataString(data, "reason")); reason != "" {
+		summary += " (" + strings.ReplaceAll(reason, "_", " ") + ")"
+	}
+	if text := strings.TrimSpace(dataString(data, "text")); text != "" {
+		summary += " - " + text
+	}
+	return summary
 }

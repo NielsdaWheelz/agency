@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,6 +26,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
+	"github.com/NielsdaWheelz/agency/internal/jsonl"
 	agencylock "github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
@@ -113,6 +113,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 					LogPaths: &LogPaths{
 						Raw:    s.readableInvocationLogPath(req.RepoID, req.InvocationID, "raw"),
 						Stderr: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stderr"),
+						Stream: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stream"),
 					},
 				}
 				s.writeJSON(w, http.StatusOK, resp)
@@ -137,6 +138,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 				LogPaths: &LogPaths{
 					Raw:    s.readableInvocationLogPath(req.RepoID, req.InvocationID, "raw"),
 					Stderr: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stderr"),
+					Stream: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stream"),
 				},
 			}
 			s.writeJSON(w, http.StatusOK, resp)
@@ -422,6 +424,7 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		LogPaths: &LogPaths{
 			Raw:    rawLogPath,
 			Stderr: stderrLogPath,
+			Stream: streamLogPath,
 		},
 	}
 	s.writeJSON(w, http.StatusOK, resp)
@@ -868,19 +871,22 @@ func loadMaxStreamSeq(path string) uint64 {
 	defer func() { _ = f.Close() }()
 
 	var maxSeq uint64
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxTimelineLineBytes)
-	for scanner.Scan() {
+	_ = jsonl.Visit(f, maxTimelineLineBytes, jsonl.VisitOptions{OversizedPrefixBytes: 1024}, func(line jsonl.Line) error {
+		if line.Oversized {
+			if seq, ok := jsonl.ExtractUintField(line.Bytes, "seq"); ok && seq > maxSeq {
+				maxSeq = seq
+			}
+			return nil
+		}
+
 		var event struct {
 			Seq uint64 `json:"seq"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		if event.Seq > maxSeq {
+		if err := json.Unmarshal(line.Bytes, &event); err == nil && event.Seq > maxSeq {
 			maxSeq = event.Seq
 		}
-	}
+		return nil
+	})
 	return maxSeq
 }
 
@@ -1227,6 +1233,7 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 	resp.LogPaths = &LogPaths{
 		Raw:    s.readableInvocationLogPath(repoID, invocationID, "raw"),
 		Stderr: s.readableInvocationLogPath(repoID, invocationID, "stderr"),
+		Stream: s.readableInvocationLogPath(repoID, invocationID, "stream"),
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -1648,14 +1655,16 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 		}
 	}()
 
-	// Wait for process to exit
-	exitResult, waitErr := startedProc.WaitExit()
-
-	// Wait for streaming goroutines to finish draining stdout/stderr pipes
-	// to the log files before processing exit status. Without this, the meta
-	// status can be set to terminal before all output is flushed, causing
-	// readers to miss the final output.
+	// Drain stdout/stderr parsing goroutines before reaping the process.
+	//
+	// With StdoutPipe/StderrPipe, calling Wait before readers finish can race
+	// the pipe close path and drop trailing output from fast-exiting runners.
+	// Draining first guarantees raw/stream persistence is complete before the
+	// process is reaped and status is finalized.
 	proc.streamWg.Wait()
+
+	// Wait for process to exit after output drains have completed.
+	exitResult, waitErr := startedProc.WaitExit()
 
 	// Stop the parser
 	if proc.Parser != nil {
