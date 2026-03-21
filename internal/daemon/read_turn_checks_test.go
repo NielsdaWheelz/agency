@@ -452,6 +452,27 @@ func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjec
 	}
 	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte("{\"raw\":true}\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:01Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`+"\n",
+	), 0o644))
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + "inv-1/1",
+				SnapshotCommit:    "deadbeef",
+				SandboxHeadSHA:    "deadbeef",
+				CreatedAt:         "2026-02-05T11:50:01Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.Store.SandboxDir(env.RepoID, "inv-1"), "checkpoints.json"), cpBytes, 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -465,6 +486,34 @@ func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjec
 
 	assert.Equal(t, "stream:1", nav["latest_turn_id"])
 	assert.Contains(t, nav["diff_command"], "--turn stream:1")
+}
+
+func TestHandleGetInvocationReview_NavigationDiffCommandOmitsTurnWhenLatestTurnNotRestorable(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	promptPath := env.Store.InvocationPromptPath(env.RepoID, "inv-1")
+	require.NoError(t, os.WriteFile(promptPath, []byte("cursor seed prompt"), 0o600))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.Runner = "cursor"
+	}))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+	nav, ok := data["navigation"].(map[string]any)
+	require.True(t, ok, "expected navigation context")
+
+	assert.Equal(t, "prompt_seed", nav["latest_turn_id"])
+	diffCommand, ok := nav["diff_command"].(string)
+	require.True(t, ok)
+	assert.Equal(t, "agency agent diff inv-1 --repo "+env.RepoID, diffCommand)
+	assert.NotContains(t, diffCommand, "--turn")
 }
 
 func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) {

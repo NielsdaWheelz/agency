@@ -117,12 +117,14 @@ func (s *Server) buildInvocationActivityProjection(
 			CheckpointPathsTrimmed: latest.CheckpointPathsTrimmed,
 		}
 		projection.Navigation.LatestTurnID = latest.EntryID
-		projection.Navigation.DiffCommand = fmt.Sprintf(
-			"agency agent diff %s --repo %s --turn %s",
-			record.InvocationID,
-			record.RepoID,
-			latest.EntryID,
-		)
+		if restorableTurnID := latestRestorableTurnID(turns); restorableTurnID != "" {
+			projection.Navigation.DiffCommand = fmt.Sprintf(
+				"agency agent diff %s --repo %s --turn %s",
+				record.InvocationID,
+				record.RepoID,
+				restorableTurnID,
+			)
+		}
 	} else if latestEntry, ok := latestMeaningfulTimelineEntry(entries); ok {
 		latestSummary := summarizeTimelineEntryDTO(latestEntry.dto)
 		if latestSummary != "" {
@@ -133,12 +135,6 @@ func (s *Server) buildInvocationActivityProjection(
 				Summary:   latestSummary,
 			}
 			projection.Navigation.LatestTurnID = latestEntry.dto.EntryID
-			projection.Navigation.DiffCommand = fmt.Sprintf(
-				"agency agent diff %s --repo %s --turn %s",
-				record.InvocationID,
-				record.RepoID,
-				latestEntry.dto.EntryID,
-			)
 		}
 	}
 
@@ -151,6 +147,16 @@ func (s *Server) buildInvocationActivityProjection(
 	}
 	projection.StatusSummary = truncateActivitySummary(statusSummary)
 	return projection
+}
+
+func latestRestorableTurnID(turns []historypicker.Turn) string {
+	for i := len(turns) - 1; i >= 0; i-- {
+		turn := turns[i]
+		if turn.Restorable && strings.TrimSpace(turn.EntryID) != "" {
+			return turn.EntryID
+		}
+	}
+	return ""
 }
 
 func normalizeLatestTurnSummary(turn historypicker.Turn) string {
