@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,6 +106,183 @@ func TestAgentDiff_TurnAware_HumanAndJSONAligned(t *testing.T) {
 	require.NotNil(t, payload.CommittedRange)
 	assert.Equal(t, "1111111", payload.CommittedRange.From)
 	assert.Equal(t, "2222222", payload.CommittedRange.To)
+}
+
+func TestAgentDiff_TurnAware_LatestAssistantTurnUsesPreviousCheckpointBoundary(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "diff-turn-latest")
+	invocationID := "20260201102020-difflatest"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	sandboxPath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
+				SnapshotCommit:    "1111111",
+				SandboxHeadSHA:    "1111111",
+				CreatedAt:         "2026-02-05T11:50:10Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+			{
+				ID:                2,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/2",
+				SnapshotCommit:    "2222222",
+				SandboxHeadSHA:    "2222222",
+				CreatedAt:         "2026-02-05T11:50:30Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+
+	events := "" +
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}` + "\n" +
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}` + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(events), 0o644))
+
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	stream := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest codex assistant turn"}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(stream, "\n")+"\n"), 0o644))
+
+	daemonRunner.Responses["git -C "+sandboxPath+" rev-parse HEAD"] = testutil.FakeResponse{Stdout: "2222222\n"}
+	daemonRunner.Responses["git -C "+sandboxPath+" log --oneline 1111111..2222222"] = testutil.FakeResponse{Stdout: "2222222 checkpoint two\n"}
+	daemonRunner.Responses["git -C "+sandboxPath+" diff --stat 1111111..2222222"] = testutil.FakeResponse{Stdout: " cp2.txt | 1 +\n 1 file changed, 1 insertion(+)\n"}
+	daemonRunner.Responses["git -C "+sandboxPath+" diff 1111111..2222222"] = testutil.FakeResponse{Stdout: "diff --git a/cp2.txt b/cp2.txt\n+checkpoint two\n"}
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	turnID := "stream:1"
+	var humanOut, jsonOut, errOut bytes.Buffer
+
+	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		TurnID:          turnID,
+		DataDirOverride: dataDir,
+	}, &humanOut, &errOut)
+	require.NoError(t, err)
+
+	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		TurnID:          turnID,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &errOut)
+	require.NoError(t, err)
+
+	assert.Contains(t, humanOut.String(), "Turn context:")
+	assert.Contains(t, humanOut.String(), "checkpoints:   1 -> 2")
+	assert.Contains(t, humanOut.String(), "commit_range:  1111111..2222222")
+	assert.NotContains(t, humanOut.String(), "(no changes)")
+
+	var payload daemon.InvocationDiffData
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	require.NotNil(t, payload.TurnContext)
+	assert.Equal(t, "single", payload.TurnContext.Selector.Kind)
+	assert.Equal(t, turnID, payload.TurnContext.Selector.TurnID)
+	assert.Equal(t, 1, payload.TurnContext.StartCheckpointID)
+	assert.Equal(t, 2, payload.TurnContext.EndCheckpointID)
+	require.NotNil(t, payload.CommittedRange)
+	assert.Equal(t, "1111111", payload.CommittedRange.From)
+	assert.Equal(t, "2222222", payload.CommittedRange.To)
+}
+
+func TestAgentDiff_TurnAware_LatestAssistantTurnSingleCheckpointUsesBaseBoundary(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "diff-turn-single-checkpoint")
+	invocationID := "20260201103030-diffsingle"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	sandboxPath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
+				SnapshotCommit:    "1111111",
+				SandboxHeadSHA:    "1111111",
+				CreatedAt:         "2026-02-05T11:50:10Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+
+	events := "" +
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}` + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(events), 0o644))
+
+	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	stream := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest codex assistant turn with one checkpoint"}}`,
+	}
+	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(stream, "\n")+"\n"), 0o644))
+
+	baseCommit := "abc123def456"
+	daemonRunner.Responses["git -C "+sandboxPath+" rev-parse HEAD"] = testutil.FakeResponse{Stdout: "1111111\n"}
+	daemonRunner.Responses["git -C "+sandboxPath+" log --oneline "+baseCommit+"..1111111"] = testutil.FakeResponse{Stdout: "1111111 checkpoint one\n"}
+	daemonRunner.Responses["git -C "+sandboxPath+" diff --stat "+baseCommit+"..1111111"] = testutil.FakeResponse{Stdout: " cp1.txt | 1 +\n 1 file changed, 1 insertion(+)\n"}
+	daemonRunner.Responses["git -C "+sandboxPath+" diff "+baseCommit+"..1111111"] = testutil.FakeResponse{Stdout: "diff --git a/cp1.txt b/cp1.txt\n+checkpoint one\n"}
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	turnID := "stream:1"
+	var humanOut, jsonOut, errOut bytes.Buffer
+
+	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		TurnID:          turnID,
+		DataDirOverride: dataDir,
+	}, &humanOut, &errOut)
+	require.NoError(t, err)
+
+	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
+		InvocationRef:   invocationID,
+		RepoFlag:        repoID,
+		TurnID:          turnID,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &errOut)
+	require.NoError(t, err)
+
+	assert.Contains(t, humanOut.String(), "Turn context:")
+	assert.Contains(t, humanOut.String(), "checkpoints:   0 -> 1")
+	assert.Contains(t, humanOut.String(), "commit_range:  "+baseCommit+"..1111111")
+	assert.NotContains(t, humanOut.String(), "(no changes)")
+
+	var payload daemon.InvocationDiffData
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	require.NotNil(t, payload.TurnContext)
+	assert.Equal(t, "single", payload.TurnContext.Selector.Kind)
+	assert.Equal(t, turnID, payload.TurnContext.Selector.TurnID)
+	assert.Equal(t, 0, payload.TurnContext.StartCheckpointID)
+	assert.Equal(t, 1, payload.TurnContext.EndCheckpointID)
+	require.NotNil(t, payload.CommittedRange)
+	assert.Equal(t, baseCommit, payload.CommittedRange.From)
+	assert.Equal(t, "1111111", payload.CommittedRange.To)
 }
 
 func TestAgentReview_Blocked_HumanAndJSONAligned(t *testing.T) {

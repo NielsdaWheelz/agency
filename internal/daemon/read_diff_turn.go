@@ -182,16 +182,33 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 
 	// Single-turn and tight ranges can map to the same checkpoint. In that case,
 	// expand to the next checkpoint boundary when available so turn-aware diff
-	// context is meaningfully anchored to a stable interval.
+	// context is meaningfully anchored to a stable interval. If no later boundary
+	// exists (for example the latest assistant turn), anchor against the previous
+	// checkpoint so the selected checkpoint's file changes remain visible. When the
+	// selected checkpoint is the first and only checkpoint, anchor to base_commit.
+	useBaseCommitBoundary := false
 	if endCheckpointID == startCheckpointID {
 		if endIndex, exists := entryIndexByID[endTurnID]; exists {
 			if next, found := nextCheckpointAfter(markers, endIndex, endCheckpointID); found {
 				endCheckpointID = next.CheckpointID
 			}
 		}
+		if endCheckpointID == startCheckpointID {
+			if prev, found := previousCheckpointBefore(cpFile.Checkpoints, startCheckpointID, checkpointCommitByID); found {
+				startCheckpointID = prev
+			} else if strings.TrimSpace(record.Meta.BaseCommit) != "" {
+				useBaseCommitBoundary = true
+				startCheckpointID = 0
+			}
+		}
 	}
 
-	fromCommit := checkpointCommitByID[startCheckpointID]
+	fromCommit := ""
+	if useBaseCommitBoundary {
+		fromCommit = strings.TrimSpace(record.Meta.BaseCommit)
+	} else {
+		fromCommit = checkpointCommitByID[startCheckpointID]
+	}
 	toCommit := checkpointCommitByID[endCheckpointID]
 	if fromCommit == "" || toCommit == "" {
 		return nil, errors.NewWithDetails(
@@ -243,6 +260,25 @@ func nextCheckpointAfter(markers []timelineCheckpointMarker, entryIndex int, cur
 		return marker, true
 	}
 	return timelineCheckpointMarker{}, false
+}
+
+func previousCheckpointBefore(checkpoints []checkpoint.Checkpoint, checkpointID int, checkpointCommitByID map[int]string) (int, bool) {
+	bestID := 0
+	for _, cp := range checkpoints {
+		if cp.ID <= 0 || cp.ID >= checkpointID {
+			continue
+		}
+		if _, ok := checkpointCommitByID[cp.ID]; !ok {
+			continue
+		}
+		if cp.ID > bestID {
+			bestID = cp.ID
+		}
+	}
+	if bestID <= 0 {
+		return 0, false
+	}
+	return bestID, true
 }
 
 func checkpointIDFromTimelineEntryDTO(entry TimelineEntryDTO) (int, bool) {

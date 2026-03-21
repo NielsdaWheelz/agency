@@ -106,6 +106,9 @@ var capabilityByID = map[string]Capability{
 			"--json",
 			"--full-auto",
 			launchTokenExtraArgs,
+			// codex unified_exec drops early command output for long-running commands.
+			// keep this disabled so aggregated_output remains complete.
+			"--disable", "unified_exec",
 			launchTokenPrompt,
 		},
 		resumeTemplate: []string{
@@ -115,6 +118,7 @@ var capabilityByID = map[string]Capability{
 			"--json",
 			"--full-auto",
 			launchTokenExtraArgs,
+			"--disable", "unified_exec",
 			launchTokenPrompt,
 		},
 		headedTemplate: []string{launchTokenExtraArgs},

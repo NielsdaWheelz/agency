@@ -120,7 +120,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--full-auto", "--model", "gpt-5", "fix bug"}, codexArgs)
+	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "fix bug"}, codexArgs)
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
@@ -152,11 +152,11 @@ func TestBuildResumeArgs(t *testing.T) {
 
 	codexArgs, err := BuildResumeArgs("codex", "continue from previous turn", "", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "resume", "--last", "--json", "--full-auto", "--model", "gpt-5", "continue from previous turn"}, codexArgs)
+	assert.Equal(t, []string{"exec", "resume", "--last", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexArgs)
 
 	codexExplicitArgs, err := BuildResumeArgs("codex", "continue from previous turn", "thread_abc123", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "resume", "thread_abc123", "--json", "--full-auto", "--model", "gpt-5", "continue from previous turn"}, codexExplicitArgs)
+	assert.Equal(t, []string{"exec", "resume", "thread_abc123", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexExplicitArgs)
 
 	cursorArgs, err := BuildResumeArgs("cursor", "continue from previous turn", "", []string{"--model", "sonnet-4.6-thinking"})
 	require.NoError(t, err)

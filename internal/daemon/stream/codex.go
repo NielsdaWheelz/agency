@@ -8,7 +8,11 @@ import (
 )
 
 // CodexAdapter parses Codex CLI JSON output.
-type CodexAdapter struct{}
+type CodexAdapter struct {
+	// commandOutputByItemID accumulates command output fragments by item id.
+	// Codex may surface partial output on started/updated/completed events.
+	commandOutputByItemID map[string]string
+}
 
 // Name returns the runner name.
 func (a *CodexAdapter) Name() string {
@@ -104,6 +108,28 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 			}
 		}
 
+	case "item.updated":
+		if raw.Item != nil {
+			switch raw.Item.Type {
+			case "command_execution":
+				events, status := a.parseCommandStart(&raw)
+				result.Events = events
+				result.SemanticStatus = status
+			case "reasoning":
+				return &ParseResult{}, nil
+			default:
+				unknown := newUnknownRunnerEvent(raw.Type, "unsupported_item_type", line)
+				if raw.Item.Type != "" {
+					unknown.Data["runner_item_type"] = raw.Item.Type
+				}
+				result.Events = []*NormalizedEvent{unknown}
+			}
+		} else {
+			result.Events = []*NormalizedEvent{
+				newUnknownRunnerEvent(raw.Type, "missing_item", line),
+			}
+		}
+
 	case "item.completed":
 		if raw.Item != nil {
 			switch raw.Item.Type {
@@ -173,6 +199,12 @@ func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) ([]*NormalizedEvent
 	if raw.Item.Command != "" {
 		event.Data["command"] = raw.Item.Command
 	}
+	output := raw.Item.AggregatedOutput
+	if strings.TrimSpace(raw.Item.ID) != "" {
+		a.mergeCommandOutput(raw.Item.ID, raw.Item.AggregatedOutput)
+		output = a.commandOutput(raw.Item.ID)
+	}
+	setOutputPreview(event.Data, output)
 
 	// Command execution -> working status
 	status := runnerstatus.StatusWorking
@@ -194,14 +226,13 @@ func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, 
 	if raw.Item.ExitCode != nil {
 		event.Data["exit_code"] = *raw.Item.ExitCode
 	}
-	if raw.Item.AggregatedOutput != "" {
-		preview := raw.Item.AggregatedOutput
-		if len(preview) > 2048 {
-			preview = preview[:2048]
-			event.Data["output_truncated"] = true
-		}
-		event.Data["output_preview"] = preview
+	output := raw.Item.AggregatedOutput
+	if strings.TrimSpace(raw.Item.ID) != "" {
+		a.mergeCommandOutput(raw.Item.ID, raw.Item.AggregatedOutput)
+		output = a.commandOutput(raw.Item.ID)
+		a.clearCommandOutput(raw.Item.ID)
 	}
+	setOutputPreview(event.Data, output)
 
 	// Keep working status after command ends
 	status := runnerstatus.StatusWorking
@@ -300,4 +331,63 @@ func (a *CodexAdapter) parseTurnCompleted(raw *codexRawEvent) []*NormalizedEvent
 	}
 
 	return []*NormalizedEvent{event}
+}
+
+func (a *CodexAdapter) ensureCommandOutputState() {
+	if a.commandOutputByItemID == nil {
+		a.commandOutputByItemID = make(map[string]string)
+	}
+}
+
+func (a *CodexAdapter) mergeCommandOutput(itemID, output string) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" || output == "" {
+		return
+	}
+	a.ensureCommandOutputState()
+	a.commandOutputByItemID[itemID] = mergeCodexCommandOutput(a.commandOutputByItemID[itemID], output)
+}
+
+func (a *CodexAdapter) commandOutput(itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ""
+	}
+	return a.commandOutputByItemID[itemID]
+}
+
+func (a *CodexAdapter) clearCommandOutput(itemID string) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" || a.commandOutputByItemID == nil {
+		return
+	}
+	delete(a.commandOutputByItemID, itemID)
+}
+
+func mergeCodexCommandOutput(previous, current string) string {
+	if previous == "" {
+		return current
+	}
+	if current == "" {
+		return previous
+	}
+	if strings.HasPrefix(current, previous) {
+		return current
+	}
+	if strings.HasPrefix(previous, current) {
+		return previous
+	}
+	return previous + current
+}
+
+func setOutputPreview(data map[string]interface{}, output string) {
+	if data == nil || output == "" {
+		return
+	}
+	preview := output
+	if len(preview) > 2048 {
+		preview = preview[:2048]
+		data["output_truncated"] = true
+	}
+	data["output_preview"] = preview
 }
