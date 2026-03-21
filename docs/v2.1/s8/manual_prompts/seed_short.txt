@@ -1,0 +1,8 @@
+Read `README.md`, `docs/getting-started.md`, and `internal/daemon/read_timeline.go`.
+Search the repository for references to `agent history` and `checkpoint ls`.
+Create `tmp/s8-manual/notes.md` with:
+- a title
+- three short bullet points summarizing what you found
+- a final line exactly `seed-line: one`
+Then run `sh -lc 'printf "sleep-start\n"; sleep 8; printf "sleep-end\n"'`.
+Finally, summarize what you read, what you changed, and the command output.

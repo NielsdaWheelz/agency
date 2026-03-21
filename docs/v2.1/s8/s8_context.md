@@ -6,6 +6,7 @@ Companion operational docs:
 
 - `docs/v2.1/s8/s8_fixture_matrix.md`
 - `docs/v2.1/s8/s8_fixture_capture_20260312.md`
+- `docs/v2.1/s8/s8_manual_validation_20260319.md`
 
 ## Scope
 

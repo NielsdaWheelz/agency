@@ -906,9 +906,9 @@ agency agent restart <invocation_ref> (--checkpoint <id> | --history) [--repo <n
 
 ### `agency agent history`
 
-shows a rich transcript of the agent's conversation for an invocation.
+shows unified invocation history for an invocation.
 
-for runners with semantic adapters (claude, codex, cursor), the default output is a styled, human-readable transcript showing assistant messages, tool use with inputs, prompts, and results. for other runners, falls back to a sparse timeline format.
+the default output is concise turn-based history (prompt/follow-up/assistant turns, tool activity, checkpoint context, and parse diagnostics). `--json` returns raw timeline entries with full payloads.
 
 **usage:**
 ```bash
@@ -926,8 +926,8 @@ agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limi
 - `--repo`: repo name, key, id, or prefix
 
 **output modes:**
-- **human** (default): rich transcript with styled headers, tool use blocks, and exit codes. adapters that produce `content_blocks` (claude, codex, cursor) get full rendering; non-adapted runners fall back to sparse one-liners.
-- **json** (`--json`): structured output with full `content_blocks` data for programmatic consumption.
+- **human** (default): concise turn rows with shared activity labels, tool counts, and checkpoint/restorable metadata.
+- **json** (`--json`): structured timeline entries for programmatic consumption.
 
 **entry coverage:**
 - prompt seed context (`prompt_seed`)
@@ -944,7 +944,7 @@ agency agent history <invocation_ref> [--last] [--repo <name|id|prefix>] [--limi
 - cursor formats are mode-specific: human mode uses turn/timeline entry IDs (for example `stream:5`), while `--json` uses daemon timeline cursors from prior JSON pages
 - invalid `--limit` values fail closed with `E_INVALID_ARGUMENT` (no silent coercion)
 - invalid human-mode `--cursor` values fail closed with `E_INVALID_ARGUMENT` (no silent rewind to page 1)
-- `--last` resolves from the canonical turn projection first, then falls back to timeline entries when no turns exist; cursor pagination is not supported with `--last`
+- `--last` resolves from the canonical turn projection first, then falls back to timeline entries when no turns exist; in `--json` mode it returns all timeline entries within the latest meaningful turn/activity (not just the seed entry)
 
 ### `agency agent logs`
 

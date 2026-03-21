@@ -185,7 +185,6 @@ headless agents run as daemon subprocesses. the daemon captures logs, creates au
 ```bash
 agency watch                                 # full-screen readiness workspace (enter/o/p actions, q to exit)
 agency agent ls                              # list all agents
-agency agent ls --watch                      # live-updating dashboard
 agency agent ls --worktree add-user-auth     # filter to one worktree
 agency agent ls --all-repos                  # across all repos
 agency agent show <invocation-id>            # details on one agent
@@ -386,7 +385,7 @@ agency agent start --worktree auth-refactor --headless \
   --prompt-file tasks/refactor-auth.md
 
 # 4. monitor it
-agency agent ls --watch
+agency watch
 agency agent logs <id> --follow
 
 # 5. check snapshots

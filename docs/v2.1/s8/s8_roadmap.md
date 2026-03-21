@@ -1,9 +1,10 @@
 # Slice S8: Invocation History and Runner Log Convergence - PR Roadmap
 
-Last updated: 2026-03-13
-Status: complete
+Last updated: 2026-03-18
+Status: complete (implementation and validation corpus closure complete)
 Upstream spec: `docs/v2.1/s8/s8_spec.md`
 Supporting context: `docs/v2.1/s8/s8_context.md`
+Manual validation follow-up: `docs/v2.1/s8/s8_manual_validation_20260319.md`
 
 Current state: invocation history, restart-from-history, checkpoint listing, turn-aware diff, invocation list/watch, show, review, and raw log reads already exist, but they do not share one durable capture model or one derived turn/activity model. Sandbox-owned raw logs can disappear after cleanup, current Codex and Cursor adapters are behind current runner output, and multiple surfaces derive turn/activity truth independently. This roadmap is intentionally fuller than a normal L3 plan because this slice will span multiple sessions and needs a durable reference plan.
 
@@ -14,6 +15,16 @@ Phase progress snapshot:
 - PR-04: done
 - PR-05: done
 - PR-06: done
+
+Closure gate (satisfied 2026-03-18):
+- Completed direct runner scenarios `D01`, `D02`, `D03`, `D04` across Claude/Codex/Cursor.
+- Completed agency-managed scenarios `A01`, `A02`, `A03`, `A04` across Claude/Codex/Cursor.
+- Capture snapshot and artifact inventory are tracked in `docs/v2.1/s8/s8_fixture_capture_20260312.md`.
+
+Post-slice runner follow-up briefs:
+- `docs/v2.1/s8/s8_prs/s8_pr07.md` — Codex manual closure and output fidelity
+- `docs/v2.1/s8/s8_prs/s8_pr08.md` — Cursor manual closure and follow-up parity
+- `docs/v2.1/s8/s8_prs/s8_pr09.md` — Claude follow-up completion and status correctness
 
 ### PR-01: invocation-owned raw capture and replay baseline
 - **goal**: make supported runner raw stdout and stderr durable under invocation ownership and establish a fixture capture protocol that future converter work can replay safely.
