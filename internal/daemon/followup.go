@@ -129,18 +129,30 @@ func (s *Server) deliverFollowUp(invocationID, prompt string) string {
 		return "audit_only"
 	}
 
-	if err := proc.Relay.Send(context.Background(), prompt); err != nil {
-		// Delivery failure is best-effort; the audit event is the durable record.
-		// The runner may have exited between the status check and delivery.
-		return "audit_only"
-	}
-
 	switch proc.Relay.Mode() {
 	case relay.ModeStdin:
+		proc.IncrementExpectedTurns()
+		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+			// Delivery failure is best-effort; the audit event is durable.
+			proc.DecrementExpectedTurns()
+			if proc.SuccessfulCompletionObserved() {
+				s.scheduleStdinCompletionFinalize(proc)
+			}
+			return "audit_only"
+		}
 		return "delivered"
 	case relay.ModeResume:
+		proc.IncrementExpectedTurns()
+		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+			proc.DecrementExpectedTurns()
+			return "audit_only"
+		}
 		return "queued"
 	default:
+		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+			// Delivery failure is best-effort; the audit event is durable.
+			return "audit_only"
+		}
 		return "audit_only"
 	}
 }

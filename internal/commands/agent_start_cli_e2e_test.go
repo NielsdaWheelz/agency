@@ -364,7 +364,7 @@ func readLaunchCapture(t *testing.T, capturePath string) launchCapture {
 func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string) []string {
 	switch canonicalRunner {
 	case "claude-code":
-		return []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", runnerArg}
+		return []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", runnerArg, prompt}
 	case "codex":
 		return []string{"exec", "--cd", sandboxPath, "--json", "--full-auto", runnerArg, "--disable", "unified_exec", prompt}
 	case "amp":

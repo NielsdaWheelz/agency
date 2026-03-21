@@ -284,6 +284,16 @@ type SupervisedProcess struct {
 
 	// doneOnce ensures done channel is only closed once.
 	doneOnce sync.Once
+
+	// expectedTurns tracks how many successful finals are required for lifecycle
+	// completion in this supervised process instance.
+	expectedTurns atomic.Int32
+
+	// completedTurns tracks how many successful final events were observed.
+	completedTurns atomic.Int32
+
+	// completionFinalizePending gates scheduling of stdin completion convergence.
+	completionFinalizePending atomic.Bool
 }
 
 // CloseDone safely closes the done channel, ensuring it is only closed once.
@@ -311,6 +321,68 @@ func (p *SupervisedProcess) GetResumeSessionID() string {
 		return ""
 	}
 	return strings.TrimSpace(s)
+}
+
+// InitializeTurnTracking seeds expected/completed turn tracking for this process.
+func (p *SupervisedProcess) InitializeTurnTracking() {
+	p.expectedTurns.Store(1)
+	p.completedTurns.Store(0)
+}
+
+// IncrementExpectedTurns records that an additional successful final is expected.
+func (p *SupervisedProcess) IncrementExpectedTurns() int32 {
+	if p.expectedTurns.Load() <= 0 {
+		p.InitializeTurnTracking()
+	}
+	return p.expectedTurns.Add(1)
+}
+
+// DecrementExpectedTurns rolls back a reserved expected turn, clamped to 1.
+func (p *SupervisedProcess) DecrementExpectedTurns() int32 {
+	for {
+		current := p.expectedTurns.Load()
+		if current <= 1 {
+			if current <= 0 {
+				p.InitializeTurnTracking()
+				return p.expectedTurns.Load()
+			}
+			return current
+		}
+		next := current - 1
+		if p.expectedTurns.CompareAndSwap(current, next) {
+			return next
+		}
+	}
+}
+
+// RecordSuccessfulFinalTurn increments completed turn count and reports whether
+// completion has converged for this process.
+func (p *SupervisedProcess) RecordSuccessfulFinalTurn() (completed int32, expected int32, completionSatisfied bool) {
+	if p.expectedTurns.Load() <= 0 {
+		return 0, 0, false
+	}
+	completed = p.completedTurns.Add(1)
+	expected = p.expectedTurns.Load()
+	return completed, expected, expected > 0 && completed >= expected
+}
+
+// SuccessfulCompletionObserved reports whether all expected turns completed.
+func (p *SupervisedProcess) SuccessfulCompletionObserved() bool {
+	expected := p.expectedTurns.Load()
+	if expected <= 0 {
+		return false
+	}
+	return p.completedTurns.Load() >= expected
+}
+
+// TryBeginCompletionFinalize acquires the completion-finalize scheduling latch.
+func (p *SupervisedProcess) TryBeginCompletionFinalize() bool {
+	return p.completionFinalizePending.CompareAndSwap(false, true)
+}
+
+// EndCompletionFinalize releases the completion-finalize scheduling latch.
+func (p *SupervisedProcess) EndCompletionFinalize() {
+	p.completionFinalizePending.Store(false)
 }
 
 // CheckpointEngine is the interface for the checkpoint engine.

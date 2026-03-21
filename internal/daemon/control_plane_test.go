@@ -283,7 +283,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "fix the bug"},
 		},
 		{
 			name:        "claude with extra args",
@@ -291,7 +291,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
 		},
 		{
 			name:        "claude-code canonical",
@@ -299,7 +299,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix the bug"},
 		},
 		{
 			name:        "codex basic - includes --cd flag",

@@ -331,8 +331,9 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			var wantArgs []string
 			switch tc.canonicalRunner {
 			case "claude-code":
-				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions")
+				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
+				wantArgs = append(wantArgs, tc.prompt)
 			case "codex":
 				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json", "--full-auto")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
@@ -381,11 +382,6 @@ func TestDaemonControlPlaneStart_InitialPromptDeliveredViaStdinForStdinRunners(t
 		inputRunner string
 		prompt      string
 	}{
-		{
-			name:        "claude",
-			inputRunner: "claude",
-			prompt:      "reply with only stdin for claude",
-		},
 		{
 			name:        "amp",
 			inputRunner: "amp",
@@ -526,6 +522,182 @@ func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *t
 	capture := readFakeRunnerLaunchCapture(t, capturePath)
 	assert.Equal(t, "cursor-session-sleep-then-exit-ok", capture.Mode)
 	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"}, capture.Args)
+}
+
+func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDiffTurnMatchesCheckpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "claude-resume-followup-completion")
+
+	capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
+	const mutationFile = "claude-followup.txt"
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "first claude turn",
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE":          "claude-session-mutate-then-exit-ok",
+			"FAKE_RUNNER_SLEEP_MS":      "1200",
+			"FAKE_RUNNER_SESSION_ID":    "sess_claude_resume_test",
+			"FAKE_RUNNER_CAPTURE_PATH":  capturePath,
+			"FAKE_RUNNER_MUTATION_FILE": mutationFile,
+		},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+	t.Cleanup(func() {
+		_, _ = env.Client.Kill(context.Background(), repoID, startResp.InvocationID)
+	})
+
+	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+		Prompt: "second claude turn",
+	})
+	require.NoError(t, err, "follow-up transport error")
+	require.True(t, followResp.OK, "follow-up failed: %s - %s", followResp.ErrorCode, followResp.Message)
+	assert.Equal(t, "queued", followResp.DeliveryMode)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 15*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Empty(t, meta.FailureReason)
+	if meta.SemanticStatus != nil {
+		assert.Equal(t, runnerstatus.StatusReadyForReview, *meta.SemanticStatus)
+	}
+
+	invResp, err := env.Client.GetInvocation(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "get invocation")
+	assert.Equal(t, "finished", invResp.Invocation.Status)
+	assert.NotEqual(t, "running", invResp.Invocation.DisplayStatus)
+	assert.NotEqual(t, "working", invResp.Invocation.DisplayStatus)
+
+	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "get review")
+	assert.Equal(t, "finished", reviewResp.Review.Status)
+	assert.NotEqual(t, "running", reviewResp.Review.DisplayStatus)
+	assert.NotEqual(t, "working", reviewResp.Review.DisplayStatus)
+	require.NotEmpty(t, strings.TrimSpace(reviewResp.Review.Navigation.LatestTurnID))
+
+	listResp, err := env.Client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+		RepoID: repoID,
+		State:  "all",
+		Limit:  100,
+	})
+	require.NoError(t, err, "list invocations")
+	found := false
+	for _, inv := range listResp.Invocations {
+		if inv.InvocationID != startResp.InvocationID {
+			continue
+		}
+		found = true
+		assert.NotEqual(t, "running", inv.DisplayStatus)
+		assert.NotEqual(t, "working", inv.DisplayStatus)
+	}
+	assert.True(t, found, "invocation should appear in list response")
+
+	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{
+		Limit: 200,
+		Order: "asc",
+	})
+	require.NoError(t, err, "get timeline")
+	require.NotEmpty(t, timelineResp.Entries)
+	followupIndex := -1
+	activityAfterFollowup := false
+	for i, entry := range timelineResp.Entries {
+		if followupIndex == -1 && entry.Kind == "followup_prompt" {
+			followupIndex = i
+			continue
+		}
+		if followupIndex >= 0 && i > followupIndex && (entry.Kind == "message" || entry.Kind == "tool_use") {
+			activityAfterFollowup = true
+			break
+		}
+	}
+	assert.NotEqual(t, -1, followupIndex, "timeline must include follow-up prompt event")
+	assert.True(t, activityAfterFollowup, "timeline must include second-turn activity after follow-up prompt")
+
+	checkpointsResp, err := env.Client.ListCheckpoints(ctx, startResp.InvocationID, repoID, daemonclient.ListCheckpointsOpts{
+		Limit: 20,
+	})
+	require.NoError(t, err, "list checkpoints")
+	require.GreaterOrEqual(t, len(checkpointsResp.Checkpoints), 2, "expected checkpoint per turn")
+	latestCheckpoint := checkpointsResp.Checkpoints[len(checkpointsResp.Checkpoints)-1]
+	assert.Contains(t, latestCheckpoint.ChangedPaths, mutationFile)
+	assert.NotEmpty(t, strings.TrimSpace(latestCheckpoint.Diffstat))
+
+	diffResp, err := env.Client.GetInvocationDiff(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationDiffOpts{
+		TurnID:             strings.TrimSpace(reviewResp.Review.Navigation.LatestTurnID),
+		IncludePatch:       true,
+		IncludeUncommitted: true,
+	})
+	require.NoError(t, err, "get turn-aware diff")
+	require.NotNil(t, diffResp.Diff.TurnContext)
+	assert.True(t, diffResp.Diff.HasCommits, "latest-turn diff should include committed changes when latest checkpoint changed files")
+	require.NotNil(t, diffResp.Diff.CommittedRange)
+	assert.NotEqual(t, diffResp.Diff.CommittedRange.From, diffResp.Diff.CommittedRange.To)
+	if strings.TrimSpace(diffResp.Diff.CommittedRange.Patch) != "" {
+		assert.Contains(t, diffResp.Diff.CommittedRange.Patch, mutationFile)
+	} else {
+		assert.NotEmpty(t, strings.TrimSpace(diffResp.Diff.CommittedRange.Diffstat))
+	}
+
+	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
+	require.NoError(t, readErr, "read raw log")
+	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful claude turns")
+
+	// Capture file is overwritten per launch; after resume it reflects the second turn launch args.
+	capture := readFakeRunnerLaunchCapture(t, capturePath)
+	assert.Equal(t, "claude-session-mutate-then-exit-ok", capture.Mode)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--resume", "sess_claude_resume_test", "second claude turn"}, capture.Args)
+}
+
+func TestDaemonStopAfterClaudeSuccessfulFinalDoesNotRelabelFailed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "claude-stop-after-final")
+
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude",
+		Prompt:      "single claude turn",
+		Env: map[string]string{
+			"FAKE_RUNNER_MODE":     "claude-session-final-sleep",
+			"FAKE_RUNNER_SLEEP_MS": "5000",
+		},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+	t.Cleanup(func() {
+		_, _ = env.Client.Kill(context.Background(), repoID, startResp.InvocationID)
+	})
+
+	streamPath := env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID)
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(streamPath)
+		if readErr != nil {
+			return false
+		}
+		return strings.Contains(string(data), `"kind":"final"`)
+	}, 8*time.Second, 50*time.Millisecond, "expected stream final event before stop request")
+
+	stopResp, err := env.Client.Stop(ctx, repoID, startResp.InvocationID)
+	require.NoError(t, err, "stop")
+	require.True(t, stopResp.OK, "stop failed: %s - %s", stopResp.ErrorCode, stopResp.Message)
+
+	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 12*time.Second)
+	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
+	assert.Empty(t, meta.FailureReason)
+	assert.NotEqual(t, "stopped", meta.ExitReason)
 }
 
 func TestDaemonControlPlaneStart_ClaudeAliasCanonicalizesRunnerIdentity(t *testing.T) {

@@ -79,6 +79,10 @@ type Parser struct {
 	// Set via SetSessionStartNotify before calling StreamAndParse.
 	sessionStartNotify func(SessionStartNotification)
 
+	// finalNotify is called when a final event is written to stream.jsonl.
+	// Set via SetFinalNotify before calling StreamAndParse.
+	finalNotify func(FinalNotification)
+
 	// pendingMutatingTools tracks mutating tool names from the latest assistant
 	// message, used to emit a checkpoint notification after the tool results arrive.
 	pendingMutatingTools []string
@@ -136,6 +140,14 @@ func (p *Parser) SetSessionStartNotify(fn func(SessionStartNotification)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sessionStartNotify = fn
+}
+
+// SetFinalNotify registers a callback invoked when a parsed final event is
+// persisted. Safe to call with nil (no-op).
+func (p *Parser) SetFinalNotify(fn func(FinalNotification)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.finalNotify = fn
 }
 
 // Stop stops the parser.
@@ -268,6 +280,7 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 		// Detect mutating tools and emit checkpoint notification.
 		p.maybeNotifyCheckpoint(event)
 		p.maybeNotifySessionStart(event)
+		p.maybeNotifyFinal(event)
 	}
 
 	// Update semantic status if provided
@@ -510,6 +523,33 @@ func (p *Parser) maybeNotifySessionStart(event *NormalizedEvent) {
 	notifyFn(SessionStartNotification{
 		SessionID: sessionID,
 		Seq:       event.Seq,
+	})
+}
+
+func (p *Parser) maybeNotifyFinal(event *NormalizedEvent) {
+	if event.Kind != EventKindFinal {
+		return
+	}
+
+	p.mu.Lock()
+	notifyFn := p.finalNotify
+	p.mu.Unlock()
+	if notifyFn == nil {
+		return
+	}
+
+	success := true
+	if event.Data != nil {
+		if raw, ok := event.Data["success"]; ok {
+			if s, ok := raw.(bool); ok {
+				success = s
+			}
+		}
+	}
+
+	notifyFn(FinalNotification{
+		Success: success,
+		Seq:     event.Seq,
 	})
 }
 

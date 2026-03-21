@@ -76,18 +76,29 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeStdin,
-		InitialPromptMode:    InitialPromptStdin,
-		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose"},
+		ChatMode:             ChatModeResume,
+		InitialPromptMode:    InitialPromptPositional,
+		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume"},
 		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
 		aliases:              []string{LegacyRunnerClaude},
 		headlessTemplate: []string{
 			"-p",
 			"--output-format", "stream-json",
-			"--input-format", "stream-json",
+			"--input-format", "text",
 			"--verbose",
 			"--dangerously-skip-permissions",
 			launchTokenExtraArgs,
+			launchTokenPrompt,
+		},
+		resumeTemplate: []string{
+			"-p",
+			"--output-format", "stream-json",
+			"--input-format", "text",
+			"--verbose",
+			"--dangerously-skip-permissions",
+			"--continue",
+			launchTokenExtraArgs,
+			launchTokenPrompt,
 		},
 		headedTemplate: []string{launchTokenExtraArgs},
 	},
@@ -360,6 +371,19 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 		}
 	}
 	if capability.ID == RunnerCursor && resumeSessionID != "" {
+		rewritten := make([]string, 0, len(args)+1)
+		replaced := false
+		for _, arg := range args {
+			if !replaced && arg == "--continue" {
+				rewritten = append(rewritten, "--resume", resumeSessionID)
+				replaced = true
+				continue
+			}
+			rewritten = append(rewritten, arg)
+		}
+		args = rewritten
+	}
+	if capability.ID == RunnerClaudeCode && resumeSessionID != "" {
 		rewritten := make([]string, 0, len(args)+1)
 		replaced := false
 		for _, arg := range args {

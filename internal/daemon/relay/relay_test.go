@@ -23,7 +23,7 @@ func TestStdinRelay_Send_WritesJSONLToWriter(t *testing.T) {
 	pr, pw := io.Pipe()
 	defer func() { _ = pr.Close() }()
 
-	r := NewStdinRelay(pw, runners.RunnerClaudeCode)
+	r := NewStdinRelay(pw, runners.RunnerAmp)
 	defer func() { _ = r.Close() }()
 
 	// Send in a goroutine since pipe writes block until read.
@@ -74,7 +74,7 @@ func TestStdinRelay_Send_AfterClose_ReturnsError(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerClaudeCode)
+	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerAmp)
 
 	require.NoError(t, r.Close())
 
@@ -87,7 +87,7 @@ func TestStdinRelay_Send_BrokenPipe_ReturnsDeliveryError(t *testing.T) {
 	t.Parallel()
 
 	w := &failWriter{err: errors.New("broken pipe")}
-	r := NewStdinRelay(w, runners.RunnerClaudeCode)
+	r := NewStdinRelay(w, runners.RunnerAmp)
 
 	err := r.Send(context.Background(), "hello")
 	require.Error(t, err)
@@ -101,7 +101,7 @@ func TestStdinRelay_Close_Idempotent(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerClaudeCode)
+	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerAmp)
 
 	require.NoError(t, r.Close())
 	require.NoError(t, r.Close()) // second close is safe
@@ -111,7 +111,7 @@ func TestStdinRelay_Mode(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerClaudeCode)
+	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerAmp)
 	assert.Equal(t, ModeStdin, r.Mode())
 }
 

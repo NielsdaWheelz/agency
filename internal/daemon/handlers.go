@@ -358,6 +358,12 @@ func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, inv
 		Relay:                 chatRelay,
 		done:                  make(chan struct{}),
 	}
+	if proc.Relay != nil {
+		proc.InitializeTurnTracking()
+	}
+	parser.SetFinalNotify(func(n stream.FinalNotification) {
+		s.handleSuccessfulFinalNotification(proc, n)
+	})
 	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
 		proc.SetResumeSessionID(n.SessionID)
 	})
@@ -473,6 +479,23 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
+	s.mu.RLock()
+	completionProc, completionSupervised := s.processes[invocationID]
+	s.mu.RUnlock()
+	if completionSupervised && completionProc != nil && completionProc.SuccessfulCompletionObserved() {
+		s.scheduleStdinCompletionFinalize(completionProc)
+		resp := StopResponse{
+			OK:              true,
+			InvocationID:    invocationID,
+			RequestID:       requestID,
+			APIVersion:      APIVersion,
+			BuildVersion:    version.FullVersion(),
+			ClientRequestID: "",
+		}
+		s.writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	// Update invocation meta - mark stop requested (idempotent)
 	now := s.Clock().UTC().Format(time.RFC3339)
 	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
@@ -572,6 +595,11 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 // stopEscalation performs the stop signal escalation: SIGINT → SIGTERM → SIGKILL
 func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervised bool, proc *SupervisedProcess) {
+	if supervised && proc != nil && proc.SuccessfulCompletionObserved() {
+		s.scheduleStdinCompletionFinalize(proc)
+		return
+	}
+
 	// Set exit reason on supervised process BEFORE sending signals,
 	// so waitForExit* uses "stopped" instead of "exited" after cmd.Wait() returns.
 	if supervised && proc != nil {
@@ -639,6 +667,82 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 			m.LifecycleOwner = ""
 		})
 	}
+}
+
+const (
+	stdinCompletionSettleDelay = 500 * time.Millisecond
+	stdinCompletionStopDelay   = 3 * time.Second
+	stdinCompletionKillDelay   = 2 * time.Second
+)
+
+func (s *Server) handleSuccessfulFinalNotification(proc *SupervisedProcess, notification stream.FinalNotification) {
+	if proc == nil || !notification.Success {
+		return
+	}
+	_, _, completionSatisfied := proc.RecordSuccessfulFinalTurn()
+	if completionSatisfied {
+		s.scheduleStdinCompletionFinalize(proc)
+	}
+}
+
+func (s *Server) scheduleStdinCompletionFinalize(proc *SupervisedProcess) {
+	if proc == nil || proc.Relay == nil || proc.Relay.Mode() != relay.ModeStdin {
+		return
+	}
+	if !proc.TryBeginCompletionFinalize() {
+		return
+	}
+
+	go func() {
+		defer proc.EndCompletionFinalize()
+
+		timer := time.NewTimer(stdinCompletionSettleDelay)
+		defer timer.Stop()
+
+		select {
+		case <-proc.done:
+			return
+		case <-s.shutdownCh:
+			return
+		case <-timer.C:
+		}
+
+		if !proc.SuccessfulCompletionObserved() {
+			return
+		}
+
+		_ = proc.Relay.Close()
+
+		select {
+		case <-proc.done:
+			return
+		case <-s.shutdownCh:
+			return
+		case <-time.After(stdinCompletionStopDelay):
+		}
+
+		if !proc.SuccessfulCompletionObserved() {
+			return
+		}
+		if proc.PGID > 0 {
+			_ = syscall.Kill(-proc.PGID, syscall.SIGTERM)
+		}
+
+		select {
+		case <-proc.done:
+			return
+		case <-s.shutdownCh:
+			return
+		case <-time.After(stdinCompletionKillDelay):
+		}
+
+		if !proc.SuccessfulCompletionObserved() {
+			return
+		}
+		if proc.PGID > 0 {
+			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+		}
+	}()
 }
 
 // handleKill handles POST /invocations/{id}/kill.
@@ -1521,7 +1625,13 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		Relay:                 chatRelay,
 		done:                  make(chan struct{}),
 	}
+	if proc.Relay != nil {
+		proc.InitializeTurnTracking()
+	}
 	proc.SetResumeSessionID(resumeSessionID)
+	parser.SetFinalNotify(func(n stream.FinalNotification) {
+		s.handleSuccessfulFinalNotification(proc, n)
+	})
 
 	// Track any session_start identifier emitted by the runner so future
 	// resume turns can target the exact thread instead of relying on --last.
@@ -1676,19 +1786,34 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 	exitReason := "exited"
 	failureReason := ""
 	status := store.InvocationStatusFinished
+	completionSatisfied := proc.SuccessfulCompletionObserved()
 
-	if waitErr != nil || exitResult.ExitCode != 0 || exitResult.Signal != "" {
+	if !completionSatisfied && (waitErr != nil || exitResult.ExitCode != 0 || exitResult.Signal != "") {
 		status = store.InvocationStatusFailed
 		failureReason = "runner_exit_nonzero"
 	}
 
 	// Check if kill/stop set an override reason before the signal was sent.
 	if override, ok := proc.exitReason.Load().(string); ok && override != "" {
-		exitReason = override
-		status = store.InvocationStatusFailed
+		if completionSatisfied && override == "stopped" {
+			// Keep successful completion sticky when stop arrives after final success.
+		} else {
+			exitReason = override
+			status = store.InvocationStatusFailed
+		}
 	}
 	if override, ok := proc.failureReason.Load().(string); ok && override != "" {
-		failureReason = override
+		if completionSatisfied && override == "stopped" {
+			// Keep successful completion sticky when stop arrives after final success.
+		} else {
+			failureReason = override
+		}
+	}
+
+	if completionSatisfied && status != store.InvocationStatusFailed {
+		status = store.InvocationStatusFinished
+		failureReason = ""
+		exitCode = 0
 	}
 
 	var queuedResumePrompts []string
@@ -1788,11 +1913,19 @@ func (s *Server) enqueueFollowUpPrompts(invocationID string, prompts []string) {
 	if !ok || proc == nil || proc.Relay == nil {
 		return
 	}
+	requiresAckedTurn := proc.Relay.Mode() == relay.ModeResume
 	for _, prompt := range prompts {
 		if strings.TrimSpace(prompt) == "" {
 			continue
 		}
-		_ = proc.Relay.Send(context.Background(), prompt)
+		if requiresAckedTurn {
+			proc.IncrementExpectedTurns()
+		}
+		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+			if requiresAckedTurn {
+				proc.DecrementExpectedTurns()
+			}
+		}
 	}
 }
 

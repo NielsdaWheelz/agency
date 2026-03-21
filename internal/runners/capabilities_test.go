@@ -116,7 +116,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	claudeArgs, err := BuildHeadlessArgs("claude", "fix bug", "/sandbox", []string{"--model", "opus"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
@@ -150,6 +150,14 @@ func TestBuildHeadlessArgs_RequiresPrompt(t *testing.T) {
 func TestBuildResumeArgs(t *testing.T) {
 	t.Parallel()
 
+	claudeArgs, err := BuildResumeArgs("claude", "continue from previous turn", "", []string{"--model", "opus"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--continue", "--model", "opus", "continue from previous turn"}, claudeArgs)
+
+	claudeExplicitArgs, err := BuildResumeArgs("claude", "continue from previous turn", "sess_abc123", []string{"--model", "opus"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--resume", "sess_abc123", "--model", "opus", "continue from previous turn"}, claudeExplicitArgs)
+
 	codexArgs, err := BuildResumeArgs("codex", "continue from previous turn", "", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"exec", "resume", "--last", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexArgs)
@@ -170,6 +178,7 @@ func TestBuildResumeArgs(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
 
+	assert.True(t, SupportsResumeTurns("claude"))
 	assert.True(t, SupportsResumeTurns("codex"))
 	assert.True(t, SupportsResumeTurns("cursor"))
 	assert.False(t, SupportsResumeTurns("amp"))
@@ -210,8 +219,8 @@ func TestChatMode(t *testing.T) {
 		runner string
 		want   ChatMode
 	}{
-		{"claude-code", ChatModeStdin},
-		{"claude", ChatModeStdin},
+		{"claude-code", ChatModeResume},
+		{"claude", ChatModeResume},
 		{"codex", ChatModeResume},
 		{"amp", ChatModeStdin},
 		{"opencode", ChatModeResume},
@@ -236,8 +245,8 @@ func TestInitialPromptMode(t *testing.T) {
 		runner string
 		want   InitialPromptMode
 	}{
-		{"claude-code", InitialPromptStdin},
-		{"claude", InitialPromptStdin},
+		{"claude-code", InitialPromptPositional},
+		{"claude", InitialPromptPositional},
 		{"codex", InitialPromptPositional},
 		{"amp", InitialPromptStdin},
 		{"opencode", InitialPromptPositional},

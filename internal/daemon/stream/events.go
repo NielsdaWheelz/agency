@@ -112,6 +112,13 @@ type SessionStartNotification struct {
 	Seq uint64
 }
 
+// FinalNotification is emitted by the parser when a final event is persisted.
+// Success indicates whether the final represented successful completion.
+type FinalNotification struct {
+	Success bool
+	Seq     uint64
+}
+
 // MessageData contains data for message events.
 // ContentBlocks, when present, preserves the full structure of content blocks
 // (text, tool_use, tool_result) with their complete fields. This is additive
