@@ -45,7 +45,3 @@ bin/
 
 # completions
 completions/
-
-# temporary files
-tmp.md
-tmp/
