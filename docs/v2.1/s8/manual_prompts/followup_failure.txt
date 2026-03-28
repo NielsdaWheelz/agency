@@ -1,0 +1,9 @@
+Do not edit any files.
+
+Run exactly:
+`sh -lc 'printf "failure-start\n"; printf "intentional-stderr\n" >&2; exit 7'`
+
+Then explain the failure in 2-4 sentences and explicitly mention:
+- the exit code
+- whether any files changed
+- whether stdout or stderr was used

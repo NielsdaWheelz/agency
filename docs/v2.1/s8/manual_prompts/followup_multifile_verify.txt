@@ -1,0 +1,20 @@
+Only modify files under `tmp/s8-manual/`.
+Prefer a multi-file edit or write tool if available; otherwise equivalent sequential edits are fine.
+
+Create or update both `tmp/s8-manual/checklist.md` and `tmp/s8-manual/report.txt`.
+
+`tmp/s8-manual/checklist.md` must contain:
+- `seed-line: one`
+- `followup-line: two`
+- `notes.md exists`
+- `search.txt exists`
+
+`tmp/s8-manual/report.txt` must contain exactly these three lines:
+`first-line: alpha`
+`second-line: beta`
+`third-line: gamma`
+
+Then run exactly:
+`sh -lc 'printf "verify-start\n"; nl -ba tmp/s8-manual/notes.md tmp/s8-manual/checklist.md tmp/s8-manual/report.txt; printf "verify-end\n"'`
+
+Finally, summarize what changed and quote the last numbered line from the verification output.

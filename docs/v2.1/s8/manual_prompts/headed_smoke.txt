@@ -1,0 +1,3 @@
+This is a headed Agency smoke test.
+
+Read `README.md`, create `tmp/s8-manual/headed-smoke.txt` with the line `headed-smoke: one`, then tell me what file you changed and wait for my next instruction.
