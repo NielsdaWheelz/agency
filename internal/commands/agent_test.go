@@ -53,6 +53,7 @@ func setupAgentTestEnv(t *testing.T, worktreeName string) (string, string, strin
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
 
 	fsys := fs.NewRealFS()
+	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// Create store directories
 	repoStoreDir := filepath.Join(dataDir, "repos", repoID)
@@ -85,6 +86,32 @@ func setupAgentTestEnv(t *testing.T, worktreeName string) (string, string, strin
 	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	metaPath := filepath.Join(worktreeDir, "meta.json")
 	require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
+
+	repoIndex := store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoIdentity.RepoKey: {
+				RepoID:     repoID,
+				Paths:      []string{repoDir},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}
+	repoRecord := store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoDir,
+		PreferredRoot:    repoDir,
+		AgencyJSONPath:   filepath.Join(repoDir, "agency.json"),
+		OriginPresent:    true,
+		OriginURL:        originURL,
+		OriginHost:       "github.com",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}
+	require.NoError(t, st.SaveRepoIndex(repoIndex))
+	require.NoError(t, st.SaveRepoRecord(repoRecord))
 
 	return repoDir, dataDir, repoID, worktreeID, cr, fsys
 }
@@ -290,10 +317,36 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	imBytes, _ := json.MarshalIndent(invMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imBytes, 0644))
 
-	// Start daemon
 	fsys := fs.NewRealFS()
-	cr := testutil.NewFakeCommandRunner()
 	st := store.NewStore(fsys, dataTmp, time.Now)
+	repoRoot := filepath.Join(dataTmp, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+	repoIndex := store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}
+	require.NoError(t, st.SaveRepoIndex(repoIndex))
+	repoRecord := store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}
+	require.NoError(t, st.SaveRepoRecord(repoRecord))
+
+	// Start daemon
+	cr := testutil.NewFakeCommandRunner()
 	configDir := filepath.Join(dataTmp, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	srv := daemon.NewServer(st, cr, fsys, configDir)

@@ -36,7 +36,7 @@ func (s *Server) handleS1ReleaseReadiness(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	source := releasegates.NewMarkdownIssueSource(repoRoot)
+	source := releasegates.NewSource(repoRoot)
 	svc := releasegates.NewService(source)
 
 	_, svcErr := svc.EvaluateReleaseReadiness(releasegates.ReleaseReadinessRequest{Slice: "S1"}, repoRoot)
@@ -75,7 +75,7 @@ func (s *Server) handleS1ClosureReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source := releasegates.NewMarkdownIssueSource(repoRoot)
+	source := releasegates.NewSource(repoRoot)
 	svc := releasegates.NewService(source)
 
 	result, svcErr := svc.BuildClosureReport(releasegates.ClosureReportRequest{Slice: "S1"}, repoRoot)
@@ -106,7 +106,7 @@ func (s *Server) handleS1FreezeReadiness(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	source := releasegates.NewMarkdownIssueSource(repoRoot)
+	source := releasegates.NewSource(repoRoot)
 	svc := releasegates.NewService(source)
 
 	result, svcErr := svc.EvaluateFreezeReadiness(releasegates.FreezeReadinessRequest{}, repoRoot)

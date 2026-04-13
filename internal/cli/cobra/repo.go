@@ -11,6 +11,12 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
+var getWorkingDir = os.Getwd
+
+func currentWorkingDir() (string, error) {
+	return getWorkingDir()
+}
+
 func newRepoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repo",
@@ -62,13 +68,16 @@ Example:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if path == "" {
 				var err error
-				path, err = os.Getwd()
+				path, err = currentWorkingDir()
 				if err != nil {
 					return errors.Wrap(errors.EInternal, "failed to get cwd", err)
 				}
 			}
 
-			cwd, _ := os.Getwd()
+			cwd, err := currentWorkingDir()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
 			cr := exec.NewRealRunner()
 			fsys := fs.NewRealFS()
 
@@ -189,7 +198,10 @@ Example:
   agency repo s1 readiness --repo <repo_id>`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
+			cwd, err := currentWorkingDir()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
 			cr := exec.NewRealRunner()
 			fsys := fs.NewRealFS()
 
@@ -215,7 +227,10 @@ func newRepoS1ReportCmd() *cobra.Command {
 		Short: "Generate S1 closure evidence report",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
+			cwd, err := currentWorkingDir()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
 			cr := exec.NewRealRunner()
 			fsys := fs.NewRealFS()
 
@@ -241,7 +256,10 @@ func newRepoS1FreezeCmd() *cobra.Command {
 		Short: "Check S1 freeze readiness",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
+			cwd, err := currentWorkingDir()
+			if err != nil {
+				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			}
 			cr := exec.NewRealRunner()
 			fsys := fs.NewRealFS()
 

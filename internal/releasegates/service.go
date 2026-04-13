@@ -13,12 +13,12 @@ import (
 // Service implements PR-05 release-gate enforcement orchestration.
 // It consumes PR-03/PR-04 evaluation outputs without redefining them.
 type Service struct {
-	issueSource IssueSource
+	source *Source
 }
 
-// NewService creates a release-gates service with the given issue source.
-func NewService(source IssueSource) *Service {
-	return &Service{issueSource: source}
+// NewService creates a release-gates service with the given source.
+func NewService(source *Source) *Service {
+	return &Service{source: source}
 }
 
 // EvaluateReleaseReadiness consumes RequireSliceReady to produce a release-readiness result.
@@ -84,7 +84,7 @@ func (s *Service) BuildClosureReport(req ClosureReportRequest, repoRoot string) 
 
 	evaluations := make(map[string]*GateItemEvaluation, len(allItems))
 	for _, issuePath := range allItems {
-		eval, evalErr := s.issueSource.Evaluate(issuePath)
+		eval, evalErr := s.source.Evaluate(issuePath)
 		if evalErr != nil {
 			code := agencyerrors.GetCode(evalErr)
 			return nil, agencyerrors.NewWithDetails(
@@ -128,7 +128,7 @@ func (s *Service) buildGateSnapshot(gateID string, items []string, evaluations m
 		eval := evaluations[issuePath]
 		if eval.State == StateClosed && eval.BlockingCode == "" {
 			snap.ClosedItems++
-			ce, _ := s.issueSource.GetClosureEvidence(issuePath)
+			ce, _ := s.source.GetClosureEvidence(issuePath)
 			evidence := ClosedItemEvidence{
 				IssuePath:       issuePath,
 				ImplementedRefs: []string{},

@@ -54,7 +54,7 @@ func TestDaemonClient_ReadAPIErrorPassthrough_PreservesDetails(t *testing.T) {
 	socketPath := startFakeDaemon(t, handler)
 	client := NewClient(socketPath)
 
-	_, err := client.GetWorktreeRich(context.Background(), "alpha", "repo-1")
+	_, err := client.GetWorktree(context.Background(), "alpha", "repo-1")
 	require.Error(t, err)
 
 	// DaemonReadError must be extractable
@@ -79,7 +79,7 @@ func TestDaemonClient_ReadAPIErrorPassthrough_PreservesDetails(t *testing.T) {
 	require.NoError(t, json.Unmarshal(dre.RawDetails, &raw))
 	assert.Contains(t, raw, "candidates")
 
-	// AgencyError extractable for backward-compat code paths
+	// AgencyError extractable from the canonical read method.
 	code := errors.GetCode(err)
 	assert.Equal(t, errors.EWorktreeIDAmbiguous, code)
 
@@ -88,7 +88,7 @@ func TestDaemonClient_ReadAPIErrorPassthrough_PreservesDetails(t *testing.T) {
 	assert.Equal(t, errors.EWorktreeIDAmbiguous, ae.Code)
 }
 
-func TestDaemonClient_ReadAPIErrorPassthrough_InvocationRich(t *testing.T) {
+func TestDaemonClient_ReadAPIErrorPassthrough_Invocation(t *testing.T) {
 	t.Parallel()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +106,7 @@ func TestDaemonClient_ReadAPIErrorPassthrough_InvocationRich(t *testing.T) {
 	socketPath := startFakeDaemon(t, handler)
 	client := NewClient(socketPath)
 
-	_, err := client.GetInvocationRich(context.Background(), "run", "repo-1")
+	_, err := client.GetInvocation(context.Background(), "run", "repo-1")
 	require.Error(t, err)
 
 	dre, ok := AsDaemonReadError(err)
@@ -118,7 +118,7 @@ func TestDaemonClient_ReadAPIErrorPassthrough_InvocationRich(t *testing.T) {
 	assert.Equal(t, []string{"inv-a", "inv-b"}, candidates)
 }
 
-func TestDaemonClient_ExistingGetWorktree_DoesNotReturnDaemonReadError(t *testing.T) {
+func TestDaemonClient_GetWorktree_ReturnsDaemonReadError(t *testing.T) {
 	t.Parallel()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +126,7 @@ func TestDaemonClient_ExistingGetWorktree_DoesNotReturnDaemonReadError(t *testin
 			OK:        false,
 			ErrorCode: "E_WORKTREE_NOT_FOUND",
 			Message:   "worktree not found",
-			Hint:      "this hint is dropped by existing method",
+			Hint:      "canonical read method should preserve this hint",
 			Details:   daemon.AmbiguousDetails{Candidates: []string{"wt-1"}},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -139,12 +139,10 @@ func TestDaemonClient_ExistingGetWorktree_DoesNotReturnDaemonReadError(t *testin
 	_, err := client.GetWorktree(context.Background(), "alpha", "repo-1")
 	require.Error(t, err)
 
-	// Existing method must NOT return DaemonReadError
-	_, ok := AsDaemonReadError(err)
-	assert.False(t, ok, "existing GetWorktree must not return DaemonReadError")
-
-	// Error code still works
-	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	dre, ok := AsDaemonReadError(err)
+	require.True(t, ok)
+	assert.Equal(t, errors.EWorktreeNotFound, dre.AgencyErr.Code)
+	assert.Equal(t, "canonical read method should preserve this hint", dre.Hint)
 }
 
 func TestDaemonClient_ReadAPIErrorPassthrough_NoDetails(t *testing.T) {
@@ -163,7 +161,7 @@ func TestDaemonClient_ReadAPIErrorPassthrough_NoDetails(t *testing.T) {
 	socketPath := startFakeDaemon(t, handler)
 	client := NewClient(socketPath)
 
-	_, err := client.GetWorktreeRich(context.Background(), "missing", "repo-1")
+	_, err := client.GetWorktree(context.Background(), "missing", "repo-1")
 	require.Error(t, err)
 
 	dre, ok := AsDaemonReadError(err)

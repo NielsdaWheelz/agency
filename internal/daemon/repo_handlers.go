@@ -213,7 +213,7 @@ func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request, repoRef s
 	// Build refs for resolver
 	refs := s.buildRepoRefs(idx)
 
-	resolved, resolveErr := ids.ResolveRepoRef(repoRef, refs, ids.ResolveRepoRefOpts{})
+	resolved, resolveErr := ids.ResolveRepoRef(repoRef, refs)
 	if resolveErr != nil {
 		switch e := resolveErr.(type) {
 		case *ids.ErrRepoAmbiguous:

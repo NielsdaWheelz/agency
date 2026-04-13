@@ -99,7 +99,24 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 	// Get all repos to scan
 	repoIDs, err := s.getRepoIDsForQuery(params.RepoID)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		switch e := err.(type) {
+		case *ids.ErrRepoAmbiguous:
+			candidates := make([]string, len(e.Candidates))
+			for i, c := range e.Candidates {
+				candidates[i] = c.RepoID
+			}
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoIDAmbiguous),
+				e.Error(),
+				"use a more specific name, repo key, or full repo id",
+				AmbiguousDetails{Candidates: candidates})
+		case *ids.ErrRepoNotFound:
+			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
+				e.Error(),
+				"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
+				nil)
+		default:
+			s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		}
 		return
 	}
 
@@ -220,7 +237,24 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 	// Get all repos to scan
 	repoIDs, err := s.getRepoIDsForQuery(params.RepoID)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		switch e := err.(type) {
+		case *ids.ErrRepoAmbiguous:
+			candidates := make([]string, len(e.Candidates))
+			for i, c := range e.Candidates {
+				candidates[i] = c.RepoID
+			}
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoIDAmbiguous),
+				e.Error(),
+				"use a more specific name, repo key, or full repo id",
+				AmbiguousDetails{Candidates: candidates})
+		case *ids.ErrRepoNotFound:
+			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
+				e.Error(),
+				"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
+				nil)
+		default:
+			s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		}
 		return
 	}
 
@@ -428,12 +462,6 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 
 	// Get repo_id from query params (optional)
 	repoID := r.URL.Query().Get("repo_id")
-
-	if r.URL.Query().Has("tail_bytes") {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
-			"tail_bytes is no longer supported", "use offset and limit", nil)
-		return
-	}
 
 	// Parse logs params
 	params := parseGetLogsParams(r)
@@ -737,7 +765,10 @@ func (s *Server) getRepoIDsForQuery(filterRepoRef string) ([]string, error) {
 	// Load repo index
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {
-		return nil, err
+		if filterRepoRef == "" {
+			return []string{}, nil
+		}
+		return []string{filterRepoRef}, nil
 	}
 
 	if filterRepoRef == "" {
@@ -750,16 +781,12 @@ func (s *Server) getRepoIDsForQuery(filterRepoRef string) ([]string, error) {
 
 	// Build refs and resolve
 	refs := s.buildRepoRefs(idx)
-	resolved, resolveErr := ids.ResolveRepoRef(filterRepoRef, refs, ids.ResolveRepoRefOpts{})
+	resolved, resolveErr := ids.ResolveRepoRef(filterRepoRef, refs)
 	if resolveErr != nil {
-		// Resolution failed. Pass through the raw value for backward compat
-		// (it may be a valid repo ID not yet in the index). Reject values
-		// containing path separators to prevent directory traversal since
-		// this value is used in filepath.Join for filesystem operations.
-		if strings.ContainsAny(filterRepoRef, "/\\") {
-			return []string{}, nil
+		if _, ok := resolveErr.(*ids.ErrRepoNotFound); ok {
+			return []string{filterRepoRef}, nil
 		}
-		return []string{filterRepoRef}, nil
+		return nil, resolveErr
 	}
 	return []string{resolved.RepoID}, nil
 }

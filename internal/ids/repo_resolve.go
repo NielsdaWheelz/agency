@@ -70,10 +70,6 @@ func repoOwnerSlashName(repoKey string) string {
 	return after
 }
 
-// ResolveRepoRefOpts contains options for repo resolution.
-// Currently empty; exists for forward compatibility with worktree/invocation resolver patterns.
-type ResolveRepoRefOpts struct{}
-
 // ResolveRepoRef resolves an input identifier to a single repo reference.
 //
 // Resolution rules (4-tier, extending the 3-tier worktree/invocation pattern
@@ -88,7 +84,7 @@ type ResolveRepoRefOpts struct{}
 //     If exactly 1 matches, return it.
 //
 // Broken repos are excluded from name/key/prefix matching but reachable by exact ID.
-func ResolveRepoRef(input string, refs []RepoRef, _ ResolveRepoRefOpts) (RepoRef, error) {
+func ResolveRepoRef(input string, refs []RepoRef) (RepoRef, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return RepoRef{}, &ErrRepoNotFound{Input: ""}

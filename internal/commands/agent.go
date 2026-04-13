@@ -22,7 +22,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -88,13 +87,11 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		fsys = fs.NewRealFS()
 	}
 
-	// Resolve paths
-	homeDir, err := os.UserHomeDir()
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
+		return fail(err)
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	userCfg, _, err := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
 	if err != nil {
 		return fail(err)
 	}
@@ -118,12 +115,12 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	// For headless mode (PR-05): delegate everything to daemon control plane
 	if opts.Headless {
-		return fail(agentStartHeadlessControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr))
+		return fail(agentStartHeadlessControlPlane(ctx, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
 	}
 
 	// PR-10: For headed mode: delegate to daemon control plane
 	// CLI never creates invocations, sandboxes, or tmux sessions directly
-	return fail(agentStartHeadedControlPlane(ctx, cr, fsys, repoRoot.Path, dirs, opts, runner, stdout, stderr))
+	return fail(agentStartHeadedControlPlane(ctx, cr, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
 }
 
 func resolveAgentRunner(input, defaultRunner string) (string, error) {
@@ -902,18 +899,7 @@ func WriteAgentMutationJSONError(w io.Writer, err error) error {
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane (PR-10).
 // CLI does NOT create invocation, sandbox, or tmux session - daemon does everything.
-func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, repoRootPath string, dirs paths.Dirs, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	// Check API version compatibility
+func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
 	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
@@ -1009,7 +995,7 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 
 // agentStartHeadlessControlPlane handles headless invocation start via daemon control plane (PR-05).
 // CLI does NOT create invocation or sandbox - daemon does everything.
-func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, repoRootPath string, dirs paths.Dirs, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
+func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
 	prompt, err := resolveBoundedPromptInput(
 		opts.Prompt,
 		opts.PromptFile,
@@ -1021,17 +1007,6 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 		return err
 	}
 
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	// Check API version compatibility (PR-05)
 	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
@@ -1138,29 +1113,13 @@ type AgentLSOpts struct {
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
 func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLSOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
-	homeDir, err := os.UserHomeDir()
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 
 	// PR-A: Resolve repo context via daemon
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllRepos:      opts.AllRepos,
 		AllowAllRepos: true,
@@ -1180,7 +1139,7 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		repoID = repoCtx.RepoID
 	}
 
-	result, fetchErr := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+	result, fetchErr := ns.client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
 		RepoID:      repoID,
 		WorktreeRef: opts.WorktreeRef,
 		State:       state,
@@ -1278,26 +1237,12 @@ type AgentShowOpts struct {
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo for CWD-less operation.
 func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShowOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent show",
@@ -1306,7 +1251,7 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	result, err := client.GetInvocationRich(ctx, opts.InvocationRef, repoCtx.RepoID)
+	result, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -1446,26 +1391,12 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return writeAgentMutationJSONError(stdout, err)
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return fail(err)
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent stop",
@@ -1475,6 +1406,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	// Resolve invocation
+	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
 	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
 		IncludeFinished: false,
@@ -1494,7 +1426,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		))
 	}
 
-	resp, err := client.Stop(ctx, repoCtx.RepoID, record.InvocationID)
+	resp, err := ns.client.Stop(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
 		return fail(err)
 	}
@@ -1582,32 +1514,12 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent diff",
@@ -1616,7 +1528,7 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	result, err := client.GetInvocationDiff(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationDiffOpts{
+	result, err := ns.client.GetInvocationDiff(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationDiffOpts{
 		IncludePatch:       true,
 		IncludeUncommitted: true,
 		TurnID:             strings.TrimSpace(opts.TurnID),
@@ -1740,32 +1652,12 @@ type AgentReviewOpts struct {
 
 // AgentReview reports canonical review/readiness state for invocation progression.
 func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentReviewOpts, stdout, stderr io.Writer) error {
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent review",
@@ -1774,7 +1666,7 @@ func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		return err
 	}
 
-	result, err := client.GetInvocationReview(ctx, opts.InvocationRef, repoCtx.RepoID)
+	result, err := ns.client.GetInvocationReview(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -1950,26 +1842,13 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return writeAgentMutationJSONError(stdout, err)
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return fail(err)
 	}
+	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent land",
@@ -1999,7 +1878,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	// Call daemon to land
-	resp, err := client.Land(ctx, daemonclient.LandOpts{
+	resp, err := ns.client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoCtx.RepoID,
 		InvocationID: record.InvocationID,
 		Apply:        opts.Apply,
@@ -2077,26 +1956,13 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return writeAgentMutationJSONError(stdout, err)
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return fail(err)
 	}
+	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent discard",
@@ -2126,7 +1992,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	// Call daemon to discard
-	resp, err := client.Discard(ctx, repoCtx.RepoID, record.InvocationID)
+	resp, err := ns.client.Discard(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
 		return fail(err)
 	}
@@ -2166,38 +2032,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // Shared navigation kernel setup for agent path/open/shell/enter (S2-PR04)
 // ---------------------------------------------------------------------------
 
-type agentNavSetup struct {
-	dirs   paths.Dirs
-	client *daemonclient.Client
-}
-
-func setupAgentNav(ctx context.Context, fsys fs.FS) (*agentNavSetup, error) {
-	return setupAgentNavWithDataDir(ctx, fsys, "")
-}
-
-func setupAgentNavWithDataDir(ctx context.Context, fsys fs.FS, dataDirOverride string) (*agentNavSetup, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	if dataDirOverride != "" {
-		dirs.DataDir = dataDirOverride
-	}
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &agentNavSetup{dirs: dirs, client: client}, nil
-}
-
-func (ns *agentNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string, isInteractive func() bool) NavigationDeps {
+func (ns *daemonNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string, isInteractive func() bool) NavigationDeps {
 	return NavigationDeps{
 		ResolveRepo: func(ctx context.Context) (*RepoContextResult, error) {
 			return ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
@@ -2209,7 +2044,7 @@ func (ns *agentNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdN
 		EnsureDaemon:    func(ctx context.Context) error { return nil },
 		CheckAPIVersion: func(ctx context.Context) error { return ns.client.CheckAPIVersion(ctx) },
 		GetInvocation: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-			result, err := ns.client.GetInvocationRich(ctx, ref, repoID)
+			result, err := ns.client.GetInvocation(ctx, ref, repoID)
 			if err != nil {
 				return nil, err
 			}
@@ -2228,8 +2063,8 @@ func (ns *agentNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdN
 // resolvedInvocationMode returns the daemon-resolved invocation mode for the
 // navigation result's target ID. This is a separate daemon read because the
 // navigation kernel only returns identity/path, not the full DTO.
-func (ns *agentNavSetup) resolvedInvocationMode(ctx context.Context, invocationID, repoID string) (string, error) {
-	result, err := ns.client.GetInvocationRich(ctx, invocationID, repoID)
+func (ns *daemonNavSetup) resolvedInvocationMode(ctx context.Context, invocationID, repoID string) (string, error) {
+	result, err := ns.client.GetInvocation(ctx, invocationID, repoID)
 	if err != nil {
 		return "", err
 	}
@@ -2249,7 +2084,7 @@ type AgentPathOpts struct {
 // AgentPath outputs the daemon-resolved sandbox path for an invocation.
 // S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
 func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentPathOpts, stdout, stderr io.Writer) error {
-	ns, err := setupAgentNav(ctx, fsys)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
@@ -2292,7 +2127,7 @@ type AgentOpenOpts struct {
 // S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
 // No local invocation target discovery — sandbox_path sourced from daemon.
 func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
-	ns, err := setupAgentNavWithDataDir(ctx, fsys, opts.DataDirOverride)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
@@ -2339,12 +2174,7 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		editor = "code"
 	}
 
-	runResult, runErr := exec.RunAttached(ctx, editor, []string{sandboxPath}, exec.AttachedRunOpts{
-		Dir:    sandboxPath,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
+	runResult, runErr := runAttachedInDir(ctx, editor, []string{sandboxPath}, sandboxPath)
 	if runErr != nil {
 		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", runErr)
 	}
@@ -2371,7 +2201,7 @@ type AgentShellOpts struct {
 // AgentShell opens a shell with cwd set to the daemon-resolved sandbox path.
 // S2-PR04: Routes through shared navigation kernel for daemon-first resolution.
 func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShellOpts, stdout, stderr io.Writer) error {
-	ns, err := setupAgentNav(ctx, fsys)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
@@ -2411,12 +2241,7 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		shell = "/bin/sh"
 	}
 
-	runResult, runErr := exec.RunAttached(ctx, shell, []string{"-l"}, exec.AttachedRunOpts{
-		Dir:    sandboxPath,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
+	runResult, runErr := runAttachedInDir(ctx, shell, []string{"-l"}, sandboxPath)
 	if runErr != nil {
 		return errors.Wrap(errors.EInternal, "failed to run shell", runErr)
 	}
@@ -2472,7 +2297,7 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		)
 	}
 
-	ns, err := setupAgentNavWithDataDir(ctx, fsys, opts.DataDirOverride)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
@@ -2582,29 +2407,12 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return fail(err)
 	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
 
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent chat",
@@ -2613,7 +2421,7 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	resp, err := client.SubmitFollowUpPrompt(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpPromptOpts{
+	resp, err := ns.client.SubmitFollowUpPrompt(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpPromptOpts{
 		Prompt: prompt,
 	})
 	if err != nil {
@@ -2745,33 +2553,16 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		}
 	}
 
-	homeDir, err := os.UserHomeDir()
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
+		return fail(err)
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	dataDir := dirs.DataDir
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	}
-	userCfg, _, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	userCfg, _, err := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
 	if err != nil {
 		return fail(err)
 	}
 
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return fail(err)
-	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent restart",
@@ -2786,7 +2577,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		strings.TrimSpace(userCfg.Defaults.Effort) != "" ||
 		hasTypedOptionRunnerArgs(opts.RunnerArgs)
 	if needsRunnerOptionResolution {
-		invocationResult, err := client.GetInvocationRich(ctx, opts.InvocationRef, repoCtx.RepoID)
+		invocationResult, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
 			return fail(err)
 		}
@@ -2803,11 +2594,11 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	if opts.InteractiveHistory {
-		timelineEntries, err := fetchAllTimelineEntries(ctx, client, opts.InvocationRef, repoCtx.RepoID)
+		timelineEntries, err := fetchAllTimelineEntries(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
 			return fail(err)
 		}
-		checkpoints, err := fetchAllCheckpoints(ctx, client, opts.InvocationRef, repoCtx.RepoID)
+		checkpoints, err := fetchAllCheckpoints(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
 			return fail(err)
 		}
@@ -2867,7 +2658,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		opts.CheckpointID = selected.CheckpointID
 	}
 
-	resp, err := client.RestartFromCheckpoint(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.RestartFromCheckpointOpts{
+	resp, err := ns.client.RestartFromCheckpoint(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.RestartFromCheckpointOpts{
 		CheckpointID: opts.CheckpointID,
 		RunnerArgs:   effectiveRunnerArgs,
 		Env:          opts.Env,
@@ -3110,32 +2901,12 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		)
 	}
 
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent history",
@@ -3148,7 +2919,7 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	// For default human history and --last resolution we project from shared turns
 	// so history aligns with restart --history semantics.
 	if opts.JSON && !opts.Last {
-		result, err := client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
+		result, err := ns.client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
 			Limit:  opts.Limit,
 			Cursor: opts.Cursor,
 		})
@@ -3158,7 +2929,7 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return writeAgentHistoryJSONFromDTO(stdout, result.Entries, result.NextCursor)
 	}
 
-	entries, turns, err := loadHistoryTimelineAndTurns(ctx, client, opts.InvocationRef, repoCtx.RepoID)
+	entries, turns, err := loadHistoryTimelineAndTurns(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -3375,7 +3146,7 @@ func timelineEntriesForTurn(entries []daemon.TimelineEntryDTO, turns []historypi
 
 func includeInLastTurnJSON(kind string) bool {
 	switch kind {
-	case "session_start", "final", "raw_log_coverage", "usage", "status":
+	case "session_start", "final", "error", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
 		return false
 	default:
 		return true
@@ -3384,20 +3155,11 @@ func includeInLastTurnJSON(kind string) bool {
 
 func latestMeaningfulTimelineEntry(entries []daemon.TimelineEntryDTO) (daemon.TimelineEntryDTO, bool) {
 	for i := len(entries) - 1; i >= 0; i-- {
-		if isMeaningfulTimelineEntry(entries[i].Kind) {
+		if includeInLastTurnJSON(entries[i].Kind) {
 			return entries[i], true
 		}
 	}
 	return daemon.TimelineEntryDTO{}, false
-}
-
-func isMeaningfulTimelineEntry(kind string) bool {
-	switch kind {
-	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
-		return false
-	default:
-		return true
-	}
 }
 
 func historyTurnIDExists(turns []historypicker.Turn, entryID string) bool {
@@ -3638,32 +3400,12 @@ type AgentLogsOpts struct {
 // Without --follow: pages to EOF and exits.
 // With --follow: pages to EOF, then polls for new data until interrupted.
 func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLogsOpts, stdout, stderr io.Writer) error {
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent logs",
@@ -3690,7 +3432,7 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	// Page to EOF
 	for {
-		result, err := client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
+		result, err := ns.client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
 			Kind:   kind,
 			Offset: offset,
 			Limit:  65536,
@@ -3738,7 +3480,7 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		default:
 		}
 
-		result, err := client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
+		result, err := ns.client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
 			Kind:   kind,
 			Offset: offset,
 			Limit:  65536,
@@ -3781,26 +3523,12 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return writeAgentMutationJSONError(stdout, err)
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return fail(err)
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "agent kill",
@@ -3810,6 +3538,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	// Resolve invocation
+	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 	invSvc := invocation.NewService(st, cr, fsys, time.Now)
 	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
 		IncludeFinished: true,
@@ -3829,7 +3558,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		))
 	}
 
-	resp, err := client.Kill(ctx, repoCtx.RepoID, record.InvocationID)
+	resp, err := ns.client.Kill(ctx, repoCtx.RepoID, record.InvocationID)
 	if err != nil {
 		return fail(err)
 	}

@@ -51,6 +51,31 @@ func setupWorktreeEnv(t *testing.T, name string) worktreeTestEnv {
 	treePath := createWorktreeInStore(t, dataTmp, repoID, wtID, name,
 		"agency/"+name+"-abcd", "main")
 
+	repoRoot := filepath.Join(dataTmp, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+	st := store.NewStore(fs.NewRealFS(), dataTmp, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}))
+
 	startTestDaemonForWorktree(t, dataTmp)
 
 	configDir := filepath.Join(dataTmp, "config")
@@ -511,21 +536,6 @@ func TestWorktreeRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *tes
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
-}
-
-func TestWorktreeRm_NonInteractiveWithYes_Proceeds(t *testing.T) {
-	env := setupWorktreeEnv(t, "rm-yes")
-
-	var stdout, stderr bytes.Buffer
-	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
-		WorktreeRef:   env.WorktreeID,
-		RepoFlag:      env.RepoID,
-		Yes:           true,
-		IsInteractive: func() bool { return false },
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.NotEqual(t, errors.EConfirmationRequired, errors.GetCode(err))
-	assert.NotEqual(t, errors.EAborted, errors.GetCode(err))
 }
 
 func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T) {

@@ -107,23 +107,8 @@ type RepoAddOpts struct {
 
 // RepoAdd registers a repository with the daemon.
 func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoAddOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 
@@ -156,23 +141,8 @@ type RepoLSOpts struct {
 
 // RepoLS lists registered repositories.
 func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 
@@ -218,7 +188,7 @@ type RepoS1ReadinessOpts struct {
 
 // RepoS1Readiness checks S1 release readiness via the daemon.
 func RepoS1Readiness(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoS1ReadinessOpts, stdout, stderr io.Writer) error {
-	client, err := ensureDaemonClient(ctx, fsys)
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
@@ -268,7 +238,7 @@ type RepoS1ClosureReportOpts struct {
 
 // RepoS1ClosureReport generates the S1 closure report via the daemon.
 func RepoS1ClosureReport(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoS1ClosureReportOpts, stdout, stderr io.Writer) error {
-	client, err := ensureDaemonClient(ctx, fsys)
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
@@ -311,7 +281,7 @@ type RepoS1FreezeReadinessOpts struct {
 
 // RepoS1FreezeReadiness checks S1 freeze readiness via the daemon.
 func RepoS1FreezeReadiness(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoS1FreezeReadinessOpts, stdout, stderr io.Writer) error {
-	client, err := ensureDaemonClient(ctx, fsys)
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
@@ -351,29 +321,6 @@ func RepoS1FreezeReadiness(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 	return nil
 }
 
-func ensureDaemonClient(ctx context.Context, fsys fs.FS) (*daemonclient.Client, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return nil, err
-	}
-
-	return client, nil
-}
-
 func readyLabel(ready bool) string {
 	if ready {
 		return "READY"
@@ -409,6 +356,67 @@ func writeJSONError(w io.Writer, code, message string) error {
 	return enc.Encode(resp)
 }
 
+type daemonNavSetup struct {
+	dirs   paths.Dirs
+	client *daemonclient.Client
+}
+
+func resolveCommandDirs(dataDirOverride string) (paths.Dirs, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return paths.Dirs{}, errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	if dataDirOverride != "" {
+		dirs.DataDir = dataDirOverride
+	}
+	return dirs, nil
+}
+
+func ensureDaemonClient(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonclient.Client, error) {
+	dirs, err := resolveCommandDirs(dataDirOverride)
+	if err != nil {
+		return nil, err
+	}
+	return ensureDaemonClientFromDirs(ctx, fsys, dirs)
+}
+
+func ensureDaemonClientFromDirs(ctx context.Context, fsys fs.FS, dirs paths.Dirs) (*daemonclient.Client, error) {
+	st := store.NewStore(fsys, dirs.DataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	logPath := st.DaemonLogPath()
+
+	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func setupDaemonNav(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonNavSetup, error) {
+	dirs, err := resolveCommandDirs(dataDirOverride)
+	if err != nil {
+		return nil, err
+	}
+	client, err := ensureDaemonClientFromDirs(ctx, fsys, dirs)
+	if err != nil {
+		return nil, err
+	}
+	return &daemonNavSetup{dirs: dirs, client: client}, nil
+}
+
+func runAttachedInDir(ctx context.Context, command string, args []string, dir string) (exec.CmdResult, error) {
+	return exec.RunAttached(ctx, command, args, exec.AttachedRunOpts{
+		Dir:    dir,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+}
+
 // RepoShowOpts holds options for the repo show command.
 type RepoShowOpts struct {
 	RepoID string
@@ -417,23 +425,8 @@ type RepoShowOpts struct {
 
 // RepoShow shows details for a registered repository.
 func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoShowOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 

@@ -29,7 +29,7 @@ func readTestdata(t *testing.T, name string) string {
 func TestEvaluateReleaseReadiness_UsesRequireSliceReady(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_blocked")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	_, err := svc.EvaluateReleaseReadiness(ReleaseReadinessRequest{Slice: "S1"}, repoRoot)
@@ -49,7 +49,7 @@ func TestEvaluateReleaseReadiness_UsesRequireSliceReady(t *testing.T) {
 func TestEvaluateReleaseReadiness_Ready(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_all_closed")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	result, err := svc.EvaluateReleaseReadiness(ReleaseReadinessRequest{Slice: "S1"}, repoRoot)
@@ -125,7 +125,7 @@ func TestReleaseGatesMigration_BehaviorParityWithLegacy(t *testing.T) {
 func TestBuildClosureReport_ClosedItemsOnlyAndCanonicalOrder(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_blocked")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	result, err := svc.BuildClosureReport(ClosureReportRequest{Slice: "S1"}, repoRoot)
@@ -147,7 +147,7 @@ func TestBuildClosureReport_ClosedItemsOnlyAndCanonicalOrder(t *testing.T) {
 func TestBuildClosureReport_StableSchema(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_all_closed")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	result, err := svc.BuildClosureReport(ClosureReportRequest{Slice: "S1"}, repoRoot)
@@ -171,7 +171,7 @@ func TestBuildClosureReport_StableSchema(t *testing.T) {
 func TestIssueSource_MarkdownAdapterContract(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_valid")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 
 	ref, err := source.GetItemRef("docs/issues/shared-item.md")
 	require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestIssueSource_MarkdownAdapterContract(t *testing.T) {
 func TestEvaluateFreezeReadiness_UnresolvedRowsBlockFreeze(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_release", "freeze_blocked")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	result, err := svc.EvaluateFreezeReadiness(FreezeReadinessRequest{}, repoRoot)
@@ -213,7 +213,7 @@ func TestEvaluateFreezeReadiness_UnresolvedRowsBlockFreeze(t *testing.T) {
 func TestEvaluateFreezeReadiness_EmptyRowsAllowFreeze(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_release", "freeze_ready")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	result, err := svc.EvaluateFreezeReadiness(FreezeReadinessRequest{}, repoRoot)
@@ -225,7 +225,7 @@ func TestEvaluateFreezeReadiness_EmptyRowsAllowFreeze(t *testing.T) {
 func TestEvaluateFreezeReadiness_ParseFailureReturnsEGateSetInvalid(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join(testdataDir(), "repo_release", "freeze_malformed")
-	source := NewMarkdownIssueSource(repoRoot)
+	source := NewSource(repoRoot)
 	svc := NewService(source)
 
 	_, err := svc.EvaluateFreezeReadiness(FreezeReadinessRequest{}, repoRoot)

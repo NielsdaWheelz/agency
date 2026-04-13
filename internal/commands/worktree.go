@@ -20,7 +20,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -35,12 +34,10 @@ type WorktreeCreateOpts struct {
 // WorktreeCreate creates a new integration worktree.
 // PR-06: Routes through daemon for single-writer ownership.
 func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
-	homeDir, err := os.UserHomeDir()
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return err
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
 	// Validate repo context (basic check - daemon does full validation)
 	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -57,28 +54,11 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash before creating a worktree")
 	}
 
-	// Auto-start daemon if not running
-	client := daemonclient.NewClient(dirs.DataDir + "/agencyd.sock")
-	if !client.IsRunning(ctx) {
-		if err := daemonclient.AutoStartDaemon(ctx, dirs.DataDir); err != nil {
-			return errors.Wrap(errors.EDaemonStartFailed, "failed to auto-start daemon", err)
-		}
-		// Wait for daemon to be ready
-		if err := client.WaitForReady(ctx, 10*time.Second); err != nil {
-			return err
-		}
-	}
-
-	// Check API version compatibility
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
 	// Generate idempotency key
 	idempotencyKey := uuid.New().String()
 
 	// Call daemon to create worktree
-	result, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+	result, err := ns.client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
 		RepoRoot:       repoRoot.Path,
 		Name:           opts.Name,
 		ParentBranch:   opts.ParentBranch,
@@ -104,7 +84,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 	// Open in editor if requested
 	if opts.Open {
-		openErr := openCreatedWorktree(ctx, cr, fsys, dirs.ConfigDir, result.TreePath, opts.Editor)
+		openErr := openCreatedWorktree(ctx, cr, fsys, ns.dirs.ConfigDir, result.TreePath, opts.Editor)
 		emitOpenOnCreateStatus(stdout, stderr, openErr)
 	}
 
@@ -127,12 +107,7 @@ func openCreatedWorktree(ctx context.Context, cr exec.CommandRunner, fsys fs.FS,
 	if err != nil {
 		return err
 	}
-	runResult, runErr := exec.RunAttached(ctx, editorCmd, []string{treePath}, exec.AttachedRunOpts{
-		Dir:    treePath,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
+	runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{treePath}, treePath)
 	if runErr != nil {
 		return runErr
 	}
@@ -154,28 +129,12 @@ type WorktreeLSOpts struct {
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
 func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeLSOpts, stdout, stderr io.Writer) error {
-	// Resolve paths
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllRepos:      opts.AllRepos,
 		AllowAllRepos: true,
@@ -196,7 +155,7 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		repoID = repoCtx.RepoID
 	}
 
-	result, fetchErr := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+	result, fetchErr := ns.client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
 		RepoID: repoID,
 		State:  state,
 	})
@@ -247,28 +206,13 @@ type WorktreeShowOpts struct {
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo for CWD-less operation.
 func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeShowOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 
 	// PR-A: Resolve repo context via daemon (single-ref command, no --all-repos)
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "worktree show",
@@ -277,7 +221,7 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	result, err := client.GetWorktreeRich(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	result, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -320,12 +264,12 @@ type WorktreePathOpts struct {
 // WorktreePath outputs the path to an integration worktree.
 // S2-PR03: Routes through shared navigation kernel for daemon-first resolution.
 func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePathOpts, stdout, stderr io.Writer) error {
-	ns, err := setupWorktreeNav(ctx, fsys)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "worktree path")
+	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree path")
 	intent := NavigationIntent{
 		CommandFamily: "worktree",
 		Verb:          "path",
@@ -355,12 +299,12 @@ type WorktreeOpenOpts struct {
 // WorktreeOpen opens an integration worktree in the configured editor.
 // S2-PR03: Routes through shared navigation kernel for daemon-first resolution.
 func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeOpenOpts, stdout, stderr io.Writer) error {
-	ns, err := setupWorktreeNav(ctx, fsys)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "worktree open")
+	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree open")
 	intent := NavigationIntent{
 		CommandFamily: "worktree",
 		Verb:          "open",
@@ -389,12 +333,7 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	runResult, runErr := exec.RunAttached(ctx, editorCmd, []string{treePath}, exec.AttachedRunOpts{
-		Dir:    treePath,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
+	runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{treePath}, treePath)
 	if runErr != nil {
 		return errors.Wrap(errors.EInternal, "failed to run editor command", runErr)
 	}
@@ -417,12 +356,12 @@ type WorktreeShellOpts struct {
 // WorktreeShell opens a shell in an integration worktree.
 // S2-PR03: Routes through shared navigation kernel for daemon-first resolution.
 func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeShellOpts, stdout, stderr io.Writer) error {
-	ns, err := setupWorktreeNav(ctx, fsys)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "worktree shell")
+	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree shell")
 	intent := NavigationIntent{
 		CommandFamily: "worktree",
 		Verb:          "shell",
@@ -446,12 +385,7 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		shell = "/bin/sh"
 	}
 
-	runResult, runErr := exec.RunAttached(ctx, shell, []string{"-l"}, exec.AttachedRunOpts{
-		Dir:    treePath,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
+	runResult, runErr := runAttachedInDir(ctx, shell, []string{"-l"}, treePath)
 	if runErr != nil {
 		return errors.Wrap(errors.EInternal, "failed to run shell", runErr)
 	}
@@ -469,31 +403,7 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 // Shared navigation kernel setup for worktree path/open/shell (S2-PR03)
 // ---------------------------------------------------------------------------
 
-type worktreeNavSetup struct {
-	dirs   paths.Dirs
-	client *daemonclient.Client
-}
-
-func setupWorktreeNav(ctx context.Context, fsys fs.FS) (*worktreeNavSetup, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &worktreeNavSetup{dirs: dirs, client: client}, nil
-}
-
-func (ns *worktreeNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string) NavigationDeps {
+func (ns *daemonNavSetup) buildWorktreeNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string) NavigationDeps {
 	return NavigationDeps{
 		ResolveRepo: func(ctx context.Context) (*RepoContextResult, error) {
 			return ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
@@ -505,7 +415,7 @@ func (ns *worktreeNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, c
 		EnsureDaemon:    func(ctx context.Context) error { return nil },
 		CheckAPIVersion: func(ctx context.Context) error { return ns.client.CheckAPIVersion(ctx) },
 		GetWorktree: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-			result, err := ns.client.GetWorktreeRich(ctx, ref, repoID)
+			result, err := ns.client.GetWorktree(ctx, ref, repoID)
 			if err != nil {
 				return nil, err
 			}
@@ -541,26 +451,12 @@ type WorktreeRmOpts struct {
 // PR-06: Routes through daemon for single-writer ownership.
 // PR-A: Supports --repo for CWD-less operation.
 func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRmOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "worktree rm",
@@ -570,6 +466,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	// Resolve worktree locally first to get worktree name for display
+	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
 	record, err := svc.Resolve(repoCtx.RepoID, opts.WorktreeRef, false)
 	if err != nil {
@@ -620,7 +517,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	// Call daemon to remove worktree
-	result, err := client.WorktreeRm(ctx, repoCtx.RepoID, worktreeID, opts.Force)
+	result, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, worktreeID, opts.Force)
 	if err != nil {
 		return err
 	}
@@ -656,31 +553,12 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return writeAgentMutationJSONError(stdout, err)
 	}
 
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return fail(err)
 	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
 
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "worktree pr sync",
@@ -689,7 +567,7 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return fail(err)
 	}
 
-	resp, err := client.WorktreePRSync(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRSyncOpts{
+	resp, err := ns.client.WorktreePRSync(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRSyncOpts{
 		AllowDirty:     opts.AllowDirty,
 		ForceWithLease: opts.ForceWithLease,
 	})
@@ -822,31 +700,12 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		confirmed = true
 	}
 
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return fail(err)
 	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
 
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "worktree merge",
@@ -855,7 +714,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		return fail(err)
 	}
 
-	resp, err := client.WorktreePRMerge(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRMergeOpts{
+	resp, err := ns.client.WorktreePRMerge(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRMergeOpts{
 		Strategy:         strategy,
 		ConfirmationMode: confirmationMode,
 		Confirmed:        confirmed,
@@ -928,31 +787,12 @@ func WorktreeUpdate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return writeAgentMutationJSONError(stdout, err)
 	}
 
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fail(errors.Wrap(errors.EInternal, "failed to get home directory", err))
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return fail(err)
 	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
 
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "worktree update",
@@ -961,7 +801,7 @@ func WorktreeUpdate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return fail(err)
 	}
 
-	resp, err := client.WorktreeUpdate(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	resp, err := ns.client.WorktreeUpdate(ctx, opts.WorktreeRef, repoCtx.RepoID)
 	if err != nil {
 		return fail(err)
 	}

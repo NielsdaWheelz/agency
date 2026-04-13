@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,7 +19,6 @@ import (
 
 // Client communicates with the agency daemon over Unix socket.
 type Client struct {
-	socketPath string
 	httpClient *http.Client
 }
 
@@ -86,7 +84,6 @@ func NewClient(socketPath string) *Client {
 	}
 
 	return &Client{
-		socketPath: socketPath,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   30 * time.Second,
@@ -390,19 +387,6 @@ func (c *Client) WaitForReady(ctx context.Context, maxWait time.Duration) error 
 	}
 
 	return errors.New(errors.EDaemonNotRunning, "daemon did not become ready within timeout")
-}
-
-// ReadRawLog reads the raw log file for an invocation.
-func (c *Client) ReadRawLog(logPath string) ([]byte, error) {
-	return io.ReadAll(mustOpenFile(logPath))
-}
-
-func mustOpenFile(path string) io.Reader {
-	f, err := http.DefaultClient.Get("file://" + path)
-	if err != nil {
-		return bytes.NewReader(nil)
-	}
-	return f.Body
 }
 
 // ----- PR-06 Worktree Client Methods -----
@@ -709,53 +693,9 @@ type GetWorktreeResult struct {
 	RequestID string
 }
 
-// GetWorktree gets a single worktree by reference via the daemon.
+// GetWorktree gets a single worktree by reference via the daemon, preserving
+// structured read errors for ambiguity and hint propagation.
 func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*GetWorktreeResult, error) {
-	u := fmt.Sprintf("http://daemon/worktrees/%s", url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
-	if !apiResp.OK {
-		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
-	}
-
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
-	var worktree daemon.WorktreeDTO
-	if err := json.Unmarshal(dataBytes, &worktree); err != nil {
-		return nil, err
-	}
-
-	return &GetWorktreeResult{
-		Worktree:  worktree,
-		RequestID: apiResp.RequestID,
-	}, nil
-}
-
-// GetWorktreeRich gets a worktree by reference via daemon, preserving full error details
-// (hint, structured details) for navigation kernel consumers.
-// Existing GetWorktree callers are unaffected — use this when you need candidate data.
-func (c *Client) GetWorktreeRich(ctx context.Context, ref string, repoID string) (*GetWorktreeResult, error) {
 	u := fmt.Sprintf("http://daemon/worktrees/%s", url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
@@ -879,53 +819,9 @@ type GetInvocationResult struct {
 	RequestID  string
 }
 
-// GetInvocation gets a single invocation by reference via the daemon.
+// GetInvocation gets a single invocation by reference via the daemon,
+// preserving structured read errors for ambiguity and hint propagation.
 func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (*GetInvocationResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s", url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
-	if !apiResp.OK {
-		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
-	}
-
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
-	var invocation daemon.InvocationDTO
-	if err := json.Unmarshal(dataBytes, &invocation); err != nil {
-		return nil, err
-	}
-
-	return &GetInvocationResult{
-		Invocation: invocation,
-		RequestID:  apiResp.RequestID,
-	}, nil
-}
-
-// GetInvocationRich gets an invocation by reference via daemon, preserving full error details
-// (hint, structured details) for navigation kernel consumers.
-// Existing GetInvocation callers are unaffected — use this when you need candidate data.
-func (c *Client) GetInvocationRich(ctx context.Context, ref string, repoID string) (*GetInvocationResult, error) {
 	u := fmt.Sprintf("http://daemon/invocations/%s", url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
@@ -1044,12 +940,6 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 	}, nil
 }
 
-// GetInvocationChecksResult wraps the invocation checks response.
-type GetInvocationChecksResult struct {
-	Checks    daemon.InvocationReviewData
-	RequestID string
-}
-
 // GetInvocationReviewResult wraps the invocation review response.
 type GetInvocationReviewResult struct {
 	Review    daemon.InvocationReviewData
@@ -1095,18 +985,6 @@ func (c *Client) GetInvocationReview(ctx context.Context, ref string, repoID str
 	return &GetInvocationReviewResult{
 		Review:    review,
 		RequestID: apiResp.RequestID,
-	}, nil
-}
-
-// GetInvocationChecks gets checks/readiness data for an invocation via the daemon.
-func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID string) (*GetInvocationChecksResult, error) {
-	review, err := c.GetInvocationReview(ctx, ref, repoID)
-	if err != nil {
-		return nil, err
-	}
-	return &GetInvocationChecksResult{
-		Checks:    review.Review,
-		RequestID: review.RequestID,
 	}, nil
 }
 

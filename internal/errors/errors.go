@@ -80,7 +80,7 @@ const (
 	EDirtyWorktree            Code = "E_DIRTY_WORKTREE"             // run worktree has uncommitted changes
 
 	// Slice 4 lifecycle control error codes
-		ESessionNotFound      Code = "E_SESSION_NOT_FOUND"     // tmux session is missing
+	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"     // tmux session is missing
 	EConfirmationRequired Code = "E_CONFIRMATION_REQUIRED" // restart attempted without confirmation in non-interactive mode
 
 	// Slice 5 verify error codes
@@ -98,7 +98,7 @@ const (
 	EPRMergeabilityUnknown Code = "E_PR_MERGEABILITY_UNKNOWN" // gh reports mergeable as UNKNOWN after retries
 	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
 	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
-		ENoPR                  Code = "E_NO_PR"                   // no PR exists for the branch or worktree
+	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the branch or worktree
 	ERebaseConflict        Code = "E_REBASE_CONFLICT"         // git rebase encountered conflicts during worktree update
 
 	// Name validation error codes
@@ -337,8 +337,7 @@ func ExitCode(err error) int {
 }
 
 // Print writes the error to w in the stable stderr format.
-// This is the default error printer - uses Format() with default options.
-// Signature preserved for backward compatibility (zero churn).
+// This is the default error printer and uses Format() with default options.
 //
 // Output format:
 //

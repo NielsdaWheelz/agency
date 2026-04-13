@@ -8,29 +8,18 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// IssueSource abstracts gate-item metadata and evidence retrieval. The long-term
-// migration path moves from markdown issue stubs (S1 compat) to GitHub issues.
-type IssueSource interface {
-	// GetItemRef returns normalized metadata for an issue path.
-	GetItemRef(issuePath string) (*GateItemRef, error)
-	// GetClosureEvidence returns closure evidence for an issue path, or nil if absent.
-	GetClosureEvidence(issuePath string) (*ClosureEvidence, error)
-	// Evaluate returns a full evaluation for a single issue path.
-	Evaluate(issuePath string) (*GateItemEvaluation, error)
-}
-
-// MarkdownIssueSource is the S1 compatibility adapter that reads markdown issue stubs.
-type MarkdownIssueSource struct {
+// Source reads release-gate issue metadata and evidence from markdown issue stubs.
+type Source struct {
 	RepoRoot string
 }
 
-// NewMarkdownIssueSource creates a MarkdownIssueSource for the given repo root.
-func NewMarkdownIssueSource(repoRoot string) *MarkdownIssueSource {
-	return &MarkdownIssueSource{RepoRoot: repoRoot}
+// NewSource creates a Source for the given repo root.
+func NewSource(repoRoot string) *Source {
+	return &Source{RepoRoot: repoRoot}
 }
 
 // GetItemRef reads and parses the issue stub and returns a normalized GateItemRef.
-func (m *MarkdownIssueSource) GetItemRef(issuePath string) (*GateItemRef, error) {
+func (m *Source) GetItemRef(issuePath string) (*GateItemRef, error) {
 	content, err := m.readIssue(issuePath)
 	if err != nil {
 		return nil, err
@@ -40,7 +29,7 @@ func (m *MarkdownIssueSource) GetItemRef(issuePath string) (*GateItemRef, error)
 }
 
 // GetClosureEvidence reads and parses the issue stub's closure evidence block.
-func (m *MarkdownIssueSource) GetClosureEvidence(issuePath string) (*ClosureEvidence, error) {
+func (m *Source) GetClosureEvidence(issuePath string) (*ClosureEvidence, error) {
 	content, err := m.readIssue(issuePath)
 	if err != nil {
 		return nil, err
@@ -53,11 +42,11 @@ func (m *MarkdownIssueSource) GetClosureEvidence(issuePath string) (*ClosureEvid
 }
 
 // Evaluate returns a full GateItemEvaluation for the given issue path.
-func (m *MarkdownIssueSource) Evaluate(issuePath string) (*GateItemEvaluation, error) {
+func (m *Source) Evaluate(issuePath string) (*GateItemEvaluation, error) {
 	return EvaluateGateItem(issuePath, m.RepoRoot)
 }
 
-func (m *MarkdownIssueSource) readIssue(issuePath string) (string, error) {
+func (m *Source) readIssue(issuePath string) (string, error) {
 	fullPath := filepath.Join(m.RepoRoot, issuePath)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {

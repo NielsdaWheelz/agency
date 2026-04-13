@@ -187,7 +187,7 @@ func (e *Engine) SetGitIgnoredDirs(dirs map[string]bool) {
 // CreateSemanticCheckpoint creates a checkpoint with semantic metadata from a
 // tool completion trigger. Unlike CreateCheckpoint, this is NOT rate-limited —
 // each tool completion is semantically distinct and warrants its own checkpoint.
-// If trigger is nil, creates a plain checkpoint (backwards compat).
+// If trigger is nil, it creates a plain checkpoint.
 func (e *Engine) CreateSemanticCheckpoint(ctx context.Context, trigger *TriggerEvent) error {
 	return e.createCheckpointWithMetadata(ctx, trigger)
 }

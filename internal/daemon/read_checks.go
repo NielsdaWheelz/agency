@@ -55,12 +55,6 @@ func (s *Server) handleGetInvocationReview(w http.ResponseWriter, r *http.Reques
 	s.writeAPIResponse(w, requestID, reviewData)
 }
 
-// handleGetInvocationChecks handles GET /invocations/{ref}/checks.
-// Compatibility surface: canonical S5 surface is /review.
-func (s *Server) handleGetInvocationChecks(w http.ResponseWriter, r *http.Request, invocationRef string) {
-	s.handleGetInvocationReview(w, r, invocationRef)
-}
-
 func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationReviewData {
 	meta := record.Meta
 	derived := DeriveDisplayStatus(meta, s.Clock())
