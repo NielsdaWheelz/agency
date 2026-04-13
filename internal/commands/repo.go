@@ -207,7 +207,13 @@ func RepoS1Readiness(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		code := errors.GetCode(err)
 		if code == errors.EGateBlocked {
 			if opts.JSON {
-				return writeJSONError(stdout, string(code), err.Error())
+				enc := json.NewEncoder(stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(map[string]interface{}{
+					"ok":         false,
+					"error_code": string(code),
+					"message":    err.Error(),
+				})
 			}
 			return errors.WithExitCode(err, 1)
 		}
@@ -300,7 +306,13 @@ func RepoS1FreezeReadiness(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 		code := errors.GetCode(err)
 		if code == errors.EGateBlocked {
 			if opts.JSON {
-				return writeJSONError(stdout, string(code), err.Error())
+				enc := json.NewEncoder(stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(map[string]interface{}{
+					"ok":         false,
+					"error_code": string(code),
+					"message":    err.Error(),
+				})
 			}
 			return errors.WithExitCode(err, 1)
 		}
@@ -343,17 +355,6 @@ func printGateClosure(w io.Writer, gc *daemon.S1GateClosureData) {
 	for _, b := range gc.BlockingItems {
 		_, _ = fmt.Fprintf(w, "    [blocking] %s\n", b)
 	}
-}
-
-func writeJSONError(w io.Writer, code, message string) error {
-	resp := map[string]interface{}{
-		"ok":         false,
-		"error_code": code,
-		"message":    message,
-	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(resp)
 }
 
 type daemonNavSetup struct {

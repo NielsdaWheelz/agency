@@ -90,5 +90,13 @@ func reportDiagnosticsToReview(diags []report.Diagnostic) []ReportDiagnostic {
 	if len(diags) == 0 {
 		return nil
 	}
-	return reportDiagnosticsToDaemon(diags)
+	out := make([]ReportDiagnostic, 0, len(diags))
+	for _, d := range diags {
+		out = append(out, ReportDiagnostic{
+			Code:    d.Code,
+			Message: d.Message,
+			Source:  d.Source,
+		})
+	}
+	return out
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
-	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -84,36 +83,39 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 	// Open in editor if requested
 	if opts.Open {
-		openErr := openCreatedWorktree(ctx, cr, fsys, ns.dirs.ConfigDir, result.TreePath, opts.Editor)
-		emitOpenOnCreateStatus(stdout, stderr, openErr)
+		userCfg, _, err := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
+		if err != nil {
+			emitOpenOnCreateStatus(stdout, stderr, err)
+			return nil
+		}
+
+		editorName := opts.Editor
+		if editorName == "" {
+			editorName = userCfg.Defaults.Editor
+		}
+		if editorName == "" {
+			editorName = os.Getenv("EDITOR")
+		}
+
+		editorCmd, err := config.ResolveEditorCmd(cr, fsys, ns.dirs.ConfigDir, userCfg, editorName)
+		if err != nil {
+			emitOpenOnCreateStatus(stdout, stderr, err)
+			return nil
+		}
+
+		runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{result.TreePath}, result.TreePath)
+		if runErr != nil {
+			emitOpenOnCreateStatus(stdout, stderr, runErr)
+			return nil
+		}
+		if runResult.ExitCode != 0 {
+			emitOpenOnCreateStatus(stdout, stderr, fmt.Errorf("editor exited with code %d", runResult.ExitCode))
+			return nil
+		}
+
+		emitOpenOnCreateStatus(stdout, stderr, nil)
 	}
 
-	return nil
-}
-
-func openCreatedWorktree(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, configDir, treePath, editorName string) error {
-	userCfg, _, err := config.LoadUserConfig(fsys, configDir)
-	if err != nil {
-		return err
-	}
-	if editorName == "" {
-		editorName = userCfg.Defaults.Editor
-	}
-	if editorName == "" {
-		editorName = os.Getenv("EDITOR")
-	}
-
-	editorCmd, err := config.ResolveEditorCmd(cr, fsys, configDir, userCfg, editorName)
-	if err != nil {
-		return err
-	}
-	runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{treePath}, treePath)
-	if runErr != nil {
-		return runErr
-	}
-	if runResult.ExitCode != 0 {
-		return fmt.Errorf("editor exited with code %d", runResult.ExitCode)
-	}
 	return nil
 }
 
@@ -163,33 +165,21 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fetchErr
 	}
 	if opts.JSON {
-		return writeWorktreeLSJSONFromDTO(stdout, result.Worktrees)
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result.Worktrees)
 	}
-	return writeWorktreeLSHumanFromDTO(stdout, result.Worktrees)
-}
-
-// writeWorktreeLSJSONFromDTO outputs worktree list as JSON from daemon DTOs.
-// PR-12: CLI renders daemon-provided data - no local derivation.
-func writeWorktreeLSJSONFromDTO(w io.Writer, worktrees []daemon.WorktreeDTO) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(worktrees)
-}
-
-// writeWorktreeLSHumanFromDTO outputs worktree list in human-readable format from daemon DTOs.
-// PR-12: CLI renders daemon-provided data.
-func writeWorktreeLSHumanFromDTO(w io.Writer, worktrees []daemon.WorktreeDTO) error {
-	if len(worktrees) == 0 {
-		_, _ = fmt.Fprintln(w, "No integration worktrees found.")
+	if len(result.Worktrees) == 0 {
+		_, _ = fmt.Fprintln(stdout, "No integration worktrees found.")
 		return nil
 	}
 
-	for _, wt := range worktrees {
+	for _, wt := range result.Worktrees {
 		state := ""
 		if wt.State == "archived" {
 			state = " [archived]"
 		}
-		_, _ = fmt.Fprintf(w, "%s  %s  %s%s\n", wt.WorktreeID, wt.Name, wt.Branch, state)
+		_, _ = fmt.Fprintf(stdout, "%s  %s  %s%s\n", wt.WorktreeID, wt.Name, wt.Branch, state)
 	}
 
 	return nil
@@ -227,31 +217,20 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	if opts.JSON {
-		return writeWorktreeShowJSONFromDTO(stdout, &result.Worktree)
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(&result.Worktree)
 	}
 
-	return writeWorktreeShowHumanFromDTO(stdout, &result.Worktree)
-}
-
-// writeWorktreeShowJSONFromDTO outputs worktree details as JSON from daemon DTO.
-// PR-12: CLI renders daemon-provided data.
-func writeWorktreeShowJSONFromDTO(w io.Writer, wt *daemon.WorktreeDTO) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(wt)
-}
-
-// writeWorktreeShowHumanFromDTO outputs worktree details in human-readable format from daemon DTO.
-// PR-12: CLI renders daemon-provided data.
-func writeWorktreeShowHumanFromDTO(w io.Writer, wt *daemon.WorktreeDTO) error {
-	_, _ = fmt.Fprintf(w, "worktree_id:   %s\n", wt.WorktreeID)
-	_, _ = fmt.Fprintf(w, "name:          %s\n", wt.Name)
-	_, _ = fmt.Fprintf(w, "repo_id:       %s\n", wt.RepoID)
-	_, _ = fmt.Fprintf(w, "branch:        %s\n", wt.Branch)
-	_, _ = fmt.Fprintf(w, "parent_branch: %s\n", wt.ParentBranch)
-	_, _ = fmt.Fprintf(w, "state:         %s\n", wt.State)
-	_, _ = fmt.Fprintf(w, "created_at:    %s\n", wt.CreatedAt)
-	_, _ = fmt.Fprintf(w, "tree_path:     %s\n", wt.TreePath)
+	wt := &result.Worktree
+	_, _ = fmt.Fprintf(stdout, "worktree_id:   %s\n", wt.WorktreeID)
+	_, _ = fmt.Fprintf(stdout, "name:          %s\n", wt.Name)
+	_, _ = fmt.Fprintf(stdout, "repo_id:       %s\n", wt.RepoID)
+	_, _ = fmt.Fprintf(stdout, "branch:        %s\n", wt.Branch)
+	_, _ = fmt.Fprintf(stdout, "parent_branch: %s\n", wt.ParentBranch)
+	_, _ = fmt.Fprintf(stdout, "state:         %s\n", wt.State)
+	_, _ = fmt.Fprintf(stdout, "created_at:    %s\n", wt.CreatedAt)
+	_, _ = fmt.Fprintf(stdout, "tree_path:     %s\n", wt.TreePath)
 	return nil
 }
 
@@ -271,8 +250,7 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree path")
 	intent := NavigationIntent{
-		CommandFamily: "worktree",
-		Verb:          "path",
+		Verb: "path",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -306,8 +284,7 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree open")
 	intent := NavigationIntent{
-		CommandFamily: "worktree",
-		Verb:          "open",
+		Verb: "open",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -363,14 +340,12 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 
 	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree shell")
 	intent := NavigationIntent{
-		CommandFamily: "worktree",
-		Verb:          "shell",
+		Verb: "shell",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
 			Ref:            opts.WorktreeRef,
 		},
-		Interactive: true,
 	}
 
 	result, err := ResolveNavigation(ctx, intent, deps)
@@ -427,7 +402,6 @@ func (ns *daemonNavSetup) buildWorktreeNavDeps(cr exec.CommandRunner, cwd, repoF
 				ResolutionSource: "daemon_get_worktree",
 			}, nil
 		},
-		IsInteractive: func() bool { return false },
 	}
 }
 
@@ -465,7 +439,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	// Resolve worktree locally first to get worktree name for display
+	// Resolve worktree locally to preserve broken-record handling and display name.
 	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
 	record, err := svc.Resolve(repoCtx.RepoID, opts.WorktreeRef, false)
@@ -516,12 +490,10 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 	}
 
-	// Call daemon to remove worktree
 	result, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, worktreeID, opts.Force)
 	if err != nil {
 		return err
 	}
-
 	if !result.OK {
 		return errors.NewWithDetails(
 			errors.Code(result.ErrorCode),
@@ -590,12 +562,11 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			envelope.RepoID = resp.RepoID
 			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
 			envelope.Branch = resp.Branch
-			envelope.PRNumber = resp.PRNumber
-			envelope.PRURL = resp.PRURL
-			envelope.PRAction = resp.PRAction
-			envelope.ReportSource = resp.ReportSource
-			envelope.ReportFallbackUsed = resp.ReportFallbackUsed
-			envelope.ReportDiagnostics = resp.ReportDiagnostics
+				envelope.PRNumber = resp.PRNumber
+				envelope.PRURL = resp.PRURL
+				envelope.PRAction = resp.PRAction
+				envelope.ReportSource = resp.ReportSource
+				envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -742,12 +713,11 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 			envelope.PRNumber = resp.PRNumber
 			envelope.PRURL = resp.PRURL
 			envelope.Strategy = resp.Strategy
-			envelope.DeleteBranch = resp.DeleteBranch
-			envelope.MergeLogPath = resp.MergeLogPath
-			envelope.VerifyLogPath = resp.VerifyLogPath
-			envelope.ReportSource = resp.ReportSource
-			envelope.ReportFallbackUsed = resp.ReportFallbackUsed
-			envelope.ReportDiagnostics = resp.ReportDiagnostics
+				envelope.DeleteBranch = resp.DeleteBranch
+				envelope.MergeLogPath = resp.MergeLogPath
+				envelope.VerifyLogPath = resp.VerifyLogPath
+				envelope.ReportSource = resp.ReportSource
+				envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}

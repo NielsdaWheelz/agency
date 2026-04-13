@@ -123,7 +123,7 @@ all mutation `--json` responses use a stable envelope with deterministic fields:
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
 for `worktree pr sync` and `worktree merge`, additive report fields include
-`report_source`, `report_fallback_used`, and `report_diagnostics`.
+`report_source` and `report_diagnostics`.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
 daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed `E_INVALID_ARGUMENT` errors.

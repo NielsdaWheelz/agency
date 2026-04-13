@@ -1,9 +1,7 @@
 package daemon
 
 import (
-	"fmt"
 	"net/http"
-	"os"
 	"syscall"
 	"time"
 
@@ -68,7 +66,9 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 		exists, err := s.TmuxClient.HasSession(ctx, sessionName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not check tmux session: %v\n", err)
+			s.recordInvocationWarning(repoID, invocationID, "stop_tmux_has_session_failed", err.Error(), map[string]any{
+				"session_name": sessionName,
+			})
 		}
 		if !exists {
 			if meta.Status == store.InvocationStatusRunning {
@@ -84,7 +84,9 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		}
 
 		if err := s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC}); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not send C-c to tmux session: %v\n", err)
+			s.recordInvocationWarning(repoID, invocationID, "stop_tmux_send_ctrl_c_failed", err.Error(), map[string]any{
+				"session_name": sessionName,
+			})
 		}
 
 		s.writeInvocationActionSuccess(w, requestID, invocationID)
@@ -268,9 +270,11 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		if sessionName == "" {
 			sessionName = tmux.SessionName(invocationID)
 		}
-		if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
-			fmt.Fprintf(os.Stderr, "warning: could not kill tmux session: %v\n", err)
-		}
+			if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
+				s.recordInvocationWarning(repoID, invocationID, "kill_tmux_session_failed", err.Error(), map[string]any{
+					"session_name": sessionName,
+				})
+			}
 
 		now := s.Clock().UTC().Format(time.RFC3339)
 		_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {

@@ -3,8 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -81,7 +79,9 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 
 	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
-		fmt.Fprintf(os.Stderr, "warning: reconcile tick: could not check tmux session %s for invocation %s: %v\n", sessionName, r.InvocationID, err)
+		s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_tmux_has_session_failed", err.Error(), map[string]any{
+			"session_name": sessionName,
+		})
 		return
 	}
 	if exists {

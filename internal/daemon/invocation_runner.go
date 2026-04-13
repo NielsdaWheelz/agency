@@ -150,7 +150,10 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		envOverlay[k] = v
 	}
 
-	stdinReader, chatRelay := createChatRelay(req.Runner)
+	stdinReader, chatRelay, relayWarning := createChatRelay(req.Runner)
+	if relayWarning != nil {
+		s.recordInvocationWarning(repoID, result.InvocationID, "chat_relay_setup_failed", relayWarning.Error(), nil)
+	}
 	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
 		Dir:        result.SandboxPath,
 		Env:        envOverlay,
@@ -226,12 +229,15 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 
 		timer := time.NewTimer(250 * time.Millisecond)
 		defer timer.Stop()
-		select {
-		case triggerCh <- trigger:
-		case <-timer.C:
-			fmt.Fprintf(os.Stderr, "warning: checkpoint trigger queue full; dropped semantic trigger invocation=%s seq=%d tool=%s\n", result.InvocationID, n.Seq, n.ToolName)
-		}
-	})
+			select {
+			case triggerCh <- trigger:
+			case <-timer.C:
+				s.recordInvocationWarning(repoID, result.InvocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
+					"seq":       n.Seq,
+					"tool_name": n.ToolName,
+				})
+			}
+		})
 
 	proc := &SupervisedProcess{
 		InvocationID:          result.InvocationID,
@@ -298,23 +304,22 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-func createChatRelay(runner string) (*os.File, relay.ChatRelay) {
+func createChatRelay(runner string) (*os.File, relay.ChatRelay, error) {
 	mode, err := runners.ResolveChatMode(runner)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	switch mode {
 	case runners.ChatModeStdin:
 		pr, pw, err := os.Pipe()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to create stdin pipe for chat relay: %v\n", err)
-			return nil, nil
+			return nil, nil, fmt.Errorf("failed to create stdin pipe for chat relay: %w", err)
 		}
-		return pr, relay.NewStdinRelay(pw, runner)
+		return pr, relay.NewStdinRelay(pw, runner), nil
 	case runners.ChatModeResume:
-		return nil, relay.NewResumeRelay(runner)
+		return nil, relay.NewResumeRelay(runner), nil
 	default:
-		return nil, nil
+		return nil, nil, nil
 	}
 }
 
@@ -465,9 +470,9 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 			meta.SemanticStatus = nil
 			meta.SemanticStatusUpdatedAt = ""
 		}
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "error: failed to update meta on exit for invocation %s: %v\n", proc.InvocationID, err)
-	}
+		}); err != nil {
+			s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "meta_update_on_exit_failed", err.Error(), nil)
+		}
 
 	s.mu.Lock()
 	if current, ok := s.processes[proc.InvocationID]; ok && current == proc {

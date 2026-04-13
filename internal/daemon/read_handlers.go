@@ -99,24 +99,12 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 	// Get all repos to scan
 	repoIDs, err := s.getRepoIDsForQuery(params.RepoID)
 	if err != nil {
-		switch e := err.(type) {
-		case *ids.ErrRepoAmbiguous:
-			candidates := make([]string, len(e.Candidates))
-			for i, c := range e.Candidates {
-				candidates[i] = c.RepoID
-			}
-			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoIDAmbiguous),
-				e.Error(),
-				"use a more specific name, repo key, or full repo id",
-				AmbiguousDetails{Candidates: candidates})
-		case *ids.ErrRepoNotFound:
-			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
-				e.Error(),
-				"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
-				nil)
-		default:
-			s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
-		}
+		s.writeRepoLookupError(
+			w,
+			requestID,
+			err,
+			"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
+		)
 		return
 	}
 
@@ -237,24 +225,12 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 	// Get all repos to scan
 	repoIDs, err := s.getRepoIDsForQuery(params.RepoID)
 	if err != nil {
-		switch e := err.(type) {
-		case *ids.ErrRepoAmbiguous:
-			candidates := make([]string, len(e.Candidates))
-			for i, c := range e.Candidates {
-				candidates[i] = c.RepoID
-			}
-			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoIDAmbiguous),
-				e.Error(),
-				"use a more specific name, repo key, or full repo id",
-				AmbiguousDetails{Candidates: candidates})
-		case *ids.ErrRepoNotFound:
-			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
-				e.Error(),
-				"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
-				nil)
-		default:
-			s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
-		}
+		s.writeRepoLookupError(
+			w,
+			requestID,
+			err,
+			"run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register",
+		)
 		return
 	}
 
@@ -789,6 +765,41 @@ func (s *Server) getRepoIDsForQuery(filterRepoRef string) ([]string, error) {
 		return nil, resolveErr
 	}
 	return []string{resolved.RepoID}, nil
+}
+
+func (s *Server) writeRepoLookupError(w http.ResponseWriter, requestID string, err error, notFoundHint string) {
+	switch e := err.(type) {
+	case *ids.ErrRepoAmbiguous:
+		candidates := make([]string, len(e.Candidates))
+		for i, c := range e.Candidates {
+			candidates[i] = c.RepoID
+		}
+		s.writeAPIError(
+			w,
+			http.StatusConflict,
+			requestID,
+			string(errors.ERepoIDAmbiguous),
+			e.Error(),
+			"use a more specific name, repo key, or full repo id",
+			AmbiguousDetails{Candidates: candidates},
+		)
+	case *ids.ErrRepoNotFound:
+		s.writeAPIError(
+			w,
+			http.StatusNotFound,
+			requestID,
+			string(errors.ERepoNotFound),
+			e.Error(),
+			notFoundHint,
+			nil,
+		)
+	default:
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
+	}
 }
 
 // ----- Diff Building -----

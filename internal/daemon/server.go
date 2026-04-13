@@ -174,8 +174,7 @@ func (s *Server) Serve(listener net.Listener) error {
 
 	// Run recovery scan before serving
 	if err := s.runRecoveryScan(); err != nil {
-		// Log but don't fail startup
-		fmt.Fprintf(os.Stderr, "warning: recovery scan failed: %v\n", err)
+		return err
 	}
 
 	// PR-11: Start headed reconciliation loop
@@ -667,15 +666,15 @@ func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader,
 		// and terminate the supervised process to prevent silent data loss.
 		proc.exitReason.Store("stream_write_failed")
 		proc.failureReason.Store("stream_write_failed")
-		_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Flags.NeedsAttention = true
-			meta.FailureReason = "stream_write_failed"
-		})
-		fmt.Fprintf(os.Stderr, "stream persistence failed for invocation %s: %v\n", proc.InvocationID, err)
+			_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Flags.NeedsAttention = true
+				meta.FailureReason = "stream_write_failed"
+			})
+			s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "stream_write_failed", err.Error(), nil)
 
-		if proc.PGID > 0 {
-			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
-		}
+			if proc.PGID > 0 {
+				_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+			}
 	}
 }
 

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -157,7 +156,9 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	sessionName := tmux.SessionName(createResult.InvocationID)
 	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not check for existing tmux session: %v\n", err)
+		s.recordInvocationWarning(repoIdentity.RepoID, createResult.InvocationID, "start_headed_tmux_has_session_failed", err.Error(), map[string]any{
+			"session_name": sessionName,
+		})
 	} else if exists {
 		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
 		s.writeHeadedError(w, http.StatusConflict, string(errors.ETmuxSessionExists), "tmux session already exists: "+sessionName, "a tmux session with this name already exists; kill it with 'tmux kill-session -t "+sessionName+"'", req.ClientRequestID, requestID)

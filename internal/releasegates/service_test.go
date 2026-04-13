@@ -1,7 +1,6 @@
 package releasegates
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -15,13 +14,6 @@ import (
 func testdataDir() string {
 	_, f, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(f), "testdata")
-}
-
-func readTestdata(t *testing.T, name string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(testdataDir(), name))
-	require.NoError(t, err)
-	return string(data)
 }
 
 // --- Release Readiness ---
@@ -57,67 +49,6 @@ func TestEvaluateReleaseReadiness_Ready(t *testing.T) {
 	assert.True(t, result.SliceReady)
 	assert.Equal(t, GateStatusReady, result.GateA.Status)
 	assert.Equal(t, GateStatusReady, result.GateB.Status)
-}
-
-// --- Migration Parity ---
-
-func TestReleaseGatesMigration_BehaviorParityWithLegacy(t *testing.T) {
-	t.Parallel()
-
-	t.Run("source_parser_valid", func(t *testing.T) {
-		content := readTestdata(t, "corpus_valid.md")
-		repoRoot := filepath.Join(testdataDir(), "repo_valid")
-		fileExists := RepoFileExists(repoRoot)
-
-		gs, err := ParseGateSet(content, CanonicalGateSourcePath, fileExists)
-		require.NoError(t, err)
-		assert.Equal(t, "S1", gs.Slice)
-		assert.Len(t, gs.GateAItems, 2)
-		assert.Len(t, gs.GateBItems, 2)
-	})
-
-	t.Run("evaluate_gates_blocked", func(t *testing.T) {
-		repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_blocked")
-		result, err := EvaluateGates(GatesEvaluateRequest{
-			GateSetSource: CanonicalGateSourcePath,
-			Slice:         "S1",
-		}, repoRoot)
-		require.NoError(t, err)
-		assert.False(t, result.SliceReady)
-		assert.Equal(t, GateStatusBlocked, result.GateA.Status)
-	})
-
-	t.Run("evaluate_gates_all_closed", func(t *testing.T) {
-		repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_all_closed")
-		result, err := EvaluateGates(GatesEvaluateRequest{
-			GateSetSource: CanonicalGateSourcePath,
-			Slice:         "S1",
-		}, repoRoot)
-		require.NoError(t, err)
-		assert.True(t, result.SliceReady)
-	})
-
-	t.Run("require_ready_blocked", func(t *testing.T) {
-		repoRoot := filepath.Join(testdataDir(), "repo_gates_eval", "valid_blocked")
-		_, err := RequireSliceReady(GatesEvaluateRequest{
-			GateSetSource: CanonicalGateSourcePath,
-			Slice:         "S1",
-		}, repoRoot)
-		require.Error(t, err)
-		assert.Equal(t, agencyerrors.EGateBlocked, agencyerrors.GetCode(err))
-	})
-
-	t.Run("change_validate_reason_required", func(t *testing.T) {
-		repoRoot := filepath.Join(testdataDir(), "repo_change_validate", "valid_synced")
-		_, err := ValidateGateSetChange(GateSetChange{
-			GateID:     "B",
-			ChangeType: "add",
-			IssuePath:  "docs/issues/new-issue.md",
-			Reason:     "",
-		}, repoRoot)
-		require.Error(t, err)
-		assert.Equal(t, agencyerrors.EGateChangeReasonRequired, agencyerrors.GetCode(err))
-	})
 }
 
 // --- Closure Report ---

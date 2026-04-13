@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -62,7 +61,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	}
 	defer func() { _ = unlock() }()
 
-	if err := s.appendWorktreePRSyncEvent(record.RepoID, record.WorktreeID, prSyncEventStarted, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventStarted, map[string]any{
 		"allow_dirty":      req.AllowDirty,
 		"force_with_lease": req.ForceWithLease,
 		"branch":           record.Meta.Branch,
@@ -83,7 +82,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		}
 		hint := prSyncHintFromError(err)
 
-		if appendErr := s.appendWorktreePRSyncEvent(record.RepoID, record.WorktreeID, prSyncEventFailed, map[string]any{
+		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventFailed, map[string]any{
 			"error_code": string(code),
 			"message":    err.Error(),
 		}); appendErr != nil {
@@ -99,7 +98,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	if err := s.appendWorktreePRSyncEvent(record.RepoID, record.WorktreeID, prSyncEventSucceeded, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventSucceeded, map[string]any{
 		"branch":    result.Branch,
 		"pr_number": result.PRNumber,
 		"pr_url":    result.PRURL,
@@ -125,7 +124,6 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		PRURL:                 result.PRURL,
 		PRAction:              result.PRAction,
 		ReportSource:          result.ReportSource,
-		ReportFallbackUsed:    result.ReportFallbackUsed,
 		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
@@ -139,7 +137,6 @@ func (s *Server) runWorktreePRSync(
 	if record == nil || record.Meta == nil {
 		return nil, errors.New(errors.EInternal, "worktree metadata missing")
 	}
-	// Reuse runPRSync core logic with worktree identity and non-strict report mode.
 	pseudoInvocation := &resolvedInvocation{
 		InvocationID: record.WorktreeID,
 		RepoID:       record.RepoID,
@@ -151,25 +148,6 @@ func (s *Server) runWorktreePRSync(
 		AllowDirty:     req.AllowDirty,
 		ForceWithLease: req.ForceWithLease,
 	})
-}
-
-func (s *Server) appendWorktreePRSyncEvent(repoID, worktreeID, kind string, data map[string]any) error {
-	writer := s.WorktreeEvents
-	if writer == nil {
-		writer = worktreeevents.NewWriter(s.Clock)
-		s.WorktreeEvents = writer
-	}
-	_, err := writer.Append(
-		s.Store.IntegrationWorktreeEventsPath(repoID, worktreeID),
-		worktreeID,
-		kind,
-		data,
-		worktreeevents.AppendOptions{},
-	)
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to append worktree event", err)
-	}
-	return nil
 }
 
 func (s *Server) writeWorktreePRSyncError(w http.ResponseWriter, status int, requestID, code, message, hint string) {

@@ -3,96 +3,30 @@ package commands
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// mockRunner implements exec.CommandRunner for testing.
-type mockRunner struct {
-	responses     map[string]agencyexec.CmdResult
-	errors        map[string]error
-	lookPathPaths map[string]string // file -> path (if found)
-	lookPathErrs  map[string]error  // file -> error (if not found)
-}
-
-func newMockRunner() *mockRunner {
-	return &mockRunner{
-		responses:     make(map[string]agencyexec.CmdResult),
-		errors:        make(map[string]error),
-		lookPathPaths: make(map[string]string),
-		lookPathErrs:  make(map[string]error),
-	}
-}
-
-func (m *mockRunner) SetResponse(name string, args []string, result agencyexec.CmdResult, err error) {
-	key := m.key(name, args)
-	m.responses[key] = result
-	if err != nil {
-		m.errors[key] = err
-	}
-}
-
-// SetLookPath configures the mock response for LookPath calls.
-// If err is nil, the path is returned; if err is non-nil, it's returned as the error.
-func (m *mockRunner) SetLookPath(file, path string, err error) {
-	if err != nil {
-		m.lookPathErrs[file] = err
-	} else {
-		m.lookPathPaths[file] = path
-	}
-}
-
-// LookPath implements CommandRunner.LookPath for testing.
-func (m *mockRunner) LookPath(file string) (string, error) {
-	if err, ok := m.lookPathErrs[file]; ok {
-		return "", err
-	}
-	if path, ok := m.lookPathPaths[file]; ok {
-		return path, nil
-	}
-	// Default: command found at /usr/bin/<file>
-	return "/usr/bin/" + file, nil
-}
-
-func (m *mockRunner) key(name string, args []string) string {
-	return name + " " + strings.Join(args, " ")
-}
-
-func (m *mockRunner) Run(_ context.Context, name string, args []string, _ agencyexec.RunOpts) (agencyexec.CmdResult, error) {
-	key := m.key(name, args)
-	if err, ok := m.errors[key]; ok {
-		return agencyexec.CmdResult{}, err
-	}
-	if result, ok := m.responses[key]; ok {
-		return result, nil
-	}
-	// Default: command not found
-	return agencyexec.CmdResult{}, fmt.Errorf("mock: command not configured: %s", key)
-}
 
 // setupTestRepo creates a temporary git repo with agency.json and executable scripts.
 // Returns the repo root path. Cleanup is handled automatically by t.TempDir().
 func setupTestRepo(t *testing.T) string {
 	t.Helper()
 
-	// Create temp dir (t.TempDir handles cleanup automatically)
 	tmpDir := t.TempDir()
 
-	// Create minimal directory structure
-	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755), "failed to create .git dir")
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755), "failed to create .git dir")
 
 	scriptsDir := filepath.Join(tmpDir, "scripts")
-	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "failed to create scripts dir")
 
 	// Create agency.json
 	agencyJSON := `{
@@ -112,14 +46,13 @@ func setupTestRepo(t *testing.T) string {
     }
   }
 }`
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644), "failed to write agency.json")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0o644), "failed to write agency.json")
 
-	// Create executable stub scripts
 	stubScript := "#!/usr/bin/env bash\nexit 0\n"
 	scripts := []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"}
 	for _, script := range scripts {
 		path := filepath.Join(scriptsDir, script)
-		require.NoError(t, os.WriteFile(path, []byte(stubScript), 0755), "failed to write script %s", script)
+		require.NoError(t, os.WriteFile(path, []byte(stubScript), 0o755), "failed to write script %s", script)
 	}
 
 	return tmpDir
@@ -141,52 +74,40 @@ func writeUserConfig(t *testing.T, configDir string) {
   "editors": {
     "code": "code"
   }
-}`
+	}`
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "failed to write config.json")
 }
 
-// setupMockRunnerAllOK sets up mock runner to respond OK for all tool checks.
-func setupMockRunnerAllOK(m *mockRunner, repoRoot string) {
-	// git rev-parse --show-toplevel
-	m.SetResponse("git", []string{"rev-parse", "--show-toplevel"}, agencyexec.CmdResult{
+func newDoctorRunner(repoRoot string) *testutil.FakeCommandRunner {
+	runner := testutil.NewFakeCommandRunner()
+	runner.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{
 		Stdout:   repoRoot + "\n",
 		ExitCode: 0,
-	}, nil)
-
-	// git config --get remote.origin.url (GitHub origin)
-	m.SetResponse("git", []string{"config", "--get", "remote.origin.url"}, agencyexec.CmdResult{
+	}
+	runner.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{
 		Stdout:   "git@github.com:testowner/testrepo.git\n",
 		ExitCode: 0,
-	}, nil)
-
-	// git --version
-	m.SetResponse("git", []string{"--version"}, agencyexec.CmdResult{
+	}
+	runner.Responses["git --version"] = testutil.FakeResponse{
 		Stdout:   "git version 2.40.0\n",
 		ExitCode: 0,
-	}, nil)
-
-	// git branch --show-current
-	m.SetResponse("git", []string{"branch", "--show-current"}, agencyexec.CmdResult{
+	}
+	runner.Responses["git branch --show-current"] = testutil.FakeResponse{
 		Stdout:   "main\n",
 		ExitCode: 0,
-	}, nil)
-
-	// tmux -V
-	m.SetResponse("tmux", []string{"-V"}, agencyexec.CmdResult{
+	}
+	runner.Responses["tmux -V"] = testutil.FakeResponse{
 		Stdout:   "tmux 3.3a\n",
 		ExitCode: 0,
-	}, nil)
-
-	// gh --version
-	m.SetResponse("gh", []string{"--version"}, agencyexec.CmdResult{
+	}
+	runner.Responses["gh --version"] = testutil.FakeResponse{
 		Stdout:   "gh version 2.40.0 (2024-01-15)\nhttps://github.com/cli/cli/releases/tag/v2.40.0\n",
 		ExitCode: 0,
-	}, nil)
-
-	// gh auth status
-	m.SetResponse("gh", []string{"auth", "status"}, agencyexec.CmdResult{
+	}
+	runner.Responses["gh auth status"] = testutil.FakeResponse{
 		ExitCode: 0,
-	}, nil)
+	}
+	return runner
 }
 
 func TestDoctor_Success(t *testing.T) {
@@ -200,8 +121,7 @@ func TestDoctor_Success(t *testing.T) {
 	writeUserConfig(t, configDir)
 
 	// Setup mock
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -252,13 +172,11 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
-	// Override gh auth status to fail
-	m.SetResponse("gh", []string{"auth", "status"}, agencyexec.CmdResult{
+	m := newDoctorRunner(repoRoot)
+	m.Responses["gh auth status"] = testutil.FakeResponse{
 		Stderr:   "You are not logged in",
 		ExitCode: 1,
-	}, nil)
+	}
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -289,8 +207,7 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -315,8 +232,7 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -336,12 +252,10 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
-	// Override origin to be missing
-	m.SetResponse("git", []string{"config", "--get", "remote.origin.url"}, agencyexec.CmdResult{
-		ExitCode: 1, // git config returns 1 for missing key
-	}, nil)
+	m := newDoctorRunner(repoRoot)
+	m.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{
+		ExitCode: 1,
+	}
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -367,8 +281,7 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 
@@ -416,8 +329,7 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer

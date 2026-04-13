@@ -556,7 +556,6 @@ type WorktreePRSyncResponse struct {
 	PRURL                 string             `json:"pr_url,omitempty"`
 	PRAction              string             `json:"pr_action,omitempty"` // created|updated
 	ReportSource          string             `json:"report_source,omitempty"`
-	ReportFallbackUsed    bool               `json:"report_fallback_used,omitempty"`
 	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
 
 	// Error fields (only set when OK is false)
@@ -598,7 +597,6 @@ type WorktreePRMergeResponse struct {
 	MergeLogPath          string             `json:"merge_log_path,omitempty"`
 	VerifyLogPath         string             `json:"verify_log_path,omitempty"`
 	ReportSource          string             `json:"report_source,omitempty"`
-	ReportFallbackUsed    bool               `json:"report_fallback_used,omitempty"`
 	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
 
 	// Error fields (only set when OK is false)

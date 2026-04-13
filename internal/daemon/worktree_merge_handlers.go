@@ -106,7 +106,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 	}
 	defer func() { _ = unlock() }()
 
-	if err := s.appendWorktreeMergeEvent(record.RepoID, record.WorktreeID, mergeEventStarted, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventStarted, map[string]any{
 		"strategy":          string(normalizedReq.Strategy),
 		"confirmation_mode": normalizedReq.ConfirmationMode,
 		"delete_branch":     normalizedReq.DeleteBranch,
@@ -126,7 +126,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		if code == "" {
 			code = errors.EInternal
 		}
-		if appendErr := s.appendWorktreeMergeEvent(record.RepoID, record.WorktreeID, mergeEventFailed, map[string]any{
+		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventFailed, map[string]any{
 			"error_code": string(code),
 			"message":    err.Error(),
 		}); appendErr != nil {
@@ -141,7 +141,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 
-	if err := s.appendWorktreeMergeEvent(record.RepoID, record.WorktreeID, mergeEventSucceeded, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventSucceeded, map[string]any{
 		"branch":          result.Branch,
 		"pr_number":       result.PRNumber,
 		"pr_url":          result.PRURL,
@@ -173,7 +173,6 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		MergeLogPath:          result.MergeLogPath,
 		VerifyLogPath:         result.VerifyLog,
 		ReportSource:          result.ReportSource,
-		ReportFallbackUsed:    result.ReportFallbackUsed,
 		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
@@ -189,10 +188,6 @@ func (s *Server) runWorktreeMerge(
 	}
 	wtMeta := record.Meta
 
-	reportSource := ""
-	reportFallbackUsed := false
-	var reportDiagnostics []report.Diagnostic
-
 	reportResolution, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
 		MaxBytes: report.MaxPRBodyReportBytes,
 	})
@@ -200,19 +195,13 @@ func (s *Server) runWorktreeMerge(
 		return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
 	}
 	if reportViolation != nil {
-		reportSource = "fallback"
-		reportFallbackUsed = true
-		reportDiagnostics = []report.Diagnostic{
-			{
-				Code:    string(reportViolation.Code),
-				Message: reportViolation.Message,
-				Source:  string(reportViolation.Source),
-			},
-		}
-	} else if reportResolution != nil {
-		reportSource = string(reportResolution.Source)
-		reportDiagnostics = reportResolution.Diagnostics
+		return nil, reportViolationToAgencyError(reportViolation)
 	}
+	if reportResolution == nil {
+		return nil, errors.New(errors.EInternal, "report resolution produced no result")
+	}
+	reportSource := string(reportResolution.Source)
+	reportDiagnostics := reportResolution.Diagnostics
 
 	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
 	if err != nil {
@@ -310,16 +299,15 @@ func (s *Server) runWorktreeMerge(
 	}
 
 	return &mergeResult{
-		Branch:             wtMeta.Branch,
-		PRNumber:           pr.Number,
-		PRURL:              pr.URL,
-		Strategy:           req.Strategy,
-		DeleteBranch:       req.DeleteBranch,
-		MergeLogPath:       mergeLogPath,
-		VerifyLog:          verifyLogPath,
-		ReportSource:       reportSource,
-		ReportFallbackUsed: reportFallbackUsed,
-		ReportDiagnostics:  reportDiagnostics,
+		Branch:            wtMeta.Branch,
+		PRNumber:          pr.Number,
+		PRURL:             pr.URL,
+		Strategy:          req.Strategy,
+		DeleteBranch:      req.DeleteBranch,
+		MergeLogPath:      mergeLogPath,
+		VerifyLog:         verifyLogPath,
+		ReportSource:      reportSource,
+		ReportDiagnostics: reportDiagnostics,
 	}, nil
 }
 
@@ -428,7 +416,7 @@ func buildWorktreeMergeVerifyEnv(
 	})
 }
 
-func (s *Server) appendWorktreeMergeEvent(repoID, worktreeID, kind string, data map[string]any) error {
+func (s *Server) appendWorktreeEvent(repoID, worktreeID, kind string, data map[string]any) error {
 	writer := s.WorktreeEvents
 	if writer == nil {
 		writer = worktreeevents.NewWriter(s.Clock)

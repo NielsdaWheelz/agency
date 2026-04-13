@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -20,7 +18,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/ids"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -42,30 +39,16 @@ type CheckpointLSOpts struct {
 // CheckpointLS lists checkpoints for an invocation.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
-	// 1. Resolve paths
-	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		dataDir = dirs.DataDir
-	}
-
-	// 2. Ensure daemon is running
 	var client *daemonclient.Client
 	var err error
 	if opts.DaemonSocketOverride != "" {
 		client = daemonclient.NewClient(opts.DaemonSocketOverride)
 	} else {
-		st := store.NewStore(fsys, dataDir, time.Now)
-		socketPath := st.DaemonSocketPath()
-		logPath := st.DaemonLogPath()
-
-		client, err = daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+		dirs, dirErr := resolveCommandDirs(opts.DataDirOverride)
+		if dirErr != nil {
+			return dirErr
+		}
+		client, err = ensureDaemonClientFromDirs(ctx, fsys, dirs)
 		if err != nil {
 			return err
 		}
@@ -96,16 +79,12 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return json.NewEncoder(stdout).Encode(result.Checkpoints)
 	}
 
-	return writeCheckpointLSHumanFromDTO(stdout, result.Checkpoints)
-}
-
-func writeCheckpointLSHumanFromDTO(w io.Writer, checkpoints []daemon.CheckpointDTO) error {
-	if len(checkpoints) == 0 {
-		_, _ = fmt.Fprintln(w, "No checkpoints found.")
+	if len(result.Checkpoints) == 0 {
+		_, _ = fmt.Fprintln(stdout, "No checkpoints found.")
 		return nil
 	}
 
-	for _, cp := range checkpoints {
+	for _, cp := range result.Checkpoints {
 		timestamp := cp.CreatedAt
 		if parsed, err := time.Parse(time.RFC3339, cp.CreatedAt); err == nil {
 			timestamp = parsed.Local().Format("2006-01-02 15:04:05")
@@ -119,7 +98,7 @@ func writeCheckpointLSHumanFromDTO(w io.Writer, checkpoints []daemon.CheckpointD
 			triggerSummary = "checkpoint snapshot"
 		}
 
-		_, _ = fmt.Fprintf(w, "%s  cp:%d  %s\n",
+		_, _ = fmt.Fprintf(stdout, "%s  cp:%d  %s\n",
 			timestamp,
 			cp.ID,
 			render.FormatActivityLabel("checkpoint", triggerSummary),
@@ -138,32 +117,25 @@ func writeCheckpointLSHumanFromDTO(w io.Writer, checkpoints []daemon.CheckpointD
 		if diffstat := strings.TrimSpace(cp.Diffstat); diffstat != "" {
 			detailParts = append(detailParts, diffstat)
 		}
-		if pathDetail := checkpointChangedPathDetail(cp); pathDetail != "" {
-			detailParts = append(detailParts, pathDetail)
+		totalChanged := cp.ChangedPathCount
+		if totalChanged <= 0 {
+			totalChanged = len(cp.ChangedPaths)
+		}
+		if totalChanged > 0 {
+			trimmed := cp.ChangedPathTruncated || totalChanged > len(cp.ChangedPaths)
+			summary := render.FormatChangedPathSummary(cp.ChangedPaths, totalChanged, trimmed)
+			if summary == "" {
+				detailParts = append(detailParts, fmt.Sprintf("paths:%d", totalChanged))
+			} else {
+				detailParts = append(detailParts, "paths:"+summary)
+			}
 		}
 		if len(detailParts) > 0 {
-			_, _ = fmt.Fprintf(w, "    %s\n", strings.Join(detailParts, " | "))
+			_, _ = fmt.Fprintf(stdout, "    %s\n", strings.Join(detailParts, " | "))
 		}
 	}
 
 	return nil
-}
-
-func checkpointChangedPathDetail(cp daemon.CheckpointDTO) string {
-	totalCount := cp.ChangedPathCount
-	if totalCount <= 0 {
-		totalCount = len(cp.ChangedPaths)
-	}
-	if totalCount <= 0 {
-		return ""
-	}
-
-	trimmed := cp.ChangedPathTruncated || totalCount > len(cp.ChangedPaths)
-	summary := render.FormatChangedPathSummary(cp.ChangedPaths, totalCount, trimmed)
-	if summary == "" {
-		return fmt.Sprintf("paths:%d", totalCount)
-	}
-	return "paths:" + summary
 }
 
 // CheckpointApplyOpts holds options for the checkpoint apply command.
@@ -187,16 +159,9 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	}
 
 	// 2. Resolve paths
-	var applyDataDir string
-	if opts.DataDirOverride != "" {
-		applyDataDir = opts.DataDirOverride
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
-		applyDataDir = dirs.DataDir
+	dirs, err := resolveCommandDirs(opts.DataDirOverride)
+	if err != nil {
+		return err
 	}
 
 	// 3. Get repo context
@@ -209,10 +174,7 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	repoIdentity := identity.DeriveRepoIdentity(gitRoot.Path, originInfo.URL)
 
 	// 4. Set up store
-	st := store.NewStore(fsys, applyDataDir, time.Now)
-
-	// 5. Scan invocations and resolve
-	records, err := store.ScanInvocationsForRepo(applyDataDir, repoIdentity.RepoID)
+	records, err := store.ScanInvocationsForRepo(dirs.DataDir, repoIdentity.RepoID)
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to scan invocations", err)
 	}
@@ -265,8 +227,10 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	}
 
 	// 7. Connect to daemon
-	socketPath := st.DaemonSocketPath()
-	client := daemonclient.NewClient(socketPath)
+	client, err := ensureDaemonClientFromDirs(ctx, fsys, dirs)
+	if err != nil {
+		return err
+	}
 
 	// 8. Call daemon checkpoint apply endpoint
 	resp, err := client.CheckpointApply(ctx, repoIdentity.RepoID, record.InvocationID, checkpointID)

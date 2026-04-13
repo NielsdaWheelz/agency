@@ -841,7 +841,6 @@ type agentMutationEnvelope struct {
 	MergeLogPath            string                    `json:"merge_log_path,omitempty"`
 	VerifyLogPath           string                    `json:"verify_log_path,omitempty"`
 	ReportSource            string                    `json:"report_source,omitempty"`
-	ReportFallbackUsed      bool                      `json:"report_fallback_used,omitempty"`
 	ReportDiagnostics       []daemon.ReportDiagnostic `json:"report_diagnostics,omitempty"`
 }
 
@@ -2060,17 +2059,6 @@ func (ns *daemonNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmd
 	}
 }
 
-// resolvedInvocationMode returns the daemon-resolved invocation mode for the
-// navigation result's target ID. This is a separate daemon read because the
-// navigation kernel only returns identity/path, not the full DTO.
-func (ns *daemonNavSetup) resolvedInvocationMode(ctx context.Context, invocationID, repoID string) (string, error) {
-	result, err := ns.client.GetInvocation(ctx, invocationID, repoID)
-	if err != nil {
-		return "", err
-	}
-	return result.Invocation.Mode, nil
-}
-
 // ---------------------------------------------------------------------------
 // AgentPath: canonical agent path command (S2-PR04)
 // ---------------------------------------------------------------------------
@@ -2089,10 +2077,9 @@ func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent path", func() bool { return false })
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent path", nil)
 	intent := NavigationIntent{
-		CommandFamily: "agent",
-		Verb:          "path",
+		Verb: "path",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -2132,10 +2119,9 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent open", func() bool { return false })
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent open", nil)
 	intent := NavigationIntent{
-		CommandFamily: "agent",
-		Verb:          "open",
+		Verb: "open",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -2206,10 +2192,9 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent shell", func() bool { return false })
+	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent shell", nil)
 	intent := NavigationIntent{
-		CommandFamily: "agent",
-		Verb:          "shell",
+		Verb: "shell",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -2304,14 +2289,12 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent enter", isInteractive)
 	intent := NavigationIntent{
-		CommandFamily: "agent",
-		Verb:          "enter",
+		Verb: "enter",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
 			Ref:            opts.InvocationRef,
 		},
-		Interactive: true,
 		RequiresTTY: true,
 	}
 
@@ -2320,17 +2303,17 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	mode, err := ns.resolvedInvocationMode(ctx, result.ResolvedID, result.ResolvedRepoID)
+	invocationResult, err := ns.client.GetInvocation(ctx, result.ResolvedID, result.ResolvedRepoID)
 	if err != nil {
 		return err
 	}
-	if mode != "headed" {
+	if invocationResult.Invocation.Mode != "headed" {
 		return errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
 			"invocation is headless; enter is only supported for headed invocations",
 			map[string]string{
 				"invocation_id": result.ResolvedID,
-				"mode":          mode,
+				"mode":          invocationResult.Invocation.Mode,
 				"hint":          "use 'agency agent logs' to view headless invocation output",
 			},
 		)

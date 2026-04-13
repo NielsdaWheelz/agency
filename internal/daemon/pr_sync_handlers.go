@@ -28,13 +28,12 @@ const (
 )
 
 type prSyncResult struct {
-	Branch             string
-	PRNumber           int
-	PRURL              string
-	PRAction           string
-	ReportSource       string
-	ReportFallbackUsed bool
-	ReportDiagnostics  []report.Diagnostic
+	Branch            string
+	PRNumber          int
+	PRURL             string
+	PRAction          string
+	ReportSource      string
+	ReportDiagnostics []report.Diagnostic
 }
 
 type prSyncPR struct {
@@ -83,12 +82,7 @@ func (s *Server) runPRSync(
 		return nil, errors.New(errors.EEmptyDiff, "no commits ahead of parent; make at least one commit")
 	}
 
-	bodyPath, reportSource, reportFallbackUsed, reportDiagnostics, err := prSyncPrepareBody(
-		s.FS,
-		wtMeta.TreePath,
-		record.InvocationID,
-		record.Meta.Mode == store.RunnerModeHeadless,
-	)
+	bodyPath, reportSource, reportDiagnostics, err := prSyncPrepareBody(s.FS, wtMeta.TreePath)
 	if err != nil {
 		return nil, err
 	}
@@ -152,13 +146,12 @@ func (s *Server) runPRSync(
 		// Newly created PR already has body from --body-file.
 		if createdNow {
 			return &prSyncResult{
-				Branch:             wtMeta.Branch,
-				PRNumber:           pr.Number,
-				PRURL:              pr.URL,
-				PRAction:           "created",
-				ReportSource:       reportSource,
-				ReportFallbackUsed: reportFallbackUsed,
-				ReportDiagnostics:  reportDiagnostics,
+				Branch:            wtMeta.Branch,
+				PRNumber:          pr.Number,
+				PRURL:             pr.URL,
+				PRAction:          "created",
+				ReportSource:      reportSource,
+				ReportDiagnostics: reportDiagnostics,
 			}, nil
 		}
 
@@ -167,13 +160,12 @@ func (s *Server) runPRSync(
 			return nil, err
 		}
 		return &prSyncResult{
-			Branch:             wtMeta.Branch,
-			PRNumber:           pr.Number,
-			PRURL:              pr.URL,
-			PRAction:           "updated",
-			ReportSource:       reportSource,
-			ReportFallbackUsed: reportFallbackUsed,
-			ReportDiagnostics:  reportDiagnostics,
+			Branch:            wtMeta.Branch,
+			PRNumber:          pr.Number,
+			PRURL:             pr.URL,
+			PRAction:          "updated",
+			ReportSource:      reportSource,
+			ReportDiagnostics: reportDiagnostics,
 		}, nil
 	}
 
@@ -193,13 +185,12 @@ func (s *Server) runPRSync(
 	}
 
 	return &prSyncResult{
-		Branch:             wtMeta.Branch,
-		PRNumber:           pr.Number,
-		PRURL:              pr.URL,
-		PRAction:           "updated",
-		ReportSource:       reportSource,
-		ReportFallbackUsed: reportFallbackUsed,
-		ReportDiagnostics:  reportDiagnostics,
+		Branch:            wtMeta.Branch,
+		PRNumber:          pr.Number,
+		PRURL:             pr.URL,
+		PRAction:          "updated",
+		ReportSource:      reportSource,
+		ReportDiagnostics: reportDiagnostics,
 	}, nil
 }
 
@@ -530,51 +521,20 @@ func prSyncEditPRBody(ctx context.Context, runner exec.CommandRunner, workDir st
 func prSyncPrepareBody(
 	fsys agencyfs.FS,
 	worktreePath string,
-	invocationID string,
-	strict bool,
-) (bodyPath, reportSource string, reportFallbackUsed bool, diagnostics []report.Diagnostic, err error) {
+) (bodyPath, reportSource string, diagnostics []report.Diagnostic, err error) {
 	resolution, violation, resolveErr := report.ResolveCanonicalReport(fsys, worktreePath, report.ResolveOptions{
 		MaxBytes: prSyncMaxReportBytes,
 	})
 	if resolveErr != nil {
-		return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", resolveErr)
+		return "", "", nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", resolveErr)
 	}
 
 	if violation != nil {
-		if strict {
-			return "", "", false, nil, reportViolationToAgencyError(violation)
-		}
-
-		fallbackPath := filepath.Join(worktreePath, ".agency", "pr_sync_fallback.md")
-		fallbackDir := filepath.Dir(fallbackPath)
-		if mkdirErr := fsys.MkdirAll(fallbackDir, 0o700); mkdirErr != nil {
-			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to create .agency directory for fallback PR body", mkdirErr)
-		}
-		if chmodErr := fsys.Chmod(fallbackDir, 0o700); chmodErr != nil {
-			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to set fallback PR body directory permissions", chmodErr)
-		}
-		fallback := fmt.Sprintf(
-			"## summary\nfallback PR body generated for invocation %s.\n\n## how to test\n- run project tests and manual verification for this branch.\n",
-			invocationID,
-		)
-		if writeErr := fsys.WriteFile(fallbackPath, []byte(fallback), 0o600); writeErr != nil {
-			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to write fallback PR body", writeErr)
-		}
-		if chmodErr := fsys.Chmod(fallbackPath, 0o600); chmodErr != nil {
-			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to set fallback PR body permissions", chmodErr)
-		}
-		violationDiagnostics := []report.Diagnostic{
-			{
-				Code:    string(violation.Code),
-				Message: violation.Message,
-				Source:  string(violation.Source),
-			},
-		}
-		return fallbackPath, "fallback", true, violationDiagnostics, nil
+		return "", "", nil, reportViolationToAgencyError(violation)
 	}
 
 	if resolution == nil {
-		return "", "", false, nil, errors.New(errors.EInternal, "report resolution produced no result")
+		return "", "", nil, errors.New(errors.EInternal, "report resolution produced no result")
 	}
 
 	diags := resolution.Diagnostics
@@ -582,14 +542,14 @@ func prSyncPrepareBody(
 	case report.SourceJSON:
 		canonicalPath, writeErr := report.WriteCanonicalMarkdownBody(fsys, worktreePath, "pr_sync_report_v2.md", resolution.Model)
 		if writeErr != nil {
-			return "", "", false, nil, errors.Wrap(errors.EInternal, "failed to materialize report.json body", writeErr)
+			return "", "", nil, errors.Wrap(errors.EInternal, "failed to materialize report.json body", writeErr)
 		}
-		return canonicalPath, string(resolution.Source), false, diags, nil
+		return canonicalPath, string(resolution.Source), diags, nil
 	case report.SourceMarkdown:
 		reportPath := filepath.Join(worktreePath, ".agency", "report.md")
-		return reportPath, string(resolution.Source), false, diags, nil
+		return reportPath, string(resolution.Source), diags, nil
 	default:
-		return "", "", false, nil, errors.NewWithDetails(
+		return "", "", nil, errors.NewWithDetails(
 			errors.EInternal,
 			"unsupported report source",
 			map[string]string{"source": string(resolution.Source)},

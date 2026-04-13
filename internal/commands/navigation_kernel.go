@@ -50,7 +50,6 @@ type NavigationIntent struct {
 	Selection                NavigationSelection
 	Interactive              bool
 	RequiresTTY              bool
-	RequiresMutation         bool // false for S2 read/navigation resolution
 	BootstrapFallbackAllowed bool
 }
 

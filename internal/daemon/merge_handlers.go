@@ -49,7 +49,6 @@ type mergeResult struct {
 	MergeLogPath       string
 	VerifyLog          string
 	ReportSource       string
-	ReportFallbackUsed bool
 	ReportDiagnostics  []report.Diagnostic
 }
 

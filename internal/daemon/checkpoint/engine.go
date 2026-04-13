@@ -202,11 +202,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.watcher = watcher
 	defer func() { _ = watcher.Close() }()
 
-	// Add initial watches for all directories in sandbox tree
-	if err := e.setupInitialWatches(); err != nil {
-		// Non-fatal: fall back to polling only
-		fmt.Fprintf(os.Stderr, "warning: fsnotify setup failed, using polling only: %v\n", err)
-	}
+	// Add initial watches for all directories in sandbox tree.
+	_ = e.setupInitialWatches()
 
 	// Start main loop
 	hasTriggerCh := e.triggerCh != nil
@@ -251,9 +248,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			}
 			// Semantic trigger — create checkpoint immediately (no rate limit)
 			if err := e.CreateSemanticCheckpoint(ctx, &trigger); err != nil {
-				if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
-					fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
-				}
+				_ = e.emitCheckpointFailed(err.Error())
 			}
 
 		case event, ok := <-watcher.Events:
@@ -268,7 +263,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			// Handle new directory creation - add watcher
 			if event.Has(fsnotify.Create) {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					e.addWatchRecursive(event.Name)
+					_ = e.addWatchRecursive(event.Name)
 				}
 			}
 
@@ -291,8 +286,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			// Log but continue
-			fmt.Fprintf(os.Stderr, "fsnotify error: %v\n", err)
+			_ = err
 
 		case <-debounceTimer.C:
 			debouncePending = false
@@ -300,7 +294,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				// With semantic triggers active, fsnotify fires as drift detection
 				e.tryDriftCheckpoint(ctx)
 			} else {
-				e.tryCheckpoint(ctx, "fsnotify")
+				e.tryCheckpoint(ctx)
 			}
 
 		case <-pollTicker.C:
@@ -333,36 +327,12 @@ func (e *Engine) isSkippedDir(path string) bool {
 
 // setupInitialWatches walks the sandbox tree and adds watches for all directories.
 func (e *Engine) setupInitialWatches() error {
-	return filepath.WalkDir(e.sandboxPath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // Skip inaccessible paths
-		}
-
-		if d.IsDir() {
-			if e.isSkippedDir(path) {
-				return filepath.SkipDir
-			}
-
-			// Skip symlinks
-			if d.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
-
-			e.mu.Lock()
-			if !e.watchedDirs[path] {
-				if err := e.watcher.Add(path); err == nil {
-					e.watchedDirs[path] = true
-				}
-			}
-			e.mu.Unlock()
-		}
-		return nil
-	})
+	return e.addWatchRecursive(e.sandboxPath)
 }
 
 // addWatchRecursive adds watches for a directory and all its subdirectories.
-func (e *Engine) addWatchRecursive(dir string) {
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+func (e *Engine) addWatchRecursive(dir string) error {
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -436,14 +406,12 @@ func (e *Engine) tryDriftCheckpoint(ctx context.Context) {
 
 	trigger := &TriggerEvent{Kind: TriggerDrift}
 	if err := e.createCheckpointWithMetadata(ctx, trigger); err != nil {
-		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
-			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
-		}
+		_ = e.emitCheckpointFailed(err.Error())
 	}
 }
 
 // tryCheckpoint attempts to create a checkpoint, respecting rate limiting.
-func (e *Engine) tryCheckpoint(ctx context.Context, trigger string) {
+func (e *Engine) tryCheckpoint(ctx context.Context) {
 	e.mu.Lock()
 	timeSinceLast := e.clock().Sub(e.lastCheckpoint)
 	if timeSinceLast < e.config.RateLimit {
@@ -453,10 +421,7 @@ func (e *Engine) tryCheckpoint(ctx context.Context, trigger string) {
 	e.mu.Unlock()
 
 	if err := e.CreateCheckpoint(ctx); err != nil {
-		// Emit failure event but continue.
-		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
-			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
-		}
+		_ = e.emitCheckpointFailed(err.Error())
 	}
 }
 
@@ -476,9 +441,7 @@ func (e *Engine) tryCheckpointIfDirty(ctx context.Context) {
 	}
 
 	if err := e.CreateCheckpoint(ctx); err != nil {
-		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
-			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
-		}
+		_ = e.emitCheckpointFailed(err.Error())
 	}
 }
 
@@ -523,9 +486,7 @@ func (e *Engine) doFinalCheckpoint(ctx context.Context) {
 
 	// Force create regardless of rate limit
 	if err := e.createCheckpointInternal(ctx); err != nil {
-		if emitErr := e.emitCheckpointFailed(err.Error()); emitErr != nil {
-			fmt.Fprintf(os.Stderr, "checkpoint_failed append error: %v (original: %v)\n", emitErr, err)
-		}
+		_ = e.emitCheckpointFailed(err.Error())
 	}
 }
 

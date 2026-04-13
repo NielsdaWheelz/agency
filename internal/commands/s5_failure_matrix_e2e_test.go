@@ -201,20 +201,13 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		}, &stdout, &stderr)
 		require.NoError(t, err)
 
-		// Worktree PR sync uses non-strict mode: oversized reports fall back
-		// to a generated body rather than failing, so sync succeeds with
-		// fallback diagnostics.
-		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
-		assert.Equal(t, true, payload["ok"])
-		assert.Equal(t, true, payload["report_fallback_used"])
-		assertS5E2EHasRequestID(t, payload)
-
-		// Verify the oversized report was NOT sent to GitHub (fallback body was used instead).
-		diagnostics, _ := payload["report_diagnostics"].([]any)
-		require.NotEmpty(t, diagnostics, "expected report diagnostics for oversized fallback")
-		firstDiag, _ := diagnostics[0].(map[string]any)
-		assert.Equal(t, "report_oversized", firstDiag["code"])
-	})
+			// Oversized reports are now rejected directly; the command returns
+			// the standard JSON error envelope instead of synthesizing a fallback.
+			payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+			assert.Equal(t, false, payload["ok"])
+			assert.Equal(t, string(errors.EReportOversized), payload["error_code"])
+			assertS5E2EHasRequestID(t, payload)
+		})
 
 	t.Run("merge_log_persistence_failure", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, _, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-merge-log-failure")

@@ -28,7 +28,7 @@ func (s *Server) runRecoveryScan() error {
 	}
 	for repoID := range index.Repos {
 		if err := s.recoverRepoInvocations(repoID); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: recovery scan for repo %s failed: %v\n", repoID, err)
+			return fmt.Errorf("recover repo %s: %w", repoID, err)
 		}
 	}
 	return nil
@@ -107,7 +107,9 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 	}
 	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
-		fmt.Fprintf(os.Stderr, "warning: recovery: could not check tmux session %s for invocation %s: %v\n", sessionName, r.InvocationID, err)
+		s.recordInvocationWarning(repoID, r.InvocationID, "recovery_tmux_has_session_failed", err.Error(), map[string]any{
+			"session_name": sessionName,
+		})
 		return
 	}
 	if exists {
