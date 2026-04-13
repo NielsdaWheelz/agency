@@ -1,8 +1,0 @@
-This is a failure-path Agency validation run. Do not edit any files.
-
-1. Read `README.md` and `internal/daemon/read_timeline.go`.
-2. Run these exact shell commands in order:
-   - `sh -lc 'printf "expected-failure-one\n" 1>&2; exit 7'`
-   - `sh -lc 'printf "missing-file-probe\n"; ls does-not-exist-for-s8-manual-test'`
-3. Do not try to repair either failure.
-4. End with a short explanation of both failures, including the command behavior and exit status if available.

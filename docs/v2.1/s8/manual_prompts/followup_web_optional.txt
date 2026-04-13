@@ -1,8 +1,0 @@
-Optional stretch. Only if you have native web search or web fetch tools available and usable here.
-Do not use shell `curl`, `wget`, or browser commands.
-
-Use native web search or web fetch to retrieve one short fact about `ripgrep` or `git diff`.
-Append exactly `web-line: optional` to `tmp/s8-manual/checklist.md`.
-Finally, summarize the web action and the line you added.
-
-If native web tools are unavailable or blocked, reply exactly `web unavailable` and do not change any files.

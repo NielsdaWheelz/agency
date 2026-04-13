@@ -1,3 +1,0 @@
-Update `src/math.js` so it also exports a `subtract(a, b)` function alongside `add(a, b)`.
-Update `README.md` to mention that `subtract` is available.
-Then run `./tests/check.sh` and summarize the result.
