@@ -352,6 +352,32 @@ func TestGroupTimelineIntoTurns_ToolStartAndEndMergeIntoSingleToolCall(t *testin
 	assert.Equal(t, 0, turns[0].ToolCalls[0].ExitCode)
 }
 
+func TestGroupTimelineIntoTurns_RepeatedInProgressToolUpdatesCollapseByID(t *testing.T) {
+	t.Parallel()
+	entries := []TimelineEntry{
+		{EntryID: "e-1", Kind: "message", Timestamp: "2026-02-05T11:50:10Z", Data: map[string]interface{}{
+			"role": "assistant", "text": "Running command",
+		}},
+		{EntryID: "e-2", Kind: "tool_use", Timestamp: "2026-02-05T11:50:11Z", Data: map[string]interface{}{
+			"tool_id": "item_1", "name": "Bash", "command": "sh -lc probe", "in_progress": true,
+		}},
+		{EntryID: "e-3", Kind: "tool_use", Timestamp: "2026-02-05T11:50:12Z", Data: map[string]interface{}{
+			"tool_id": "item_1", "name": "Bash", "command": "sh -lc probe", "in_progress": true,
+		}},
+		{EntryID: "e-4", Kind: "tool_use", Timestamp: "2026-02-05T11:50:13Z", Data: map[string]interface{}{
+			"tool_id": "item_1", "name": "Bash", "command": "sh -lc probe", "exit_code": float64(0),
+		}},
+	}
+
+	turns := GroupTimelineIntoTurns(entries, nil)
+	require.Len(t, turns, 1)
+	require.Len(t, turns[0].ToolCalls, 1, "repeated Codex updates should keep one tool row")
+	assert.Equal(t, "item_1", turns[0].ToolCalls[0].ID)
+	assert.Equal(t, "sh -lc probe", turns[0].ToolCalls[0].Command)
+	assert.True(t, turns[0].ToolCalls[0].HasExit)
+	assert.Equal(t, 0, turns[0].ToolCalls[0].ExitCode)
+}
+
 func TestGroupTimelineIntoTurns_ParseErrorIncludedAsDiagnosticTurn(t *testing.T) {
 	t.Parallel()
 	entries := []TimelineEntry{

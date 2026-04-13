@@ -10,8 +10,7 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// Service implements PR-05 release-gate enforcement orchestration.
-// It consumes PR-03/PR-04 evaluation outputs without redefining them.
+// Service orchestrates release-gate evaluation and reporting.
 type Service struct {
 	source *Source
 }
@@ -21,7 +20,7 @@ func NewService(source *Source) *Service {
 	return &Service{source: source}
 }
 
-// EvaluateReleaseReadiness consumes RequireSliceReady to produce a release-readiness result.
+// EvaluateReleaseReadiness returns the aggregate readiness result for a slice.
 func (s *Service) EvaluateReleaseReadiness(req ReleaseReadinessRequest, repoRoot string) (*ReleaseReadinessResult, error) {
 	gatesReq := GatesEvaluateRequest{
 		GateSetSource: CanonicalGateSourcePath,
@@ -33,22 +32,11 @@ func (s *Service) EvaluateReleaseReadiness(req ReleaseReadinessRequest, repoRoot
 		code := agencyerrors.GetCode(err)
 		if code == agencyerrors.EGateBlocked {
 			ae, _ := agencyerrors.AsAgencyError(err)
-			gateAStatus := ae.Details["gate_a_status"]
-			gateBStatus := ae.Details["gate_b_status"]
-
-			gateA := rebuildGateStatusFromDetails(ae.Details, "a")
-			gateB := rebuildGateStatusFromDetails(ae.Details, "b")
-
-			return &ReleaseReadinessResult{
-					Slice:      req.Slice,
-					SliceReady: false,
-					GateA:      &GateStatus{GateID: "A", Status: gateAStatus, TotalItems: gateA.TotalItems, ClosedItems: gateA.ClosedItems, BlockingItems: gateA.BlockingItems},
-					GateB:      &GateStatus{GateID: "B", Status: gateBStatus, TotalItems: gateB.TotalItems, ClosedItems: gateB.ClosedItems, BlockingItems: gateB.BlockingItems},
-				}, agencyerrors.NewWithDetails(
-					agencyerrors.EGateBlocked,
-					ae.Msg,
-					ae.Details,
-				)
+			return rebuildBlockedReadinessResult(req.Slice, ae), agencyerrors.NewWithDetails(
+				agencyerrors.EGateBlocked,
+				ae.Msg,
+				ae.Details,
+			)
 		}
 		return nil, err
 	}
@@ -61,13 +49,8 @@ func (s *Service) EvaluateReleaseReadiness(req ReleaseReadinessRequest, repoRoot
 	}, nil
 }
 
-// BuildClosureReport generates a deterministic closure-evidence report for closed gate items.
+// BuildClosureReport generates closure evidence for the closed items in each gate.
 func (s *Service) BuildClosureReport(req ClosureReportRequest, repoRoot string) (*ClosureReportResult, error) {
-	gatesReq := GatesEvaluateRequest{
-		GateSetSource: CanonicalGateSourcePath,
-		Slice:         req.Slice,
-	}
-
 	gateSet, err := LoadGateSet(repoRoot)
 	if err != nil {
 		return nil, err
@@ -104,10 +87,8 @@ func (s *Service) BuildClosureReport(req ClosureReportRequest, repoRoot string) 
 		return nil, driftErr
 	}
 
-	_ = gatesReq
-
-	gateASnapshot := s.buildGateSnapshot("A", gateSet.GateAItems, evaluations, repoRoot)
-	gateBSnapshot := s.buildGateSnapshot("B", gateSet.GateBItems, evaluations, repoRoot)
+	gateASnapshot := s.buildGateSnapshot("A", gateSet.GateAItems, evaluations)
+	gateBSnapshot := s.buildGateSnapshot("B", gateSet.GateBItems, evaluations)
 
 	return &ClosureReportResult{
 		Slice: req.Slice,
@@ -116,7 +97,7 @@ func (s *Service) BuildClosureReport(req ClosureReportRequest, repoRoot string) 
 	}, nil
 }
 
-func (s *Service) buildGateSnapshot(gateID string, items []string, evaluations map[string]*GateItemEvaluation, repoRoot string) *GateClosureSnapshot {
+func (s *Service) buildGateSnapshot(gateID string, items []string, evaluations map[string]*GateItemEvaluation) *GateClosureSnapshot {
 	snap := &GateClosureSnapshot{
 		GateID:         gateID,
 		TotalItems:     len(items),
@@ -293,17 +274,38 @@ func parseSection9UnresolvedRows(content string) (int, string) {
 	return count, firstQuestion
 }
 
-// rebuildGateStatusFromDetails reconstructs gate counts from E_GATE_BLOCKED details.
-func rebuildGateStatusFromDetails(details map[string]string, prefix string) struct {
+type blockedGateStatus struct {
 	TotalItems    int
 	ClosedItems   int
 	BlockingItems []string
-} {
-	var result struct {
-		TotalItems    int
-		ClosedItems   int
-		BlockingItems []string
+}
+
+func rebuildBlockedReadinessResult(slice string, ae *agencyerrors.AgencyError) *ReleaseReadinessResult {
+	gateA := rebuildBlockedGateStatus(ae.Details, "a")
+	gateB := rebuildBlockedGateStatus(ae.Details, "b")
+
+	return &ReleaseReadinessResult{
+		Slice:      slice,
+		SliceReady: false,
+		GateA: &GateStatus{
+			GateID:        "A",
+			Status:        ae.Details["gate_a_status"],
+			TotalItems:    gateA.TotalItems,
+			ClosedItems:   gateA.ClosedItems,
+			BlockingItems: gateA.BlockingItems,
+		},
+		GateB: &GateStatus{
+			GateID:        "B",
+			Status:        ae.Details["gate_b_status"],
+			TotalItems:    gateB.TotalItems,
+			ClosedItems:   gateB.ClosedItems,
+			BlockingItems: gateB.BlockingItems,
+		},
 	}
+}
+
+func rebuildBlockedGateStatus(details map[string]string, prefix string) blockedGateStatus {
+	var result blockedGateStatus
 	_, _ = fmt.Sscanf(details["gate_"+prefix+"_total_items"], "%d", &result.TotalItems)
 	_, _ = fmt.Sscanf(details["gate_"+prefix+"_closed_items"], "%d", &result.ClosedItems)
 	blocking := details["gate_"+prefix+"_blocking_items"]

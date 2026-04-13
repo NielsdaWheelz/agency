@@ -23,10 +23,10 @@ type Snapshot struct {
 }
 
 type snapshotClient interface {
-	ListRepos(ctx context.Context) (*daemonclient.ListReposResult, error)
-	ListWorktrees(ctx context.Context, opts daemonclient.ListWorktreesOpts) (*daemonclient.ListWorktreesResult, error)
-	ListInvocations(ctx context.Context, opts daemonclient.ListInvocationsOpts) (*daemonclient.ListInvocationsResult, error)
-	GetInvocationReview(ctx context.Context, ref string, repoID string) (*daemonclient.GetInvocationReviewResult, error)
+	ListRepos(ctx context.Context) (*daemon.Result[daemon.ListReposData], error)
+	ListWorktrees(ctx context.Context, opts daemonclient.ListWorktreesOpts) (*daemon.Result[daemon.ListWorktreesData], error)
+	ListInvocations(ctx context.Context, opts daemonclient.ListInvocationsOpts) (*daemon.Result[daemon.ListInvocationsData], error)
+	GetInvocationReview(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationReviewData], error)
 }
 
 // SnapshotLoader composes watch workspace state from canonical daemon reads.
@@ -67,7 +67,7 @@ func (l *SnapshotLoader) Load(ctx context.Context) (Snapshot, error) {
 	reviews, warnings := l.fetchReviews(ctx, invocations)
 
 	return Snapshot{
-		Repos:       reposResult.Repos,
+		Repos:       reposResult.Data.Repos,
 		Worktrees:   worktrees,
 		Invocations: invocations,
 		Reviews:     reviews,
@@ -90,14 +90,14 @@ func (l *SnapshotLoader) fetchAllWorktrees(ctx context.Context) ([]daemon.Worktr
 			return nil, err
 		}
 
-		worktrees = append(worktrees, result.Worktrees...)
-		if result.NextCursor == "" {
+		worktrees = append(worktrees, result.Data.Worktrees...)
+		if result.Data.NextCursor == "" {
 			return worktrees, nil
 		}
-		if result.NextCursor == cursor {
+		if result.Data.NextCursor == cursor {
 			return nil, errors.New(errors.EInternal, "worktree pagination cursor did not advance")
 		}
-		cursor = result.NextCursor
+		cursor = result.Data.NextCursor
 	}
 }
 
@@ -115,14 +115,14 @@ func (l *SnapshotLoader) fetchAllInvocations(ctx context.Context) ([]daemon.Invo
 			return nil, err
 		}
 
-		invocations = append(invocations, result.Invocations...)
-		if result.NextCursor == "" {
+		invocations = append(invocations, result.Data.Invocations...)
+		if result.Data.NextCursor == "" {
 			return invocations, nil
 		}
-		if result.NextCursor == cursor {
+		if result.Data.NextCursor == cursor {
 			return nil, errors.New(errors.EInternal, "invocation pagination cursor did not advance")
 		}
-		cursor = result.NextCursor
+		cursor = result.Data.NextCursor
 	}
 }
 
@@ -136,7 +136,7 @@ func (l *SnapshotLoader) fetchReviews(ctx context.Context, invocations []daemon.
 			warnings = append(warnings, fmt.Sprintf("review refresh failed for %s: %v", inv.InvocationID, err))
 			continue
 		}
-		reviews[inv.InvocationID] = result.Review
+		reviews[inv.InvocationID] = result.Data
 	}
 
 	return reviews, warnings

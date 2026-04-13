@@ -22,16 +22,13 @@ const MaxPromptSize = 256 * 1024
 const IdempotencyTTL = 5 * 60 // seconds
 
 // HeadedReconcileInterval is the default interval for headed invocation reconciliation.
-// Per PR-11 spec: default 3 seconds, configurable via constant (no CLI flag).
 const HeadedReconcileInterval = 3 * time.Second
 
 // HeadedStartingGraceCount is the number of reconciliation ticks a "starting"
 // invocation must be observed without a tmux session before being marked failed.
-// Per PR-11 spec: at least 2 consecutive ticks (i.e., ≥1 full tick interval after first observation).
 const HeadedStartingGraceCount = 2
 
-// ControlPlaneStartRequest is the request body for POST /invocations/start_headless (PR-05 control plane).
-// This is the new endpoint where daemon creates everything.
+// ControlPlaneStartRequest is the request body for POST /invocations/start_headless.
 type ControlPlaneStartRequest struct {
 	// RepoRoot is the absolute path to the repository root.
 	RepoRoot string `json:"repo_root"`
@@ -62,7 +59,7 @@ type ControlPlaneStartRequest struct {
 	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
 }
 
-// ControlPlaneStartResponse is the response body for POST /invocations/start_headless (PR-05 control plane).
+// ControlPlaneStartResponse is the response body for POST /invocations/start_headless.
 type ControlPlaneStartResponse struct {
 	OK                      bool      `json:"ok"`
 	InvocationID            string    `json:"invocation_id,omitempty"`
@@ -88,7 +85,7 @@ type ControlPlaneStartResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// ControlPlaneFollowUpPromptRequest is the request body for POST /invocations/{ref}/chat (S3 PR-02).
+// ControlPlaneFollowUpPromptRequest is the request body for POST /invocations/{ref}/chat.
 type ControlPlaneFollowUpPromptRequest struct {
 	// Prompt is the follow-up prompt text (max 256KB).
 	Prompt string `json:"prompt"`
@@ -97,7 +94,7 @@ type ControlPlaneFollowUpPromptRequest struct {
 	ClientRequestID string `json:"client_request_id"`
 }
 
-// ControlPlaneFollowUpPromptResponse is the response body for POST /invocations/{ref}/chat (S3 PR-02).
+// ControlPlaneFollowUpPromptResponse is the response body for POST /invocations/{ref}/chat.
 type ControlPlaneFollowUpPromptResponse struct {
 	OK             bool   `json:"ok"`
 	InvocationID   string `json:"invocation_id,omitempty"`
@@ -176,26 +173,26 @@ type ErrorResponse struct {
 type SupervisedProcess struct {
 	InvocationID          string
 	RepoID                string
-	IntegrationWorktreeID string // PR-06: track which worktree this invocation targets
-	Mode                  string // PR-10: "headless" or "headed"
+	IntegrationWorktreeID string
+	Mode                  string
 	PID                   int    // Headless only
 	PGID                  int    // Headless only
-	TmuxSession           string // PR-10: Headed only - tmux session name
+	TmuxSession           string // Headed only - tmux session name
 	SandboxPath           string // Headless only: runner working directory
 	RawLogFile            string
 	StderrFile            string
-	StreamLogFile         string // PR-07: path to stream.jsonl for normalized events
-	Runner                string // PR-07: runner type for stream parsing
-	RepoRoot              string // PR-08: repo root path for checkpoint engine
+	StreamLogFile         string // path to stream.jsonl for normalized events
+	Runner                string // runner type for stream parsing
+	RepoRoot              string // repo root path for checkpoint engine
 	RunnerArgs            []string
 	Env                   map[string]string
 	NoIncludeUntracked    bool
 
-	// Parser handles stream parsing and semantic status (PR-07).
+	// Parser handles stream parsing and semantic status.
 	// May be nil for headed invocations or unsupported runners.
 	Parser *stream.Parser
 
-	// CheckpointEngine manages checkpoint creation (PR-08).
+	// CheckpointEngine manages checkpoint creation.
 	// May be nil if checkpointing is disabled.
 	CheckpointEngine CheckpointEngine
 
@@ -337,7 +334,7 @@ type CheckpointEngine interface {
 	Stop()
 }
 
-// ----- PR-06 Worktree Types -----
+// ----- Worktree Types -----
 
 // WorktreeCreateRequest is the request body for POST /worktrees/create.
 type WorktreeCreateRequest struct {
@@ -396,7 +393,7 @@ type WorktreeIdempotencyEntry struct {
 	CreatedAt  int64 // Unix timestamp
 }
 
-// ----- PR-08 Checkpoint Types -----
+// ----- Checkpoint Types -----
 
 // CheckpointApplyRequest is the request body for POST /invocations/{id}/checkpoints/apply.
 type CheckpointApplyRequest struct {
@@ -423,7 +420,6 @@ type CheckpointApplyResponse struct {
 }
 
 // RestartFromCheckpointRequest is the request body for POST /invocations/{ref}/restart.
-// S3 PR-03: canonical invocation-scoped restart flow.
 type RestartFromCheckpointRequest struct {
 	// CheckpointID is the checkpoint number to restore before runner restart.
 	CheckpointID int `json:"checkpoint_id"`
@@ -458,7 +454,7 @@ type RestartFromCheckpointResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// ----- PR-09 Landing Types -----
+// ----- Landing Types -----
 
 // LandingMode indicates which landing strategy was used.
 type LandingMode string
@@ -627,9 +623,9 @@ type WorktreeUpdateResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// ----- PR-10 Headed Invocation Types -----
+// ----- Headed Invocation Types -----
 
-// ControlPlaneStartHeadedRequest is the request body for POST /invocations/start_headed (PR-10).
+// ControlPlaneStartHeadedRequest is the request body for POST /invocations/start_headed.
 // This endpoint creates and starts a headed (tmux) invocation end-to-end.
 type ControlPlaneStartHeadedRequest struct {
 	// RepoRoot is the absolute path to the repository root.
@@ -658,7 +654,7 @@ type ControlPlaneStartHeadedRequest struct {
 	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
 }
 
-// ControlPlaneStartHeadedResponse is the response body for POST /invocations/start_headed (PR-10).
+// ControlPlaneStartHeadedResponse is the response body for POST /invocations/start_headed.
 type ControlPlaneStartHeadedResponse struct {
 	OK                      bool   `json:"ok"`
 	InvocationID            string `json:"invocation_id,omitempty"`
@@ -691,7 +687,7 @@ type HeadedIdempotencyEntry struct {
 	CreatedAt    int64 // Unix timestamp
 }
 
-// ----- PR-A Repo Registry Types -----
+// ----- Repo Registry Types -----
 
 // RepoRegisterRequest is the request body for POST /repos/register.
 type RepoRegisterRequest struct {

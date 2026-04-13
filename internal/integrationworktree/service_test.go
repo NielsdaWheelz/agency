@@ -156,6 +156,41 @@ func TestCreateAndRemove(t *testing.T) {
 	})
 }
 
+func TestCreateInvalidName(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	st := store.NewStore(fsys, filepath.Join(tmpDir, "data"), time.Now)
+	svc := NewService(st, exec.NewRealRunner(), fsys, time.Now)
+
+	tests := []struct {
+		name     string
+		worktree string
+	}{
+		{name: "too short", worktree: "a"},
+		{name: "uppercase", worktree: "MyFeature"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := svc.Create(context.Background(), CreateOpts{
+				Name:         tc.worktree,
+				RepoRoot:     filepath.Join(tmpDir, "repo"),
+				RepoID:       "repo-1",
+				ParentBranch: "main",
+			})
+
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Equal(t, errors.EInvalidName, errors.GetCode(err))
+		})
+	}
+}
+
 func TestHasIntegrationMarker(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

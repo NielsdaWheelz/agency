@@ -1,8 +1,16 @@
 // Package daemon implements the agency daemon supervisor.
-// This file defines types for the read API (PR-12).
 package daemon
 
+import "encoding/json"
+
 // ----- Response Envelope -----
+
+// Result is the canonical decoded daemon response surface used by callers once
+// the wire envelope has been parsed.
+type Result[T any] struct {
+	Data      T
+	RequestID string
+}
 
 // APIResponse is the standard response envelope for all read endpoints.
 // All responses include the envelope fields; data is type-specific.
@@ -19,6 +27,22 @@ type APIResponse struct {
 	Message   string      `json:"message,omitempty"`
 	Hint      string      `json:"hint,omitempty"`
 	Details   interface{} `json:"details,omitempty"`
+}
+
+// RawAPIResponse is the canonical transport envelope for read-client decoding.
+// Clients should decode this envelope once, then unmarshal Data into the
+// daemon DTO for the requested capability instead of redefining the envelope.
+type RawAPIResponse struct {
+	OK           bool            `json:"ok"`
+	APIVersion   int             `json:"api_version"`
+	BuildVersion string          `json:"build_version,omitempty"`
+	GitSHA       string          `json:"git_sha,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	Hint         string          `json:"hint,omitempty"`
+	Details      json.RawMessage `json:"details,omitempty"`
 }
 
 // AmbiguousDetails is the details shape for E_AMBIGUOUS errors.
@@ -82,7 +106,7 @@ type InvocationDTO struct {
 	AttentionFlags []string `json:"attention_flags"` // daemon-derived flags
 	SortKey        int      `json:"sort_key"`        // daemon-derived priority for rendering
 
-	// Shared activity projection (PR-05)
+	// Shared activity projection.
 	StatusSummary  string                        `json:"status_summary,omitempty"`
 	LatestActivity *InvocationLatestActivity     `json:"latest_activity,omitempty"`
 	Navigation     *InvocationActivityNavigation `json:"navigation,omitempty"`
@@ -93,7 +117,7 @@ type InvocationDTO struct {
 }
 
 // InvocationLatestActivity summarizes the latest meaningful invocation activity.
-// Shared across list/watch/show/review surfaces (PR-05).
+// Shared across list/watch/show/review surfaces.
 type InvocationLatestActivity struct {
 	TurnID    string `json:"turn_id,omitempty"`
 	Kind      string `json:"kind,omitempty"`
@@ -138,7 +162,7 @@ type CheckpointDTO struct {
 	IncludesUntracked bool   `json:"includes_untracked"`
 	Degraded          bool   `json:"degraded"`
 
-	// Semantic trigger metadata (schema 1.1+). Omitted for legacy checkpoints.
+	// Semantic trigger metadata (schema 1.1+).
 	Trigger     string `json:"trigger,omitempty"`
 	ToolName    string `json:"tool_name,omitempty"`
 	StreamSeq   uint64 `json:"stream_seq,omitempty"`
@@ -338,7 +362,6 @@ type ListWorktreesParams struct {
 // ListInvocationsParams holds query parameters for GET /invocations.
 type ListInvocationsParams struct {
 	RepoID      string // optional, filter by repo
-	WorktreeID  string // optional, filter by worktree (can be ref)
 	WorktreeRef string // optional, filter by worktree ref (name/id/prefix)
 	State       string // active, finished, all (default: all)
 	Mode        string // headed, headless, all (default: all)
@@ -356,7 +379,7 @@ type GetLogsParams struct {
 // MaxLogChunk is the maximum bytes per offset-mode log read (1 MB).
 const MaxLogChunk = 1_048_576
 
-// ----- Timeline Response Types (S3 PR-01) -----
+// ----- Timeline Response Types -----
 
 // TimelineEntryDTO is a normalized, typed entry in the invocation timeline.
 type TimelineEntryDTO struct {
@@ -389,7 +412,7 @@ type GetTimelineParams struct {
 	Order  string // "asc" (default) or "desc"
 }
 
-// ----- S1 Release Gate DTOs (PR-05) -----
+// ----- S1 Release Gate DTOs -----
 
 // S1ReleaseReadinessData is the data payload for GET /spec/v2.1/s1/release/readiness.
 type S1ReleaseReadinessData struct {

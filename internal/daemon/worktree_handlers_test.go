@@ -82,18 +82,6 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 			wantCode:   "E_INVALID_REQUEST",
 			wantStatus: http.StatusBadRequest,
 		},
-		{
-			name:       "invalid name - too short",
-			req:        WorktreeCreateRequest{RepoRoot: "/tmp/repo", Name: "a"},
-			wantCode:   string(errors.EInvalidName),
-			wantStatus: http.StatusBadRequest,
-		},
-		{
-			name:       "invalid name - uppercase",
-			req:        WorktreeCreateRequest{RepoRoot: "/tmp/repo", Name: "MyFeature"},
-			wantCode:   string(errors.EInvalidName),
-			wantStatus: http.StatusBadRequest,
-		},
 	}
 
 	for _, tc := range tests {
@@ -258,7 +246,7 @@ func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&resp2)
 
 	assert.False(t, resp2.OK, "expected second request to fail due to name collision")
-	assert.Equal(t, string(errors.EWorktreeNameExists), resp2.ErrorCode)
+	assert.Equal(t, string(errors.ENameExists), resp2.ErrorCode)
 }
 
 func TestHandleWorktreeRm_ValidationErrors(t *testing.T) {

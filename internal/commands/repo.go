@@ -1,5 +1,4 @@
 // Package commands implements agency CLI commands.
-// This file implements repo registry commands (PR-A / PR-14).
 package commands
 
 import (
@@ -41,12 +40,7 @@ type ResolveRepoContextOpts struct {
 	CmdName string
 }
 
-// ResolveRepoViaClient resolves the repo context for a CLI command.
-// It implements the PR-A auto-registration flow:
-//   - If --repo flag is set, use it directly.
-//   - If --all-repos is set (list commands only), return AllRepos=true.
-//   - If CWD is inside a git repo, auto-register via daemon and return repo_id.
-//   - Otherwise, return a helpful error with hints.
+// ResolveRepoViaClient resolves repo context for a CLI command.
 func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *daemonclient.Client, cwd string, opts ResolveRepoContextOpts) (*RepoContextResult, error) {
 	// Mutual exclusion
 	if opts.RepoFlag != "" && opts.AllRepos {
@@ -96,7 +90,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 		return nil, err
 	}
 
-	return &RepoContextResult{RepoID: result.RepoID}, nil
+	return &RepoContextResult{RepoID: result.Data.RepoID}, nil
 }
 
 // RepoAddOpts holds options for the repo add command.
@@ -128,15 +122,15 @@ func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAd
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		return enc.Encode(result.Data)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Registered repo\n")
-	_, _ = fmt.Fprintf(stdout, "  repo_id:        %s\n", result.RepoID)
-	_, _ = fmt.Fprintf(stdout, "  repo_key:       %s\n", result.RepoKey)
-	_, _ = fmt.Fprintf(stdout, "  preferred_root: %s\n", result.PreferredRoot)
-	if len(result.Paths) > 1 {
-		_, _ = fmt.Fprintf(stdout, "  paths:          %d registered\n", len(result.Paths))
+	_, _ = fmt.Fprintf(stdout, "  repo_id:        %s\n", result.Data.RepoID)
+	_, _ = fmt.Fprintf(stdout, "  repo_key:       %s\n", result.Data.RepoKey)
+	_, _ = fmt.Fprintf(stdout, "  preferred_root: %s\n", result.Data.PreferredRoot)
+	if len(result.Data.Paths) > 1 {
+		_, _ = fmt.Fprintf(stdout, "  paths:          %d registered\n", len(result.Data.Paths))
 	}
 
 	return nil
@@ -162,16 +156,16 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result.Repos)
+		return enc.Encode(result.Data.Repos)
 	}
 
-	if len(result.Repos) == 0 {
+	if len(result.Data.Repos) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No repos registered.")
 		_, _ = fmt.Fprintln(stdout, "Register one with: agency repo add /path/to/repo")
 		return nil
 	}
 
-	for _, r := range result.Repos {
+	for _, r := range result.Data.Repos {
 		// Show short name as primary column; fall back to truncated ID for path-based repos
 		label := ids.RepoShortName(r.RepoKey)
 		if label == "" {
@@ -185,8 +179,6 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 
 	return nil
 }
-
-// ----- PR-05: S1 Release Gate Commands -----
 
 // RepoS1ReadinessOpts holds options for the s1 readiness command.
 type RepoS1ReadinessOpts struct {
@@ -447,10 +439,10 @@ func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoS
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result.Repo)
+		return enc.Encode(result.Data)
 	}
 
-	r := result.Repo
+	r := result.Data
 	_, _ = fmt.Fprintf(stdout, "repo_id:        %s\n", r.RepoID)
 	_, _ = fmt.Fprintf(stdout, "repo_key:       %s\n", r.RepoKey)
 	_, _ = fmt.Fprintf(stdout, "preferred_root: %s\n", r.PreferredRoot)

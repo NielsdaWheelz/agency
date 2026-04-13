@@ -199,6 +199,9 @@ func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) ([]*NormalizedEvent
 	if raw.Item.Command != "" {
 		event.Data["command"] = raw.Item.Command
 	}
+	if itemID := strings.TrimSpace(raw.Item.ID); itemID != "" {
+		event.Data["tool_id"] = itemID
+	}
 	output := raw.Item.AggregatedOutput
 	if strings.TrimSpace(raw.Item.ID) != "" {
 		a.mergeCommandOutput(raw.Item.ID, raw.Item.AggregatedOutput)
@@ -225,6 +228,9 @@ func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, 
 	}
 	if raw.Item.ExitCode != nil {
 		event.Data["exit_code"] = *raw.Item.ExitCode
+	}
+	if itemID := strings.TrimSpace(raw.Item.ID); itemID != "" {
+		event.Data["tool_id"] = itemID
 	}
 	output := raw.Item.AggregatedOutput
 	if strings.TrimSpace(raw.Item.ID) != "" {

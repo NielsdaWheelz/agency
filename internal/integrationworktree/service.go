@@ -1,4 +1,4 @@
-// Package integrationworktree provides integration worktree operations for Slice 8.
+// Package integrationworktree provides integration worktree operations.
 // Integration worktrees are stable, human-owned branches that agents execute against.
 package integrationworktree
 

@@ -36,7 +36,6 @@ and provides commands to control the runner session.`,
 		newDoctorCmd(),
 		newCompletionCmd(),
 		newVersionCmd(),
-		// v2 commands
 		newWorktreeCmd(),
 		newAgentCmd(),
 		newCheckpointCmd(),

@@ -38,6 +38,7 @@ type Turn struct {
 
 // ToolCall is a tool invocation rendered within an assistant turn.
 type ToolCall struct {
+	ID       string
 	Name     string
 	Command  string
 	ExitCode int
@@ -127,6 +128,7 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 			// Attach to the current (last) assistant turn
 			if len(turns) > 0 && turns[len(turns)-1].Kind == TurnAssistant {
 				tc := ToolCall{
+					ID:      dataString(entry.Data, "tool_id"),
 					Name:    dataString(entry.Data, "name"),
 					Command: dataString(entry.Data, "command"),
 				}
@@ -135,6 +137,30 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 					tc.HasExit = true
 				}
 				lastTurn := &turns[len(turns)-1]
+				if tc.ID != "" {
+					matched := false
+					for i := len(lastTurn.ToolCalls) - 1; i >= 0; i-- {
+						lastTool := &lastTurn.ToolCalls[i]
+						if strings.TrimSpace(lastTool.ID) != tc.ID {
+							continue
+						}
+						if strings.TrimSpace(lastTool.Name) == "" {
+							lastTool.Name = tc.Name
+						}
+						if strings.TrimSpace(lastTool.Command) == "" {
+							lastTool.Command = tc.Command
+						}
+						if tc.HasExit {
+							lastTool.ExitCode = tc.ExitCode
+							lastTool.HasExit = true
+						}
+						matched = true
+						break
+					}
+					if matched {
+						continue
+					}
+				}
 				if tc.HasExit && len(lastTurn.ToolCalls) > 0 {
 					lastTool := &lastTurn.ToolCalls[len(lastTurn.ToolCalls)-1]
 					if !lastTool.HasExit && sameToolIdentity(*lastTool, tc) {
@@ -538,6 +564,11 @@ func extractCheckpointID(data map[string]interface{}) int {
 }
 
 func sameToolIdentity(a, b ToolCall) bool {
+	aID := strings.TrimSpace(a.ID)
+	bID := strings.TrimSpace(b.ID)
+	if aID != "" && bID != "" {
+		return aID == bID
+	}
 	aCommand := strings.TrimSpace(a.Command)
 	bCommand := strings.TrimSpace(b.Command)
 	if aCommand != "" && bCommand != "" {

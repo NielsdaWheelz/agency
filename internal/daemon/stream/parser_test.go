@@ -302,6 +302,22 @@ func TestCodexAdapter_ContentBlocks_AgentMessage(t *testing.T) {
 	assert.Equal(t, "Done!", blocks[0]["text"])
 }
 
+func TestCodexAdapter_ParseLine_ItemUpdatedIncludesToolID(t *testing.T) {
+	t.Parallel()
+	adapter := &CodexAdapter{}
+
+	input := `{"type":"item.updated","item":{"id":"item_1","type":"command_execution","command":"sh -lc probe","aggregated_output":"sleep-start\n","status":"in_progress"}}`
+
+	result, err := adapter.ParseLine([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, result.Events, 1)
+
+	ev := result.Events[0]
+	assert.Equal(t, EventKindToolStart, ev.Kind)
+	assert.Equal(t, "item_1", ev.Data["tool_id"])
+	assert.Equal(t, "sh -lc probe", ev.Data["command"])
+}
+
 func TestCursorAdapter_ParseLine_ToolCallCompleted(t *testing.T) {
 	t.Parallel()
 	adapter := &CursorAdapter{}

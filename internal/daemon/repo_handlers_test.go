@@ -27,11 +27,11 @@ func TestRepoRegister_Success(t *testing.T) {
 	result, err := env.Client.RegisterRepo(ctx, repoDir)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, result.RepoID)
-	assert.NotEmpty(t, result.RepoKey)
-	assert.Contains(t, result.Paths, resolvedRepoDir)
-	assert.Equal(t, resolvedRepoDir, result.PreferredRoot)
-	assert.True(t, result.PreferredRootAccessible)
+	assert.NotEmpty(t, result.Data.RepoID)
+	assert.NotEmpty(t, result.Data.RepoKey)
+	assert.Contains(t, result.Data.Paths, resolvedRepoDir)
+	assert.Equal(t, resolvedRepoDir, result.Data.PreferredRoot)
+	assert.True(t, result.Data.PreferredRootAccessible)
 }
 
 // TestRepoRegister_Idempotent verifies registering the same repo twice returns consistent data.
@@ -48,9 +48,9 @@ func TestRepoRegister_Idempotent(t *testing.T) {
 	r2, err := env.Client.RegisterRepo(ctx, repoDir)
 	require.NoError(t, err)
 
-	assert.Equal(t, r1.RepoID, r2.RepoID, "repo_id must be stable")
-	assert.Equal(t, r1.RepoKey, r2.RepoKey, "repo_key must be stable")
-	assert.Equal(t, r1.PreferredRoot, r2.PreferredRoot, "preferred_root must be stable")
+	assert.Equal(t, r1.Data.RepoID, r2.Data.RepoID, "repo_id must be stable")
+	assert.Equal(t, r1.Data.RepoKey, r2.Data.RepoKey, "repo_key must be stable")
+	assert.Equal(t, r1.Data.PreferredRoot, r2.Data.PreferredRoot, "preferred_root must be stable")
 }
 
 // TestRepoRegister_NonGitDir verifies E_REPO_NOT_A_GIT_REPO for a non-git directory.
@@ -106,7 +106,7 @@ func TestListRepos_Empty(t *testing.T) {
 	result, err := env.Client.ListRepos(ctx)
 	require.NoError(t, err)
 
-	assert.Empty(t, result.Repos)
+	assert.Empty(t, result.Data.Repos)
 }
 
 // TestListRepos_AfterRegister verifies GET /repos includes registered repos.
@@ -126,9 +126,9 @@ func TestListRepos_AfterRegister(t *testing.T) {
 	result, err := env.Client.ListRepos(ctx)
 	require.NoError(t, err)
 
-	require.Len(t, result.Repos, 1)
-	assert.Equal(t, reg.RepoID, result.Repos[0].RepoID)
-	assert.Equal(t, resolvedRepoDir, result.Repos[0].PreferredRoot)
+	require.Len(t, result.Data.Repos, 1)
+	assert.Equal(t, reg.Data.RepoID, result.Data.Repos[0].RepoID)
+	assert.Equal(t, resolvedRepoDir, result.Data.Repos[0].PreferredRoot)
 }
 
 // TestGetRepo_Success verifies GET /repos/{id} returns repo data.
@@ -145,13 +145,13 @@ func TestGetRepo_Success(t *testing.T) {
 	reg, err := env.Client.RegisterRepo(ctx, repoDir)
 	require.NoError(t, err)
 
-	result, err := env.Client.GetRepo(ctx, reg.RepoID)
+	result, err := env.Client.GetRepo(ctx, reg.Data.RepoID)
 	require.NoError(t, err)
 
-	assert.Equal(t, reg.RepoID, result.Repo.RepoID)
-	assert.Equal(t, reg.RepoKey, result.Repo.RepoKey)
-	assert.Contains(t, result.Repo.Paths, resolvedRepoDir)
-	assert.Equal(t, resolvedRepoDir, result.Repo.PreferredRoot)
+	assert.Equal(t, reg.Data.RepoID, result.Data.RepoID)
+	assert.Equal(t, reg.Data.RepoKey, result.Data.RepoKey)
+	assert.Contains(t, result.Data.Paths, resolvedRepoDir)
+	assert.Equal(t, resolvedRepoDir, result.Data.PreferredRoot)
 }
 
 // TestGetRepo_NotFound verifies E_REPO_NOT_FOUND for unknown repo.
@@ -183,13 +183,13 @@ func TestRepoRegister_PreferredRootPersistence(t *testing.T) {
 	// Register
 	r1, err := env.Client.RegisterRepo(ctx, repoDir)
 	require.NoError(t, err)
-	assert.Equal(t, resolvedRepoDir, r1.PreferredRoot)
+	assert.Equal(t, resolvedRepoDir, r1.Data.PreferredRoot)
 
 	// Get should return same preferred root
-	got, err := env.Client.GetRepo(ctx, r1.RepoID)
+	got, err := env.Client.GetRepo(ctx, r1.Data.RepoID)
 	require.NoError(t, err)
-	assert.Equal(t, resolvedRepoDir, got.Repo.PreferredRoot)
-	assert.True(t, got.Repo.PreferredRootAccessible)
+	assert.Equal(t, resolvedRepoDir, got.Data.PreferredRoot)
+	assert.True(t, got.Data.PreferredRootAccessible)
 }
 
 // TestRepoRegister_InaccessiblePreferredRoot verifies fallback when preferred_root disappears.
@@ -208,7 +208,7 @@ func TestRepoRegister_InaccessiblePreferredRoot(t *testing.T) {
 	require.NoError(t, os.RemoveAll(repoDir))
 
 	// Get should show preferred_root as inaccessible
-	got, err := env.Client.GetRepo(ctx, r1.RepoID)
+	got, err := env.Client.GetRepo(ctx, r1.Data.RepoID)
 	require.NoError(t, err)
-	assert.False(t, got.Repo.PreferredRootAccessible)
+	assert.False(t, got.Data.PreferredRootAccessible)
 }

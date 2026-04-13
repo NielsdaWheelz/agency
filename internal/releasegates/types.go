@@ -1,6 +1,5 @@
 // Package releasegates implements release-gating evaluation, closure reporting,
-// and freeze-readiness governance for v2.1 platform hardening gates. This
-// package is the durable replacement for the temporary slice-scoped namespace.
+// and freeze-readiness governance for v2.1 platform hardening gates.
 package releasegates
 
 import (
@@ -172,7 +171,7 @@ const (
 	GateStatusBlocked = "blocked"
 )
 
-// ----- Domain Models (PR-01..PR-04 parity) -----
+// ----- Domain Models -----
 
 // GateSet represents the resolved gate membership from the canonical source.
 type GateSet struct {
@@ -286,7 +285,7 @@ type IssueMapResult struct {
 	Counts map[string]int // occurrence count per issue path
 }
 
-// ----- PR-05 Service DTOs -----
+// ----- Service DTOs -----
 
 // ReleaseReadinessRequest is the input for release-readiness evaluation.
 type ReleaseReadinessRequest struct {

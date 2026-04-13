@@ -171,6 +171,138 @@ func TestDaemonClient_ReadAPIErrorPassthrough_NoDetails(t *testing.T) {
 	assert.Nil(t, dre.Candidates())
 }
 
+func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
+	t.Parallel()
+
+	expectedDetails := daemon.InvalidQueryArgumentDetails{
+		Param:         "state",
+		Value:         "bogus",
+		AllowedValues: []string{"present", "archived", "all"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := daemon.APIResponse{
+			OK:        false,
+			ErrorCode: string(errors.EInvalidArgument),
+			Message:   "invalid argument",
+			Hint:      "preserve the structured read error",
+			Details:   expectedDetails,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	socketPath := startFakeDaemon(t, handler)
+	client := NewClient(socketPath)
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "ListWorktrees",
+			call: func() error {
+				_, err := client.ListWorktrees(context.Background(), ListWorktreesOpts{State: "bogus"})
+				return err
+			},
+		},
+		{
+			name: "ListInvocations",
+			call: func() error {
+				_, err := client.ListInvocations(context.Background(), ListInvocationsOpts{State: "bogus"})
+				return err
+			},
+		},
+		{
+			name: "GetInvocationDiff",
+			call: func() error {
+				_, err := client.GetInvocationDiff(context.Background(), "inv-1", "repo-1", GetInvocationDiffOpts{})
+				return err
+			},
+		},
+		{
+			name: "GetInvocationReview",
+			call: func() error {
+				_, err := client.GetInvocationReview(context.Background(), "inv-1", "repo-1")
+				return err
+			},
+		},
+		{
+			name: "GetInvocationLogsOffset",
+			call: func() error {
+				_, err := client.GetInvocationLogsOffset(context.Background(), "inv-1", "repo-1", GetInvocationLogsOffsetOpts{})
+				return err
+			},
+		},
+		{
+			name: "GetInvocationTimeline",
+			call: func() error {
+				_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", GetInvocationTimelineOpts{})
+				return err
+			},
+		},
+		{
+			name: "ListCheckpoints",
+			call: func() error {
+				_, err := client.ListCheckpoints(context.Background(), "inv-1", "repo-1", ListCheckpointsOpts{})
+				return err
+			},
+		},
+		{
+			name: "ListRepos",
+			call: func() error {
+				_, err := client.ListRepos(context.Background())
+				return err
+			},
+		},
+		{
+			name: "GetRepo",
+			call: func() error {
+				_, err := client.GetRepo(context.Background(), "repo-1")
+				return err
+			},
+		},
+		{
+			name: "GetS1ReleaseReadiness",
+			call: func() error {
+				_, err := client.GetS1ReleaseReadiness(context.Background(), "repo-1")
+				return err
+			},
+		},
+		{
+			name: "GetS1ClosureReport",
+			call: func() error {
+				_, err := client.GetS1ClosureReport(context.Background(), "repo-1")
+				return err
+			},
+		},
+		{
+			name: "GetS1FreezeReadiness",
+			call: func() error {
+				_, err := client.GetS1FreezeReadiness(context.Background(), "repo-1")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			require.Error(t, err)
+
+			dre, ok := AsDaemonReadError(err)
+			require.True(t, ok, "error should preserve the daemon read envelope")
+			assert.Equal(t, errors.EInvalidArgument, dre.AgencyErr.Code)
+			assert.Equal(t, "invalid argument", dre.AgencyErr.Msg)
+			assert.Equal(t, "preserve the structured read error", dre.Hint)
+
+			var details daemon.InvalidQueryArgumentDetails
+			require.NoError(t, json.Unmarshal(dre.RawDetails, &details))
+			assert.Equal(t, expectedDetails, details)
+		})
+	}
+}
+
 func TestDaemonClient_GetInvocationTimeline_OrderParamSentInURL(t *testing.T) {
 	t.Parallel()
 

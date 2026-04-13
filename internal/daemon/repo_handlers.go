@@ -1,5 +1,4 @@
 // Package daemon implements the agency daemon supervisor.
-// This file implements repo registry handlers (PR-A / PR-14).
 package daemon
 
 import (

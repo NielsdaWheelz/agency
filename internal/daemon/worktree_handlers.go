@@ -11,12 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -44,15 +42,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Validate name format
-	if err := core.ValidateName(req.Name); err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidName),
-			"invalid worktree name: "+err.Error(),
-			"names must be 2-40 chars, lowercase alphanumeric + hyphens")
-		return
-	}
-
-	// 3. Canonicalize repo_root: Abs -> EvalSymlinks -> git rev-parse --show-toplevel
+	// Canonicalize repo_root: Abs -> EvalSymlinks -> git rev-parse --show-toplevel
 	repoRoot, err := filepath.Abs(req.RepoRoot)
 	if err != nil {
 		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
@@ -75,18 +65,18 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	repoRoot = gitRoot.Path
 
-	// 4. Derive repo identity
+	// Derive repo identity.
 	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 
-	// 5. Check idempotency before acquiring lock
+	// Check idempotency before acquiring lock.
 	if entry, isDuplicate := s.checkWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey); isDuplicate {
 		// Return the existing worktree
 		s.writeWorktreeSuccess(w, entry.WorktreeID, entry.TreePath, entry.Branch, repoIdentity.RepoID)
 		return
 	}
 
-	// 6. Determine parent branch
+	// Determine parent branch.
 	parentBranch := req.ParentBranch
 	if parentBranch == "" {
 		result, err := s.Runner.Run(ctx, "git", []string{"-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"}, exec.RunOpts{})
@@ -98,7 +88,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		parentBranch = strings.TrimSpace(result.Stdout)
 	}
 
-	// 7. Acquire repo lock BEFORE name check and branch generation
+	// Acquire repo lock before mutation.
 	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "worktree create")
 	if err != nil {
 		var lockErr *lock.ErrLocked
@@ -113,164 +103,41 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = unlock() }()
 
-	// 8. Ensure repo is registered
+	// Ensure repo is registered.
 	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
 		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
 			"failed to register repo: "+err.Error(), "")
 		return
 	}
 
-	// 9. Write/update repo.json
+	// Write/update repo.json.
 	if err := s.ensureRepoRecord(repoIdentity, repoRoot, originInfo); err != nil {
 		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
 			"failed to write repo.json: "+err.Error(), "")
 		return
 	}
 
-	// 10. Check name uniqueness among non-archived worktrees
-	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoIdentity.RepoID)
-	if err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
-			"failed to scan integration worktrees: "+err.Error(), "")
-		return
-	}
-
-	refs := make([]ids.WorktreeRef, len(records))
-	for i, r := range records {
-		state := ""
-		if r.Meta != nil {
-			state = string(r.Meta.State)
-		}
-		refs[i] = ids.WorktreeRef{
-			WorktreeID: r.WorktreeID,
-			RepoID:     r.RepoID,
-			Name:       r.Name,
-			State:      state,
-			Broken:     r.Broken,
-		}
-	}
-
-	if err := ids.CheckWorktreeNameUnique(req.Name, refs); err != nil {
-		s.writeWorktreeError(w, http.StatusConflict, string(errors.EWorktreeNameExists),
-			err.Error(), "use a different name")
-		return
-	}
-
-	// 11. Generate worktree_id
-	worktreeID, err := core.NewRunID(s.Clock())
-	if err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
-			"failed to generate worktree_id: "+err.Error(), "")
-		return
-	}
-
-	// 12. Compute branch name and tree path
-	branch := core.BranchName(req.Name, worktreeID)
-	treePath := s.Store.IntegrationWorktreeTreePath(repoIdentity.RepoID, worktreeID)
-
-	// 13. Create record directory (exclusive)
-	_, err = s.Store.EnsureIntegrationWorktreeDir(repoIdentity.RepoID, worktreeID)
+	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	createResult, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
+		Name:         req.Name,
+		RepoRoot:     repoRoot,
+		RepoID:       repoIdentity.RepoID,
+		ParentBranch: parentBranch,
+	})
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(code),
-			err.Error(), "")
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(code), err.Error(), "")
 		return
 	}
 
-	// Track cleanup state
-	recordDirCreated := true
-	gitWorktreeCreated := false
-	branchCreated := false
+	// Record idempotency entry.
+	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, createResult.WorktreeID, createResult.TreePath, createResult.Branch)
 
-	// Cleanup function for rollback on partial failure
-	cleanup := func() {
-		if gitWorktreeCreated {
-			args := []string{"-C", repoRoot, "worktree", "remove", "--force", treePath}
-			_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-		}
-		if branchCreated {
-			args := []string{"-C", repoRoot, "branch", "-D", branch}
-			_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-		}
-		if recordDirCreated {
-			_ = s.Store.RemoveIntegrationWorktreeDir(repoIdentity.RepoID, worktreeID)
-		}
-	}
-
-	// 14. Create git worktree + branch
-	args := []string{
-		"-C", repoRoot,
-		"worktree", "add",
-		"-b", branch,
-		treePath,
-		parentBranch,
-	}
-
-	result, err := s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-	if err != nil {
-		cleanup()
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EWorktreeCreateFailed),
-			"failed to execute git worktree add: "+err.Error(), "")
-		return
-	}
-	if result.ExitCode != 0 {
-		cleanup()
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EWorktreeCreateFailed),
-			"git worktree add failed: "+strings.TrimSpace(result.Stderr), "")
-		return
-	}
-
-	gitWorktreeCreated = true
-	branchCreated = true
-
-	// 15. Create .agency/ directory and write INTEGRATION_MARKER
-	agencyDir := filepath.Join(treePath, ".agency")
-	if err := s.FS.MkdirAll(agencyDir, 0o755); err != nil {
-		cleanup()
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EWorktreeCreateFailed),
-			"failed to create .agency directory: "+err.Error(), "")
-		return
-	}
-
-	markerPath := filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName)
-	markerContent := "# This directory is an integration worktree.\n# Runners must not execute here.\n"
-	if err := s.FS.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
-		cleanup()
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EWorktreeCreateFailed),
-			"failed to write INTEGRATION_MARKER: "+err.Error(), "")
-		return
-	}
-
-	// 16. Write meta.json
-	meta := store.NewIntegrationWorktreeMeta(
-		worktreeID,
-		req.Name,
-		repoIdentity.RepoID,
-		branch,
-		parentBranch,
-		treePath,
-		s.Clock(),
-	)
-
-	if err := s.Store.WriteIntegrationWorktreeMeta(repoIdentity.RepoID, worktreeID, meta); err != nil {
-		cleanup()
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(code),
-			err.Error(), "")
-		return
-	}
-
-	// 17. Record idempotency entry
-	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, worktreeID, treePath, branch)
-
-	// 18. Return success
-	s.writeWorktreeSuccess(w, worktreeID, treePath, branch, repoIdentity.RepoID)
+	// Return success.
+	s.writeWorktreeSuccess(w, createResult.WorktreeID, createResult.TreePath, createResult.Branch, repoIdentity.RepoID)
 }
 
 // handleWorktreeRm handles POST /worktrees/{id}/rm.
@@ -498,7 +365,6 @@ func (s *Server) forceStopAndDiscardInvocations(ctx context.Context, repoID, rep
 }
 
 // ensureRepoRecord writes/updates repo.json for the repo.
-// PR-A: Now sets PreferredRoot on mutations.
 func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot string, originInfo git.OriginInfo) error {
 	// Check if repo record exists
 	existing, exists, err := s.Store.LoadRepoRecord(repoIdentity.RepoID)
@@ -517,7 +383,7 @@ func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot s
 		RepoKey:          repoIdentity.RepoKey,
 		RepoID:           repoIdentity.RepoID,
 		RepoRootLastSeen: repoRoot,
-		PreferredRoot:    repoRoot, // PR-A: set preferred root on mutation
+		PreferredRoot:    repoRoot,
 		OriginPresent:    originInfo.Present,
 		OriginURL:        originInfo.URL,
 		OriginHost:       originInfo.Host,

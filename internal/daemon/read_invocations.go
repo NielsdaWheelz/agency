@@ -47,8 +47,6 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 		if !resolved {
 			worktreeIDFilter = "__unresolved__"
 		}
-	} else if params.WorktreeID != "" {
-		worktreeIDFilter = params.WorktreeID
 	}
 
 	now := s.Clock()

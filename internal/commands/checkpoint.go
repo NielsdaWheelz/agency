@@ -1,5 +1,4 @@
 // Package commands implements CLI command logic for agency.
-// This file implements checkpoint commands (Slice 8 PR-08).
 package commands
 
 import (
@@ -29,7 +28,6 @@ type CheckpointLSOpts struct {
 }
 
 // CheckpointLS lists checkpoints for an invocation.
-// PR-12: Routes through daemon read API - CLI never reads store directly.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(opts.InvocationRef) == "" {
 		return errors.New(errors.EUsage, "--invocation is required")
@@ -54,23 +52,21 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// Call daemon ListCheckpoints endpoint.
 	result, err := ns.client.ListCheckpoints(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.ListCheckpointsOpts{})
 	if err != nil {
 		return err
 	}
 
-	// Output
 	if opts.JSON {
-		return json.NewEncoder(stdout).Encode(result.Checkpoints)
+		return json.NewEncoder(stdout).Encode(result.Data.Checkpoints)
 	}
 
-	if len(result.Checkpoints) == 0 {
+	if len(result.Data.Checkpoints) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No checkpoints found.")
 		return nil
 	}
 
-	for _, cp := range result.Checkpoints {
+	for _, cp := range result.Data.Checkpoints {
 		timestamp := cp.CreatedAt
 		if parsed, err := time.Parse(time.RFC3339, cp.CreatedAt); err == nil {
 			timestamp = parsed.Local().Format("2006-01-02 15:04:05")

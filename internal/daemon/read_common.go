@@ -228,9 +228,6 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *Invali
 	if repoID := r.URL.Query().Get("repo_id"); repoID != "" {
 		params.RepoID = repoID
 	}
-	if worktreeID := r.URL.Query().Get("worktree_id"); worktreeID != "" {
-		params.WorktreeID = worktreeID
-	}
 	if worktreeRef := r.URL.Query().Get("worktree_ref"); worktreeRef != "" {
 		params.WorktreeRef = worktreeRef
 	}

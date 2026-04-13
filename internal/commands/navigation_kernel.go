@@ -1,7 +1,3 @@
-// Package commands implements agency CLI commands.
-// This file implements the shared CLI navigation resolution kernel (S2 PR-02).
-// The kernel is command-family agnostic: no cobra wiring, no editor/shell/tmux
-// dispatch, no compatibility alias behavior. Downstream PRs (03/04/05) consume it.
 package commands
 
 import (
@@ -14,19 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// ---------------------------------------------------------------------------
-// Domain model types (L2 NavigationSelection, NavigationCommandIntent)
-// ---------------------------------------------------------------------------
-
-// SelectorSource identifies how a navigation target was specified.
-type SelectorSource string
-
-const (
-	SelectorExplicitRef SelectorSource = "explicit_ref"
-	SelectorMachineRef  SelectorSource = "machine_ref"
-	SelectorListRow     SelectorSource = "list_row"
-)
-
 // TargetKind is the entity kind of a navigation target.
 type TargetKind string
 
@@ -37,17 +20,14 @@ const (
 
 // NavigationSelection represents a CLI-selected target used by path/open/shell/enter flows.
 type NavigationSelection struct {
-	SelectorSource SelectorSource
-	TargetKind     TargetKind
-	Ref            string // non-empty CLI/user-provided selector
-	RepoID         string // from list_row/machine_ref, or resolved via repo context
+	TargetKind TargetKind
+	Ref        string
 }
 
 // NavigationIntent describes what a CLI navigation command wants to do.
 type NavigationIntent struct {
-	Selection                NavigationSelection
-	RequiresTTY              bool
-	BootstrapFallbackAllowed bool
+	Selection   NavigationSelection
+	RequiresTTY bool
 }
 
 // NavigationResult holds the resolved navigation target after daemon-first resolution.
@@ -58,56 +38,17 @@ type NavigationResult struct {
 	ResolvedPath   string
 }
 
-// ---------------------------------------------------------------------------
-// Dependency injection (all fields required unless documented otherwise)
-// ---------------------------------------------------------------------------
-
 // NavigationDeps holds injected dependencies for the navigation resolution kernel.
-// Tests inject fakes; real wiring happens in PR-03/PR-04 command migrations.
+// Tests inject fakes; real wiring happens in command setup.
 type NavigationDeps struct {
-	// ResolveRepo resolves the repo context (wraps ResolveRepoViaClient or equivalent).
-	ResolveRepo func(ctx context.Context) (*RepoContextResult, error)
-
-	// EnsureDaemon ensures the daemon is running and connectable.
-	EnsureDaemon func(ctx context.Context) error
-
-	// CheckAPIVersion verifies CLI/daemon API version compatibility.
-	CheckAPIVersion func(ctx context.Context) error
-
-	// GetWorktree resolves a worktree target via daemon read API.
-	// Errors may be *daemonclient.DaemonReadError for rich detail preservation.
-	GetWorktree func(ctx context.Context, ref, repoID string) (*NavigationResult, error)
-
-	// GetInvocation resolves an invocation target via daemon read API.
-	// Errors may be *daemonclient.DaemonReadError for rich detail preservation.
+	ResolveRepo   func(ctx context.Context) (*RepoContextResult, error)
+	GetWorktree   func(ctx context.Context, ref, repoID string) (*NavigationResult, error)
 	GetInvocation func(ctx context.Context, ref, repoID string) (*NavigationResult, error)
-
-	// IsInteractive returns true if the session has a TTY.
 	IsInteractive func() bool
-
-	// FallbackCallback is invoked only when BootstrapFallbackAllowed is true in the
-	// intent AND daemon ensure/version check fails. If nil, no fallback is attempted
-	// even when the policy allows it.
-	FallbackCallback func(ctx context.Context) (*NavigationResult, error)
 }
 
-// ---------------------------------------------------------------------------
-// Main resolution lifecycle
-// ---------------------------------------------------------------------------
-
-// ResolveNavigation executes the S2 daemon-first CLI read-routing and target-resolution
-// lifecycle. The ordering is enforced:
-//
-//  1. TTY preflight (fail fast for interactive commands)
-//  2. Repo context resolution
-//  3. Daemon ensure + API version check
-//  4. Daemon-first target resolution (no local store discovery)
-//
-// Bootstrap fallback is the only exception path: it is invoked only when
-// BootstrapFallbackAllowed is true, a FallbackCallback is provided, and the
-// daemon ensure/version step fails.
+// ResolveNavigation executes daemon-first CLI target resolution.
 func ResolveNavigation(ctx context.Context, intent NavigationIntent, deps NavigationDeps) (*NavigationResult, error) {
-	// Phase 1: TTY preflight — fail before any I/O if interactive session is required
 	if intent.RequiresTTY {
 		if deps.IsInteractive == nil || !deps.IsInteractive() {
 			return nil, errors.NewWithDetails(
@@ -120,56 +61,31 @@ func ResolveNavigation(ctx context.Context, intent NavigationIntent, deps Naviga
 		}
 	}
 
-	// Phase 2: Repo context resolution
 	repoCtx, err := deps.ResolveRepo(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Phase 3: Daemon ensure + API version check
-	if err := deps.EnsureDaemon(ctx); err != nil {
-		return handleDaemonFailure(ctx, err, intent, deps)
-	}
-	if err := deps.CheckAPIVersion(ctx); err != nil {
-		return handleDaemonFailure(ctx, err, intent, deps)
-	}
-
-	// Phase 4: Daemon-first target resolution — no local store discovery
+	resolveRepoID := repoCtx.RepoID
 	sel := intent.Selection
-	resolveRepoID := sel.RepoID
-	if resolveRepoID == "" {
-		resolveRepoID = repoCtx.RepoID
-	}
 
-	var result *NavigationResult
 	switch sel.TargetKind {
 	case TargetWorktree:
-		result, err = deps.GetWorktree(ctx, sel.Ref, resolveRepoID)
+		result, err := deps.GetWorktree(ctx, sel.Ref, resolveRepoID)
+		if err != nil {
+			return nil, translateNavigationError(err, sel.TargetKind)
+		}
+		return result, nil
 	case TargetInvocation:
-		result, err = deps.GetInvocation(ctx, sel.Ref, resolveRepoID)
+		result, err := deps.GetInvocation(ctx, sel.Ref, resolveRepoID)
+		if err != nil {
+			return nil, translateNavigationError(err, sel.TargetKind)
+		}
+		return result, nil
 	default:
 		return nil, errors.New(errors.EInternal, fmt.Sprintf("unknown target kind: %q", sel.TargetKind))
 	}
-	if err != nil {
-		return nil, translateNavigationError(err, sel.TargetKind)
-	}
-
-	return result, nil
 }
-
-// handleDaemonFailure is called when EnsureDaemon or CheckAPIVersion fails.
-// If bootstrap fallback is allowed AND a callback is provided, invokes the callback.
-// Otherwise returns the daemon failure directly — no silent local-store fallback.
-func handleDaemonFailure(ctx context.Context, daemonErr error, intent NavigationIntent, deps NavigationDeps) (*NavigationResult, error) {
-	if intent.BootstrapFallbackAllowed && deps.FallbackCallback != nil {
-		return deps.FallbackCallback(ctx)
-	}
-	return nil, daemonErr
-}
-
-// ---------------------------------------------------------------------------
-// Error translation (D-002: normalize ambiguity to E_AMBIGUOUS for navigation)
-// ---------------------------------------------------------------------------
 
 // translateNavigationError normalizes daemon target resolution errors for
 // the navigation resolution contract. Entity-specific ambiguity codes are
@@ -178,8 +94,6 @@ func translateNavigationError(err error, targetKind TargetKind) error {
 	dre, isDaemonErr := daemonclient.AsDaemonReadError(err)
 
 	code := errors.GetCode(err)
-
-	// Normalize entity-specific ambiguity to E_AMBIGUOUS
 	if code == errors.EWorktreeIDAmbiguous || code == errors.EInvocationIDAmbiguous {
 		details := map[string]string{
 			"target_kind": string(targetKind),
@@ -206,7 +120,6 @@ func translateNavigationError(err error, targetKind TargetKind) error {
 		return errors.NewWithDetails(errors.EAmbiguous, msg, details)
 	}
 
-	// For non-ambiguity DaemonReadErrors: preserve hint if present
 	if isDaemonErr && dre.Hint != "" {
 		return errors.NewWithDetails(code, dre.AgencyErr.Msg, map[string]string{"hint": dre.Hint})
 	}

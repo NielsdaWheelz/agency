@@ -1,5 +1,4 @@
 // Package daemon implements the agency daemon supervisor.
-// This file implements display status derivation logic (PR-12).
 package daemon
 
 import (
@@ -20,7 +19,6 @@ type DerivedStatus struct {
 const StallThreshold = 5 * time.Minute
 
 // DeriveDisplayStatus computes the display status from invocation metadata.
-// This implements the precedence rules defined in PR-12 spec.
 //
 // Precedence:
 //  1. lifecycle == failed → "failed"

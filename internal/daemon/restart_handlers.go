@@ -22,7 +22,7 @@ import (
 )
 
 // handleRestartFromCheckpoint handles POST /invocations/{ref}/restart.
-// S3 PR-03 canonical flow: stop running headless process (if needed), apply checkpoint,
+// Canonical flow: stop running headless process (if needed), apply checkpoint,
 // and restart runner in one invocation-scoped operation.
 func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)

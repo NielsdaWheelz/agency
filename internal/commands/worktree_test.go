@@ -614,12 +614,12 @@ func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *te
 	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
 	require.NoError(t, regErr)
 	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{
-		RepoID: reg.RepoID,
+		RepoID: reg.Data.RepoID,
 		State:  "present",
 	})
 	require.NoError(t, listErr)
-	require.Len(t, listResp.Worktrees, 1)
-	assert.Equal(t, "open-fail", listResp.Worktrees[0].Name)
+	require.Len(t, listResp.Data.Worktrees, 1)
+	assert.Equal(t, "open-fail", listResp.Data.Worktrees[0].Name)
 }
 
 func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {

@@ -558,16 +558,16 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 
 	invResp, err := env.Client.GetInvocation(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "get invocation")
-	assert.Equal(t, "finished", invResp.Invocation.Status)
-	assert.NotEqual(t, "running", invResp.Invocation.DisplayStatus)
-	assert.NotEqual(t, "working", invResp.Invocation.DisplayStatus)
+	assert.Equal(t, "finished", invResp.Data.Status)
+	assert.NotEqual(t, "running", invResp.Data.DisplayStatus)
+	assert.NotEqual(t, "working", invResp.Data.DisplayStatus)
 
 	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "get review")
-	assert.Equal(t, "finished", reviewResp.Review.Status)
-	assert.NotEqual(t, "running", reviewResp.Review.DisplayStatus)
-	assert.NotEqual(t, "working", reviewResp.Review.DisplayStatus)
-	require.NotEmpty(t, strings.TrimSpace(reviewResp.Review.Navigation.LatestTurnID))
+	assert.Equal(t, "finished", reviewResp.Data.Status)
+	assert.NotEqual(t, "running", reviewResp.Data.DisplayStatus)
+	assert.NotEqual(t, "working", reviewResp.Data.DisplayStatus)
+	require.NotEmpty(t, strings.TrimSpace(reviewResp.Data.Navigation.LatestTurnID))
 
 	listResp, err := env.Client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
 		RepoID: repoID,
@@ -576,7 +576,7 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 	})
 	require.NoError(t, err, "list invocations")
 	found := false
-	for _, inv := range listResp.Invocations {
+	for _, inv := range listResp.Data.Invocations {
 		if inv.InvocationID != startResp.InvocationID {
 			continue
 		}
@@ -591,10 +591,10 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 		Order: "asc",
 	})
 	require.NoError(t, err, "get timeline")
-	require.NotEmpty(t, timelineResp.Entries)
+	require.NotEmpty(t, timelineResp.Data.Entries)
 	followupIndex := -1
 	activityAfterFollowup := false
-	for i, entry := range timelineResp.Entries {
+	for i, entry := range timelineResp.Data.Entries {
 		if followupIndex == -1 && entry.Kind == "followup_prompt" {
 			followupIndex = i
 			continue
@@ -611,25 +611,25 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 		Limit: 20,
 	})
 	require.NoError(t, err, "list checkpoints")
-	require.GreaterOrEqual(t, len(checkpointsResp.Checkpoints), 2, "expected checkpoint per turn")
-	latestCheckpoint := checkpointsResp.Checkpoints[len(checkpointsResp.Checkpoints)-1]
+	require.GreaterOrEqual(t, len(checkpointsResp.Data.Checkpoints), 2, "expected checkpoint per turn")
+	latestCheckpoint := checkpointsResp.Data.Checkpoints[len(checkpointsResp.Data.Checkpoints)-1]
 	assert.Contains(t, latestCheckpoint.ChangedPaths, mutationFile)
 	assert.NotEmpty(t, strings.TrimSpace(latestCheckpoint.Diffstat))
 
 	diffResp, err := env.Client.GetInvocationDiff(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationDiffOpts{
-		TurnID:             strings.TrimSpace(reviewResp.Review.Navigation.LatestTurnID),
+		TurnID:             strings.TrimSpace(reviewResp.Data.Navigation.LatestTurnID),
 		IncludePatch:       true,
 		IncludeUncommitted: true,
 	})
 	require.NoError(t, err, "get turn-aware diff")
-	require.NotNil(t, diffResp.Diff.TurnContext)
-	assert.True(t, diffResp.Diff.HasCommits, "latest-turn diff should include committed changes when latest checkpoint changed files")
-	require.NotNil(t, diffResp.Diff.CommittedRange)
-	assert.NotEqual(t, diffResp.Diff.CommittedRange.From, diffResp.Diff.CommittedRange.To)
-	if strings.TrimSpace(diffResp.Diff.CommittedRange.Patch) != "" {
-		assert.Contains(t, diffResp.Diff.CommittedRange.Patch, mutationFile)
+	require.NotNil(t, diffResp.Data.TurnContext)
+	assert.True(t, diffResp.Data.HasCommits, "latest-turn diff should include committed changes when latest checkpoint changed files")
+	require.NotNil(t, diffResp.Data.CommittedRange)
+	assert.NotEqual(t, diffResp.Data.CommittedRange.From, diffResp.Data.CommittedRange.To)
+	if strings.TrimSpace(diffResp.Data.CommittedRange.Patch) != "" {
+		assert.Contains(t, diffResp.Data.CommittedRange.Patch, mutationFile)
 	} else {
-		assert.NotEmpty(t, strings.TrimSpace(diffResp.Diff.CommittedRange.Diffstat))
+		assert.NotEmpty(t, strings.TrimSpace(diffResp.Data.CommittedRange.Diffstat))
 	}
 
 	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
@@ -1081,7 +1081,7 @@ func TestDaemonWorktreeNameUniqueness(t *testing.T) {
 	})
 	require.NoError(t, err, "second create")
 	require.False(t, resp2.OK, "expected second create to fail due to name collision")
-	assert.Equal(t, "E_WORKTREE_NAME_EXISTS", resp2.ErrorCode)
+	assert.Equal(t, "E_NAME_EXISTS", resp2.ErrorCode)
 }
 
 // ---------------------------------------------------------------------------
@@ -2007,27 +2007,27 @@ func TestDaemonLandCherryPick(t *testing.T) {
 
 	logsResp, err := env.Client.GetInvocationLogsOffset(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{})
 	require.NoError(t, err, "logs API should still work after landing cleanup")
-	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Logs.DataB64)
+	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Data.DataB64)
 	require.NoError(t, err)
 	assert.NotEmpty(t, strings.TrimSpace(string(logBytes)))
 
 	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
 	require.NoError(t, err, "timeline API should still work after landing cleanup")
-	assert.NotEmpty(t, timelineResp.Entries)
+	assert.NotEmpty(t, timelineResp.Data.Entries)
 
 	checkpointsResp, err := env.Client.ListCheckpoints(ctx, startResp.InvocationID, repoID, daemonclient.ListCheckpointsOpts{Limit: 50})
 	require.NoError(t, err, "checkpoints API should still work after landing cleanup")
-	require.Len(t, checkpointsResp.Checkpoints, 1)
-	assert.Equal(t, 1, checkpointsResp.Checkpoints[0].ID)
+	require.Len(t, checkpointsResp.Data.Checkpoints, 1)
+	assert.Equal(t, 1, checkpointsResp.Data.Checkpoints[0].ID)
 
 	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "review API should still work after landing cleanup")
-	reviewCodes := make([]string, 0, len(reviewResp.Review.BlockingReasons))
-	for _, reason := range reviewResp.Review.BlockingReasons {
+	reviewCodes := make([]string, 0, len(reviewResp.Data.BlockingReasons))
+	for _, reason := range reviewResp.Data.BlockingReasons {
 		reviewCodes = append(reviewCodes, reason.Code)
 	}
 	assert.NotContains(t, reviewCodes, "runner_status_unreadable")
-	assert.Equal(t, "ready_for_review", reviewResp.Review.RunnerStatus)
+	assert.Equal(t, "ready_for_review", reviewResp.Data.RunnerStatus)
 }
 
 func TestDaemonLandApply(t *testing.T) {
@@ -2351,27 +2351,27 @@ func TestDaemonDiscard(t *testing.T) {
 
 	logsResp, err := env.Client.GetInvocationLogsOffset(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{})
 	require.NoError(t, err, "logs API should still work after discard cleanup")
-	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Logs.DataB64)
+	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Data.DataB64)
 	require.NoError(t, err)
 	assert.NotEmpty(t, strings.TrimSpace(string(logBytes)))
 
 	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
 	require.NoError(t, err, "timeline API should still work after discard cleanup")
-	assert.NotEmpty(t, timelineResp.Entries)
+	assert.NotEmpty(t, timelineResp.Data.Entries)
 
 	checkpointsResp, err := env.Client.ListCheckpoints(ctx, startResp.InvocationID, repoID, daemonclient.ListCheckpointsOpts{Limit: 50})
 	require.NoError(t, err, "checkpoints API should still work after discard cleanup")
-	require.Len(t, checkpointsResp.Checkpoints, 1)
-	assert.Equal(t, 1, checkpointsResp.Checkpoints[0].ID)
+	require.Len(t, checkpointsResp.Data.Checkpoints, 1)
+	assert.Equal(t, 1, checkpointsResp.Data.Checkpoints[0].ID)
 
 	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "review API should still work after discard cleanup")
-	reviewCodes := make([]string, 0, len(reviewResp.Review.BlockingReasons))
-	for _, reason := range reviewResp.Review.BlockingReasons {
+	reviewCodes := make([]string, 0, len(reviewResp.Data.BlockingReasons))
+	for _, reason := range reviewResp.Data.BlockingReasons {
 		reviewCodes = append(reviewCodes, reason.Code)
 	}
 	assert.NotContains(t, reviewCodes, "runner_status_unreadable")
-	assert.Equal(t, "ready_for_review", reviewResp.Review.RunnerStatus)
+	assert.Equal(t, "ready_for_review", reviewResp.Data.RunnerStatus)
 }
 
 func TestDaemonDiscardRunning(t *testing.T) {

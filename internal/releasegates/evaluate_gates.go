@@ -8,8 +8,7 @@ import (
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-// EvaluateGates performs deterministic aggregate evaluation for Gate A, Gate B,
-// and Slice S1 readiness.
+// EvaluateGates performs deterministic aggregate evaluation for Gate A and Gate B.
 func EvaluateGates(req GatesEvaluateRequest, repoRoot string) (*GatesEvaluateResult, error) {
 	if req.Slice != "S1" {
 		return nil, agencyerrors.NewWithDetails(

@@ -14,27 +14,27 @@ import (
 )
 
 type fakeSnapshotClient struct {
-	reposResult         *daemonclient.ListReposResult
+	reposResult         *daemon.Result[daemon.ListReposData]
 	reposErr            error
-	worktreePages       map[string]*daemonclient.ListWorktreesResult
+	worktreePages       map[string]*daemon.Result[daemon.ListWorktreesData]
 	worktreeErrByCursor map[string]error
-	invocationPages     map[string]*daemonclient.ListInvocationsResult
+	invocationPages     map[string]*daemon.Result[daemon.ListInvocationsData]
 	invocationErrByPage map[string]error
-	reviewsByInvocation map[string]*daemonclient.GetInvocationReviewResult
+	reviewsByInvocation map[string]*daemon.Result[daemon.InvocationReviewData]
 	reviewErrByRef      map[string]error
 }
 
-func (f *fakeSnapshotClient) ListRepos(_ context.Context) (*daemonclient.ListReposResult, error) {
+func (f *fakeSnapshotClient) ListRepos(_ context.Context) (*daemon.Result[daemon.ListReposData], error) {
 	if f.reposErr != nil {
 		return nil, f.reposErr
 	}
 	if f.reposResult == nil {
-		return &daemonclient.ListReposResult{}, nil
+		return &daemon.Result[daemon.ListReposData]{}, nil
 	}
 	return f.reposResult, nil
 }
 
-func (f *fakeSnapshotClient) ListWorktrees(_ context.Context, opts daemonclient.ListWorktreesOpts) (*daemonclient.ListWorktreesResult, error) {
+func (f *fakeSnapshotClient) ListWorktrees(_ context.Context, opts daemonclient.ListWorktreesOpts) (*daemon.Result[daemon.ListWorktreesData], error) {
 	if opts.State != "all" {
 		return nil, fmt.Errorf("unexpected state %q", opts.State)
 	}
@@ -44,10 +44,10 @@ func (f *fakeSnapshotClient) ListWorktrees(_ context.Context, opts daemonclient.
 	if result := f.worktreePages[opts.Cursor]; result != nil {
 		return result, nil
 	}
-	return &daemonclient.ListWorktreesResult{}, nil
+	return &daemon.Result[daemon.ListWorktreesData]{}, nil
 }
 
-func (f *fakeSnapshotClient) ListInvocations(_ context.Context, opts daemonclient.ListInvocationsOpts) (*daemonclient.ListInvocationsResult, error) {
+func (f *fakeSnapshotClient) ListInvocations(_ context.Context, opts daemonclient.ListInvocationsOpts) (*daemon.Result[daemon.ListInvocationsData], error) {
 	if opts.State != "all" {
 		return nil, fmt.Errorf("unexpected state %q", opts.State)
 	}
@@ -57,10 +57,10 @@ func (f *fakeSnapshotClient) ListInvocations(_ context.Context, opts daemonclien
 	if result := f.invocationPages[opts.Cursor]; result != nil {
 		return result, nil
 	}
-	return &daemonclient.ListInvocationsResult{}, nil
+	return &daemon.Result[daemon.ListInvocationsData]{}, nil
 }
 
-func (f *fakeSnapshotClient) GetInvocationReview(_ context.Context, ref string, _ string) (*daemonclient.GetInvocationReviewResult, error) {
+func (f *fakeSnapshotClient) GetInvocationReview(_ context.Context, ref string, _ string) (*daemon.Result[daemon.InvocationReviewData], error) {
 	if err := f.reviewErrByRef[ref]; err != nil {
 		return nil, err
 	}
@@ -74,39 +74,49 @@ func TestSnapshotLoader_Load_DrainsPaginationAndCollectsReviews(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeSnapshotClient{
-		reposResult: &daemonclient.ListReposResult{
-			Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
+		reposResult: &daemon.Result[daemon.ListReposData]{
+			Data: daemon.ListReposData{
+				Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
+			},
 		},
-		worktreePages: map[string]*daemonclient.ListWorktreesResult{
+		worktreePages: map[string]*daemon.Result[daemon.ListWorktreesData]{
 			"": {
-				Worktrees: []daemon.WorktreeDTO{
-					{WorktreeID: "wt-1", RepoID: "repo-1", Name: "alpha"},
-					{WorktreeID: "wt-2", RepoID: "repo-1", Name: "beta"},
+				Data: daemon.ListWorktreesData{
+					Worktrees: []daemon.WorktreeDTO{
+						{WorktreeID: "wt-1", RepoID: "repo-1", Name: "alpha"},
+						{WorktreeID: "wt-2", RepoID: "repo-1", Name: "beta"},
+					},
+					NextCursor: "wt-next-1",
 				},
-				NextCursor: "wt-next-1",
 			},
 			"wt-next-1": {
-				Worktrees: []daemon.WorktreeDTO{
-					{WorktreeID: "wt-3", RepoID: "repo-1", Name: "gamma"},
+				Data: daemon.ListWorktreesData{
+					Worktrees: []daemon.WorktreeDTO{
+						{WorktreeID: "wt-3", RepoID: "repo-1", Name: "gamma"},
+					},
 				},
 			},
 		},
-		invocationPages: map[string]*daemonclient.ListInvocationsResult{
+		invocationPages: map[string]*daemon.Result[daemon.ListInvocationsData]{
 			"": {
-				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"},
+				Data: daemon.ListInvocationsData{
+					Invocations: []daemon.InvocationDTO{
+						{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"},
+					},
+					NextCursor: "inv-next-1",
 				},
-				NextCursor: "inv-next-1",
 			},
 			"inv-next-1": {
-				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-2", RepoID: "repo-1", WorktreeID: "wt-2"},
+				Data: daemon.ListInvocationsData{
+					Invocations: []daemon.InvocationDTO{
+						{InvocationID: "inv-2", RepoID: "repo-1", WorktreeID: "wt-2"},
+					},
 				},
 			},
 		},
-		reviewsByInvocation: map[string]*daemonclient.GetInvocationReviewResult{
-			"inv-1": {Review: daemon.InvocationReviewData{InvocationID: "inv-1", Readiness: "ready", Ready: true}},
-			"inv-2": {Review: daemon.InvocationReviewData{InvocationID: "inv-2", Readiness: "blocked", Ready: false}},
+		reviewsByInvocation: map[string]*daemon.Result[daemon.InvocationReviewData]{
+			"inv-1": {Data: daemon.InvocationReviewData{InvocationID: "inv-1", Readiness: "ready", Ready: true}},
+			"inv-2": {Data: daemon.InvocationReviewData{InvocationID: "inv-2", Readiness: "blocked", Ready: false}},
 		},
 	}
 
@@ -127,23 +137,29 @@ func TestSnapshotLoader_Load_CursorMustAdvance(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeSnapshotClient{
-		reposResult: &daemonclient.ListReposResult{
-			Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
+		reposResult: &daemon.Result[daemon.ListReposData]{
+			Data: daemon.ListReposData{
+				Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
+			},
 		},
-		worktreePages: map[string]*daemonclient.ListWorktreesResult{
+		worktreePages: map[string]*daemon.Result[daemon.ListWorktreesData]{
 			"": {
-				Worktrees:  []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1"}},
-				NextCursor: "cursor-1",
+				Data: daemon.ListWorktreesData{
+					Worktrees:  []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1"}},
+					NextCursor: "cursor-1",
+				},
 			},
 			"cursor-1": {
-				Worktrees:  []daemon.WorktreeDTO{{WorktreeID: "wt-2", RepoID: "repo-1"}},
-				NextCursor: "cursor-1",
+				Data: daemon.ListWorktreesData{
+					Worktrees:  []daemon.WorktreeDTO{{WorktreeID: "wt-2", RepoID: "repo-1"}},
+					NextCursor: "cursor-1",
+				},
 			},
 		},
-		invocationPages: map[string]*daemonclient.ListInvocationsResult{
+		invocationPages: map[string]*daemon.Result[daemon.ListInvocationsData]{
 			"": {},
 		},
-		reviewsByInvocation: map[string]*daemonclient.GetInvocationReviewResult{},
+		reviewsByInvocation: map[string]*daemon.Result[daemon.InvocationReviewData]{},
 	}
 
 	loader := NewSnapshotLoader(client)
@@ -160,26 +176,32 @@ func TestSnapshotLoader_Load_ReviewReadFailuresAreRecoverable(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeSnapshotClient{
-		reposResult: &daemonclient.ListReposResult{
-			Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
+		reposResult: &daemon.Result[daemon.ListReposData]{
+			Data: daemon.ListReposData{
+				Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
+			},
 		},
-		worktreePages: map[string]*daemonclient.ListWorktreesResult{
+		worktreePages: map[string]*daemon.Result[daemon.ListWorktreesData]{
 			"": {
-				Worktrees: []daemon.WorktreeDTO{
-					{WorktreeID: "wt-1", RepoID: "repo-1", Name: "alpha"},
+				Data: daemon.ListWorktreesData{
+					Worktrees: []daemon.WorktreeDTO{
+						{WorktreeID: "wt-1", RepoID: "repo-1", Name: "alpha"},
+					},
 				},
 			},
 		},
-		invocationPages: map[string]*daemonclient.ListInvocationsResult{
+		invocationPages: map[string]*daemon.Result[daemon.ListInvocationsData]{
 			"": {
-				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-good", RepoID: "repo-1", WorktreeID: "wt-1"},
-					{InvocationID: "inv-bad", RepoID: "repo-1", WorktreeID: "wt-1"},
+				Data: daemon.ListInvocationsData{
+					Invocations: []daemon.InvocationDTO{
+						{InvocationID: "inv-good", RepoID: "repo-1", WorktreeID: "wt-1"},
+						{InvocationID: "inv-bad", RepoID: "repo-1", WorktreeID: "wt-1"},
+					},
 				},
 			},
 		},
-		reviewsByInvocation: map[string]*daemonclient.GetInvocationReviewResult{
-			"inv-good": {Review: daemon.InvocationReviewData{InvocationID: "inv-good", Readiness: "ready", Ready: true}},
+		reviewsByInvocation: map[string]*daemon.Result[daemon.InvocationReviewData]{
+			"inv-good": {Data: daemon.InvocationReviewData{InvocationID: "inv-good", Readiness: "ready", Ready: true}},
 		},
 		reviewErrByRef: map[string]error{
 			"inv-bad": fmt.Errorf("temporary daemon timeout"),

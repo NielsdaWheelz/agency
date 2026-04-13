@@ -1086,11 +1086,17 @@ func TestHandleGetInvocationLogs_MissingFile(t *testing.T) {
 	// inv-2 has no log files
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/logs?repo_id="+env.RepoID)
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 
 	resp := decodeAPIResponse(t, w)
-	assert.False(t, resp.OK)
-	assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
+	assert.True(t, resp.OK)
+
+	var data InvocationLogsOffsetData
+	decodeData(t, resp, &data)
+	assert.Equal(t, "raw", data.Kind)
+	assert.Empty(t, data.DataB64)
+	assert.Zero(t, data.NextOffset)
+	assert.Zero(t, data.TotalBytes)
 }
 
 func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
@@ -1484,6 +1490,26 @@ func TestHandleListInvocations_WorktreeRefFilter_NotFound(t *testing.T) {
 	assert.Len(t, data.Invocations, 0, "nonexistent worktree_ref should return empty list")
 }
 
+func TestHandleListInvocations_WorktreeIDQueryParamIgnored(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_id=wt-1")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Invocations, 3)
+	assert.ElementsMatch(t, []string{"inv-1", "inv-2", "inv-3"}, []string{
+		data.Invocations[0].InvocationID,
+		data.Invocations[1].InvocationID,
+		data.Invocations[2].InvocationID,
+	})
+}
+
 // ---------------------------------------------------------------------------
 // TIER 3: Handler pagination (Tests 38-40)
 // ---------------------------------------------------------------------------
@@ -1762,7 +1788,9 @@ func TestReadLogFileAtOffset(t *testing.T) {
 			offset:  0,
 			limit:   65536,
 			noFile:  true,
-			wantErr: true,
+			wantData: "",
+			wantNext: 0,
+			wantTotal: 0,
 		},
 	}
 	for _, tt := range tests {
@@ -1780,10 +1808,6 @@ func TestReadLogFileAtOffset(t *testing.T) {
 			srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
 			data, err := srv.readLogFileAtOffset(logPath, tt.offset, tt.limit)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantNext, data.NextOffset)
@@ -1895,34 +1919,45 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 		assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 	})
 
-	t.Run("offset_missing_file_returns_not_found", func(t *testing.T) {
+	t.Run("offset_missing_file_returns_empty", func(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
-		// inv-2 has no log files; offset mode should return E_LOG_NOT_FOUND
+		// inv-2 has no log files; offset mode should now return an empty log payload.
 		w := env.doInvocationRequest(t, http.MethodGet,
 			"/invocations/inv-2/logs?repo_id="+env.RepoID+"&offset=0&limit=65536")
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		resp := decodeAPIResponse(t, w)
-		assert.False(t, resp.OK)
-		assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "raw", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
 	})
 
-	t.Run("offset_stream_kind_missing_file", func(t *testing.T) {
+	t.Run("offset_stream_kind_missing_file_returns_empty", func(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
 		w := env.doInvocationRequest(t, http.MethodGet,
 			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=stream&offset=0&limit=65536")
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		resp := decodeAPIResponse(t, w)
-		assert.False(t, resp.OK)
-		assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
-		assert.Contains(t, resp.Hint, "try --kind raw")
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "stream", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
 	})
 
 	t.Run("offset_invalid_limit_returns_error", func(t *testing.T) {
@@ -2131,49 +2166,6 @@ func TestHandleListInvocations_Limit500Accepted(t *testing.T) {
 	var data ListInvocationsData
 	decodeData(t, resp, &data)
 	assert.Len(t, data.Invocations, 3)
-}
-
-func TestHandleListInvocations_WorktreeIDFilter_Compatibility(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_id=wt-1")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	var data ListInvocationsData
-	decodeData(t, resp, &data)
-
-	// inv-1 and inv-2 are in wt-1; inv-3 is in wt-2
-	assert.Len(t, data.Invocations, 2)
-	for _, inv := range data.Invocations {
-		assert.Equal(t, "wt-1", inv.WorktreeID,
-			"worktree_id filter must not widen to all invocations")
-	}
-}
-
-func TestHandleListInvocations_WorktreeFilterPrecedence_WorktreeRefWins(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	// worktree_ref=alpha resolves to wt-1; worktree_id=wt-2 would select wt-2.
-	// worktree_ref takes precedence.
-	w := env.doInvocationRequest(t, http.MethodGet,
-		"/invocations/?repo_id="+env.RepoID+"&worktree_ref=alpha&worktree_id=wt-2")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	var data ListInvocationsData
-	decodeData(t, resp, &data)
-
-	// worktree_ref=alpha → wt-1: inv-1 and inv-2
-	assert.Len(t, data.Invocations, 2)
-	for _, inv := range data.Invocations {
-		assert.Equal(t, "wt-1", inv.WorktreeID,
-			"worktree_ref must take precedence over worktree_id")
-	}
 }
 
 func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
@@ -2546,12 +2538,27 @@ func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
 			require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(tc.eventLine), 0o644))
 
 			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
-			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, http.StatusOK, w.Code)
 
 			resp := decodeAPIResponse(t, w)
-			assert.False(t, resp.OK)
-			assert.Equal(t, "E_STORE_CORRUPT", resp.ErrorCode)
-			assert.NotEmpty(t, resp.Message)
+			assert.True(t, resp.OK)
+
+			var data struct {
+				Entries []struct {
+					Kind string `json:"kind"`
+				} `json:"entries"`
+			}
+			decodeData(t, resp, &data)
+			require.NotEmpty(t, data.Entries)
+
+			sawParseError := false
+			for _, entry := range data.Entries {
+				if entry.Kind == "parse_error" {
+					sawParseError = true
+					break
+				}
+			}
+			assert.True(t, sawParseError, "tolerant replay must preserve a parse_error diagnostic")
 		})
 	}
 }

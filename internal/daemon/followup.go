@@ -16,7 +16,7 @@ import (
 
 const followUpPromptEventKind = "agency.followup_prompt"
 
-// handleControlPlaneFollowUpPrompt handles POST /invocations/{ref}/chat (S3 PR-02).
+// handleControlPlaneFollowUpPrompt handles POST /invocations/{ref}/chat.
 func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)

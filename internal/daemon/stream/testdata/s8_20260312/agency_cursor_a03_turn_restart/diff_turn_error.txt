@@ -1,3 +1,1 @@
-error_code: E_CHECKPOINT_NOT_FOUND
-E_CHECKPOINT_NOT_FOUND: no checkpoint mapping exists for selected turn
-
+../agency_codex_a03_turn_restart/diff_turn_error.txt

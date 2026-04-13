@@ -52,14 +52,6 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 
 	offsetData, err := s.readLogFileAtOffset(logPath, params.Offset, params.Limit)
 	if err != nil {
-		if os.IsNotExist(err) {
-			hint := "invocation may not have started or produced output yet"
-			if params.Kind == "stream" {
-				hint = "stream logs unavailable for this invocation; try --kind raw"
-			}
-			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ELogNotFound), fmt.Sprintf("logs not found for invocation %s", invocationRef), hint, nil)
-			return
-		}
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
 		return
 	}
@@ -71,6 +63,9 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 func (s *Server) readLogFileAtOffset(logPath string, offset int64, limit int) (*InvocationLogsOffsetData, error) {
 	info, err := os.Stat(logPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return &InvocationLogsOffsetData{}, nil
+		}
 		return nil, err
 	}
 
