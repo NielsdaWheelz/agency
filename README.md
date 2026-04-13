@@ -155,13 +155,13 @@ reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is str
 
 ## documentation
 
-- **[getting started](docs/getting-started.md)** — full walkthrough from zero to merged PR
-- **[concepts](docs/concepts.md)** — repos, worktrees, agents, sandboxes, landing, checkpoints
-- **[CLI reference](docs/cli.md)** — every command and flag
-- **[configuration](docs/configuration.md)** — agency.json, environment variables, shell completion
-- **[architecture](docs/architecture.md)** — daemon internals, stream parsing, data model
-- **[v2.1 docs](docs/v2.1/README.md)** — consolidated product scope, parity matrix, release gates, roadmap
-- **[contributing](docs/contributing.md)** — build, test, lint, project structure
+- **[docs/index.md](docs/index.md)** — documentation map and ownership rules
+- **[docs/codebase.md](docs/codebase.md)** — package layout and architecture boundaries
+- **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
+- **[docs/git-worktrees.md](docs/git-worktrees.md)** — repo, integration worktree, invocation, and sandbox model
+- **[docs/persistence.md](docs/persistence.md)** — on-disk schemas, atomic writes, and permissions
+- **[docs/testing.md](docs/testing.md)** — test layers, fakes, fixtures, and e2e rules
+- **[docs/modules/index.md](docs/modules/index.md)** — subsystem-owned docs
 
 ## license
 

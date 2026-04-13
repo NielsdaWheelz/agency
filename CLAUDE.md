@@ -39,10 +39,10 @@ This file is binding for contributors and agents. If a rule is listed under Bind
 
 ## References
 
-- docs/standards/binding.md
-- docs/contracts/events.md
-- docs/sdlc/testing_standards.md
-- .claude/prompts/event-writing.md
+- docs/process-execution.md
+- docs/persistence.md
+- docs/daemon.md
+- docs/testing.md
 
 ## Runner Protocol
 
