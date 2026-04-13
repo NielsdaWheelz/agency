@@ -141,9 +141,19 @@ func (m model) renderInvocationsPanel(width int) string {
 			displayStatus = inv.Status
 		}
 		activitySummary := strings.TrimSpace(inv.StatusSummary)
-		if inv.LatestActivity != nil {
-			if latestLabel := formatLatestActivityLabel(inv.LatestActivity); latestLabel != "" {
-				activitySummary = latestLabel
+		if activity := inv.LatestActivity; activity != nil {
+			toolCount := activity.ToolCallCount
+			if toolCount == 0 {
+				toolCount = len(activity.ToolCalls)
+			}
+			if kind := strings.TrimSpace(activity.Kind); kind != "" || strings.TrimSpace(activity.Summary) != "" || toolCount > 0 || activity.CheckpointID > 0 {
+				activitySummary = render.FormatActivityWithExtras(
+					activity.Kind,
+					activity.Summary,
+					toolCount,
+					activity.CheckpointID,
+					activity.Restorable,
+				)
 			}
 		}
 		rowTail := worktreeName
@@ -199,29 +209,40 @@ func (m model) renderDetailsPanel(width int) string {
 	if summary := strings.TrimSpace(selected.StatusSummary); summary != "" {
 		lines = append(lines, fmt.Sprintf("status_summary: %s", summary))
 	}
-	if selected.LatestActivity != nil {
-		latestTurnID := strings.TrimSpace(selected.LatestActivity.TurnID)
-		if latestLabel := formatLatestActivityLabel(selected.LatestActivity); latestLabel != "" {
+	if activity := selected.LatestActivity; activity != nil {
+		toolCount := activity.ToolCallCount
+		if toolCount == 0 {
+			toolCount = len(activity.ToolCalls)
+		}
+		if kind := strings.TrimSpace(activity.Kind); kind != "" || strings.TrimSpace(activity.Summary) != "" || toolCount > 0 || activity.CheckpointID > 0 {
+			latestLabel := render.FormatActivityWithExtras(
+				activity.Kind,
+				activity.Summary,
+				toolCount,
+				activity.CheckpointID,
+				activity.Restorable,
+			)
+			latestTurnID := strings.TrimSpace(activity.TurnID)
 			if latestTurnID != "" {
 				lines = append(lines, fmt.Sprintf("latest_activity: [%s] %s", latestTurnID, latestLabel))
 			} else {
 				lines = append(lines, fmt.Sprintf("latest_activity: %s", latestLabel))
 			}
-		}
-		for _, tool := range selected.LatestActivity.ToolCalls {
-			lines = append(lines, "latest_tool: "+render.FormatToolCallSummary(tool.Name, tool.Command, tool.HasExit, tool.ExitCode))
-		}
-		if selected.LatestActivity.CheckpointID > 0 {
-			lines = append(lines, fmt.Sprintf("latest_checkpoint: %d", selected.LatestActivity.CheckpointID))
-		}
-		if description := strings.TrimSpace(selected.LatestActivity.CheckpointDescription); description != "" {
-			lines = append(lines, "latest_checkpoint_desc: "+description)
-		}
-		if diffstat := strings.TrimSpace(selected.LatestActivity.CheckpointDiffstat); diffstat != "" {
-			lines = append(lines, "latest_checkpoint_diff: "+diffstat)
-		}
-		if pathsSummary := render.FormatChangedPathSummary(selected.LatestActivity.CheckpointChangedPaths, selected.LatestActivity.CheckpointChangedCount, selected.LatestActivity.CheckpointPathsTrimmed); pathsSummary != "" {
-			lines = append(lines, "latest_checkpoint_paths: "+pathsSummary)
+			for _, tool := range activity.ToolCalls {
+				lines = append(lines, "latest_tool: "+render.FormatToolCallSummary(tool.Name, tool.Command, tool.HasExit, tool.ExitCode))
+			}
+			if activity.CheckpointID > 0 {
+				lines = append(lines, fmt.Sprintf("latest_checkpoint: %d", activity.CheckpointID))
+			}
+			if description := strings.TrimSpace(activity.CheckpointDescription); description != "" {
+				lines = append(lines, "latest_checkpoint_desc: "+description)
+			}
+			if diffstat := strings.TrimSpace(activity.CheckpointDiffstat); diffstat != "" {
+				lines = append(lines, "latest_checkpoint_diff: "+diffstat)
+			}
+			if pathsSummary := render.FormatChangedPathSummary(activity.CheckpointChangedPaths, activity.CheckpointChangedCount, activity.CheckpointPathsTrimmed); pathsSummary != "" {
+				lines = append(lines, "latest_checkpoint_paths: "+pathsSummary)
+			}
 		}
 	}
 	lines = append(lines, "")
@@ -405,26 +426,4 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func formatLatestActivityLabel(activity *daemon.InvocationLatestActivity) string {
-	if activity == nil {
-		return ""
-	}
-	kind := strings.TrimSpace(activity.Kind)
-	summary := strings.TrimSpace(activity.Summary)
-	toolCount := activity.ToolCallCount
-	if toolCount <= 0 {
-		toolCount = len(activity.ToolCalls)
-	}
-	if kind == "" && summary == "" && toolCount == 0 && activity.CheckpointID <= 0 {
-		return ""
-	}
-	return render.FormatActivityWithExtras(
-		kind,
-		summary,
-		toolCount,
-		activity.CheckpointID,
-		activity.Restorable,
-	)
 }

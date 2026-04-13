@@ -286,9 +286,6 @@ type AgentLogsOpts struct {
 	// Offset is the byte offset to start reading from (default 0).
 	Offset int64
 
-	// PollInterval is the follow-mode poll interval (default 500ms, min 250ms, max 5s).
-	PollInterval time.Duration
-
 	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
 	SleepFn func(time.Duration)
 
@@ -328,10 +325,7 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		sleepFn = time.Sleep
 	}
 
-	pollInterval := opts.PollInterval
-	if pollInterval == 0 {
-		pollInterval = 500 * time.Millisecond
-	}
+	pollInterval := 500 * time.Millisecond
 
 	// Page to EOF
 	for {

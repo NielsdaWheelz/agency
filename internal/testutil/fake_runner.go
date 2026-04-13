@@ -22,10 +22,6 @@ type FakeCommandRunner struct {
 	mu        sync.Mutex
 	Responses map[string]FakeResponse // key: "name arg1 arg2"
 	Calls     []string
-
-	// LookPathFunc overrides the default LookPath behaviour.
-	// If nil, LookPath returns "/usr/bin/" + file.
-	LookPathFunc func(string) (string, error)
 }
 
 // NewFakeCommandRunner creates a ready-to-use FakeCommandRunner.
@@ -61,8 +57,5 @@ func (f *FakeCommandRunner) Run(_ context.Context, name string, args []string, _
 
 // LookPath implements exec.CommandRunner.
 func (f *FakeCommandRunner) LookPath(file string) (string, error) {
-	if f.LookPathFunc != nil {
-		return f.LookPathFunc(file)
-	}
 	return "/usr/bin/" + file, nil
 }

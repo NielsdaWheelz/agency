@@ -27,9 +27,9 @@ type loader interface {
 // Implementations should call canonical command contracts rather than
 // reimplementing policy in the watch runtime.
 type ActionDispatcher interface {
-	Enter(ctx context.Context, invocationID, repoID string) error
-	Open(ctx context.Context, invocationID, repoID string) error
-	PRSync(ctx context.Context, worktreeID, repoID string) error
+	Enter(ctx context.Context, invocationID, repoID string) (string, error)
+	Open(ctx context.Context, invocationID, repoID string) (string, error)
+	PRSync(ctx context.Context, worktreeID, repoID string) (string, error)
 }
 
 type keyMap struct {
@@ -136,6 +136,7 @@ type actionResultMsg struct {
 	kind         actionKind
 	invocationID string
 	worktreeID   string
+	output       string
 	err          error
 }
 
@@ -219,8 +220,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastActionError = msg.err != nil
 		if msg.err != nil {
 			m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID)
+			if output := strings.TrimSpace(msg.output); output != "" {
+				m.lastActionMessage += " | " + output
+			}
 		} else {
-			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID))
+			if output := strings.TrimSpace(msg.output); output != "" {
+				m.lastActionMessage = output
+			} else {
+				m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID))
+			}
 		}
 		// Refresh after each action outcome so readiness/details remain actionable.
 		return m, scheduleRefreshCmd()
@@ -335,14 +343,15 @@ func (m model) runActionCmd(kind actionKind, selected daemon.InvocationDTO) tea.
 	ctx := m.ctx
 
 	return func() tea.Msg {
+		var output string
 		var err error
 		switch kind {
 		case actionEnter:
-			err = dispatcher.Enter(ctx, selected.InvocationID, selected.RepoID)
+			output, err = dispatcher.Enter(ctx, selected.InvocationID, selected.RepoID)
 		case actionOpen:
-			err = dispatcher.Open(ctx, selected.InvocationID, selected.RepoID)
+			output, err = dispatcher.Open(ctx, selected.InvocationID, selected.RepoID)
 		case actionPRSync:
-			err = dispatcher.PRSync(ctx, selected.WorktreeID, selected.RepoID)
+			output, err = dispatcher.PRSync(ctx, selected.WorktreeID, selected.RepoID)
 		default:
 			err = agencyerrors.New(agencyerrors.EInternal, "unknown watch action")
 		}
@@ -350,6 +359,7 @@ func (m model) runActionCmd(kind actionKind, selected daemon.InvocationDTO) tea.
 			kind:         kind,
 			invocationID: selected.InvocationID,
 			worktreeID:   selected.WorktreeID,
+			output:       output,
 			err:          err,
 		}
 	}

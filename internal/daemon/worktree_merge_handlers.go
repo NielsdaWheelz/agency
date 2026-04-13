@@ -434,16 +434,3 @@ func (s *Server) appendWorktreeEvent(repoID, worktreeID, kind string, data map[s
 	}
 	return nil
 }
-
-func (s *Server) writeWorktreeMergeError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := WorktreePRMergeResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
-}

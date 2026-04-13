@@ -14,7 +14,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.Request) {
@@ -175,45 +174,4 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
-}
-
-func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
-	s.writeJSON(w, status, ControlPlaneStartResponse{
-		OK:              false,
-		ErrorCode:       code,
-		Message:         message,
-		Hint:            hint,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    version.FullVersion(),
-		ClientRequestID: clientRequestID,
-	})
-}
-
-func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
-	resp := ControlPlaneStartResponse{
-		OK:                    true,
-		InvocationID:          invocationID,
-		SandboxPath:           meta.SandboxPath,
-		RepoID:                repoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		AlreadyRunning:        alreadyRunning,
-		RequestID:             requestID,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		ClientRequestID:       clientRequestID,
-		DaemonInstanceID:      s.InstanceID,
-	}
-	if meta.PID != nil {
-		resp.PID = *meta.PID
-	}
-	if meta.PGID != nil {
-		resp.PGID = *meta.PGID
-	}
-	resp.LogPaths = &LogPaths{
-		Raw:    s.readableInvocationLogPath(repoID, invocationID, "raw"),
-		Stderr: s.readableInvocationLogPath(repoID, invocationID, "stderr"),
-		Stream: s.readableInvocationLogPath(repoID, invocationID, "stream"),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
 }

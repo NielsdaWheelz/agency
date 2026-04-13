@@ -164,7 +164,13 @@ func (m model) renderView() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.styleHelp(formatHelp(m.keys)))
+	bindings := m.keys.ShortHelp()
+	parts := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		h := b.Help()
+		parts = append(parts, h.Key+": "+h.Desc)
+	}
+	b.WriteString(m.styleHelp(strings.Join(parts, " • ")))
 
 	return b.String()
 }
@@ -187,7 +193,22 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 	}
 
 	// Separator line
-	remaining := width - visibleLen(header) - 1
+	visibleLen := 0
+	inEscape := false
+	for _, r := range header {
+		if r == '\033' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+				inEscape = false
+			}
+			continue
+		}
+		visibleLen++
+	}
+	remaining := width - visibleLen - 1
 	if remaining > 2 {
 		header += " " + m.styleSeparator(strings.Repeat("─", remaining))
 	}
@@ -234,16 +255,6 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 	}
 }
 
-func formatHelp(keys keyMap) string {
-	bindings := keys.ShortHelp()
-	parts := make([]string, 0, len(bindings))
-	for _, b := range bindings {
-		h := b.Help()
-		parts = append(parts, h.Key+": "+h.Desc)
-	}
-	return strings.Join(parts, " • ")
-}
-
 func truncate(s string, max int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 	runes := []rune(s)
@@ -254,26 +265,6 @@ func truncate(s string, max int) string {
 		return string(runes[:max])
 	}
 	return string(runes[:max-3]) + "..."
-}
-
-func visibleLen(s string) int {
-	// Strip ANSI escape sequences for length calculation
-	inEscape := false
-	n := 0
-	for _, r := range s {
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-				inEscape = false
-			}
-			continue
-		}
-		n++
-	}
-	return n
 }
 
 // Styling methods — all respect NoColor.

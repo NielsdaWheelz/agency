@@ -3,41 +3,12 @@ package daemon
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
-
-// handleCheckpoints handles requests to /invocations/{id}/checkpoints/...
-func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
-
-	// Parse path: /invocations/{id}/checkpoints/{action}
-	path := r.URL.Path
-	checkpointsPrefix := "/invocations/" + invocationID + "/checkpoints/"
-
-	if !strings.HasPrefix(path, checkpointsPrefix) {
-		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, "E_NOT_FOUND", "endpoint not found", "use /invocations/{id}/checkpoints/apply")
-		return
-	}
-
-	action := strings.TrimPrefix(path, checkpointsPrefix)
-
-	switch action {
-	case "apply":
-		if r.Method != http.MethodPost {
-			s.writeErrorWithRequestID(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
-			return
-		}
-		s.handleCheckpointApply(w, r, invocationID)
-	default:
-		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, "E_NOT_FOUND", "unknown action: "+action, "supported actions: apply")
-	}
-}
 
 // handleCheckpointApply handles POST /invocations/{ref}/checkpoints/apply.
 func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, invocationID string) {
@@ -163,18 +134,4 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		RestoredAt:     s.Clock().UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
-}
-
-// writeCheckpointError writes an error response for checkpoint endpoints.
-func (s *Server) writeCheckpointError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := CheckpointApplyResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
 }

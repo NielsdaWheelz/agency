@@ -30,92 +30,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupAgentTestEnv creates a test environment with integration worktree for agent tests.
-func setupAgentTestEnv(t *testing.T, worktreeName string) (string, string, string, string, *testutil.FakeCommandRunner, fs.FS) {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	repoDir := filepath.Join(tempDir, "repo")
-	dataDir := filepath.Join(tempDir, "data")
-
-	require.NoError(t, os.MkdirAll(repoDir, 0755))
-
-	// Initialize git repo (minimal)
-	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".git"), 0755))
-
-	originURL := "git@github.com:test/agent-repo.git"
-	repoIdentity := identity.DeriveRepoIdentity(repoDir, originURL)
-	repoID := repoIdentity.RepoID
-
-	// Create fake command runner
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
-
-	fsys := fs.NewRealFS()
-	st := store.NewStore(fsys, dataDir, time.Now)
-
-	// Create store directories
-	repoStoreDir := filepath.Join(dataDir, "repos", repoID)
-	require.NoError(t, os.MkdirAll(repoStoreDir, 0755))
-
-	// Create integration worktree
-	worktreeID := "20260131120000-abcd"
-	worktreeDir := filepath.Join(repoStoreDir, "integration_worktrees", worktreeID)
-	worktreeTreeDir := filepath.Join(worktreeDir, "tree")
-	require.NoError(t, os.MkdirAll(worktreeTreeDir, 0755))
-
-	// Write integration marker
-	agencyDir := filepath.Join(worktreeTreeDir, ".agency")
-	require.NoError(t, os.MkdirAll(agencyDir, 0755))
-	markerPath := filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName)
-	require.NoError(t, os.WriteFile(markerPath, []byte("# Integration worktree\n"), 0644))
-
-	// Write integration worktree meta.json
-	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          worktreeName,
-		RepoID:        repoID,
-		Branch:        "agency/" + worktreeName + "-abcd",
-		ParentBranch:  "main",
-		TreePath:      worktreeTreeDir,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
-	}
-	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
-	metaPath := filepath.Join(worktreeDir, "meta.json")
-	require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
-
-	repoIndex := store.RepoIndex{
-		SchemaVersion: store.SchemaVersion,
-		Repos: map[string]store.RepoIndexEntry{
-			repoIdentity.RepoKey: {
-				RepoID:     repoID,
-				Paths:      []string{repoDir},
-				LastSeenAt: "2026-01-31T12:00:00Z",
-			},
-		},
-	}
-	repoRecord := store.RepoRecord{
-		SchemaVersion:    store.SchemaVersion,
-		RepoKey:          repoIdentity.RepoKey,
-		RepoID:           repoID,
-		RepoRootLastSeen: repoDir,
-		PreferredRoot:    repoDir,
-		AgencyJSONPath:   filepath.Join(repoDir, "agency.json"),
-		OriginPresent:    true,
-		OriginURL:        originURL,
-		OriginHost:       "github.com",
-		CreatedAt:        "2026-01-31T12:00:00Z",
-		UpdatedAt:        "2026-01-31T12:00:00Z",
-	}
-	require.NoError(t, st.SaveRepoIndex(repoIndex))
-	require.NoError(t, st.SaveRepoRecord(repoRecord))
-
-	return repoDir, dataDir, repoID, worktreeID, cr, fsys
-}
-
 // createTestInvocation creates a test invocation for testing attach/stop/kill.
 func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationID string, mode store.RunnerMode, status store.InvocationStatus) {
 	t.Helper()
@@ -795,7 +709,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 // S2-PR04 Acceptance 2: canonical agent path/open/shell/enter daemon-first navigation
 // ---------------------------------------------------------------------------
 
-func TestAgentPath_UsesNavigationKernelDaemonResolution(t *testing.T) {
+func TestAgentPath_UsesDaemonResolution(t *testing.T) {
 	env := setupAgentNavEnv(t, "path-test", store.RunnerModeHeaded)
 
 	var stdout, stderr bytes.Buffer
@@ -807,7 +721,7 @@ func TestAgentPath_UsesNavigationKernelDaemonResolution(t *testing.T) {
 		"stdout must be exactly the daemon-resolved sandbox_path plus newline")
 }
 
-func TestAgentOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestAgentOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupAgentNavEnv(t, "open-test", store.RunnerModeHeaded)
 	shimPath, recordFile := createShimScript(t)
 
@@ -824,7 +738,7 @@ func TestAgentOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
 		"editor must receive daemon-resolved sandbox_path as argument")
 }
 
-func TestAgentShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupAgentNavEnv(t, "shell-test", store.RunnerModeHeaded)
 	shimPath, recordFile := createShimScript(t)
 	t.Setenv("SHELL", shimPath)
@@ -842,7 +756,7 @@ func TestAgentShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) 
 		"shell should be invoked with -l (login)")
 }
 
-func TestAgentEnter_UsesNavigationKernelInvocationResolution_HeadedOnly(t *testing.T) {
+func TestAgentEnter_UsesDaemonResolution_HeadedOnly(t *testing.T) {
 	env := setupAgentNavEnv(t, "enter-test", store.RunnerModeHeaded)
 
 	fakeTmux := testutil.NewFakeTmuxClient()

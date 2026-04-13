@@ -124,34 +124,9 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 }
 
 // setupTestGitRepo creates a temporary git repo with one initial commit.
-// Uses t.Setenv via HermeticGitEnv — incompatible with t.Parallel().
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
-	testutil.HermeticGitEnv(t)
-
-	repoDir := t.TempDir()
-	cr := exec.NewRealRunner()
-	ctx := context.Background()
-
-	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		require.FailNow(t, "git init failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
-
-	testFile := filepath.Join(repoDir, "README.md")
-	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644), "failed to write test file")
-
-	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		require.FailNow(t, "git add failed", "err=%v, exit %d", err, result.ExitCode)
-	}
-
-	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		require.FailNow(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
-
-	return repoDir
+	return testutil.SetupGitRepo(t)
 }
 
 // hermeticGitEnv returns per-command env vars that isolate git from the host
@@ -268,11 +243,6 @@ func gitExec(t *testing.T, dir string, args ...string) string {
 	require.NoError(t, err, "git %s", strings.Join(args, " "))
 	require.Equal(t, 0, result.ExitCode, "git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
 	return strings.TrimSpace(result.Stdout)
-}
-
-// newFakeTmuxClient returns a testutil.FakeTmuxClient for daemon tests.
-func newFakeTmuxClient() *testutil.FakeTmuxClient {
-	return testutil.NewFakeTmuxClient()
 }
 
 // startTestHeadedInvocation starts a headed invocation via the daemon client.

@@ -2,11 +2,16 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+
+	"golang.org/x/term"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -26,18 +31,21 @@ func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent path", nil)
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetInvocation,
-			Ref:        opts.InvocationRef,
-		},
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent path",
+	})
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintln(stdout, result.ResolvedPath)
+	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "invocation")
+	}
+
+	_, _ = fmt.Fprintln(stdout, invocation.Data.SandboxPath)
 	return nil
 }
 
@@ -56,25 +64,27 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent open", nil)
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetInvocation,
-			Ref:        opts.InvocationRef,
-		},
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent open",
+	})
 	if err != nil {
 		return err
 	}
 
-	sandboxPath := result.ResolvedPath
+	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "invocation")
+	}
+	sandboxPath := invocation.Data.SandboxPath
 
 	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
 		return errors.NewWithDetails(
 			errors.ESandboxMissing,
 			"sandbox no longer exists",
 			map[string]string{
-				"invocation_id": result.ResolvedID,
+				"invocation_id": invocation.Data.InvocationID,
 				"sandbox_path":  sandboxPath,
 				"hint":          "sandbox was removed after landing or discarding",
 			},
@@ -120,25 +130,27 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent shell", nil)
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetInvocation,
-			Ref:        opts.InvocationRef,
-		},
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent shell",
+	})
 	if err != nil {
 		return err
 	}
 
-	sandboxPath := result.ResolvedPath
+	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "invocation")
+	}
+	sandboxPath := invocation.Data.SandboxPath
 
 	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
 		return errors.NewWithDetails(
 			errors.ESandboxMissing,
 			"sandbox no longer exists",
 			map[string]string{
-				"invocation_id": result.ResolvedID,
+				"invocation_id": invocation.Data.InvocationID,
 				"sandbox_path":  sandboxPath,
 				"hint":          "sandbox was removed after landing or discarding",
 			},
@@ -197,35 +209,32 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent enter", isInteractive)
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetInvocation,
-			Ref:        opts.InvocationRef,
-		},
-		RequiresTTY: true,
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent enter",
+	})
 	if err != nil {
 		return err
 	}
 
-	invocationResult, err := ns.client.GetInvocation(ctx, result.ResolvedID, result.ResolvedRepoID)
+	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
-		return err
+		return translateNavigationError(err, "invocation")
 	}
-	if invocationResult.Data.Mode != "headed" {
+	if invocation.Data.Mode != "headed" {
 		return errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
 			"invocation is headless; enter is only supported for headed invocations",
 			map[string]string{
-				"invocation_id": result.ResolvedID,
-				"mode":          invocationResult.Data.Mode,
+				"invocation_id": invocation.Data.InvocationID,
+				"mode":          invocation.Data.Mode,
 				"hint":          "use 'agency agent logs' to view headless invocation output",
 			},
 		)
 	}
 
-	sessionName := tmux.SessionName(result.ResolvedID)
+	sessionName := tmux.SessionName(invocation.Data.InvocationID)
 
 	tmuxClient := opts.TmuxClient
 	if tmuxClient == nil {
@@ -242,7 +251,7 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			"tmux session not found",
 			map[string]string{
 				"session_name":  sessionName,
-				"invocation_id": result.ResolvedID,
+				"invocation_id": invocation.Data.InvocationID,
 				"hint":          "session ended; use 'agency agent logs' or 'agency agent open' to view",
 			},
 		)
@@ -255,28 +264,61 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	return attachFn(sessionName)
 }
 
-// Shared navigation kernel setup for agent path/open/shell/enter.
-func (ns *daemonNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string, isInteractive func() bool) NavigationDeps {
-	return NavigationDeps{
-		ResolveRepo: func(ctx context.Context) (*RepoContextResult, error) {
-			return ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-				RepoFlag:      repoFlag,
-				AllowAllRepos: false,
-				CmdName:       cmdName,
-			})
-		},
-		GetInvocation: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-			result, err := ns.client.GetInvocation(ctx, ref, repoID)
-			if err != nil {
-				return nil, err
+func translateNavigationError(err error, targetKind string) error {
+	dre, isDaemonErr := daemonclient.AsDaemonReadError(err)
+
+	code := errors.GetCode(err)
+	if code == errors.EWorktreeIDAmbiguous || code == errors.EInvocationIDAmbiguous {
+		details := map[string]string{
+			"target_kind": targetKind,
+		}
+
+		if isDaemonErr {
+			candidates := dre.Candidates()
+			if len(candidates) > 0 {
+				candidatesJSON, _ := json.Marshal(candidates)
+				details["candidates"] = string(candidatesJSON)
+				details["candidate_count"] = strconv.Itoa(len(candidates))
 			}
-			return &NavigationResult{
-				TargetKind:     TargetInvocation,
-				ResolvedRepoID: result.Data.RepoID,
-				ResolvedID:     result.Data.InvocationID,
-				ResolvedPath:   result.Data.SandboxPath,
-			}, nil
-		},
-		IsInteractive: isInteractive,
+			if dre.Hint != "" {
+				details["hint"] = dre.Hint
+			}
+		}
+
+		ae, _ := errors.AsAgencyError(err)
+		msg := "ambiguous target"
+		if ae != nil {
+			msg = ae.Msg
+		}
+
+		return errors.NewWithDetails(errors.EAmbiguous, msg, details)
 	}
+
+	if isDaemonErr && dre.Hint != "" {
+		return errors.NewWithDetails(code, dre.AgencyErr.Msg, map[string]string{"hint": dre.Hint})
+	}
+
+	return err
+}
+
+// realTmuxAttach performs a real interactive tmux attach with stdin/stdout/stderr connected.
+// This is the only way to get proper interactive terminal behavior.
+func realTmuxAttach(sessionName string) error {
+	result, err := exec.RunAttached(context.Background(), "tmux", []string{"attach", "-t", sessionName}, exec.AttachedRunOpts{
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("tmux attach exited with code %d", result.ExitCode)
+	}
+	return nil
+}
+
+// isTerminal returns true if the given file descriptor is a terminal.
+func isTerminal(fd uintptr) bool {
+	return term.IsTerminal(int(fd))
 }

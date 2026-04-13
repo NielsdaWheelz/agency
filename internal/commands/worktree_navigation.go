@@ -25,18 +25,21 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree path")
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetWorktree,
-			Ref:        opts.WorktreeRef,
-		},
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree path",
+	})
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintln(stdout, result.ResolvedPath)
+	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "worktree")
+	}
+
+	_, _ = fmt.Fprintln(stdout, worktree.Data.TreePath)
 	return nil
 }
 
@@ -54,18 +57,20 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree open")
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetWorktree,
-			Ref:        opts.WorktreeRef,
-		},
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree open",
+	})
 	if err != nil {
 		return err
 	}
 
-	treePath := result.ResolvedPath
+	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "worktree")
+	}
+	treePath := worktree.Data.TreePath
 
 	userCfg, found, _ := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
 	editorName := opts.Editor
@@ -105,18 +110,20 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		return err
 	}
 
-	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree shell")
-	result, err := ResolveNavigation(ctx, NavigationIntent{
-		Selection: NavigationSelection{
-			TargetKind: TargetWorktree,
-			Ref:        opts.WorktreeRef,
-		},
-	}, deps)
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "worktree shell",
+	})
 	if err != nil {
 		return err
 	}
 
-	treePath := result.ResolvedPath
+	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "worktree")
+	}
+	treePath := worktree.Data.TreePath
 
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -135,29 +142,4 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	}
 
 	return nil
-}
-
-// Shared navigation kernel setup for worktree path/open/shell.
-func (ns *daemonNavSetup) buildWorktreeNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmdName string) NavigationDeps {
-	return NavigationDeps{
-		ResolveRepo: func(ctx context.Context) (*RepoContextResult, error) {
-			return ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-				RepoFlag:      repoFlag,
-				AllowAllRepos: false,
-				CmdName:       cmdName,
-			})
-		},
-		GetWorktree: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-			result, err := ns.client.GetWorktree(ctx, ref, repoID)
-			if err != nil {
-				return nil, err
-			}
-			return &NavigationResult{
-				TargetKind:     TargetWorktree,
-				ResolvedRepoID: result.Data.RepoID,
-				ResolvedID:     result.Data.WorktreeID,
-				ResolvedPath:   result.Data.TreePath,
-			}, nil
-		},
-	}
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // handleWorktreeCreate handles POST /worktrees/create.
@@ -416,54 +415,4 @@ func (s *Server) getRepoRootFromIndex(repoID string) (string, error) {
 	}
 
 	return "", fmt.Errorf("repo %s not found in index", repoID)
-}
-
-// writeWorktreeError writes an error response for worktree endpoints.
-func (s *Server) writeWorktreeError(w http.ResponseWriter, status int, code, message, hint string) {
-	resp := WorktreeCreateResponse{
-		OK:           false,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-	}
-	s.writeJSON(w, status, resp)
-}
-
-// writeWorktreeSuccess writes a success response for worktree create.
-func (s *Server) writeWorktreeSuccess(w http.ResponseWriter, worktreeID, treePath, branch, repoID string) {
-	resp := WorktreeCreateResponse{
-		OK:           true,
-		WorktreeID:   worktreeID,
-		TreePath:     treePath,
-		Branch:       branch,
-		RepoID:       repoID,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
-}
-
-// writeWorktreeRmError writes an error response for worktree rm.
-func (s *Server) writeWorktreeRmError(w http.ResponseWriter, status int, code, message, hint string) {
-	resp := WorktreeRmResponse{
-		OK:           false,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-	}
-	s.writeJSON(w, status, resp)
-}
-
-// writeWorktreeRmSuccess writes a success response for worktree rm.
-func (s *Server) writeWorktreeRmSuccess(w http.ResponseWriter) {
-	resp := WorktreeRmResponse{
-		OK:           true,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
 }

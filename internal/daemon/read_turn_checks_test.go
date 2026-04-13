@@ -146,74 +146,6 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 	}
 }
 
-func setupAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
-	t.Helper()
-	fixture := setupTurnDiffFixture(t)
-
-	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
-	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
-	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:09Z","invocation_id":"` + fixture.invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"assistant turn before checkpoint"}}`,
-	}
-	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-
-	fixture.selectedTurnID = "stream:1"
-	return fixture
-}
-
-func setupLatestCheckpointAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
-	t.Helper()
-	fixture := setupTurnDiffFixture(t)
-
-	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
-	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
-	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn after checkpoint two"}}`,
-	}
-	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-
-	fixture.selectedTurnID = "stream:1"
-	return fixture
-}
-
-func setupSingleCheckpointLatestAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
-	t.Helper()
-	fixture := setupTurnDiffFixture(t)
-
-	cpFile := checkpoint.CheckpointsFile{
-		SchemaVersion: checkpoint.SchemaVersion,
-		Checkpoints: []checkpoint.Checkpoint{
-			{
-				ID:                1,
-				SnapshotRef:       checkpoint.RefPrefix + fixture.invocationID + "/1",
-				SnapshotCommit:    fixture.cp1Commit,
-				SandboxHeadSHA:    fixture.cp1Commit,
-				CreatedAt:         "2026-02-05T11:50:10Z",
-				IncludesUntracked: true,
-				Diffstat:          "+1 -0 in 1 files",
-			},
-		},
-	}
-	cpBytes, err := json.Marshal(cpFile)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationCheckpointsPath(fixture.repoID, fixture.invocationID), cpBytes, 0o644))
-
-	events := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + fixture.invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationEventsPath(fixture.repoID, fixture.invocationID), []byte(events), 0o644))
-
-	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
-	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
-	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn on first checkpoint"}}`,
-	}
-	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-
-	fixture.selectedTurnID = "stream:1"
-	return fixture
-}
-
 func writeRunnerStatusForInvocation(t *testing.T, st *store.Store, repoID, invocationID string, status runnerstatus.RunnerStatus) {
 	t.Helper()
 	stateDir := filepath.Join(st.InvocationDir(repoID, invocationID), ".agency", "state")
@@ -296,7 +228,15 @@ func TestHandleGetInvocationDiff_TurnSelectorRejectsNonTurnEntryIDs(t *testing.T
 }
 
 func TestHandleGetInvocationDiff_TurnSelectorAssistantTurnUsesCanonicalCheckpointAssociation(t *testing.T) {
-	fixture := setupAssistantTurnDiffFixture(t)
+	fixture := setupTurnDiffFixture(t)
+
+	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:09Z","invocation_id":"` + fixture.invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"assistant turn before checkpoint"}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	fixture.selectedTurnID = "stream:1"
 
 	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
 	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
@@ -317,7 +257,15 @@ func TestHandleGetInvocationDiff_TurnSelectorAssistantTurnUsesCanonicalCheckpoin
 }
 
 func TestHandleGetInvocationDiff_TurnSelectorLatestAssistantTurnUsesPreviousCheckpointBoundary(t *testing.T) {
-	fixture := setupLatestCheckpointAssistantTurnDiffFixture(t)
+	fixture := setupTurnDiffFixture(t)
+
+	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn after checkpoint two"}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	fixture.selectedTurnID = "stream:1"
 
 	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
 	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
@@ -343,7 +291,38 @@ func TestHandleGetInvocationDiff_TurnSelectorLatestAssistantTurnUsesPreviousChec
 }
 
 func TestHandleGetInvocationDiff_TurnSelectorLatestAssistantTurnSingleCheckpointUsesBaseBoundary(t *testing.T) {
-	fixture := setupSingleCheckpointLatestAssistantTurnDiffFixture(t)
+	fixture := setupTurnDiffFixture(t)
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + fixture.invocationID + "/1",
+				SnapshotCommit:    fixture.cp1Commit,
+				SandboxHeadSHA:    fixture.cp1Commit,
+				CreatedAt:         "2026-02-05T11:50:10Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationCheckpointsPath(fixture.repoID, fixture.invocationID), cpBytes, 0o644))
+
+	events := strings.Join([]string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + fixture.invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationEventsPath(fixture.repoID, fixture.invocationID), []byte(events), 0o644))
+
+	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn on first checkpoint"}}`,
+	}
+	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	fixture.selectedTurnID = "stream:1"
 
 	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
 	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)

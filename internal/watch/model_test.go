@@ -26,24 +26,28 @@ type fakeActionDispatcher struct {
 	openErr   error
 	prSyncErr error
 
+	enterOutput  string
+	openOutput   string
+	prSyncOutput string
+
 	enterCalls  []string
 	openCalls   []string
 	prSyncCalls []string
 }
 
-func (f *fakeActionDispatcher) Enter(_ context.Context, invocationID, repoID string) error {
+func (f *fakeActionDispatcher) Enter(_ context.Context, invocationID, repoID string) (string, error) {
 	f.enterCalls = append(f.enterCalls, invocationID+"@"+repoID)
-	return f.enterErr
+	return f.enterOutput, f.enterErr
 }
 
-func (f *fakeActionDispatcher) Open(_ context.Context, invocationID, repoID string) error {
+func (f *fakeActionDispatcher) Open(_ context.Context, invocationID, repoID string) (string, error) {
 	f.openCalls = append(f.openCalls, invocationID+"@"+repoID)
-	return f.openErr
+	return f.openOutput, f.openErr
 }
 
-func (f *fakeActionDispatcher) PRSync(_ context.Context, worktreeID, repoID string) error {
+func (f *fakeActionDispatcher) PRSync(_ context.Context, worktreeID, repoID string) (string, error) {
 	f.prSyncCalls = append(f.prSyncCalls, worktreeID+"@"+repoID)
-	return f.prSyncErr
+	return f.prSyncOutput, f.prSyncErr
 }
 
 func TestModel_SnapshotRefresh_KeepsSelectionByInvocationID(t *testing.T) {
@@ -350,6 +354,32 @@ func TestModel_ActionPRSync_MessagesIncludeWorktreeTarget(t *testing.T) {
 	assert.Contains(t, nextModel.lastActionMessage, "complete")
 	require.Len(t, dispatcher.prSyncCalls, 1)
 	assert.Equal(t, "wt-1@repo-1", dispatcher.prSyncCalls[0])
+}
+
+func TestModel_ActionSuccessUsesDispatcherOutput(t *testing.T) {
+	t.Parallel()
+
+	dispatcher := &fakeActionDispatcher{
+		enterOutput: "attached to tmux session",
+	}
+
+	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedIndex = 0
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	next, _ = next.(model).Update(msg)
+	nextModel := next.(model)
+
+	assert.Equal(t, "attached to tmux session", nextModel.lastActionMessage)
+	require.Len(t, dispatcher.enterCalls, 1)
 }
 
 func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {

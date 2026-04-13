@@ -10,7 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
@@ -382,15 +381,5 @@ func (s *Server) markInvocationFailed(repoID, invocationID, exitReason string) {
 		meta.ExitReason = exitReason
 		meta.FinishedAt = now
 		meta.Flags.NeedsAttention = true
-	})
-}
-
-func (s *Server) writeInvocationActionSuccess(w http.ResponseWriter, requestID, invocationID string) {
-	s.writeJSON(w, http.StatusOK, InvocationActionResponse{
-		OK:           true,
-		InvocationID: invocationID,
-		RequestID:    requestID,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
 	})
 }

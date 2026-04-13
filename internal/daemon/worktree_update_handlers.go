@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -31,7 +30,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	if _, decodeErr := decodeWorktreeUpdateRequest(r.Body); decodeErr != "" {
+	if decodeErr := decodeWorktreeUpdateRequest(r.Body); decodeErr != "" {
 		s.writeWorktreeUpdateError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), decodeErr, "")
 		return
 	}
@@ -64,7 +63,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 	}
 	defer func() { _ = unlock() }()
 
-	if err := s.appendWorktreeUpdateEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventStarted, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventStarted, map[string]any{
 		"branch":        record.Meta.Branch,
 		"parent_branch": record.Meta.ParentBranch,
 	}); err != nil {
@@ -86,7 +85,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 			hint = strings.TrimSpace(ae.Details["hint"])
 		}
 
-		if appendErr := s.appendWorktreeUpdateEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventFailed, map[string]any{
+		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventFailed, map[string]any{
 			"error_code": string(code),
 			"message":    err.Error(),
 		}); appendErr != nil {
@@ -102,7 +101,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	if err := s.appendWorktreeUpdateEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventSucceeded, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventSucceeded, map[string]any{
 		"branch":        record.Meta.Branch,
 		"parent_branch": record.Meta.ParentBranch,
 	}); err != nil {
@@ -187,42 +186,23 @@ func (s *Server) runWorktreeUpdate(ctx context.Context, record *store.Integratio
 	return nil
 }
 
-func decodeWorktreeUpdateRequest(body io.Reader) (WorktreeUpdateRequest, string) {
-	var req WorktreeUpdateRequest
+func decodeWorktreeUpdateRequest(body io.Reader) string {
+	var req struct{}
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		if err == io.EOF {
-			return req, ""
+			return ""
 		}
-		return WorktreeUpdateRequest{}, prSyncDecodeErrorMessage(err)
+		return prSyncDecodeErrorMessage(err)
 	}
 
 	var trailing json.RawMessage
 	if err := dec.Decode(&trailing); err != io.EOF {
-		return WorktreeUpdateRequest{}, "invalid request body: expected a single JSON object: " + err.Error()
+		return "invalid request body: expected a single JSON object: " + err.Error()
 	}
 
-	return req, ""
-}
-
-func (s *Server) appendWorktreeUpdateEvent(repoID, worktreeID, kind string, data map[string]any) error {
-	writer := s.WorktreeEvents
-	if writer == nil {
-		writer = worktreeevents.NewWriter(s.Clock)
-		s.WorktreeEvents = writer
-	}
-	_, err := writer.Append(
-		s.Store.IntegrationWorktreeEventsPath(repoID, worktreeID),
-		worktreeID,
-		kind,
-		data,
-		worktreeevents.AppendOptions{},
-	)
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to append worktree event", err)
-	}
-	return nil
+	return ""
 }
 
 func worktreeUpdateHTTPStatusForCode(code errors.Code) int {
@@ -240,16 +220,4 @@ func worktreeUpdateHTTPStatusForCode(code errors.Code) int {
 	default:
 		return http.StatusInternalServerError
 	}
-}
-
-func (s *Server) writeWorktreeUpdateError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreeUpdateResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	})
 }

@@ -1784,12 +1784,12 @@ func TestReadLogFileAtOffset(t *testing.T) {
 			wantTotal: 6,
 		},
 		{
-			name:    "file_not_found",
-			offset:  0,
-			limit:   65536,
-			noFile:  true,
-			wantData: "",
-			wantNext: 0,
+			name:      "file_not_found",
+			offset:    0,
+			limit:     65536,
+			noFile:    true,
+			wantData:  "",
+			wantNext:  0,
 			wantTotal: 0,
 		},
 	}

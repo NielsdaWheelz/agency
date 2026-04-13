@@ -11,7 +11,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 const followUpPromptEventKind = "agency.followup_prompt"
@@ -86,35 +85,6 @@ func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http
 	deliveryMode := s.deliverFollowUp(record.InvocationID, req.Prompt)
 
 	s.writeFollowUpSuccessWithDelivery(w, record.InvocationID, timelineEntryID, req.ClientRequestID, requestID, alreadyApplied, deliveryMode)
-}
-
-func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
-	resp := ControlPlaneFollowUpPromptResponse{
-		OK:              false,
-		ErrorCode:       code,
-		Message:         message,
-		Hint:            hint,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    version.FullVersion(),
-		ClientRequestID: clientRequestID,
-	}
-	s.writeJSON(w, status, resp)
-}
-
-func (s *Server) writeFollowUpSuccessWithDelivery(w http.ResponseWriter, invocationID, timelineEntryID, clientRequestID, requestID string, alreadyApplied bool, deliveryMode string) {
-	resp := ControlPlaneFollowUpPromptResponse{
-		OK:              true,
-		InvocationID:    invocationID,
-		TimelineEntry:   timelineEntryID,
-		AlreadyApplied:  alreadyApplied,
-		DeliveryMode:    deliveryMode,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    version.FullVersion(),
-		ClientRequestID: clientRequestID,
-	}
-	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // deliverFollowUp sends the prompt to the runner via its chat relay.

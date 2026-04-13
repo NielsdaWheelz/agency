@@ -13,7 +13,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Request) {
@@ -202,38 +201,6 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
-}
-
-func (s *Server) writeHeadedError(w http.ResponseWriter, status int, code, message, hint, clientRequestID, requestID string) {
-	s.writeJSON(w, status, ControlPlaneStartHeadedResponse{
-		OK:              false,
-		ErrorCode:       code,
-		Message:         message,
-		Hint:            hint,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    version.FullVersion(),
-		GitSHA:          version.Commit,
-		ClientRequestID: clientRequestID,
-	})
-}
-
-func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
-	s.writeJSON(w, http.StatusOK, ControlPlaneStartHeadedResponse{
-		OK:                    true,
-		InvocationID:          invocationID,
-		SandboxPath:           meta.SandboxPath,
-		RepoID:                repoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		TmuxSession:           meta.TmuxSession,
-		AlreadyRunning:        alreadyRunning,
-		RequestID:             requestID,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		GitSHA:                version.Commit,
-		ClientRequestID:       clientRequestID,
-		DaemonInstanceID:      s.InstanceID,
-	})
 }
 
 func (s *Server) markHeadedInvocationFailed(repoID, invocationID, exitReason string) {

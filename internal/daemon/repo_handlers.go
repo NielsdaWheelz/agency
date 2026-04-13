@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
@@ -19,33 +18,29 @@ import (
 
 // handleRepos handles requests to /repos/...
 func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-
-	// POST /repos/register
-	if path == "/repos/register" {
-		if r.Method != http.MethodPost {
-			s.writeAPIError(w, http.StatusMethodNotAllowed, getOrCreateRequestID(r), "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
+	if r.URL.Path == "/repos/register" {
+		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleRepoRegister(w, r)
 		return
 	}
 
-	// GET /repos or /repos/
-	if path == "/repos" || path == "/repos/" {
-		if r.Method != http.MethodGet {
-			s.writeAPIError(w, http.StatusMethodNotAllowed, getOrCreateRequestID(r), "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
+	if r.URL.Path == "/repos" || r.URL.Path == "/repos/" {
+		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleListRepos(w, r)
 		return
 	}
 
-	// GET /repos/{repo_ref} — ref may contain slashes (e.g. "owner/repo")
-	remaining := strings.TrimPrefix(path, "/repos/")
+	remaining, ok := trimRoutePrefix(r.URL.Path, "/repos/")
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+		return
+	}
 	if remaining != "" {
-		if r.Method != http.MethodGet {
-			s.writeAPIError(w, http.StatusMethodNotAllowed, getOrCreateRequestID(r), "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
+		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetRepo(w, r, remaining)
@@ -341,19 +336,4 @@ func (s *Server) buildRepoRefs(idx store.RepoIndex) []ids.RepoRef {
 		refs = append(refs, ref)
 	}
 	return refs
-}
-
-// writeRepoError writes an error response for repo endpoints.
-func (s *Server) writeRepoError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := RepoRegisterResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		GitSHA:       version.Commit,
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
 }

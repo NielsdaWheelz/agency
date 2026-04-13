@@ -182,7 +182,6 @@ func newAgentLogsCmd() *cobra.Command {
 	var kind string
 	var follow bool
 	var offset int64
-	var intervalMs int
 	var maxIterations int
 
 	cmd := &cobra.Command{
@@ -201,7 +200,6 @@ func newAgentLogsCmd() *cobra.Command {
 				Kind:          kind,
 				Follow:        follow,
 				Offset:        offset,
-				PollInterval:  0,
 				MaxIterations: maxIterations,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -211,7 +209,6 @@ func newAgentLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream)")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
-	cmd.Flags().IntVar(&intervalMs, "interval-ms", 0, "Follow poll interval in milliseconds")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 0, "Limit follow iterations for testing")
 
 	return cmd

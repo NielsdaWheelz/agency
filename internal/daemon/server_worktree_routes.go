@@ -6,69 +6,53 @@ import (
 )
 
 func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-
-	if path == "/worktrees" || path == "/worktrees/" {
-		if r.Method == http.MethodGet {
-			s.handleListWorktrees(w, r)
+	if r.URL.Path == "/worktrees" || r.URL.Path == "/worktrees/" {
+		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}
-		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		s.handleListWorktrees(w, r)
 		return
 	}
 
-	remaining := strings.TrimPrefix(path, "/worktrees/")
+	remaining, ok := trimRoutePrefix(r.URL.Path, "/worktrees/")
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+		return
+	}
 	if remaining == "create" {
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleWorktreeCreate(w, r)
 		return
 	}
 
-	var worktreeRef, action string
-	for i, c := range remaining {
-		if c == '/' {
-			worktreeRef = remaining[:i]
-			action = remaining[i+1:]
-			break
-		}
-	}
-	if worktreeRef == "" {
-		worktreeRef = remaining
-	}
-
+	worktreeRef, action := splitRouteRefAction(remaining)
 	if worktreeRef == "" {
 		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree ref required", "")
 		return
 	}
 
-	topAction, _, _ := strings.Cut(action, "/")
-	switch topAction {
+	switch routeFirstAction(action) {
 	case "":
-		if r.Method == http.MethodGet {
-			s.handleGetWorktree(w, r, worktreeRef)
+		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}
-		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		s.handleGetWorktree(w, r, worktreeRef)
 	case "rm":
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleWorktreeRm(w, r, worktreeRef)
 	case "pr":
 		s.handleWorktreePRRoute(w, r, worktreeRef, action)
 	case "merge":
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleWorktreePRMerge(w, r, worktreeRef)
 	case "update":
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleWorktreeUpdate(w, r, worktreeRef)
@@ -78,15 +62,11 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWorktreePRRoute(w http.ResponseWriter, r *http.Request, worktreeRef, action string) {
-	subAction := ""
-	if idx := strings.Index(action, "/"); idx != -1 {
-		subAction = action[idx+1:]
-	}
+	_, subAction, _ := strings.Cut(action, "/")
 
 	switch subAction {
 	case "sync":
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleWorktreePRSync(w, r, worktreeRef)

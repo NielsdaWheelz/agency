@@ -451,16 +451,3 @@ func (s *Server) stopHeadlessForRestart(ctx context.Context, repoID, invocationI
 	})
 	return nil
 }
-
-func (s *Server) writeRestartError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := RestartFromCheckpointResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
-}

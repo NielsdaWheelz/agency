@@ -149,16 +149,3 @@ func (s *Server) runWorktreePRSync(
 		ForceWithLease: req.ForceWithLease,
 	})
 }
-
-func (s *Server) writeWorktreePRSyncError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := WorktreePRSyncResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
-}

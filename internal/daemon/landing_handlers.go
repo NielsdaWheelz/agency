@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"syscall"
 	"time"
@@ -119,9 +120,16 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 
 	// Parse request body (currently empty, but allow for future expansion)
 	if r.ContentLength > 0 {
-		var req DiscardRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		var req struct{}
+		if err := dec.Decode(&req); err != nil {
 			s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+			return
+		}
+		var trailing json.RawMessage
+		if err := dec.Decode(&trailing); err != io.EOF {
+			s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: expected a single JSON object", "")
 			return
 		}
 	}
@@ -294,33 +302,4 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 	// For headed mode, we would use tmux kill-session
 	// This is handled elsewhere - headed invocations are managed by CLI
 	return nil
-}
-
-// writeLandError writes an error response for land endpoints.
-func (s *Server) writeLandError(w http.ResponseWriter, status int, requestID, code, message, hint string, conflictFiles []string) {
-	resp := LandResponse{
-		OK:            false,
-		APIVersion:    APIVersion,
-		BuildVersion:  version.FullVersion(),
-		RequestID:     requestID,
-		ErrorCode:     code,
-		Message:       message,
-		Hint:          hint,
-		ConflictFiles: conflictFiles,
-	}
-	s.writeJSON(w, status, resp)
-}
-
-// writeDiscardError writes an error response for discard endpoints.
-func (s *Server) writeDiscardError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := DiscardResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
 }

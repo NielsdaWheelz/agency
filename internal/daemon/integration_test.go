@@ -25,6 +25,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
@@ -2487,7 +2488,7 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2535,7 +2536,7 @@ func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2631,7 +2632,7 @@ func TestDaemonHeadedStartIdempotent(t *testing.T) {
 
 	env := startTestDaemon(t)
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2702,8 +2703,8 @@ func TestDaemonHeadedStartTmuxSessionExists(t *testing.T) {
 
 	env := startTestDaemon(t)
 
-	fakeTmux := newFakeTmuxClient()
-	fakeTmux.AlwaysHasSession = true
+	fakeTmux := testutil.NewFakeTmuxClient()
+	fakeTmux.HasSessionFunc = func(string) (bool, error) { return true, nil }
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2732,7 +2733,7 @@ func TestDaemonHeadedStartTmuxCreationFails(t *testing.T) {
 
 	env := startTestDaemon(t)
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	fakeTmux.NewSessionErr = fmt.Errorf("tmux not running")
 	env.Server.TmuxClient = fakeTmux
 
@@ -2759,7 +2760,7 @@ func TestDaemonHeadedStartWithName(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2790,7 +2791,7 @@ func TestDaemonHeadedStop(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2828,7 +2829,7 @@ func TestDaemonHeadedStopSessionMissing(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2868,7 +2869,7 @@ func TestDaemonHeadedStopAlreadyFinished(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2907,7 +2908,7 @@ func TestDaemonHeadedKill(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2944,7 +2945,7 @@ func TestDaemonHeadedKillSessionAlreadyGone(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
@@ -2977,7 +2978,7 @@ func TestDaemonForceShutdownWithHeaded(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	fakeTmux := newFakeTmuxClient()
+	fakeTmux := testutil.NewFakeTmuxClient()
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)

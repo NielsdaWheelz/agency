@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -31,32 +33,52 @@ type watchActionDispatcher struct {
 	fsys            fs.FS
 	cwd             string
 	dataDirOverride string
-	stdout          io.Writer
-	stderr          io.Writer
 }
 
-func (d *watchActionDispatcher) Enter(ctx context.Context, invocationID, repoID string) error {
-	return AgentEnter(ctx, d.cr, d.fsys, d.cwd, AgentEnterOpts{
-		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
-		DataDirOverride: d.dataDirOverride,
-	}, d.stdout, d.stderr)
+func (d *watchActionDispatcher) Enter(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentEnter(ctx, d.cr, d.fsys, d.cwd, AgentEnterOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
 }
 
-func (d *watchActionDispatcher) Open(ctx context.Context, invocationID, repoID string) error {
-	return AgentOpen(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
-		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
-		DataDirOverride: d.dataDirOverride,
-	}, d.stdout, d.stderr)
+func (d *watchActionDispatcher) Open(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentOpen(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
+			InvocationRef:   invocationID,
+			RepoFlag:        repoID,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
 }
 
-func (d *watchActionDispatcher) PRSync(ctx context.Context, worktreeID, repoID string) error {
-	return WorktreePRSync(ctx, d.cr, d.fsys, d.cwd, WorktreePRSyncOpts{
-		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
-		DataDirOverride: d.dataDirOverride,
-	}, d.stdout, d.stderr)
+func (d *watchActionDispatcher) PRSync(ctx context.Context, worktreeID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return WorktreePRSync(ctx, d.cr, d.fsys, d.cwd, WorktreePRSyncOpts{
+			WorktreeRef:     worktreeID,
+			RepoFlag:        repoID,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) capture(run func(stdout, stderr io.Writer) error) (string, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run(&stdout, &stderr)
+
+	output := strings.TrimSpace(stdout.String())
+	if errText := strings.TrimSpace(stderr.String()); errText != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += errText
+	}
+
+	return output, err
 }
 
 // Watch launches the full-screen, daemon-backed watch workspace.
@@ -125,8 +147,6 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		fsys:            fsys,
 		cwd:             cwd,
 		dataDirOverride: opts.DataDirOverride,
-		stdout:          io.Discard,
-		stderr:          io.Discard,
 	}
 	return watch.Run(ctx, loader, watch.RunOptions{
 		Interval: interval,

@@ -316,7 +316,7 @@ func TestWorktreeShow_AmbiguousPreservesCandidates(t *testing.T) {
 // Acceptance 2: worktree path/open/shell daemon-first navigation
 // ---------------------------------------------------------------------------
 
-func TestWorktreePath_UsesNavigationKernelDaemonResolution(t *testing.T) {
+func TestWorktreePath_UsesDaemonResolution(t *testing.T) {
 	env := setupWorktreeEnv(t, "alpha")
 
 	var stdout, stderr bytes.Buffer
@@ -328,7 +328,7 @@ func TestWorktreePath_UsesNavigationKernelDaemonResolution(t *testing.T) {
 		"stdout must be exactly the daemon-resolved tree_path plus newline")
 }
 
-func TestWorktreeOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestWorktreeOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupWorktreeEnv(t, "open-test")
 	shimPath, recordFile := createShimScript(t)
 
@@ -349,7 +349,7 @@ func TestWorktreeOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T
 		"editor must receive daemon-resolved tree_path as argument")
 }
 
-func TestWorktreeShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestWorktreeShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupWorktreeEnv(t, "shell-test")
 	shimPath, recordFile := createShimScript(t)
 
