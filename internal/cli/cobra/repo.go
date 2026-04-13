@@ -1,14 +1,10 @@
 package cobra
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newRepoCmd() *cobra.Command {
@@ -60,18 +56,12 @@ Example:
   agency repo add --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-			if path == "" {
-				path = cwd
+				return err
 			}
 
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoAdd(cmd.Context(), cr, fsys, cwd, commands.RepoAddOpts{
+			return commands.RepoAdd(ctx, cr, fsys, commands.RepoAddOpts{
 				Path: path,
 				JSON: jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())
@@ -97,10 +87,12 @@ Example:
   agency repo ls --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
+			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+			if err != nil {
+				return err
+			}
 
-			return commands.RepoLS(cmd.Context(), cr, fsys, commands.RepoLSOpts{
+			return commands.RepoLS(ctx, cr, fsys, commands.RepoLSOpts{
 				JSON: jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())
 		},
@@ -129,10 +121,12 @@ Example:
   agency repo show --json agency`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
+			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+			if err != nil {
+				return err
+			}
 
-			return commands.RepoShow(cmd.Context(), cr, fsys, commands.RepoShowOpts{
+			return commands.RepoShow(ctx, cr, fsys, commands.RepoShowOpts{
 				RepoID: args[0],
 				JSON:   jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())
@@ -188,14 +182,12 @@ Example:
   agency repo s1 readiness --repo <repo_id>`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
 
-			return commands.RepoS1Readiness(cmd.Context(), cr, fsys, cwd, commands.RepoS1ReadinessOpts{
+			return commands.RepoS1Readiness(ctx, cr, fsys, cwd, commands.RepoS1ReadinessOpts{
 				RepoID: repoID,
 				JSON:   jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())
@@ -217,14 +209,12 @@ func newRepoS1ReportCmd() *cobra.Command {
 		Short: "Generate S1 closure evidence report",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
 
-			return commands.RepoS1ClosureReport(cmd.Context(), cr, fsys, cwd, commands.RepoS1ClosureReportOpts{
+			return commands.RepoS1ClosureReport(ctx, cr, fsys, cwd, commands.RepoS1ClosureReportOpts{
 				RepoID: repoID,
 				JSON:   jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())
@@ -246,14 +236,12 @@ func newRepoS1FreezeCmd() *cobra.Command {
 		Short: "Check S1 freeze readiness",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
 
-			return commands.RepoS1FreezeReadiness(cmd.Context(), cr, fsys, cwd, commands.RepoS1FreezeReadinessOpts{
+			return commands.RepoS1FreezeReadiness(ctx, cr, fsys, cwd, commands.RepoS1FreezeReadinessOpts{
 				RepoID: repoID,
 				JSON:   jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())

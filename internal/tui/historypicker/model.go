@@ -215,7 +215,7 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 	}
 
 	if turn.Restorable && len(turn.CheckpointChangedPaths) > 0 {
-		pathsSummary := formatCheckpointChangedPaths(turn)
+		pathsSummary := render.FormatChangedPathSummary(turn.CheckpointChangedPaths, turn.CheckpointChangedCount, turn.CheckpointPathsTrimmed)
 		pathsLine := "    files: " + truncate(pathsSummary, width-11)
 		b.WriteString(pathsLine)
 		b.WriteString("\n")
@@ -223,7 +223,7 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 
 	// Tool calls (indented)
 	for _, tc := range turn.ToolCalls {
-		tcLine := "    " + m.styleToolCall(formatToolCall(tc))
+		tcLine := "    " + m.styleToolCall(render.FormatToolCallSummary(tc.Name, tc.Command, tc.HasExit, tc.ExitCode))
 		b.WriteString(tcLine)
 		b.WriteString("\n")
 	}
@@ -234,10 +234,6 @@ func (m model) renderTurn(b *strings.Builder, idx int, turn Turn, width int) {
 	}
 }
 
-func formatToolCall(tc ToolCall) string {
-	return render.FormatToolCallSummary(tc.Name, tc.Command, tc.HasExit, tc.ExitCode)
-}
-
 func formatHelp(keys keyMap) string {
 	bindings := keys.ShortHelp()
 	parts := make([]string, 0, len(bindings))
@@ -246,23 +242,6 @@ func formatHelp(keys keyMap) string {
 		parts = append(parts, h.Key+": "+h.Desc)
 	}
 	return strings.Join(parts, " • ")
-}
-
-func formatCheckpointChangedPaths(turn Turn) string {
-	if len(turn.CheckpointChangedPaths) == 0 {
-		return ""
-	}
-	joined := strings.Join(turn.CheckpointChangedPaths, ", ")
-	if turn.CheckpointPathsTrimmed {
-		remaining := turn.CheckpointChangedCount - len(turn.CheckpointChangedPaths)
-		if remaining < 0 {
-			remaining = 0
-		}
-		if remaining > 0 {
-			joined += fmt.Sprintf(", ... (+%d more)", remaining)
-		}
-	}
-	return joined
 }
 
 func truncate(s string, max int) string {

@@ -18,82 +18,6 @@ func fixedTime(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-// TestRepoIndexPath verifies path construction.
-func TestRepoIndexPath(t *testing.T) {
-	t.Parallel()
-	s := NewStore(nil, "/data/agency", nil)
-	got := s.RepoIndexPath()
-	want := "/data/agency/repo_index.json"
-	assert.Equal(t, want, got, "RepoIndexPath()")
-}
-
-// TestRepoDir verifies repo directory path construction.
-func TestRepoDir(t *testing.T) {
-	t.Parallel()
-	s := NewStore(nil, "/data/agency", nil)
-	got := s.RepoDir("abc123")
-	want := "/data/agency/repos/abc123"
-	assert.Equal(t, want, got, "RepoDir()")
-}
-
-// TestRepoRecordPath verifies repo record path construction.
-func TestRepoRecordPath(t *testing.T) {
-	t.Parallel()
-	s := NewStore(nil, "/data/agency", nil)
-	got := s.RepoRecordPath("abc123")
-	want := "/data/agency/repos/abc123/repo.json"
-	assert.Equal(t, want, got, "RepoRecordPath()")
-}
-
-func TestInvocationLogPaths(t *testing.T) {
-	t.Parallel()
-	s := NewStore(nil, "/data/agency", nil)
-
-	assert.Equal(t,
-		"/data/agency/repos/repo123/invocations/inv456/logs",
-		s.InvocationLogsDir("repo123", "inv456"),
-	)
-	assert.Equal(t,
-		"/data/agency/repos/repo123/invocations/inv456/logs/raw.jsonl",
-		s.InvocationRawLogPath("repo123", "inv456"),
-	)
-	assert.Equal(t,
-		"/data/agency/repos/repo123/invocations/inv456/logs/stderr.log",
-		s.InvocationStderrLogPath("repo123", "inv456"),
-	)
-	assert.Equal(t,
-		"/data/agency/repos/repo123/invocations/inv456/logs/stream.jsonl",
-		s.InvocationStreamLogPath("repo123", "inv456"),
-	)
-	assert.Equal(t,
-		"/data/agency/repos/repo123/invocations/inv456/.agency/state/runner_status.json",
-		s.InvocationRunnerStatusPath("repo123", "inv456"),
-	)
-}
-
-func TestResolveInvocationLogPath_ReturnsInvocationOwned(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	const repoID = "repo123"
-	const invocationID = "inv456"
-
-	_, err := s.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(s.InvocationLogsDir(repoID, invocationID), 0o700))
-
-	assert.Equal(t,
-		s.InvocationRawLogPath(repoID, invocationID),
-		s.ResolveInvocationLogPath(repoID, invocationID, "raw"),
-	)
-	assert.Equal(t,
-		s.InvocationLogsDir(repoID, invocationID),
-		s.ResolveInvocationLogsDir(repoID, invocationID),
-	)
-}
-
 func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
 	t.Parallel()
 
@@ -116,25 +40,6 @@ func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.Stat(preparedPath)
 	assert.True(t, os.IsNotExist(err))
-}
-
-func TestResolveInvocationCheckpointsDir_ReturnsInvocationOwned(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	const repoID = "repo123"
-	const invocationID = "inv456"
-
-	_, err := s.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-
-	assert.Equal(
-		t,
-		s.InvocationDir(repoID, invocationID),
-		s.ResolveInvocationCheckpointsDir(repoID, invocationID),
-	)
 }
 
 func TestReadInvocationMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {

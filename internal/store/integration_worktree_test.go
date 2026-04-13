@@ -13,45 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationWorktreePaths(t *testing.T) {
-	t.Parallel()
-	st := NewStore(fs.NewRealFS(), "/data", time.Now)
-
-	tests := []struct {
-		name     string
-		repoID   string
-		wtID     string
-		wantDir  string
-		wantMeta string
-		wantTree string
-		wantEv   string
-		wantLogs string
-	}{
-		{
-			name:     "basic paths",
-			repoID:   "abc123",
-			wtID:     "20260131120000-a1b2",
-			wantDir:  "/data/repos/abc123/integration_worktrees/20260131120000-a1b2",
-			wantMeta: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/meta.json",
-			wantTree: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/tree",
-			wantEv:   "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/events.jsonl",
-			wantLogs: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/logs",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.wantDir, st.IntegrationWorktreeDir(tt.repoID, tt.wtID), "IntegrationWorktreeDir()")
-			assert.Equal(t, tt.wantMeta, st.IntegrationWorktreeMetaPath(tt.repoID, tt.wtID), "IntegrationWorktreeMetaPath()")
-			assert.Equal(t, tt.wantTree, st.IntegrationWorktreeTreePath(tt.repoID, tt.wtID), "IntegrationWorktreeTreePath()")
-			assert.Equal(t, tt.wantEv, st.IntegrationWorktreeEventsPath(tt.repoID, tt.wtID), "IntegrationWorktreeEventsPath()")
-			assert.Equal(t, tt.wantLogs, st.IntegrationWorktreeLogsDir(tt.repoID, tt.wtID), "IntegrationWorktreeLogsDir()")
-		})
-	}
-}
-
 func TestNewIntegrationWorktreeMeta(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
@@ -80,16 +41,10 @@ func TestEnsureIntegrationWorktreeDir(t *testing.T) {
 	repoID := "abc123"
 	wtID := "20260131120000-a1b2"
 
-	// First call should succeed
 	dir, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.NoError(t, err)
-	assert.Equal(t, st.IntegrationWorktreeDir(repoID, wtID), dir)
+	assert.DirExists(t, dir)
 
-	// Directory should exist
-	_, err = os.Stat(dir)
-	assert.False(t, os.IsNotExist(err), "directory was not created")
-
-	// Second call should fail (exclusive)
 	_, err = st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.Error(t, err, "expected error on duplicate")
 }

@@ -74,18 +74,10 @@ Example:
   agency worktree create --name bugfix --parent develop --open`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return errors.New(errors.EUsage, "--name is required")
-			}
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
 
 			return commands.WorktreeCreate(ctx, cr, fsys, cwd, commands.WorktreeCreateOpts{
 				Name:         name,

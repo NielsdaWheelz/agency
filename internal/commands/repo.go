@@ -106,13 +106,21 @@ type RepoAddOpts struct {
 }
 
 // RepoAdd registers a repository with the daemon.
-func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoAddOpts, stdout, stderr io.Writer) error {
+func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAddOpts, stdout, stderr io.Writer) error {
 	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	result, err := client.RegisterRepo(ctx, opts.Path)
+	path := opts.Path
+	if path == "" {
+		path, err = os.Getwd()
+		if err != nil {
+			return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+		}
+	}
+
+	result, err := client.RegisterRepo(ctx, path)
 	if err != nil {
 		return err
 	}

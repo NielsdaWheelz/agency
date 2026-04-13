@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 )
 
@@ -54,7 +53,7 @@ func groupTimelineEntriesIntoTurns(entries []timelineSortableEntry, checkpoints 
 }
 
 func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []historypicker.Turn {
-	checkpointsDir := s.Store.ResolveInvocationCheckpointsDir(record.RepoID, record.InvocationID)
+	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil && !os.IsNotExist(err) {
 		// Best-effort only: review/read surfaces should still work when
@@ -240,28 +239,6 @@ func timelineDataString(data map[string]interface{}, key string) string {
 		return ""
 	}
 	return value
-}
-
-func (s *Server) loadRunnerStatusForInvocation(record *resolvedInvocation) (*runnerstatus.RunnerStatus, error) {
-	if s == nil || s.Store == nil || record == nil || record.Meta == nil {
-		return nil, nil
-	}
-	invocationRoot := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	return runnerstatus.Load(invocationRoot)
-}
-
-func (s *Server) loadRunnerSummaryBestEffort(record *resolvedInvocation) string {
-	statusMeta, err := s.loadRunnerStatusForInvocation(record)
-	if err != nil || statusMeta == nil {
-		return ""
-	}
-	if statusMeta.SchemaVersion != runnerstatus.SchemaVersion {
-		return ""
-	}
-	if err := statusMeta.Validate(); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(statusMeta.Summary)
 }
 
 func applyInvocationActivityProjection(dto *InvocationDTO, projection invocationActivityProjection) {

@@ -1,15 +1,10 @@
 package cobra
 
 import (
-	"context"
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newCheckpointCmd() *cobra.Command {
@@ -57,18 +52,10 @@ Example:
   agency checkpoint ls --invocation my-inv --repo abc123 --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if invocationRef == "" {
-				return errors.New(errors.EUsage, "--invocation is required")
-			}
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
 
 			return commands.CheckpointLS(ctx, cr, fsys, cwd, commands.CheckpointLSOpts{
 				InvocationRef: invocationRef,
@@ -103,18 +90,10 @@ Example:
   agency checkpoint apply --invocation my-inv 3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if invocationRef == "" {
-				return errors.New(errors.EUsage, "--invocation is required")
-			}
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
 
 			return commands.CheckpointApply(ctx, cr, fsys, cwd, commands.CheckpointApplyOpts{
 				InvocationRef: invocationRef,

@@ -45,10 +45,8 @@ type NavigationSelection struct {
 
 // NavigationIntent describes what a CLI navigation command wants to do.
 type NavigationIntent struct {
-	CommandFamily            string // "agent", "worktree", or "legacy" — metadata for downstream
 	Verb                     string // "path", "open", "shell", "enter", etc.
 	Selection                NavigationSelection
-	Interactive              bool
 	RequiresTTY              bool
 	BootstrapFallbackAllowed bool
 }

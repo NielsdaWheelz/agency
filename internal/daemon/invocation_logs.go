@@ -30,11 +30,18 @@ func (f *invocationLogFiles) Close() {
 }
 
 func (s *Server) preferredInvocationLogsDir(repoID, invocationID string) string {
-	return s.Store.ResolveInvocationLogsDir(repoID, invocationID)
+	return s.Store.InvocationLogsDir(repoID, invocationID)
 }
 
 func (s *Server) readableInvocationLogPath(repoID, invocationID, kind string) string {
-	return s.Store.ResolveInvocationLogPath(repoID, invocationID, kind)
+	switch kind {
+	case "stderr":
+		return s.Store.InvocationStderrLogPath(repoID, invocationID)
+	case "stream":
+		return s.Store.InvocationStreamLogPath(repoID, invocationID)
+	default:
+		return s.Store.InvocationRawLogPath(repoID, invocationID)
+	}
 }
 
 func (s *Server) prepareWritableInvocationLogPath(repoID, invocationID, kind string) (string, error) {

@@ -31,6 +31,10 @@ type CheckpointLSOpts struct {
 // CheckpointLS lists checkpoints for an invocation.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
+	if strings.TrimSpace(opts.InvocationRef) == "" {
+		return errors.New(errors.EUsage, "--invocation is required")
+	}
+
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
@@ -131,6 +135,10 @@ type CheckpointApplyOpts struct {
 
 // CheckpointApply restores a sandbox to a checkpoint state.
 func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointApplyOpts, stdout, stderr io.Writer) error {
+	if strings.TrimSpace(opts.InvocationRef) == "" {
+		return errors.New(errors.EUsage, "--invocation is required")
+	}
+
 	checkpointID, err := strconv.Atoi(opts.CheckpointID)
 	if err != nil {
 		return errors.New(errors.EUsage, "checkpoint_id must be a positive integer")

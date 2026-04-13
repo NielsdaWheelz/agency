@@ -103,44 +103,29 @@ type LandOpts struct {
 // Land applies sandbox changes to the integration worktree.
 // All git mutations are performed under the repo lock.
 func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) {
-	// 1. Load invocation meta
 	meta, err := s.store.ReadInvocationMeta(opts.RepoID, opts.InvocationID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Load integration worktree meta
 	wtMeta, err := s.store.ReadIntegrationWorktreeMeta(opts.RepoID, meta.IntegrationWorktreeID)
 	if err != nil {
 		return nil, errors.Wrap(errors.ELandFailed, "failed to read integration worktree meta", err)
 	}
 
-	// 3. Validate preconditions
 	if err := s.validateLandPreconditions(meta); err != nil {
 		return nil, err
 	}
 
-	// 4. Verify paths exist
-	sandboxPath := meta.SandboxPath
-	integrationPath := wtMeta.TreePath
-
-	if _, err := os.Stat(sandboxPath); os.IsNotExist(err) {
-		return nil, errors.New(errors.ESandboxMissing, "sandbox tree no longer exists")
-	}
-	if _, err := os.Stat(integrationPath); os.IsNotExist(err) {
-		return nil, errors.New(errors.EIntegrationTreeMissing, "integration worktree tree no longer exists")
-	}
-
-	// 5. Emit land_started event
-	if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_started", map[string]any{
-		"invocation_id": opts.InvocationID,
-		"worktree_id":   meta.IntegrationWorktreeID,
-	}); err != nil {
+	if err := s.ensureLandPathsExist(meta.SandboxPath, wtMeta.TreePath); err != nil {
 		return nil, err
 	}
 
-	// 6. Capture integration HEAD before landing
-	headBefore, err := s.getHeadCommit(ctx, integrationPath)
+	if err := s.emitLandStarted(opts.RepoID, opts.InvocationID, meta.IntegrationWorktreeID); err != nil {
+		return nil, err
+	}
+
+	headBefore, err := s.getHeadCommit(ctx, wtMeta.TreePath)
 	if err != nil {
 		return nil, s.emitLandFailure(
 			opts.RepoID,
@@ -150,24 +135,15 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		)
 	}
 
-	// 7. Check if base_commit check is required
-	if opts.RequireBase && headBefore != meta.BaseCommit {
+	if err := s.ensureLandingBase(opts, meta, headBefore); err != nil {
 		return nil, s.emitLandFailure(
 			opts.RepoID,
 			opts.InvocationID,
-			"integration branch has diverged from base_commit",
-			errors.NewWithDetails(errors.ELandFailed,
-				"integration branch has diverged from base_commit",
-				map[string]string{
-					"base_commit":      meta.BaseCommit,
-					"integration_head": headBefore,
-					"hint":             "remove --require-base to allow landing onto moved HEAD, or rebase sandbox manually",
-				},
-			),
+			err.Error(),
+			err,
 		)
 	}
 
-	// 8. Determine landing mode
 	commitCount, err := s.countCommits(ctx, opts.RepoRoot, meta.BaseCommit, meta.SandboxBranch)
 	if err != nil {
 		return nil, s.emitLandFailure(
@@ -178,55 +154,12 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		)
 	}
 
-	var result *LandResult
-	if commitCount > 0 {
-		// Case A: Cherry-pick mode
-		result, err = s.landCherryPick(ctx, opts, meta, integrationPath, headBefore, commitCount)
-	} else {
-		// Case B: Check for dirty tree
-		var dirty bool
-		dirty, err = s.isSandboxDirty(ctx, sandboxPath)
-		if err != nil {
-			return nil, s.emitLandFailure(
-				opts.RepoID,
-				opts.InvocationID,
-				"failed to check sandbox status: "+err.Error(),
-				errors.Wrap(errors.ELandFailed, "failed to check sandbox status", err),
-			)
-		}
-
-		if !dirty {
-			// Case C: Nothing to land
-			return nil, s.emitLandFailure(
-				opts.RepoID,
-				opts.InvocationID,
-				"nothing to land",
-				errors.New(errors.ELandNothingToLand, "nothing to land — sandbox has no commits and no uncommitted changes"),
-			)
-		}
-
-		if !opts.Apply {
-			// No commits but dirty tree - require --apply
-			return nil, s.emitLandFailure(
-				opts.RepoID,
-				opts.InvocationID,
-				"no commits to cherry-pick; --apply required",
-				errors.NewWithDetails(errors.ELandApplyRequired,
-					"no commits to cherry-pick; use --apply to land working tree changes",
-					map[string]string{"hint": "run 'agency agent land --apply' to apply uncommitted changes"},
-				),
-			)
-		}
-
-		// Apply mode
-		result, err = s.landApply(ctx, opts, meta, integrationPath, headBefore)
-	}
+	result, err := s.landForState(ctx, opts, meta, wtMeta.TreePath, headBefore, commitCount)
 
 	if err != nil {
 		return nil, err
 	}
 
-	// 9. Cleanup on success
 	if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta); err != nil {
 		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_warning", map[string]any{
 			"invocation_id": opts.InvocationID,
@@ -236,30 +169,102 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		}
 	}
 
-	// 10. Update invocation meta
-	now := s.clock().UTC().Format(time.RFC3339)
-	_ = s.store.UpdateInvocationMeta(opts.RepoID, opts.InvocationID, func(m *store.InvocationMeta) {
-		m.LandingStatus = store.LandingStatusLanded
-		m.FinishedAt = now
-	})
-
-	// 11. Update worktree last_used_at
-	_ = s.store.UpdateIntegrationWorktreeMeta(opts.RepoID, meta.IntegrationWorktreeID, func(m *store.IntegrationWorktreeMeta) {
-		m.LastUsedAt = now
-	})
-
-	// 12. Emit success event
-	if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_succeeded", map[string]any{
-		"invocation_id": opts.InvocationID,
-		"head_before":   result.IntegrationHeadBefore,
-		"head_after":    result.IntegrationHeadAfter,
-		"mode":          string(result.Mode),
-		"commits":       result.CommitsLanded,
-	}); err != nil {
+	if err := s.finalizeLand(opts.RepoID, opts.InvocationID, meta.IntegrationWorktreeID, result); err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+func (s *Service) ensureLandPathsExist(sandboxPath, integrationPath string) error {
+	if _, err := os.Stat(sandboxPath); os.IsNotExist(err) {
+		return errors.New(errors.ESandboxMissing, "sandbox tree no longer exists")
+	}
+	if _, err := os.Stat(integrationPath); os.IsNotExist(err) {
+		return errors.New(errors.EIntegrationTreeMissing, "integration worktree tree no longer exists")
+	}
+	return nil
+}
+
+func (s *Service) emitLandStarted(repoID, invocationID, worktreeID string) error {
+	return s.emitEvent(repoID, invocationID, "agency.land_started", map[string]any{
+		"invocation_id": invocationID,
+		"worktree_id":   worktreeID,
+	})
+}
+
+func (s *Service) ensureLandingBase(opts LandOpts, meta *store.InvocationMeta, headBefore string) error {
+	if !opts.RequireBase || headBefore == meta.BaseCommit {
+		return nil
+	}
+
+	return errors.NewWithDetails(errors.ELandFailed,
+		"integration branch has diverged from base_commit",
+		map[string]string{
+			"base_commit":      meta.BaseCommit,
+			"integration_head": headBefore,
+			"hint":             "remove --require-base to allow landing onto moved HEAD, or rebase sandbox manually",
+		},
+	)
+}
+
+func (s *Service) landForState(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string, commitCount int) (*LandResult, error) {
+	if commitCount > 0 {
+		return s.landCherryPick(ctx, opts, meta, integrationPath, headBefore, commitCount)
+	}
+
+	dirty, err := s.isSandboxDirty(ctx, meta.SandboxPath)
+	if err != nil {
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to check sandbox status: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to check sandbox status", err),
+		)
+	}
+
+	if !dirty {
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"nothing to land",
+			errors.New(errors.ELandNothingToLand, "nothing to land — sandbox has no commits and no uncommitted changes"),
+		)
+	}
+
+	if !opts.Apply {
+		return nil, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"no commits to cherry-pick; --apply required",
+			errors.NewWithDetails(errors.ELandApplyRequired,
+				"no commits to cherry-pick; use --apply to land working tree changes",
+				map[string]string{"hint": "run 'agency agent land --apply' to apply uncommitted changes"},
+			),
+		)
+	}
+
+	return s.landApply(ctx, opts, meta, integrationPath, headBefore)
+}
+
+func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *LandResult) error {
+	now := s.clock().UTC().Format(time.RFC3339)
+	_ = s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		m.LandingStatus = store.LandingStatusLanded
+		m.FinishedAt = now
+	})
+
+	_ = s.store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
+		m.LastUsedAt = now
+	})
+
+	return s.emitEvent(repoID, invocationID, "agency.land_succeeded", map[string]any{
+		"invocation_id": invocationID,
+		"head_before":   result.IntegrationHeadBefore,
+		"head_after":    result.IntegrationHeadAfter,
+		"mode":          string(result.Mode),
+		"commits":       result.CommitsLanded,
+	})
 }
 
 // validateLandPreconditions checks that the invocation is in a valid state for landing.
@@ -354,132 +359,19 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 
 // landApply performs apply mode landing (for uncommitted changes).
 func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string) (*LandResult, error) {
-	sandboxPath := meta.SandboxPath
-
-	// Create tmp directory for patch file
-	tmpDir := filepath.Join(s.store.SandboxDir(opts.RepoID, opts.InvocationID), "tmp")
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to create tmp directory: "+err.Error(),
-			errors.Wrap(errors.ELandFailed, "failed to create tmp directory", err),
-		)
-	}
-
-	patchPath := filepath.Join(tmpDir, "land.patch")
-
-	// Stage all changes in sandbox (to include untracked files in diff).
-	// Exclude .agency/ — the daemon writes SANDBOX_MARKER there, not the user.
-	_, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "add", "-A", "--", ":(exclude).agency"}, exec.RunOpts{})
+	patchPath, err := s.prepareApplyPatch(ctx, opts, meta)
 	if err != nil {
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to stage changes: "+err.Error(),
-			errors.Wrap(errors.ELandFailed, "failed to stage changes in sandbox", err),
-		)
+		return nil, err
 	}
 
-	// Generate patch: diff between base_commit and current staged state.
-	// Exclude .agency/ so daemon artifacts don't leak into the patch.
-	diffResult, err := s.runner.Run(ctx, "git", []string{
-		"-C", sandboxPath,
-		"diff", "--cached", meta.BaseCommit, "--", ":(exclude).agency",
-	}, exec.RunOpts{})
-	if err != nil {
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to generate diff: "+err.Error(),
-			errors.Wrap(errors.ELandFailed, "failed to generate diff", err),
-		)
+	if err := s.applyLandingPatch(ctx, opts, integrationPath, patchPath); err != nil {
+		return nil, err
 	}
 
-	if diffResult.ExitCode != 0 {
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"diff command failed: "+diffResult.Stderr,
-			errors.New(errors.ELandFailed, "failed to generate diff: "+diffResult.Stderr),
-		)
+	if err := s.commitLandingPatch(ctx, opts, integrationPath); err != nil {
+		return nil, err
 	}
 
-	if strings.TrimSpace(diffResult.Stdout) == "" {
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"no changes to apply (empty diff)",
-			errors.New(errors.ELandNothingToLand, "nothing to land — diff is empty"),
-		)
-	}
-
-	// Write patch file
-	if err := os.WriteFile(patchPath, []byte(diffResult.Stdout), 0o644); err != nil {
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to write patch file: "+err.Error(),
-			errors.Wrap(errors.ELandFailed, "failed to write patch file", err),
-		)
-	}
-
-	// Apply patch to integration tree
-	applyResult, err := s.runner.Run(ctx, "git", []string{
-		"-C", integrationPath,
-		"apply", "--index", patchPath,
-	}, exec.RunOpts{})
-	if err != nil {
-		// Reset integration tree on failure
-		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to apply patch: "+err.Error(),
-			errors.Wrap(errors.ELandFailed, "failed to apply patch", err),
-		)
-	}
-
-	if applyResult.ExitCode != 0 {
-		// Reset integration tree on failure
-		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"patch apply failed: "+applyResult.Stderr,
-			errors.New(errors.ELandFailed, "patch apply failed: "+applyResult.Stderr),
-		)
-	}
-
-	// Commit the changes
-	commitMsg := fmt.Sprintf("agency: land invocation %s", opts.InvocationID)
-	commitResult, err := s.runner.Run(ctx, "git", []string{
-		"-C", integrationPath,
-		"commit", "-m", commitMsg,
-	}, exec.RunOpts{})
-	if err != nil {
-		// Reset integration tree on failure
-		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to commit: "+err.Error(),
-			errors.Wrap(errors.ELandFailed, "failed to commit applied changes", err),
-		)
-	}
-
-	if commitResult.ExitCode != 0 {
-		// Reset integration tree on failure
-		_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
-		return nil, s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"commit failed: "+commitResult.Stderr,
-			errors.New(errors.ELandFailed, "commit failed: "+commitResult.Stderr),
-		)
-	}
-
-	// Get new HEAD
 	headAfter, err := s.getHeadCommit(ctx, integrationPath)
 	if err != nil {
 		return nil, errors.Wrap(errors.ELandFailed, "failed to capture new integration HEAD", err)
@@ -489,8 +381,127 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 		Mode:                  ModeApplyPatch,
 		IntegrationHeadBefore: headBefore,
 		IntegrationHeadAfter:  headAfter,
-		CommitsLanded:         1, // One commit created
+		CommitsLanded:         1,
 	}, nil
+}
+
+func (s *Service) prepareApplyPatch(ctx context.Context, opts LandOpts, meta *store.InvocationMeta) (string, error) {
+	tmpDir := filepath.Join(s.store.SandboxDir(opts.RepoID, opts.InvocationID), "tmp")
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		return "", s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to create tmp directory: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to create tmp directory", err),
+		)
+	}
+
+	patchPath := filepath.Join(tmpDir, "land.patch")
+	if err := s.stageLandingPatch(ctx, opts, meta.SandboxPath, meta.BaseCommit, patchPath); err != nil {
+		return "", err
+	}
+	return patchPath, nil
+}
+
+func (s *Service) stageLandingPatch(ctx context.Context, opts LandOpts, sandboxPath, baseCommit, patchPath string) error {
+	if err := s.stageSandboxChanges(ctx, opts, sandboxPath); err != nil {
+		return err
+	}
+
+	diffResult, err := s.generateLandingDiff(ctx, opts, sandboxPath, baseCommit)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(diffResult.Stdout) == "" {
+		return s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"no changes to apply (empty diff)",
+			errors.New(errors.ELandNothingToLand, "nothing to land — diff is empty"),
+		)
+	}
+
+	if err := os.WriteFile(patchPath, []byte(diffResult.Stdout), 0o644); err != nil {
+		return s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to write patch file: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to write patch file", err),
+		)
+	}
+
+	return nil
+}
+
+func (s *Service) stageSandboxChanges(ctx context.Context, opts LandOpts, sandboxPath string) error {
+	_, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "add", "-A", "--", ":(exclude).agency"}, exec.RunOpts{})
+	if err != nil {
+		return s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to stage changes: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to stage changes in sandbox", err),
+		)
+	}
+	return nil
+}
+
+func (s *Service) generateLandingDiff(ctx context.Context, opts LandOpts, sandboxPath, baseCommit string) (exec.CmdResult, error) {
+	diffResult, err := s.runner.Run(ctx, "git", []string{
+		"-C", sandboxPath,
+		"diff", "--cached", baseCommit, "--", ":(exclude).agency",
+	}, exec.RunOpts{})
+	if err != nil {
+		return exec.CmdResult{}, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to generate diff: "+err.Error(),
+			errors.Wrap(errors.ELandFailed, "failed to generate diff", err),
+		)
+	}
+	if diffResult.ExitCode != 0 {
+		return exec.CmdResult{}, s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"diff command failed: "+diffResult.Stderr,
+			errors.New(errors.ELandFailed, "failed to generate diff: "+diffResult.Stderr),
+		)
+	}
+	return diffResult, nil
+}
+
+func (s *Service) applyLandingPatch(ctx context.Context, opts LandOpts, integrationPath, patchPath string) error {
+	applyResult, err := s.runner.Run(ctx, "git", []string{
+		"-C", integrationPath,
+		"apply", "--index", patchPath,
+	}, exec.RunOpts{})
+	if err != nil {
+		return s.resetLandingTreeAndFail(ctx, opts, integrationPath, "failed to apply patch: "+err.Error(), errors.Wrap(errors.ELandFailed, "failed to apply patch", err))
+	}
+	if applyResult.ExitCode != 0 {
+		return s.resetLandingTreeAndFail(ctx, opts, integrationPath, "patch apply failed: "+applyResult.Stderr, errors.New(errors.ELandFailed, "patch apply failed: "+applyResult.Stderr))
+	}
+	return nil
+}
+
+func (s *Service) commitLandingPatch(ctx context.Context, opts LandOpts, integrationPath string) error {
+	commitMsg := fmt.Sprintf("agency: land invocation %s", opts.InvocationID)
+	commitResult, err := s.runner.Run(ctx, "git", []string{
+		"-C", integrationPath,
+		"commit", "-m", commitMsg,
+	}, exec.RunOpts{})
+	if err != nil {
+		return s.resetLandingTreeAndFail(ctx, opts, integrationPath, "failed to commit: "+err.Error(), errors.Wrap(errors.ELandFailed, "failed to commit applied changes", err))
+	}
+	if commitResult.ExitCode != 0 {
+		return s.resetLandingTreeAndFail(ctx, opts, integrationPath, "commit failed: "+commitResult.Stderr, errors.New(errors.ELandFailed, "commit failed: "+commitResult.Stderr))
+	}
+	return nil
+}
+
+func (s *Service) resetLandingTreeAndFail(ctx context.Context, opts LandOpts, integrationPath, reason string, operationErr error) error {
+	_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
+	return s.emitLandFailure(opts.RepoID, opts.InvocationID, reason, operationErr)
 }
 
 // cleanupAfterLand performs cleanup after successful landing.

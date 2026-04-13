@@ -36,18 +36,7 @@ func (s *Server) handleGetInvocationReview(w http.ResponseWriter, r *http.Reques
 	repoID := r.URL.Query().Get("repo_id")
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		status := http.StatusNotFound
-		var details interface{}
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-			if ae, ok := errors.AsAgencyError(resolveErr); ok && ae.Details != nil {
-				if candidates, ok := ae.Details["candidates"]; ok {
-					details = AmbiguousDetails{Candidates: strings.Split(candidates, ",")}
-				}
-			}
-		}
-		s.writeAPIError(w, status, requestID, string(code), resolveErr.Error(), "use 'agent ls' to list invocations", details)
+		s.writeReadResolveError(w, requestID, resolveErr, "use 'agent ls' to list invocations", errors.EInvocationIDAmbiguous)
 		return
 	}
 

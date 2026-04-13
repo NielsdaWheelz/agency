@@ -88,8 +88,7 @@ func TestNavigationKernel_ReadRoutingLifecycle_OrderAndGuards(t *testing.T) {
 	}
 
 	intent := NavigationIntent{
-		CommandFamily: "worktree",
-		Verb:          "open",
+		Verb: "open",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -440,14 +439,12 @@ func TestNavigationKernel_InteractivePreflight_RequiresTTY(t *testing.T) {
 	}
 
 	intent := NavigationIntent{
-		CommandFamily: "agent",
-		Verb:          "enter",
+		Verb: "enter",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
 			Ref:            "inv-1",
 		},
-		Interactive: true,
 		RequiresTTY: true,
 	}
 

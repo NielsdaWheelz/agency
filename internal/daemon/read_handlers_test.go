@@ -835,7 +835,6 @@ func TestMatchesWorktreeState(t *testing.T) {
 		{store.WorktreeStateArchived, "present", false},
 		{store.WorktreeStateArchived, "archived", true},
 		{store.WorktreeStateArchived, "all", true},
-		{store.WorktreeStatePresent, "", true},
 	}
 
 	for _, tt := range tests {
@@ -886,7 +885,6 @@ func TestMatchesInvocationMode(t *testing.T) {
 		{store.RunnerModeHeaded, "headed", true},
 		{store.RunnerModeHeaded, "headless", false},
 		{store.RunnerModeHeaded, "all", true},
-		{store.RunnerModeHeaded, "", true},
 		{store.RunnerModeHeadless, "headless", true},
 		{store.RunnerModeHeadless, "headed", false},
 	}

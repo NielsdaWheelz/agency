@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -30,6 +31,10 @@ type WorktreeCreateOpts struct {
 // WorktreeCreate creates a new integration worktree.
 // PR-06: Routes through daemon for single-writer ownership.
 func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
+	if strings.TrimSpace(opts.Name) == "" {
+		return errors.New(errors.EUsage, "--name is required")
+	}
+
 	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return err

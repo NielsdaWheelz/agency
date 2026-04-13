@@ -113,18 +113,10 @@ Example:
   agency agent start --worktree my-feature --headless --no-include-untracked`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if worktree == "" {
-				return errors.New(errors.EUsage, "--worktree is required")
-			}
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
 
 			return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
 				WorktreeRef:        worktree,
@@ -359,18 +351,10 @@ Example:
   agency agent diff --turn-range stream:4..stream:9 --json 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if turnID != "" && turnRange != "" {
-				return errors.New(errors.EUsage, "use either --turn or --turn-range, not both")
-			}
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
 
 			return commands.AgentDiff(ctx, cr, fsys, cwd, commands.AgentDiffOpts{
 				InvocationRef: args[0],
@@ -704,37 +688,18 @@ Example:
   agency agent restart --json 20260131 --checkpoint 3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			writeJSONValidationFailure := func(err error) error {
-				if err == nil || !jsonOut {
-					return err
-				}
-				return commands.WriteAgentMutationJSONError(cmd.OutOrStdout(), err)
-			}
-
-			checkpointProvided := cmd.Flags().Changed("checkpoint")
-			if historySelector && checkpointProvided {
-				return writeJSONValidationFailure(errors.New(errors.EUsage, "use either --checkpoint or --history, not both"))
-			}
-			if !historySelector && !checkpointProvided {
-				return writeJSONValidationFailure(errors.New(errors.EUsage, "either --checkpoint <id> or --history is required"))
-			}
-			if checkpointProvided && checkpointID <= 0 {
-				return writeJSONValidationFailure(errors.New(errors.EUsage, "--checkpoint must be a positive integer"))
-			}
-
 			envMap, err := parseEnvAssignments(envAssignments)
 			if err != nil {
-				return writeJSONValidationFailure(errors.New(errors.EUsage, err.Error()))
+				if jsonOut {
+					return commands.WriteAgentMutationJSONError(cmd.OutOrStdout(), errors.New(errors.EUsage, err.Error()))
+				}
+				return err
 			}
 
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
 
 			return commands.AgentRestart(ctx, cr, fsys, cwd, commands.AgentRestartOpts{
 				InvocationRef:      args[0],

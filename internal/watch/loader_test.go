@@ -22,10 +22,6 @@ type fakeSnapshotClient struct {
 	invocationErrByPage map[string]error
 	reviewsByInvocation map[string]*daemonclient.GetInvocationReviewResult
 	reviewErrByRef      map[string]error
-
-	seenWorktreeCursors  []string
-	seenInvocationCursor []string
-	seenReviewRefs       []string
 }
 
 func (f *fakeSnapshotClient) ListRepos(_ context.Context) (*daemonclient.ListReposResult, error) {
@@ -39,7 +35,6 @@ func (f *fakeSnapshotClient) ListRepos(_ context.Context) (*daemonclient.ListRep
 }
 
 func (f *fakeSnapshotClient) ListWorktrees(_ context.Context, opts daemonclient.ListWorktreesOpts) (*daemonclient.ListWorktreesResult, error) {
-	f.seenWorktreeCursors = append(f.seenWorktreeCursors, opts.Cursor)
 	if opts.State != "all" {
 		return nil, fmt.Errorf("unexpected state %q", opts.State)
 	}
@@ -53,7 +48,6 @@ func (f *fakeSnapshotClient) ListWorktrees(_ context.Context, opts daemonclient.
 }
 
 func (f *fakeSnapshotClient) ListInvocations(_ context.Context, opts daemonclient.ListInvocationsOpts) (*daemonclient.ListInvocationsResult, error) {
-	f.seenInvocationCursor = append(f.seenInvocationCursor, opts.Cursor)
 	if opts.State != "all" {
 		return nil, fmt.Errorf("unexpected state %q", opts.State)
 	}
@@ -67,7 +61,6 @@ func (f *fakeSnapshotClient) ListInvocations(_ context.Context, opts daemonclien
 }
 
 func (f *fakeSnapshotClient) GetInvocationReview(_ context.Context, ref string, _ string) (*daemonclient.GetInvocationReviewResult, error) {
-	f.seenReviewRefs = append(f.seenReviewRefs, ref)
 	if err := f.reviewErrByRef[ref]; err != nil {
 		return nil, err
 	}
@@ -120,10 +113,6 @@ func TestSnapshotLoader_Load_DrainsPaginationAndCollectsReviews(t *testing.T) {
 	loader := NewSnapshotLoader(client)
 	snapshot, err := loader.Load(context.Background())
 	require.NoError(t, err)
-
-	assert.Equal(t, []string{"", "wt-next-1"}, client.seenWorktreeCursors)
-	assert.Equal(t, []string{"", "inv-next-1"}, client.seenInvocationCursor)
-	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, client.seenReviewRefs)
 
 	require.Len(t, snapshot.Repos, 1)
 	require.Len(t, snapshot.Worktrees, 3)

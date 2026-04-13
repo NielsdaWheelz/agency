@@ -35,65 +35,19 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		}
 	}
 
-	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
-	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
-		s.writeLandError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations", nil)
+	mutation, ok := s.prepareLandingMutation(w, r, requestID, invocationID, repoID, "land", func(w http.ResponseWriter, status int, requestID, code, message, hint string) {
+		s.writeLandError(w, status, requestID, code, message, hint, nil)
+	})
+	if !ok {
 		return
 	}
-
-	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
-	if err != nil {
-		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeLandError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "", nil)
-			return
-		}
-		s.writeLandError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", nil)
-		return
-	}
-
-	// Get repo root from integration worktree meta
-	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.IntegrationWorktreeID)
-	if err != nil {
-		s.writeLandError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
-			"failed to read integration worktree meta: "+err.Error(), "", nil)
-		return
-	}
-
-	// Derive repo root from the integration tree path
-	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath)
-	if err != nil {
-		s.writeLandError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
-			"failed to get repo root: "+err.Error(), "", nil)
-		return
-	}
-
-	// Acquire repo lock
-	unlock, err := s.repoLock.Lock(repoID, "land")
-	if err != nil {
-		s.writeLandError(w, http.StatusConflict, requestID, string(errors.ERepoLocked),
-			"repository is locked by another operation",
-			"wait for the other operation to complete", nil)
-		return
-	}
-	defer func() { _ = unlock() }()
-
-	// Create landing service
-	landingSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
+	defer func() { _ = mutation.unlock() }()
 
 	// Execute land
-	result, err := landingSvc.Land(r.Context(), landing.LandOpts{
-		RepoID:       record.RepoID,
-		InvocationID: record.InvocationID,
-		RepoRoot:     repoRoot.Path,
+	result, err := mutation.service.Land(r.Context(), landing.LandOpts{
+		RepoID:       mutation.record.RepoID,
+		InvocationID: mutation.record.InvocationID,
+		RepoRoot:     mutation.repoRoot,
 		Apply:        req.Apply,
 		RequireBase:  req.RequireBase,
 	})
@@ -142,7 +96,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
 		RequestID:             requestID,
-		InvocationID:          record.InvocationID,
+		InvocationID:          mutation.record.InvocationID,
 		AppliedMode:           LandingMode(result.Mode),
 		IntegrationHeadBefore: result.IntegrationHeadBefore,
 		IntegrationHeadAfter:  result.IntegrationHeadAfter,
@@ -172,65 +126,17 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		}
 	}
 
-	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
-	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
-		s.writeDiscardError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+	mutation, ok := s.prepareLandingMutation(w, r, requestID, invocationID, repoID, "discard", s.writeDiscardError)
+	if !ok {
 		return
 	}
-
-	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
-	if err != nil {
-		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeDiscardError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
-			return
-		}
-		s.writeDiscardError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
-		return
-	}
-
-	// Get repo root from integration worktree meta
-	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.IntegrationWorktreeID)
-	if err != nil {
-		s.writeDiscardError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
-			"failed to read integration worktree meta: "+err.Error(), "")
-		return
-	}
-
-	// Derive repo root from the integration tree path
-	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath)
-	if err != nil {
-		s.writeDiscardError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed),
-			"failed to get repo root: "+err.Error(), "")
-		return
-	}
-
-	// Acquire repo lock
-	unlock, err := s.repoLock.Lock(repoID, "discard")
-	if err != nil {
-		s.writeDiscardError(w, http.StatusConflict, requestID, string(errors.ERepoLocked),
-			"repository is locked by another operation",
-			"wait for the other operation to complete")
-		return
-	}
-	defer func() { _ = unlock() }()
-
-	// Create landing service
-	landingSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
+	defer func() { _ = mutation.unlock() }()
 
 	// Execute discard with stop callback
-	err = landingSvc.Discard(r.Context(), landing.DiscardOpts{
-		RepoID:       record.RepoID,
-		InvocationID: record.InvocationID,
-		RepoRoot:     repoRoot.Path,
+	err := mutation.service.Discard(r.Context(), landing.DiscardOpts{
+		RepoID:       mutation.record.RepoID,
+		InvocationID: mutation.record.InvocationID,
+		RepoRoot:     mutation.repoRoot,
 		StopCallback: s.stopInvocationForDiscard,
 	})
 	if err != nil {
@@ -257,9 +163,57 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
 		RequestID:    requestID,
-		InvocationID: record.InvocationID,
+		InvocationID: mutation.record.InvocationID,
 	}
 	s.writeJSON(w, http.StatusOK, resp)
+}
+
+type landingMutation struct {
+	record   *resolvedInvocation
+	repoRoot string
+	service  *landing.Service
+	unlock   func() error
+}
+
+func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, requestID, invocationID, repoID, lockName string, writeError func(http.ResponseWriter, int, string, string, string, string)) (*landingMutation, bool) {
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		writeError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		return nil, false
+	}
+
+	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to read integration worktree meta: "+err.Error(), "")
+		return nil, false
+	}
+
+	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to get repo root: "+err.Error(), "")
+		return nil, false
+	}
+
+	unlock, err := s.repoLock.Lock(record.RepoID, lockName)
+	if err != nil {
+		writeError(w, http.StatusConflict, requestID, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete")
+		return nil, false
+	}
+
+	return &landingMutation{
+		record:   record,
+		repoRoot: repoRoot.Path,
+		service:  landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents),
+		unlock:   unlock,
+	}, true
 }
 
 // stopInvocationForDiscard stops a running invocation before discarding.

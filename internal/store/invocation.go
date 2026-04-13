@@ -333,28 +333,20 @@ func (s *Store) EnsureInvocationRunnerStatusDir(repoID, invocationID string) (st
 	return statusDir, nil
 }
 
-// ResolveInvocationLogsDir returns the canonical logs directory for an invocation.
-func (s *Store) ResolveInvocationLogsDir(repoID, invocationID string) string {
-	return s.InvocationLogsDir(repoID, invocationID)
-}
-
-// ResolveInvocationLogPath returns the canonical log file path for reads.
-func (s *Store) ResolveInvocationLogPath(repoID, invocationID, kind string) string {
-	return s.invocationLogPathForKind(repoID, invocationID, kind)
-}
-
-// ResolveInvocationCheckpointsDir returns the canonical checkpoints directory for reads.
-func (s *Store) ResolveInvocationCheckpointsDir(repoID, invocationID string) string {
-	return s.InvocationDir(repoID, invocationID)
-}
-
 // PrepareInvocationLogPath ensures the invocation-owned logs directory exists
 // before returning the canonical path.
 func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (string, error) {
 	if _, err := s.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
 		return "", err
 	}
-	return s.invocationLogPathForKind(repoID, invocationID, kind), nil
+	switch kind {
+	case "stderr":
+		return s.InvocationStderrLogPath(repoID, invocationID), nil
+	case "stream":
+		return s.InvocationStreamLogPath(repoID, invocationID), nil
+	default:
+		return s.InvocationRawLogPath(repoID, invocationID), nil
+	}
 }
 
 // WriteInvocationMeta writes the meta.json for an invocation atomically.
@@ -465,15 +457,4 @@ func (s *Store) RemoveInvocationDir(repoID, invocationID string) error {
 func (s *Store) RemoveSandboxDir(repoID, invocationID string) error {
 	sandboxDir := s.SandboxDir(repoID, invocationID)
 	return fs.SafeRemoveAll(sandboxDir, s.DataDir)
-}
-
-func (s *Store) invocationLogPathForKind(repoID, invocationID, kind string) string {
-	switch kind {
-	case "stderr":
-		return s.InvocationStderrLogPath(repoID, invocationID)
-	case "stream":
-		return s.InvocationStreamLogPath(repoID, invocationID)
-	default:
-		return s.InvocationRawLogPath(repoID, invocationID)
-	}
 }

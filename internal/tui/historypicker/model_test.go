@@ -298,23 +298,6 @@ func TestTruncate_UTF8Safe(t *testing.T) {
 	assert.NotContains(t, got, "\uFFFD", "truncate should not split utf-8 runes")
 }
 
-func TestFormatToolCall_EmptyNameUsesFallback(t *testing.T) {
-	t.Parallel()
-	got := formatToolCall(ToolCall{Name: "", Command: "echo hi"})
-	assert.Equal(t, "▶ tool echo hi", got)
-}
-
-func TestFormatCheckpointChangedPaths_InconsistentCounts(t *testing.T) {
-	t.Parallel()
-	turn := Turn{
-		CheckpointChangedPaths: []string{"a.go", "b.go"},
-		CheckpointChangedCount: 1,
-		CheckpointPathsTrimmed: true,
-	}
-	got := formatCheckpointChangedPaths(turn)
-	assert.Equal(t, "a.go, b.go", got)
-}
-
 // applyKey sends a named key press to the model.
 func applyKey(m model, code rune) (model, tea.Cmd) {
 	msg := tea.KeyPressMsg{Code: code}
