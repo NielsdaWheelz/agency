@@ -21,10 +21,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/runners"
-	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -1404,28 +1402,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	// Resolve invocation
-	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: false,
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	if record.Broken {
-		return fail(errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		))
-	}
-
-	resp, err := ns.client.Stop(ctx, repoCtx.RepoID, record.InvocationID)
+	resp, err := ns.client.Stop(ctx, repoCtx.RepoID, opts.InvocationRef)
 	if err != nil {
 		return fail(err)
 	}
@@ -1441,9 +1418,13 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		))
 	}
 
+	invocationID := resp.InvocationID
+	if invocationID == "" {
+		invocationID = opts.InvocationRef
+	}
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = record.InvocationID
+			envelope.InvocationID = invocationID
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -1454,12 +1435,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		})
 	}
 
-	modeStr := "headless"
-	if record.Meta.Mode == store.RunnerModeHeaded {
-		modeStr = "headed"
-	}
-
-	_, _ = fmt.Fprintf(stdout, "Stop signal sent to %s invocation %s\n", modeStr, record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "Stop signal sent to invocation %s\n", invocationID)
 	_, _ = fmt.Fprintf(stdout, "Note: The runner may ignore the interrupt. Use 'agency agent kill' to force termination.\n")
 
 	return nil
@@ -1845,7 +1821,6 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return fail(err)
 	}
-	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
@@ -1856,30 +1831,9 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	// Resolve invocation
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true,
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	if record.Broken {
-		return fail(errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		))
-	}
-
-	// Call daemon to land
 	resp, err := ns.client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoCtx.RepoID,
-		InvocationID: record.InvocationID,
+		InvocationID: opts.InvocationRef,
 		Apply:        opts.Apply,
 		RequireBase:  opts.RequireBase,
 	})
@@ -1888,7 +1842,6 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	if !resp.OK {
-		// Handle specific error codes
 		hint := resp.Hint
 		if !opts.JSON && resp.ErrorCode == string(errors.ELandConflict) && len(resp.ConflictFiles) > 0 {
 			_, _ = fmt.Fprintf(stderr, "Conflicting files:\n")
@@ -1906,9 +1859,13 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		))
 	}
 
+	invocationID := resp.InvocationID
+	if invocationID == "" {
+		invocationID = opts.InvocationRef
+	}
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = record.InvocationID
+			envelope.InvocationID = invocationID
 			envelope.AppliedMode = resp.AppliedMode
 			envelope.IntegrationHeadBefore = resp.IntegrationHeadBefore
 			envelope.IntegrationHeadAfter = resp.IntegrationHeadAfter
@@ -1924,7 +1881,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	// Success output
-	_, _ = fmt.Fprintf(stdout, "Successfully landed invocation %s\n", record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "Successfully landed invocation %s\n", invocationID)
 	_, _ = fmt.Fprintf(stdout, "  mode:        %s\n", resp.AppliedMode)
 	_, _ = fmt.Fprintf(stdout, "  commits:     %d\n", resp.CommitsLanded)
 	_, _ = fmt.Fprintf(stdout, "  head_before: %s\n", resp.IntegrationHeadBefore[:12])
@@ -1959,7 +1916,6 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return fail(err)
 	}
-	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
@@ -1970,28 +1926,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return fail(err)
 	}
 
-	// Resolve invocation
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true,
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	if record.Broken {
-		return fail(errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		))
-	}
-
-	// Call daemon to discard
-	resp, err := ns.client.Discard(ctx, repoCtx.RepoID, record.InvocationID)
+	resp, err := ns.client.Discard(ctx, repoCtx.RepoID, opts.InvocationRef)
 	if err != nil {
 		return fail(err)
 	}
@@ -2007,9 +1942,13 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		))
 	}
 
+	invocationID := resp.InvocationID
+	if invocationID == "" {
+		invocationID = opts.InvocationRef
+	}
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = record.InvocationID
+			envelope.InvocationID = invocationID
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -2021,7 +1960,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	// Success output
-	_, _ = fmt.Fprintf(stdout, "Discarded invocation %s\n", record.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "Discarded invocation %s\n", invocationID)
 	_, _ = fmt.Fprintf(stdout, "Sandbox and checkpoint refs have been removed.\n")
 
 	return nil
@@ -3520,28 +3459,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	// Resolve invocation
-	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
-	invSvc := invocation.NewService(st, cr, fsys, time.Now)
-	record, err := invSvc.Resolve(repoCtx.RepoID, opts.InvocationRef, invocation.ResolveOpts{
-		IncludeFinished: true,
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	if record.Broken {
-		return fail(errors.NewWithDetails(
-			errors.EInvocationBroken,
-			"invocation exists but meta.json is unreadable or invalid",
-			map[string]string{
-				"invocation_id":  record.InvocationID,
-				"invocation_dir": record.InvocationDir,
-			},
-		))
-	}
-
-	resp, err := ns.client.Kill(ctx, repoCtx.RepoID, record.InvocationID)
+	resp, err := ns.client.Kill(ctx, repoCtx.RepoID, opts.InvocationRef)
 	if err != nil {
 		return fail(err)
 	}
@@ -3557,9 +3475,13 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		))
 	}
 
+	invocationID := resp.InvocationID
+	if invocationID == "" {
+		invocationID = opts.InvocationRef
+	}
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = record.InvocationID
+			envelope.InvocationID = invocationID
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -3570,13 +3492,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		})
 	}
 
-	modeStr := "headless"
-	if record.Meta.Mode == store.RunnerModeHeaded {
-		modeStr = "headed"
-	}
-
-	_, _ = fmt.Fprintf(stdout, "Killed %s invocation %s\n", modeStr, record.InvocationID)
-	_, _ = fmt.Fprintf(stdout, "Sandbox preserved at: %s\n", record.Meta.SandboxPath)
+	_, _ = fmt.Fprintf(stdout, "Killed invocation %s\n", invocationID)
 
 	return nil
 }

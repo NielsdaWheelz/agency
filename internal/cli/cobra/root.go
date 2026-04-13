@@ -9,19 +9,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// GlobalOpts holds global options parsed before subcommand dispatch.
-type GlobalOpts struct {
-	Verbose bool
-}
-
-// globalOpts stores the parsed global options for access by subcommands.
-var globalOpts GlobalOpts
-
-// GetGlobalOpts returns the parsed global options.
-func GetGlobalOpts() GlobalOpts {
-	return globalOpts
-}
-
 // NewRootCmd creates the root cobra command for agency.
 func NewRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
@@ -38,7 +25,7 @@ and provides commands to control the runner session.`,
 	}
 
 	// Global flags
-	rootCmd.PersistentFlags().BoolVar(&globalOpts.Verbose, "verbose", false, "show detailed error context")
+	rootCmd.PersistentFlags().Bool("verbose", false, "show detailed error context")
 
 	// Disable Cobra's default completion command (we register our own)
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
@@ -63,9 +50,14 @@ and provides commands to control the runner session.`,
 
 // Execute runs the root command with the given output writers.
 // This is the main entry point from main.go.
-func Execute(stdout, stderr io.Writer) error {
+func Execute(stdout, stderr io.Writer) (bool, error) {
 	rootCmd := NewRootCmd()
 	rootCmd.SetOut(stdout)
 	rootCmd.SetErr(stderr)
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	verbose, verboseErr := rootCmd.PersistentFlags().GetBool("verbose")
+	if verboseErr != nil {
+		return false, err
+	}
+	return verbose, err
 }

@@ -60,7 +60,7 @@ func TestReportViolationToAgencyError_MapsDeterministicCodes(t *testing.T) {
 			expectedCode: errors.EReportIncomplete,
 		},
 		{
-			name: "unknown falls back to legacy invalid",
+			name: "unknown code is reported as invalid",
 			violation: &report.Violation{
 				Code:    report.ViolationCode("unknown"),
 				Message: "unknown",

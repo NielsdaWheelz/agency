@@ -33,13 +33,6 @@ func EnsureDaemonRunning(ctx context.Context, socketPath, logPath string) (*Clie
 	return client, nil
 }
 
-// AutoStartDaemon is a convenience function that starts the daemon using standard paths.
-// PR-06: Used by CLI commands that need daemon before proceeding.
-func AutoStartDaemon(ctx context.Context, dataDir string) error {
-	logPath := dataDir + "/agencyd.log"
-	return StartDaemonBackground(logPath)
-}
-
 // StartDaemonBackground starts the daemon in the background.
 func StartDaemonBackground(logPath string) error {
 	// Get the current executable path

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
-	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -44,14 +43,8 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	canonicalRunner, err := runners.Canonicalize(req.Runner)
+	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, false)
 	if err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.ERunnerNotFound), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "), req.ClientRequestID, requestID)
-		return
-	}
-	req.Runner = canonicalRunner
-
-	if err := validateRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerArgConflict
@@ -63,6 +56,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		s.writeHeadedError(w, http.StatusBadRequest, string(code), err.Error(), hint, req.ClientRequestID, requestID)
 		return
 	}
+	req.Runner = canonicalRunner
 
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
 	if err != nil {
@@ -86,7 +80,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	}
 
 	if req.InvocationName != "" {
-		if err := core.ValidateName(req.InvocationName); err != nil {
+		if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
 			s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidName), "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID, requestID)
 			return
 		}

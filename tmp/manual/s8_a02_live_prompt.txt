@@ -1,4 +1,0 @@
-Re-open `tmp/s8-manual/live-notes.md`.
-Append a final line exactly `followup-line: two`.
-Then run `rg -n "agent history|checkpoint ls|agency watch" README.md docs/getting-started.md docs/cli.md | head -n 12`.
-Finally, summarize both tracked lines now present in the file and the command output.

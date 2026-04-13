@@ -14,7 +14,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// handleLand handles POST /invocations/{id}/land.
+// handleLand handles POST /invocations/{ref}/land.
 func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
@@ -35,8 +35,22 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		}
 	}
 
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		s.writeLandError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations", nil)
+		return
+	}
+
 	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeLandError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "", nil)
@@ -77,8 +91,8 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 
 	// Execute land
 	result, err := landingSvc.Land(r.Context(), landing.LandOpts{
-		RepoID:       repoID,
-		InvocationID: invocationID,
+		RepoID:       record.RepoID,
+		InvocationID: record.InvocationID,
 		RepoRoot:     repoRoot.Path,
 		Apply:        req.Apply,
 		RequireBase:  req.RequireBase,
@@ -128,7 +142,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
 		RequestID:             requestID,
-		InvocationID:          invocationID,
+		InvocationID:          record.InvocationID,
 		AppliedMode:           LandingMode(result.Mode),
 		IntegrationHeadBefore: result.IntegrationHeadBefore,
 		IntegrationHeadAfter:  result.IntegrationHeadAfter,
@@ -137,7 +151,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-// handleDiscard handles POST /invocations/{id}/discard.
+// handleDiscard handles POST /invocations/{ref}/discard.
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocationID string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
@@ -158,8 +172,22 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		}
 	}
 
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		s.writeDiscardError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		return
+	}
+
 	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeDiscardError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
@@ -200,8 +228,8 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 
 	// Execute discard with stop callback
 	err = landingSvc.Discard(r.Context(), landing.DiscardOpts{
-		RepoID:       repoID,
-		InvocationID: invocationID,
+		RepoID:       record.RepoID,
+		InvocationID: record.InvocationID,
 		RepoRoot:     repoRoot.Path,
 		StopCallback: s.stopInvocationForDiscard,
 	})
@@ -229,7 +257,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
 		RequestID:    requestID,
-		InvocationID: invocationID,
+		InvocationID: record.InvocationID,
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }

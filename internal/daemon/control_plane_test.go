@@ -177,7 +177,7 @@ func TestValidateRunnerArgs(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateRunnerArgs(tt.runner, tt.args)
+			_, err := validateControlPlaneStartRunner(tt.runner, tt.args, false)
 			if tt.wantError {
 				assert.Error(t, err)
 			} else {

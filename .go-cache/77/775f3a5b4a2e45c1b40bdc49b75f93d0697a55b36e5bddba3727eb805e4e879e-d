@@ -1,5 +1,0 @@
-./adapter.go
-./claude.go
-./codex.go
-./events.go
-./parser.go

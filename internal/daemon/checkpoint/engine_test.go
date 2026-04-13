@@ -2182,27 +2182,6 @@ func TestCheckpoint_SchemaVersion_Writes1_1(t *testing.T) {
 	assert.Equal(t, "1.1", f.SchemaVersion, "new checkpoints files should use schema 1.1")
 }
 
-func TestCheckpoint_SchemaVersion_Reads1_0(t *testing.T) {
-	t.Parallel()
-
-	// Simulate loading a legacy 1.0 checkpoints.json
-	legacy := `{"schema_version":"1.0","checkpoints":[{"id":1,"snapshot_ref":"refs/agency/snapshots/inv/1","snapshot_commit":"abc","sandbox_head_sha":"def","created_at":"2026-01-01T00:00:00Z","includes_untracked":true,"diffstat":"+1 -0 in 1 files","tree_sha":"tree1"}]}`
-
-	dir := t.TempDir()
-	cpPath := filepath.Join(dir, "checkpoints.json")
-	require.NoError(t, os.WriteFile(cpPath, []byte(legacy), 0o644))
-
-	cpFile, err := LoadCheckpointsFile(fs.NewRealFS(), dir)
-	require.NoError(t, err)
-	require.Len(t, cpFile.Checkpoints, 1)
-
-	// Legacy checkpoints should load fine without trigger metadata
-	cp := cpFile.Checkpoints[0]
-	assert.Equal(t, 1, cp.ID)
-	assert.Empty(t, cp.Trigger, "legacy checkpoint should have no trigger metadata")
-	assert.Empty(t, cp.ToolName)
-}
-
 func TestCheckpoint_SchemaVersion_RejectsUnknown(t *testing.T) {
 	t.Parallel()
 

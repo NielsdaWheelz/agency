@@ -27,7 +27,21 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		writeStopError(status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		return
+	}
+
+	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			writeStopError(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
@@ -37,21 +51,21 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
-		s.writeInvocationActionSuccess(w, requestID, invocationID)
+		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 		return
 	}
 
 	s.mu.RLock()
-	completionProc, completionSupervised := s.processes[invocationID]
+	completionProc, completionSupervised := s.processes[record.InvocationID]
 	s.mu.RUnlock()
 	if completionSupervised && completionProc != nil && completionProc.SuccessfulCompletionObserved() {
 		s.scheduleStdinCompletionFinalize(completionProc)
-		s.writeInvocationActionSuccess(w, requestID, invocationID)
+		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 		return
 	}
 
 	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+	_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
 		if m.StopRequestedAt == "" {
 			m.StopRequestedAt = now
 		}
@@ -61,35 +75,35 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	if meta.Mode == store.RunnerModeHeaded {
 		sessionName := meta.TmuxSession
 		if sessionName == "" {
-			sessionName = tmux.SessionName(invocationID)
+			sessionName = tmux.SessionName(record.InvocationID)
 		}
 
 		exists, err := s.TmuxClient.HasSession(ctx, sessionName)
 		if err != nil {
-			s.recordInvocationWarning(repoID, invocationID, "stop_tmux_has_session_failed", err.Error(), map[string]any{
+			s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_has_session_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
 			})
 		}
 		if !exists {
 			if meta.Status == store.InvocationStatusRunning {
 				finishedAt := s.Clock().UTC().Format(time.RFC3339)
-				_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+				_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
 					m.Status = store.InvocationStatusFinished
 					m.ExitReason = "exited"
 					m.FinishedAt = finishedAt
 				})
 			}
-			s.writeInvocationActionSuccess(w, requestID, invocationID)
+			s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 			return
 		}
 
 		if err := s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC}); err != nil {
-			s.recordInvocationWarning(repoID, invocationID, "stop_tmux_send_ctrl_c_failed", err.Error(), map[string]any{
+			s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_send_ctrl_c_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
 			})
 		}
 
-		s.writeInvocationActionSuccess(w, requestID, invocationID)
+		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 		return
 	}
 
@@ -103,11 +117,11 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	}
 
 	s.mu.RLock()
-	proc, supervised := s.processes[invocationID]
+	proc, supervised := s.processes[record.InvocationID]
 	s.mu.RUnlock()
 
-	go s.stopEscalation(repoID, invocationID, pgid, supervised, proc)
-	s.writeInvocationActionSuccess(w, requestID, invocationID)
+	go s.stopEscalation(record.RepoID, record.InvocationID, pgid, supervised, proc)
+	s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 }
 
 func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervised bool, proc *SupervisedProcess) {
@@ -255,7 +269,21 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		writeKillError(status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		return
+	}
+
+	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			writeKillError(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
@@ -268,29 +296,29 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	if meta.Mode == store.RunnerModeHeaded {
 		sessionName := meta.TmuxSession
 		if sessionName == "" {
-			sessionName = tmux.SessionName(invocationID)
+			sessionName = tmux.SessionName(record.InvocationID)
 		}
-			if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
-				s.recordInvocationWarning(repoID, invocationID, "kill_tmux_session_failed", err.Error(), map[string]any{
-					"session_name": sessionName,
-				})
-			}
+		if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
+			s.recordInvocationWarning(record.RepoID, record.InvocationID, "kill_tmux_session_failed", err.Error(), map[string]any{
+				"session_name": sessionName,
+			})
+		}
 
 		now := s.Clock().UTC().Format(time.RFC3339)
-		_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
 			m.Status = store.InvocationStatusFailed
 			m.ExitReason = "killed"
 			m.FinishedAt = now
 		})
 
 		s.mu.Lock()
-		if proc, ok := s.processes[invocationID]; ok {
+		if proc, ok := s.processes[record.InvocationID]; ok {
 			proc.CloseDone()
-			delete(s.processes, invocationID)
+			delete(s.processes, record.InvocationID)
 		}
 		s.mu.Unlock()
 
-		s.writeInvocationActionSuccess(w, requestID, invocationID)
+		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 		return
 	}
 
@@ -300,7 +328,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	}
 
 	s.mu.RLock()
-	proc, supervised := s.processes[invocationID]
+	proc, supervised := s.processes[record.InvocationID]
 	s.mu.RUnlock()
 	if supervised && proc != nil {
 		proc.exitReason.Store("killed")
@@ -311,7 +339,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	}
 	if !supervised {
 		now := s.Clock().UTC().Format(time.RFC3339)
-		_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+		_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
 			m.Status = store.InvocationStatusFailed
 			m.ExitReason = "killed"
 			m.FailureReason = "killed"
@@ -321,7 +349,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		})
 	}
 
-	s.writeInvocationActionSuccess(w, requestID, invocationID)
+	s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 }
 
 func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {

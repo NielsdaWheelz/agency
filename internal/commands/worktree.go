@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -18,8 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
-	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // WorktreeCreateOpts holds options for the worktree create command.
@@ -439,28 +436,6 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	// Resolve worktree locally to preserve broken-record handling and display name.
-	st := store.NewStore(fsys, ns.dirs.DataDir, time.Now)
-	svc := integrationworktree.NewService(st, cr, fsys, time.Now)
-	record, err := svc.Resolve(repoCtx.RepoID, opts.WorktreeRef, false)
-	if err != nil {
-		return err
-	}
-
-	if record.Broken {
-		return errors.NewWithDetails(
-			errors.EWorktreeBroken,
-			"worktree exists but meta.json is unreadable or invalid; remove manually",
-			map[string]string{
-				"worktree_id":  record.WorktreeID,
-				"worktree_dir": record.WorktreeDir,
-			},
-		)
-	}
-
-	worktreeName := record.Meta.Name
-	worktreeID := record.WorktreeID
-
 	if !opts.Yes {
 		isInteractiveFn := opts.IsInteractive
 		if isInteractiveFn == nil {
@@ -490,7 +465,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 	}
 
-	result, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, worktreeID, opts.Force)
+	result, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, opts.WorktreeRef, opts.Force)
 	if err != nil {
 		return err
 	}
@@ -502,7 +477,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		)
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Removed integration worktree '%s' (%s)\n", worktreeName, worktreeID)
+	_, _ = fmt.Fprintf(stdout, "Removed integration worktree '%s'\n", opts.WorktreeRef)
 	return nil
 }
 
@@ -562,11 +537,11 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			envelope.RepoID = resp.RepoID
 			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
 			envelope.Branch = resp.Branch
-				envelope.PRNumber = resp.PRNumber
-				envelope.PRURL = resp.PRURL
-				envelope.PRAction = resp.PRAction
-				envelope.ReportSource = resp.ReportSource
-				envelope.ReportDiagnostics = resp.ReportDiagnostics
+			envelope.PRNumber = resp.PRNumber
+			envelope.PRURL = resp.PRURL
+			envelope.PRAction = resp.PRAction
+			envelope.ReportSource = resp.ReportSource
+			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -713,11 +688,11 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 			envelope.PRNumber = resp.PRNumber
 			envelope.PRURL = resp.PRURL
 			envelope.Strategy = resp.Strategy
-				envelope.DeleteBranch = resp.DeleteBranch
-				envelope.MergeLogPath = resp.MergeLogPath
-				envelope.VerifyLogPath = resp.VerifyLogPath
-				envelope.ReportSource = resp.ReportSource
-				envelope.ReportDiagnostics = resp.ReportDiagnostics
+			envelope.DeleteBranch = resp.DeleteBranch
+			envelope.MergeLogPath = resp.MergeLogPath
+			envelope.VerifyLogPath = resp.VerifyLogPath
+			envelope.ReportSource = resp.ReportSource
+			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}

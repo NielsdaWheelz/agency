@@ -15,11 +15,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/render"
-	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // CheckpointLSOpts holds options for the checkpoint ls command.
@@ -30,36 +26,22 @@ type CheckpointLSOpts struct {
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
-
-	// DaemonSocketOverride, if set, uses this socket path directly and
-	// assumes the daemon is already running. Bypasses EnsureDaemonRunning.
-	DaemonSocketOverride string
 }
 
 // CheckpointLS lists checkpoints for an invocation.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
-	var client *daemonclient.Client
-	var err error
-	if opts.DaemonSocketOverride != "" {
-		client = daemonclient.NewClient(opts.DaemonSocketOverride)
-	} else {
-		dirs, dirErr := resolveCommandDirs(opts.DataDirOverride)
-		if dirErr != nil {
-			return dirErr
-		}
-		client, err = ensureDaemonClientFromDirs(ctx, fsys, dirs)
-		if err != nil {
-			return err
-		}
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+	if err != nil {
 		return err
 	}
 
-	// 3. Resolve repo context through daemon-first contract.
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
+	if err := ns.client.CheckAPIVersion(ctx); err != nil {
+		return err
+	}
+
+	// Resolve repo context through daemon-first contract.
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
 		CmdName:       "checkpoint ls",
@@ -68,8 +50,8 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// 4. Call daemon ListCheckpoints endpoint.
-	result, err := client.ListCheckpoints(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.ListCheckpointsOpts{})
+	// Call daemon ListCheckpoints endpoint.
+	result, err := ns.client.ListCheckpoints(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.ListCheckpointsOpts{})
 	if err != nil {
 		return err
 	}
@@ -149,7 +131,6 @@ type CheckpointApplyOpts struct {
 
 // CheckpointApply restores a sandbox to a checkpoint state.
 func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointApplyOpts, stdout, stderr io.Writer) error {
-	// 1. Parse checkpoint ID
 	checkpointID, err := strconv.Atoi(opts.CheckpointID)
 	if err != nil {
 		return errors.New(errors.EUsage, "checkpoint_id must be a positive integer")
@@ -158,96 +139,32 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		return errors.New(errors.EUsage, "checkpoint_id must be a positive integer")
 	}
 
-	// 2. Resolve paths
-	dirs, err := resolveCommandDirs(opts.DataDirOverride)
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
 	}
 
-	// 3. Get repo context
-	gitRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "not inside a git repository", err)
-	}
-
-	originInfo := git.GetOriginInfo(ctx, cr, gitRoot.Path)
-	repoIdentity := identity.DeriveRepoIdentity(gitRoot.Path, originInfo.URL)
-
-	// 4. Set up store
-	records, err := store.ScanInvocationsForRepo(dirs.DataDir, repoIdentity.RepoID)
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to scan invocations", err)
-	}
-
-	// Convert to refs
-	refs := make([]ids.InvocationRef, 0, len(records))
-	for _, r := range records {
-		ref := ids.InvocationRef{
-			InvocationID: r.InvocationID,
-			RepoID:       repoIdentity.RepoID,
-			Broken:       r.Broken,
-		}
-		if r.Meta != nil {
-			ref.IntegrationWorktreeID = r.Meta.IntegrationWorktreeID
-			ref.InvocationName = r.Meta.InvocationName
-			ref.Status = string(r.Meta.Status)
-			ref.LandingStatus = string(r.Meta.LandingStatus)
-		}
-		refs = append(refs, ref)
-	}
-
-	resolved, err := ids.ResolveInvocationRef(opts.InvocationRef, refs, ids.ResolveInvocationRefOpts{
-		IncludeFinished: true, // Allow applying checkpoints to finished invocations
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		CmdName: "checkpoint apply",
 	})
 	if err != nil {
-		if _, ok := err.(*ids.ErrInvocationNotFound); ok {
-			return errors.NewWithDetails(errors.EInvocationNotFound, err.Error(), nil)
-		}
-		if _, ok := err.(*ids.ErrInvocationAmbiguous); ok {
-			return errors.NewWithDetails(errors.EInvocationIDAmbiguous, err.Error(), nil)
-		}
 		return err
 	}
 
-	// Find the record with full meta
-	var record *store.InvocationRecord
-	for i := range records {
-		if records[i].InvocationID == resolved.InvocationID {
-			record = &records[i]
-			break
-		}
-	}
-	if record == nil || record.Meta == nil {
-		return errors.New(errors.EInvocationNotFound, "invocation not found")
-	}
-
-	// 6. Verify invocation is headless
-	if record.Meta.Mode != store.RunnerModeHeadless {
-		return errors.New(errors.EInvocationInvalidMode, "checkpoint apply is only supported for headless invocations")
-	}
-
-	// 7. Connect to daemon
-	client, err := ensureDaemonClientFromDirs(ctx, fsys, dirs)
-	if err != nil {
-		return err
-	}
-
-	// 8. Call daemon checkpoint apply endpoint
-	resp, err := client.CheckpointApply(ctx, repoIdentity.RepoID, record.InvocationID, checkpointID)
+	resp, err := ns.client.CheckpointApply(ctx, repoCtx.RepoID, opts.InvocationRef, checkpointID)
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "checkpoint apply request failed", err)
 	}
 
 	if !resp.OK {
-		hint := ""
-		if resp.Hint != "" {
-			hint = resp.Hint
-		}
-		return errors.NewWithDetails(errors.Code(resp.ErrorCode), resp.Message, map[string]string{"hint": hint})
+		return errors.NewWithDetails(errors.Code(resp.ErrorCode), resp.Message, map[string]string{"hint": resp.Hint})
 	}
 
-	// 9. Success output
-	_, _ = fmt.Fprintf(stdout, "Restored to checkpoint %d (commit %s)\n", resp.CheckpointID, resp.SnapshotCommit[:8])
+	snapshotCommit := resp.SnapshotCommit
+	if len(snapshotCommit) > 8 {
+		snapshotCommit = snapshotCommit[:8]
+	}
+	_, _ = fmt.Fprintf(stdout, "Restored to checkpoint %d (commit %s)\n", resp.CheckpointID, snapshotCommit)
 
 	return nil
 }

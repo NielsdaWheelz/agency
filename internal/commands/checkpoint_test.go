@@ -35,24 +35,18 @@ type checkpointTestEnv struct {
 	SandboxDir   string
 	Runner       exec.CommandRunner
 	FS           fs.FS
-	SocketPath   string // test daemon socket path (set by startTestDaemonForCheckpoint)
 }
 
 // startTestDaemonForCheckpoint starts a daemon server backed by the test env's data dir.
-// Returns the Unix socket path. The daemon is shut down when the test finishes.
-func startTestDaemonForCheckpoint(t *testing.T, env *checkpointTestEnv) string {
+// The daemon is shut down when the test finishes.
+func startTestDaemonForCheckpoint(t *testing.T, env *checkpointTestEnv) {
 	t.Helper()
 
 	st := store.NewStore(env.FS, env.DataDir, time.Now)
 	configDir := filepath.Join(env.DataDir, "config")
 	srv := daemon.NewServer(st, env.Runner, env.FS, configDir)
 
-	// Use a short temp dir for the socket to stay under macOS ~104-byte limit.
-	sockDir, err := os.MkdirTemp("", "dsock")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-
-	socketPath := filepath.Join(sockDir, "d.sock")
+	socketPath := st.DaemonSocketPath()
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 
@@ -81,9 +75,6 @@ func startTestDaemonForCheckpoint(t *testing.T, env *checkpointTestEnv) string {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-
-	env.SocketPath = socketPath
-	return socketPath
 }
 
 // setupCheckpointTestEnv creates a minimal environment for checkpoint command tests.
@@ -109,7 +100,9 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 	require.NoError(t, err)
 	require.Equal(t, 0, result.ExitCode, "git commit failed: stderr: %s", result.Stderr)
 
-	dataDir := t.TempDir()
+	dataDir, err := os.MkdirTemp("", "acp")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 
 	// Derive repo ID using the same logic the commands will use.
 	// The commands call git rev-parse --show-toplevel which resolves symlinks
@@ -201,13 +194,12 @@ func TestCheckpointLS_TableOutput(t *testing.T) {
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
 
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:        env.InvocationID,
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -248,13 +240,12 @@ func TestCheckpointLS_TableOutput_UsesSharedChangedPathPreview(t *testing.T) {
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:        env.InvocationID,
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -277,14 +268,13 @@ func TestCheckpointLS_RepoFlagResolvesOutsideGitContext(t *testing.T) {
 		},
 	}
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), testutil.NewFakeCommandRunner(), env.FS, t.TempDir(), CheckpointLSOpts{
-		InvocationRef:        env.InvocationID,
-		RepoFlag:             env.RepoID,
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   env.InvocationID,
+		RepoFlag:        env.RepoID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "checkpoint ls with --repo should not depend on local git context")
 	assert.Contains(t, stdout.String(), "cp:1")
@@ -303,14 +293,13 @@ func TestCheckpointLS_JSONOutput(t *testing.T) {
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
 
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:        env.InvocationID,
-		JSON:                 true,
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   env.InvocationID,
+		JSON:            true,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -327,13 +316,12 @@ func TestCheckpointLS_NoCheckpoints(t *testing.T) {
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, []checkpoint.Checkpoint{})
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:        env.InvocationID,
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -348,14 +336,13 @@ func TestCheckpointLS_InvocationNotFound(t *testing.T) {
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, nil)
 
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	// Use a non-existent invocation ref
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:        "nonexistent-invocation",
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   "nonexistent-invocation",
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.Error(t, err, "expected error, got nil")
 
@@ -372,13 +359,12 @@ func TestCheckpointLS_WrongMode(t *testing.T) {
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeaded, store.InvocationStatusFinished, nil)
-	socketPath := startTestDaemonForCheckpoint(t, env)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointLSOpts{
-		InvocationRef:        env.InvocationID,
-		DataDirOverride:      env.DataDir,
-		DaemonSocketOverride: socketPath,
+		InvocationRef:   env.InvocationID,
+		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "CheckpointLS() error")
 
@@ -424,6 +410,7 @@ func TestCheckpointApply_InvocationNotFound(t *testing.T) {
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, nil)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointApply(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointApplyOpts{
@@ -443,6 +430,7 @@ func TestCheckpointApply_WrongMode(t *testing.T) {
 	}
 
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeaded, store.InvocationStatusFinished, nil)
+	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := CheckpointApply(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointApplyOpts{

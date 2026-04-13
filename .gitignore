@@ -39,9 +39,16 @@ Thumbs.db
 # Build artifacts
 dist/
 bin/
+.go-cache/
+.go-cache-local/
 
 # Local environment variables
 .env
+
+# Scratch and generated repository clutter
+tmp/
+tmp.md
+internal/runservice/repos/runs/logs/
 
 # completions
 completions/

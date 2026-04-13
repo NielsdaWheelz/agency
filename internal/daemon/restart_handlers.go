@@ -113,7 +113,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	}
 
 	effectiveRunnerArgs := mergeRestartRunnerArgs(canonicalRunner, meta.RunnerArgs, req.RunnerArgs)
-	if err := validateHeadlessRunnerArgs(canonicalRunner, effectiveRunnerArgs); err != nil {
+	if _, err := validateControlPlaneStartRunner(canonicalRunner, effectiveRunnerArgs, true); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerArgConflict

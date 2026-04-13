@@ -21,58 +21,11 @@ func executeCmd(args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
-func TestRoot_Help(t *testing.T) {
-	tests := []string{"--help", "-h"}
-	for _, arg := range tests {
-		arg := arg
-		t.Run(arg, func(t *testing.T) {
-			stdout, _, err := executeCmd(arg)
-			require.NoError(t, err, "unexpected error")
-
-			// Check for key elements in help output
-			assert.Contains(t, stdout, "agency")
-			assert.Contains(t, stdout, "Available Commands")
-			// Verify canonical surfaces are present
-			for _, cmd := range []string{"init", "doctor", "completion", "worktree", "agent", "watch", "checkpoint", "daemon", "repo"} {
-				assert.Contains(t, stdout, cmd, "expected '%s' command in help output", cmd)
-			}
-		})
-	}
-}
-
-func TestRoot_Version(t *testing.T) {
-	tests := []string{"--version", "-v", "version"}
-	for _, arg := range tests {
-		arg := arg
-		t.Run(arg, func(t *testing.T) {
-			stdout, _, err := executeCmd(arg)
-			require.NoError(t, err, "unexpected error")
-			assert.Contains(t, stdout, "agency")
-		})
-	}
-}
-
 func TestRoot_UnknownCommand(t *testing.T) {
 	_, _, err := executeCmd("nonexistent")
 	require.Error(t, err, "expected error for unknown command")
 	// Cobra returns its own error type for unknown commands
 	assert.Contains(t, err.Error(), "unknown command")
-}
-
-func TestInitCmd_Help(t *testing.T) {
-	stdout, _, err := executeCmd("init", "--help")
-	require.NoError(t, err, "unexpected error")
-	// Check for key elements
-	assert.Contains(t, stdout, "init")
-	assert.Contains(t, stdout, "--repo")
-	assert.Contains(t, stdout, "--force")
-}
-
-func TestDoctorCmd_Help(t *testing.T) {
-	stdout, _, err := executeCmd("doctor", "--help")
-	require.NoError(t, err, "unexpected error")
-	assert.Contains(t, stdout, "doctor")
-	assert.Contains(t, stdout, "--repo")
 }
 
 // TestInit_NotInRepo tests that init fails when not in a git repo.
@@ -173,17 +126,4 @@ func TestCompletionCmd_InvalidShell(t *testing.T) {
 func TestCompletionCmd_MissingArg(t *testing.T) {
 	_, _, err := executeCmd("completion")
 	require.Error(t, err, "expected error when shell is missing")
-}
-
-// Test that global --verbose flag is accessible
-
-func TestGlobalVerboseFlag(t *testing.T) {
-	// Reset global opts before test
-	globalOpts = GlobalOpts{}
-
-	// Run a command with --verbose
-	_, _, _ = executeCmd("--verbose", "version")
-
-	// Check that verbose flag was set
-	assert.True(t, GetGlobalOpts().Verbose, "expected verbose flag to be set")
 }

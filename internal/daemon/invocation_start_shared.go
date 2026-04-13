@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
@@ -39,12 +40,28 @@ func safeIntPtr(p *int) int {
 	return *p
 }
 
-func validateRunnerArgs(runner string, args []string) error {
-	return runners.ValidateArgs(runner, args)
+func validateControlPlaneStartRunner(runner string, args []string, headless bool) (string, error) {
+	canonicalRunner, err := runners.Canonicalize(runner)
+	if err != nil {
+		return "", err
+	}
+	if headless {
+		if err := runners.ValidateHeadlessArgs(canonicalRunner, args); err != nil {
+			return "", err
+		}
+		return canonicalRunner, nil
+	}
+	if err := runners.ValidateArgs(canonicalRunner, args); err != nil {
+		return "", err
+	}
+	return canonicalRunner, nil
 }
 
-func validateHeadlessRunnerArgs(runner string, args []string) error {
-	return runners.ValidateHeadlessArgs(runner, args)
+func validateControlPlaneStartInvocationName(name string) error {
+	if name == "" {
+		return nil
+	}
+	return core.ValidateName(name)
 }
 
 func isInsideAgencyManagedWorktree(path, dataDir string) bool {

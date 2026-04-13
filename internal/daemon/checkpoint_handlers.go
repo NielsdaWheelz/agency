@@ -39,7 +39,7 @@ func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request, invoc
 	}
 }
 
-// handleCheckpointApply handles POST /invocations/{id}/checkpoints/apply.
+// handleCheckpointApply handles POST /invocations/{ref}/checkpoints/apply.
 func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, invocationID string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
@@ -63,8 +63,22 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		s.writeCheckpointError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		return
+	}
+
 	// Repo-scoped lock serializes rollback mutations with other git-mutating flows.
-	unlock, err := s.repoLock.Lock(repoID, "checkpoint_apply")
+	unlock, err := s.repoLock.Lock(record.RepoID, "checkpoint_apply")
 	if err != nil {
 		s.writeCheckpointError(
 			w,
@@ -79,7 +93,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	defer func() { _ = unlock() }()
 
 	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
@@ -107,12 +121,12 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	// Get sandbox path and checkpoints directory
 	sandboxPath := meta.SandboxPath
-	checkpointsDir := s.Store.InvocationDir(repoID, invocationID)
-	eventsPath := s.Store.InvocationEventsPath(repoID, invocationID)
+	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
+	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
 
 	// Create applier and apply checkpoint
 	applier := checkpoint.NewApplierWithWriter(
-		invocationID,
+		record.InvocationID,
 		sandboxPath,
 		checkpointsDir,
 		eventsPath,

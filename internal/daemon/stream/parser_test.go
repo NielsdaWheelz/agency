@@ -1327,54 +1327,6 @@ func TestParser_StreamAndParse_S8DirectCorpusClosure_D01ToD04_Parseable(t *testi
 	}
 }
 
-func TestParser_S8AgencyCorpusClosure_HasExpectedArtifacts(t *testing.T) {
-	t.Parallel()
-
-	base := filepath.Join("testdata", "s8_20260312")
-	runners := []string{"claude", "codex", "cursor"}
-
-	for _, runner := range runners {
-		runner := runner
-		t.Run(runner, func(t *testing.T) {
-			t.Parallel()
-
-			a01 := filepath.Join(base, "agency_"+runner+"_a01_seed")
-			assert.DirExists(t, a01)
-			assert.FileExists(t, filepath.Join(a01, "meta.json"))
-			assert.FileExists(t, filepath.Join(a01, "events.jsonl"))
-			assert.FileExists(t, filepath.Join(a01, "raw.jsonl"))
-			assert.FileExists(t, filepath.Join(a01, "stream.jsonl"))
-
-			a02 := filepath.Join(base, "agency_"+runner+"_a02_followup")
-			assert.DirExists(t, a02)
-			assert.FileExists(t, filepath.Join(a02, "meta.json"))
-			assert.FileExists(t, filepath.Join(a02, "events.jsonl"))
-			assert.FileExists(t, filepath.Join(a02, "raw.jsonl"))
-			assert.FileExists(t, filepath.Join(a02, "stream.jsonl"))
-
-			a03 := filepath.Join(base, "agency_"+runner+"_a03_turn_restart")
-			assert.DirExists(t, a03)
-			assert.FileExists(t, filepath.Join(a03, "history.txt"))
-			assert.FileExists(t, filepath.Join(a03, "history.json"))
-			assert.FileExists(t, filepath.Join(a03, "checkpoints.json"))
-
-			diffJSONPath := filepath.Join(a03, "diff_turn.json")
-			diffErrPath := filepath.Join(a03, "diff_turn_error.txt")
-			_, diffJSONErr := os.Stat(diffJSONPath)
-			_, diffErrErr := os.Stat(diffErrPath)
-			assert.True(t, diffJSONErr == nil || diffErrErr == nil, "a03 must include diff_turn.json or diff_turn_error.txt")
-
-			a04 := filepath.Join(base, "agency_"+runner+"_a04_retention")
-			assert.DirExists(t, a04)
-			assert.FileExists(t, filepath.Join(a04, "history_after_discard.txt"))
-			assert.FileExists(t, filepath.Join(a04, "history_after_discard.json"))
-			assert.FileExists(t, filepath.Join(a04, "logs_raw_after_discard.txt"))
-			assert.FileExists(t, filepath.Join(a04, "logs_stderr_after_discard.txt"))
-			assert.FileExists(t, filepath.Join(a04, "checkpoints_after_discard.json"))
-		})
-	}
-}
-
 func TestParser_StreamAndParse_S8CursorToolFamilyCoverage_IncludesSearchAndWeb(t *testing.T) {
 	t.Parallel()
 

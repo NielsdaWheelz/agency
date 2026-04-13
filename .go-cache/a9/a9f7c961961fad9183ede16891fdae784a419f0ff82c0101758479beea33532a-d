@@ -1,4 +1,0 @@
-./fake_runner.go
-./fake_tmux.go
-./git_env.go
-./repo.go

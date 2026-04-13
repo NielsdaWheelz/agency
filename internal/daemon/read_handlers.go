@@ -760,7 +760,10 @@ func (s *Server) getRepoIDsForQuery(filterRepoRef string) ([]string, error) {
 	resolved, resolveErr := ids.ResolveRepoRef(filterRepoRef, refs)
 	if resolveErr != nil {
 		if _, ok := resolveErr.(*ids.ErrRepoNotFound); ok {
-			return []string{filterRepoRef}, nil
+			if _, statErr := os.Stat(s.Store.RepoDir(filterRepoRef)); statErr == nil {
+				return []string{filterRepoRef}, nil
+			}
+			return []string{}, nil
 		}
 		return nil, resolveErr
 	}

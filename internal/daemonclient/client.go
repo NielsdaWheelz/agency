@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,21 @@ import (
 // Client communicates with the agency daemon over Unix socket.
 type Client struct {
 	httpClient *http.Client
+}
+
+const daemonBaseURL = "http://daemon"
+
+type apiResponseEnvelope struct {
+	OK           bool            `json:"ok"`
+	APIVersion   int             `json:"api_version"`
+	BuildVersion string          `json:"build_version,omitempty"`
+	GitSHA       string          `json:"git_sha,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	Hint         string          `json:"hint,omitempty"`
+	Details      json.RawMessage `json:"details,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
 }
 
 // DaemonReadError carries the full daemon read API error envelope for consumers
@@ -60,11 +76,9 @@ func AsDaemonReadError(err error) (*DaemonReadError, bool) {
 
 // readAPIErrorRich creates a DaemonReadError from a failed APIResponse,
 // preserving error_code, message, hint, and raw structured details.
-func readAPIErrorRich(resp daemon.APIResponse) *DaemonReadError {
+func readAPIErrorRich(resp apiResponseEnvelope) *DaemonReadError {
 	var rawDetails json.RawMessage
-	if resp.Details != nil {
-		rawDetails, _ = json.Marshal(resp.Details)
-	}
+	rawDetails = append(json.RawMessage(nil), resp.Details...)
 	return &DaemonReadError{
 		AgencyErr: &errors.AgencyError{
 			Code: errors.Code(resp.ErrorCode),
@@ -73,6 +87,70 @@ func readAPIErrorRich(resp daemon.APIResponse) *DaemonReadError {
 		Hint:       resp.Hint,
 		RawDetails: rawDetails,
 	}
+}
+
+func (c *Client) newJSONRequest(ctx context.Context, method, rawURL string, reqBody any) (*http.Request, error) {
+	var bodyReader io.Reader
+	if reqBody != nil {
+		body, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, err
+		}
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, reqBody any, respBody any) error {
+	req, err := c.newJSONRequest(ctx, method, rawURL, reqBody)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if respBody == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBody any) (*apiResponseEnvelope, error) {
+	req, err := c.newJSONRequest(ctx, method, rawURL, reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp apiResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+	return &apiResp, nil
+}
+
+func decodeAPIResponseData(raw json.RawMessage, target any) error {
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+	return json.Unmarshal(raw, target)
 }
 
 // NewClient creates a new daemon client.
@@ -93,19 +171,8 @@ func NewClient(socketPath string) *Client {
 
 // Health checks the daemon health.
 func (c *Client) Health(ctx context.Context) (*daemon.HealthResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://daemon/health", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var health daemon.HealthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodGet, daemonBaseURL+"/health", nil, &health); err != nil {
 		return nil, err
 	}
 
@@ -164,26 +231,8 @@ func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlan
 		NoIncludeUntracked: opts.NoIncludeUntracked, // PR-08
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := "http://daemon/invocations/start_headless"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.ControlPlaneStartResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, daemonBaseURL+"/invocations/start_headless", req, &result); err != nil {
 		return nil, err
 	}
 
@@ -207,26 +256,8 @@ func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts ControlPlaneS
 		NoIncludeUntracked: opts.NoIncludeUntracked,
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := "http://daemon/invocations/start_headed"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.ControlPlaneStartHeadedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, daemonBaseURL+"/invocations/start_headed", req, &result); err != nil {
 		return nil, err
 	}
 
@@ -241,30 +272,13 @@ func (c *Client) SubmitFollowUpPrompt(ctx context.Context, invocationRef, repoID
 		ClientRequestID: clientRequestID,
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
 	u := fmt.Sprintf("http://daemon/invocations/%s/chat", url.PathEscape(invocationRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.ControlPlaneFollowUpPromptResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, u, reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -295,20 +309,8 @@ func (c *Client) CheckAPIVersion(ctx context.Context) error {
 
 // Stop sends a graceful stop signal to an invocation.
 func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon.InvocationActionResponse, error) {
-	url := fmt.Sprintf("http://daemon/invocations/%s/stop?repo_id=%s", invocationID, repoID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.InvocationActionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/stop?repo_id=%s", daemonBaseURL, invocationID, repoID), nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -317,20 +319,8 @@ func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon
 
 // Kill forcefully terminates an invocation.
 func (c *Client) Kill(ctx context.Context, repoID, invocationID string) (*daemon.InvocationActionResponse, error) {
-	url := fmt.Sprintf("http://daemon/invocations/%s/kill?repo_id=%s", invocationID, repoID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.InvocationActionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/kill?repo_id=%s", daemonBaseURL, invocationID, repoID), nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -339,24 +329,12 @@ func (c *Client) Kill(ctx context.Context, repoID, invocationID string) (*daemon
 
 // Shutdown requests graceful daemon shutdown.
 func (c *Client) Shutdown(ctx context.Context, force bool) (*daemon.ShutdownResponse, error) {
-	url := "http://daemon/shutdown"
+	url := daemonBaseURL + "/shutdown"
 	if force {
 		url += "?force=true"
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.ShutdownResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, url, nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -407,26 +385,8 @@ func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*
 		ParentBranch:   opts.ParentBranch,
 		IdempotencyKey: opts.IdempotencyKey,
 	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://daemon/worktrees/create", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.WorktreeCreateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, daemonBaseURL+"/worktrees/create", req, &result); err != nil {
 		return nil, err
 	}
 
@@ -435,30 +395,9 @@ func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*
 
 // WorktreeRm removes an integration worktree via the daemon.
 func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, force bool) (*daemon.WorktreeRmResponse, error) {
-	req := daemon.WorktreeRmRequest{
-		Force: force,
-	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := fmt.Sprintf("http://daemon/worktrees/%s/rm?repo_id=%s", worktreeRef, repoID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
+	req := daemon.WorktreeRmRequest{Force: force}
 	var result daemon.WorktreeRmResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/worktrees/%s/rm?repo_id=%s", daemonBaseURL, url.PathEscape(worktreeRef), url.QueryEscape(repoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -469,30 +408,9 @@ func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, for
 
 // CheckpointApply applies a checkpoint to an invocation's sandbox.
 func (c *Client) CheckpointApply(ctx context.Context, repoID, invocationID string, checkpointID int) (*daemon.CheckpointApplyResponse, error) {
-	req := daemon.CheckpointApplyRequest{
-		CheckpointID: checkpointID,
-	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := fmt.Sprintf("http://daemon/invocations/%s/checkpoints/apply?repo_id=%s", invocationID, repoID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
+	req := daemon.CheckpointApplyRequest{CheckpointID: checkpointID}
 	var result daemon.CheckpointApplyResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/checkpoints/apply?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -514,29 +432,12 @@ func (c *Client) RestartFromCheckpoint(ctx context.Context, invocationRef, repoI
 		RunnerArgs:   opts.RunnerArgs,
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	u := fmt.Sprintf("http://daemon/invocations/%s/restart", url.PathEscape(invocationRef))
+	u := fmt.Sprintf("%s/invocations/%s/restart", daemonBaseURL, url.PathEscape(invocationRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.RestartFromCheckpointResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, u, req, &result); err != nil {
 		return nil, err
 	}
 
@@ -559,27 +460,8 @@ func (c *Client) Land(ctx context.Context, opts LandOpts) (*daemon.LandResponse,
 		Apply:       opts.Apply,
 		RequireBase: opts.RequireBase,
 	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := fmt.Sprintf("http://daemon/invocations/%s/land?repo_id=%s", opts.InvocationID, opts.RepoID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.LandResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/land?repo_id=%s", daemonBaseURL, url.PathEscape(opts.InvocationID), url.QueryEscape(opts.RepoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -589,27 +471,8 @@ func (c *Client) Land(ctx context.Context, opts LandOpts) (*daemon.LandResponse,
 // Discard discards a sandbox without landing via daemon.
 func (c *Client) Discard(ctx context.Context, repoID, invocationID string) (*daemon.DiscardResponse, error) {
 	req := daemon.DiscardRequest{}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := fmt.Sprintf("http://daemon/invocations/%s/discard?repo_id=%s", invocationID, repoID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.DiscardResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/discard?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -635,7 +498,7 @@ type ListWorktreesResult struct {
 
 // ListWorktrees lists integration worktrees via the daemon.
 func (c *Client) ListWorktrees(ctx context.Context, opts ListWorktreesOpts) (*ListWorktreesResult, error) {
-	u := "http://daemon/worktrees?"
+	u := daemonBaseURL + "/worktrees?"
 	if opts.RepoID != "" {
 		u += "repo_id=" + url.QueryEscape(opts.RepoID) + "&"
 	}
@@ -650,33 +513,16 @@ func (c *Client) ListWorktrees(ctx context.Context, opts ListWorktreesOpts) (*Li
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.ListWorktreesData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -696,37 +542,21 @@ type GetWorktreeResult struct {
 // GetWorktree gets a single worktree by reference via the daemon, preserving
 // structured read errors for ambiguity and hint propagation.
 func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*GetWorktreeResult, error) {
-	u := fmt.Sprintf("http://daemon/worktrees/%s", url.PathEscape(ref))
+	u := fmt.Sprintf("%s/worktrees/%s", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
-		return nil, readAPIErrorRich(apiResp)
+		return nil, readAPIErrorRich(*apiResp)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var worktree daemon.WorktreeDTO
-	if err := json.Unmarshal(dataBytes, &worktree); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &worktree); err != nil {
 		return nil, err
 	}
 
@@ -755,7 +585,7 @@ type ListInvocationsResult struct {
 
 // ListInvocations lists invocations via the daemon.
 func (c *Client) ListInvocations(ctx context.Context, opts ListInvocationsOpts) (*ListInvocationsResult, error) {
-	u := "http://daemon/invocations?"
+	u := daemonBaseURL + "/invocations?"
 	if opts.RepoID != "" {
 		u += "repo_id=" + url.QueryEscape(opts.RepoID) + "&"
 	}
@@ -776,33 +606,16 @@ func (c *Client) ListInvocations(ctx context.Context, opts ListInvocationsOpts) 
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.ListInvocationsData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -822,37 +635,21 @@ type GetInvocationResult struct {
 // GetInvocation gets a single invocation by reference via the daemon,
 // preserving structured read errors for ambiguity and hint propagation.
 func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (*GetInvocationResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s", url.PathEscape(ref))
+	u := fmt.Sprintf("%s/invocations/%s", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
-		return nil, readAPIErrorRich(apiResp)
+		return nil, readAPIErrorRich(*apiResp)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var invocation daemon.InvocationDTO
-	if err := json.Unmarshal(dataBytes, &invocation); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &invocation); err != nil {
 		return nil, err
 	}
 
@@ -880,7 +677,7 @@ type GetInvocationDiffResult struct {
 
 // GetInvocationDiff gets the diff for an invocation via the daemon.
 func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID string, opts GetInvocationDiffOpts) (*GetInvocationDiffResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/diff?", url.PathEscape(ref))
+	u := fmt.Sprintf("%s/invocations/%s/diff?", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
@@ -904,33 +701,16 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var diff daemon.InvocationDiffData
-	if err := json.Unmarshal(dataBytes, &diff); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &diff); err != nil {
 		return nil, err
 	}
 
@@ -948,37 +728,21 @@ type GetInvocationReviewResult struct {
 
 // GetInvocationReview gets review/readiness data for an invocation via the daemon.
 func (c *Client) GetInvocationReview(ctx context.Context, ref string, repoID string) (*GetInvocationReviewResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/review", url.PathEscape(ref))
+	u := fmt.Sprintf("%s/invocations/%s/review", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var review daemon.InvocationReviewData
-	if err := json.Unmarshal(dataBytes, &review); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &review); err != nil {
 		return nil, err
 	}
 
@@ -1000,29 +764,12 @@ func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string,
 		AllowDirty:     opts.AllowDirty,
 		ForceWithLease: opts.ForceWithLease,
 	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	u := fmt.Sprintf("http://daemon/worktrees/%s/pr/sync", url.PathEscape(worktreeRef))
+	u := fmt.Sprintf("%s/worktrees/%s/pr/sync", daemonBaseURL, url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.WorktreePRSyncResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, u, reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1044,29 +791,12 @@ func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string
 		Confirmed:        opts.Confirmed,
 		NoDeleteBranch:   opts.NoDeleteBranch,
 	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	u := fmt.Sprintf("http://daemon/worktrees/%s/merge", url.PathEscape(worktreeRef))
+	u := fmt.Sprintf("%s/worktrees/%s/merge", daemonBaseURL, url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.WorktreePRMergeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, u, reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1075,29 +805,12 @@ func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string
 // WorktreeUpdate performs worktree-scoped fetch + rebase via daemon.
 func (c *Client) WorktreeUpdate(ctx context.Context, worktreeRef, repoID string) (*daemon.WorktreeUpdateResponse, error) {
 	reqBody := daemon.WorktreeUpdateRequest{}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	u := fmt.Sprintf("http://daemon/worktrees/%s/update", url.PathEscape(worktreeRef))
+	u := fmt.Sprintf("%s/worktrees/%s/update", daemonBaseURL, url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var result daemon.WorktreeUpdateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.doJSONRequest(ctx, http.MethodPost, u, reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1118,7 +831,7 @@ type GetInvocationLogsOffsetResult struct {
 
 // GetInvocationLogsOffset gets logs at a byte offset for an invocation via the daemon.
 func (c *Client) GetInvocationLogsOffset(ctx context.Context, ref string, repoID string, opts GetInvocationLogsOffsetOpts) (*GetInvocationLogsOffsetResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/logs?", url.PathEscape(ref))
+	u := fmt.Sprintf("%s/invocations/%s/logs?", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
@@ -1132,33 +845,16 @@ func (c *Client) GetInvocationLogsOffset(ctx context.Context, ref string, repoID
 	}
 	u += fmt.Sprintf("limit=%d", limit)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var logs daemon.InvocationLogsOffsetData
-	if err := json.Unmarshal(dataBytes, &logs); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &logs); err != nil {
 		return nil, err
 	}
 
@@ -1184,7 +880,7 @@ type GetInvocationTimelineResult struct {
 
 // GetInvocationTimeline gets the unified timeline for an invocation via daemon.
 func (c *Client) GetInvocationTimeline(ctx context.Context, ref string, repoID string, opts GetInvocationTimelineOpts) (*GetInvocationTimelineResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/timeline?", url.PathEscape(ref))
+	u := fmt.Sprintf("%s/invocations/%s/timeline?", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
@@ -1199,32 +895,16 @@ func (c *Client) GetInvocationTimeline(ctx context.Context, ref string, repoID s
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.InvocationTimelineData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -1250,7 +930,7 @@ type ListCheckpointsResult struct {
 
 // ListCheckpoints lists checkpoints for an invocation via the daemon.
 func (c *Client) ListCheckpoints(ctx context.Context, invocationRef string, repoID string, opts ListCheckpointsOpts) (*ListCheckpointsResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/checkpoints?", url.PathEscape(invocationRef))
+	u := fmt.Sprintf("%s/invocations/%s/checkpoints?", daemonBaseURL, url.PathEscape(invocationRef))
 	if repoID != "" {
 		u += "repo_id=" + url.QueryEscape(repoID) + "&"
 	}
@@ -1262,33 +942,16 @@ func (c *Client) ListCheckpoints(ctx context.Context, invocationRef string, repo
 	}
 	u = u[:len(u)-1] // trim trailing & or ?
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.ListCheckpointsData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -1318,43 +981,26 @@ func (c *Client) RegisterRepo(ctx context.Context, repoRoot string) (*RegisterRe
 		RepoRoot: repoRoot,
 	}
 
-	body, err := json.Marshal(reqBody)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodPost, daemonBaseURL+"/repos/register", reqBody)
 	if err != nil {
 		return nil, err
 	}
+	if !apiResp.OK {
+		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
+	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://daemon/repos/register", bytes.NewReader(body))
-	if err != nil {
+	var data daemon.RepoRegisterData
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var result daemon.RepoRegisterResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	if !result.OK {
-		return nil, errors.New(errors.Code(result.ErrorCode), result.Message)
-	}
-
-	if result.Data == nil {
-		return nil, errors.New(errors.EInternal, "daemon returned success but no data")
 	}
 
 	return &RegisterRepoResult{
-		RepoID:                  result.Data.RepoID,
-		RepoKey:                 result.Data.RepoKey,
-		Paths:                   result.Data.Paths,
-		PreferredRoot:           result.Data.PreferredRoot,
-		PreferredRootAccessible: result.Data.PreferredRootAccessible,
-		LastSeenAt:              result.Data.LastSeenAt,
+		RepoID:                  data.RepoID,
+		RepoKey:                 data.RepoKey,
+		Paths:                   data.Paths,
+		PreferredRoot:           data.PreferredRoot,
+		PreferredRootAccessible: data.PreferredRootAccessible,
+		LastSeenAt:              data.LastSeenAt,
 	}, nil
 }
 
@@ -1366,32 +1012,16 @@ type ListReposResult struct {
 
 // ListRepos lists all registered repos.
 func (c *Client) ListRepos(ctx context.Context) (*ListReposResult, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://daemon/repos", nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/repos", nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.ListReposData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -1409,33 +1039,16 @@ type GetRepoResult struct {
 
 // GetRepo gets a single repo by ID.
 func (c *Client) GetRepo(ctx context.Context, repoID string) (*GetRepoResult, error) {
-	u := fmt.Sprintf("http://daemon/repos/%s", url.PathEscape(repoID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s", daemonBaseURL, url.PathEscape(repoID)), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var dto daemon.RepoDTO
-	if err := json.Unmarshal(dataBytes, &dto); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &dto); err != nil {
 		return nil, err
 	}
 
@@ -1455,34 +1068,16 @@ type S1ReleaseReadinessResult struct {
 
 // GetS1ReleaseReadiness queries the daemon for S1 release readiness.
 func (c *Client) GetS1ReleaseReadiness(ctx context.Context, repoID string) (*S1ReleaseReadinessResult, error) {
-	u := "http://daemon/spec/v2.1/s1/release/readiness?repo_id=" + url.QueryEscape(repoID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/spec/v2.1/s1/release/readiness?repo_id="+url.QueryEscape(repoID), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.S1ReleaseReadinessData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -1500,34 +1095,16 @@ type S1ClosureReportResult struct {
 
 // GetS1ClosureReport queries the daemon for the S1 closure report.
 func (c *Client) GetS1ClosureReport(ctx context.Context, repoID string) (*S1ClosureReportResult, error) {
-	u := "http://daemon/spec/v2.1/s1/release/closure-report?repo_id=" + url.QueryEscape(repoID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/spec/v2.1/s1/release/closure-report?repo_id="+url.QueryEscape(repoID), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.S1ClosureReportData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
@@ -1545,34 +1122,16 @@ type S1FreezeReadinessResult struct {
 
 // GetS1FreezeReadiness queries the daemon for S1 freeze readiness.
 func (c *Client) GetS1FreezeReadiness(ctx context.Context, repoID string) (*S1FreezeReadinessResult, error) {
-	u := "http://daemon/spec/v2.1/s1/release/freeze-readiness?repo_id=" + url.QueryEscape(repoID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/spec/v2.1/s1/release/freeze-readiness?repo_id="+url.QueryEscape(repoID), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
 	if !apiResp.OK {
 		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
 	}
 
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
 	var data daemon.S1FreezeReadinessData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
 		return nil, err
 	}
 
