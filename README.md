@@ -160,7 +160,7 @@ reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is str
 - **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
 - **[docs/git-worktrees.md](docs/git-worktrees.md)** — repo, integration worktree, invocation, and sandbox model
 - **[docs/persistence.md](docs/persistence.md)** — on-disk schemas, atomic writes, and permissions
-- **[docs/testing.md](docs/testing.md)** — test layers, fakes, fixtures, and e2e rules
+- **[docs/testing.md](docs/testing.md)** — testing standards, layers, fixtures, and e2e rules
 - **[docs/modules/index.md](docs/modules/index.md)** — subsystem-owned docs
 
 ## license

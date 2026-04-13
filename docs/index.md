@@ -23,7 +23,7 @@ This directory is the canonical home for repository documentation.
 - [errors.md](errors.md): stable error-code and corruption rules
 - [concurrency.md](concurrency.md): repo locks and mutation ordering
 - [modules/index.md](modules/index.md): subsystem-owned docs
-- [testing.md](testing.md): test layers, fixtures, and e2e rules
+- [testing.md](testing.md): testing standards, layers, fixtures, and e2e rules
 
 ## Placement Rules
 
