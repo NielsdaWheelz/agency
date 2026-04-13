@@ -41,15 +41,15 @@ type normalizedMergeRequest struct {
 }
 
 type mergeResult struct {
-	Branch             string
-	PRNumber           int
-	PRURL              string
-	Strategy           mergeStrategy
-	DeleteBranch       bool
-	MergeLogPath       string
-	VerifyLog          string
-	ReportSource       string
-	ReportDiagnostics  []report.Diagnostic
+	Branch            string
+	PRNumber          int
+	PRURL             string
+	Strategy          mergeStrategy
+	DeleteBranch      bool
+	MergeLogPath      string
+	VerifyLog         string
+	ReportSource      string
+	ReportDiagnostics []report.Diagnostic
 }
 
 type mergePRView struct {

@@ -124,7 +124,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		PRURL:                 result.PRURL,
 		PRAction:              result.PRAction,
 		ReportSource:          result.ReportSource,
-		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
+		ReportDiagnostics:     reportDiagnostics(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }

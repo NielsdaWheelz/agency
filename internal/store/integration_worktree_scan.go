@@ -123,4 +123,3 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 
 	return records, nil
 }
-

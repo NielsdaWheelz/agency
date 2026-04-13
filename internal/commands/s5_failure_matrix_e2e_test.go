@@ -201,13 +201,13 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		}, &stdout, &stderr)
 		require.NoError(t, err)
 
-			// Oversized reports are now rejected directly; the command returns
-			// the standard JSON error envelope instead of synthesizing a fallback.
-			payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
-			assert.Equal(t, false, payload["ok"])
-			assert.Equal(t, string(errors.EReportOversized), payload["error_code"])
-			assertS5E2EHasRequestID(t, payload)
-		})
+		// Oversized reports are now rejected directly; the command returns
+		// the standard JSON error envelope instead of synthesizing a fallback.
+		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
+		assert.Equal(t, false, payload["ok"])
+		assert.Equal(t, string(errors.EReportOversized), payload["error_code"])
+		assertS5E2EHasRequestID(t, payload)
+	})
 
 	t.Run("merge_log_persistence_failure", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, _, branch, daemonRunner, fsys := setupS5E2EMergeReadyInvocation(t, "s5-merge-log-failure")

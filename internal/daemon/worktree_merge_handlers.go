@@ -173,7 +173,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		MergeLogPath:          result.MergeLogPath,
 		VerifyLogPath:         result.VerifyLog,
 		ReportSource:          result.ReportSource,
-		ReportDiagnostics:     reportDiagnosticsToDaemon(result.ReportDiagnostics),
+		ReportDiagnostics:     reportDiagnostics(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }

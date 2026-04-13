@@ -481,19 +481,19 @@ func TestFormatWithTailer(t *testing.T) {
 func TestDeriveTryLines(t *testing.T) {
 	t.Parallel()
 
-		tests := []struct {
-			name     string
-			code     Code
-			details  map[string]string
-			contains string
-		}{
-			{
-				name:     "gh not authenticated suggests login",
-				code:     EGhNotAuthenticated,
-				details:  nil,
-				contains: "gh auth login",
-			},
-		}
+	tests := []struct {
+		name     string
+		code     Code
+		details  map[string]string
+		contains string
+	}{
+		{
+			name:     "gh not authenticated suggests login",
+			code:     EGhNotAuthenticated,
+			details:  nil,
+			contains: "gh auth login",
+		},
+	}
 
 	for _, tt := range tests {
 		tt := tt

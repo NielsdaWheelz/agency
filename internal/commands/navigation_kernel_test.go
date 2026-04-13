@@ -11,10 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 func successRepo(repoID string) func(context.Context) (*RepoContextResult, error) {
 	return func(context.Context) (*RepoContextResult, error) {
 		return &RepoContextResult{RepoID: repoID}, nil
@@ -27,21 +23,19 @@ func successDaemon() func(context.Context) error {
 
 func worktreeResult(repoID, id, path string) *NavigationResult {
 	return &NavigationResult{
-		TargetKind:       TargetWorktree,
-		ResolvedRepoID:   repoID,
-		ResolvedID:       id,
-		ResolvedPath:     path,
-		ResolutionSource: "daemon_get_worktree",
+		TargetKind:     TargetWorktree,
+		ResolvedRepoID: repoID,
+		ResolvedID:     id,
+		ResolvedPath:   path,
 	}
 }
 
 func invocationResult(repoID, id, path string) *NavigationResult {
 	return &NavigationResult{
-		TargetKind:       TargetInvocation,
-		ResolvedRepoID:   repoID,
-		ResolvedID:       id,
-		ResolvedPath:     path,
-		ResolutionSource: "daemon_get_invocation",
+		TargetKind:     TargetInvocation,
+		ResolvedRepoID: repoID,
+		ResolvedID:     id,
+		ResolvedPath:   path,
 	}
 }
 
@@ -53,10 +47,6 @@ func ambiguousDaemonErr(code errors.Code, msg, hint string, candidates []string)
 		RawDetails: rawDetails,
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Tests: routing lifecycle
-// ---------------------------------------------------------------------------
 
 func TestNavigationKernel_ReadRoutingLifecycle_OrderAndGuards(t *testing.T) {
 	t.Parallel()
@@ -88,7 +78,6 @@ func TestNavigationKernel_ReadRoutingLifecycle_OrderAndGuards(t *testing.T) {
 	}
 
 	intent := NavigationIntent{
-		Verb: "open",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -98,11 +87,7 @@ func TestNavigationKernel_ReadRoutingLifecycle_OrderAndGuards(t *testing.T) {
 
 	result, err := ResolveNavigation(ctx, intent, deps)
 	require.NoError(t, err)
-
-	// Lifecycle ordering enforced
 	assert.Equal(t, []string{"resolve_repo", "ensure_daemon", "check_api_version", "get_worktree"}, callOrder)
-
-	// Resolved target returned
 	assert.Equal(t, "repo-1", result.ResolvedRepoID)
 	assert.Equal(t, "wt-1", result.ResolvedID)
 	assert.Equal(t, "/abs/path", result.ResolvedPath)
@@ -182,7 +167,7 @@ func TestNavigationKernel_NoLocalDiscoveryAfterDaemonRouting(t *testing.T) {
 			TargetKind:     TargetWorktree,
 			Ref:            "alpha",
 		},
-		BootstrapFallbackAllowed: false, // fallback NOT allowed
+		BootstrapFallbackAllowed: false,
 	}
 
 	_, err := ResolveNavigation(ctx, intent, deps)
@@ -190,10 +175,6 @@ func TestNavigationKernel_NoLocalDiscoveryAfterDaemonRouting(t *testing.T) {
 	assert.Equal(t, errors.EDaemonConnectionFailed, errors.GetCode(err))
 	assert.False(t, localDiscoveryCalled, "local discovery spy must not be called when bootstrap fallback is disabled")
 }
-
-// ---------------------------------------------------------------------------
-// Tests: bootstrap fallback boundary (D-005, D-006)
-// ---------------------------------------------------------------------------
 
 func TestNavigationKernel_BootstrapFallbackBoundary_GuardedCallback(t *testing.T) {
 	t.Parallel()
@@ -264,7 +245,7 @@ func TestNavigationKernel_BootstrapFallbackBoundary_GuardedCallback(t *testing.T
 				TargetKind:     TargetWorktree,
 				Ref:            "alpha",
 			},
-			BootstrapFallbackAllowed: false, // disabled
+			BootstrapFallbackAllowed: false,
 		}
 
 		_, err := ResolveNavigation(ctx, intent, deps)
@@ -280,7 +261,7 @@ func TestNavigationKernel_BootstrapFallbackBoundary_GuardedCallback(t *testing.T
 			CheckAPIVersion:  func(ctx context.Context) error { return nil },
 			GetWorktree:      func(ctx context.Context, ref, repoID string) (*NavigationResult, error) { return nil, nil },
 			IsInteractive:    func() bool { return true },
-			FallbackCallback: nil, // absent
+			FallbackCallback: nil,
 		}
 
 		intent := NavigationIntent{
@@ -289,7 +270,7 @@ func TestNavigationKernel_BootstrapFallbackBoundary_GuardedCallback(t *testing.T
 				TargetKind:     TargetWorktree,
 				Ref:            "alpha",
 			},
-			BootstrapFallbackAllowed: true, // enabled, but callback nil
+			BootstrapFallbackAllowed: true,
 		}
 
 		_, err := ResolveNavigation(ctx, intent, deps)
@@ -308,7 +289,7 @@ func TestNavigationKernel_BootstrapFallbackBoundary_GuardedCallback(t *testing.T
 			},
 			EnsureDaemon: func(ctx context.Context) error {
 				order = append(order, "ensure_daemon")
-				return nil // daemon running
+				return nil
 			},
 			CheckAPIVersion: func(ctx context.Context) error {
 				order = append(order, "check_api_version")
@@ -340,10 +321,6 @@ func TestNavigationKernel_BootstrapFallbackBoundary_GuardedCallback(t *testing.T
 		assert.Equal(t, "wt-vfb", result.ResolvedID)
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Tests: daemon failure semantics
-// ---------------------------------------------------------------------------
 
 func TestNavigationKernel_DaemonUnavailable_NoFallback(t *testing.T) {
 	t.Parallel()
@@ -411,10 +388,6 @@ func TestNavigationKernel_DaemonIncompatible_NoFallback(t *testing.T) {
 	assert.False(t, localScanAttempted, "no local store scan after version mismatch")
 }
 
-// ---------------------------------------------------------------------------
-// Tests: TTY preflight
-// ---------------------------------------------------------------------------
-
 func TestNavigationKernel_InteractivePreflight_RequiresTTY(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -435,11 +408,10 @@ func TestNavigationKernel_InteractivePreflight_RequiresTTY(t *testing.T) {
 		GetInvocation: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
 			return nil, nil
 		},
-		IsInteractive: func() bool { return false }, // non-interactive
+		IsInteractive: func() bool { return false },
 	}
 
 	intent := NavigationIntent{
-		Verb: "enter",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -451,21 +423,14 @@ func TestNavigationKernel_InteractivePreflight_RequiresTTY(t *testing.T) {
 	_, err := ResolveNavigation(ctx, intent, deps)
 	require.Error(t, err)
 	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
-
-	// Failure occurs before dispatch — no repo or daemon calls
 	assert.False(t, repoCalled, "repo resolution must not happen before TTY preflight failure")
 	assert.False(t, daemonCalled, "daemon must not be contacted before TTY preflight failure")
 
-	// Recovery hint is non-empty
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
 	require.NotNil(t, ae.Details)
 	assert.NotEmpty(t, ae.Details["hint"], "must include interactive-terminal recovery cue")
 }
-
-// ---------------------------------------------------------------------------
-// Tests: selection identity and stability
-// ---------------------------------------------------------------------------
 
 func TestNavigationKernel_SelectionIdentity_StableForDispatch(t *testing.T) {
 	t.Parallel()
@@ -476,19 +441,18 @@ func TestNavigationKernel_SelectionIdentity_StableForDispatch(t *testing.T) {
 
 	for _, tc := range []struct {
 		name       string
-		verb       string
 		targetKind TargetKind
 		ref        string
 		expected   *NavigationResult
 	}{
-		{"worktree_path", "path", TargetWorktree, "alpha", expectedWT},
-		{"worktree_open", "open", TargetWorktree, "alpha", expectedWT},
-		{"worktree_shell", "shell", TargetWorktree, "alpha", expectedWT},
-		{"worktree_enter", "enter", TargetWorktree, "alpha", expectedWT},
-		{"invocation_path", "path", TargetInvocation, "inv-ref", expectedInv},
-		{"invocation_open", "open", TargetInvocation, "inv-ref", expectedInv},
-		{"invocation_shell", "shell", TargetInvocation, "inv-ref", expectedInv},
-		{"invocation_enter", "enter", TargetInvocation, "inv-ref", expectedInv},
+		{"worktree_path", TargetWorktree, "alpha", expectedWT},
+		{"worktree_open", TargetWorktree, "alpha", expectedWT},
+		{"worktree_shell", TargetWorktree, "alpha", expectedWT},
+		{"worktree_enter", TargetWorktree, "alpha", expectedWT},
+		{"invocation_path", TargetInvocation, "inv-ref", expectedInv},
+		{"invocation_open", TargetInvocation, "inv-ref", expectedInv},
+		{"invocation_shell", TargetInvocation, "inv-ref", expectedInv},
+		{"invocation_enter", TargetInvocation, "inv-ref", expectedInv},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := NavigationDeps{
@@ -505,7 +469,6 @@ func TestNavigationKernel_SelectionIdentity_StableForDispatch(t *testing.T) {
 			}
 
 			intent := NavigationIntent{
-				Verb: tc.verb,
 				Selection: NavigationSelection{
 					SelectorSource: SelectorExplicitRef,
 					TargetKind:     tc.targetKind,
@@ -521,154 +484,6 @@ func TestNavigationKernel_SelectionIdentity_StableForDispatch(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Tests: selection normalization
-// ---------------------------------------------------------------------------
-
-func TestNavigationKernel_NormalizeMachineSelectorInput(t *testing.T) {
-	t.Parallel()
-
-	t.Run("valid_machine_ref", func(t *testing.T) {
-		sel, err := NormalizeSelection(SelectorMachineRef, TargetWorktree, "wt-1", "repo-1")
-		require.NoError(t, err)
-		assert.Equal(t, SelectorMachineRef, sel.SelectorSource)
-		assert.Equal(t, TargetWorktree, sel.TargetKind)
-		assert.Equal(t, "wt-1", sel.Ref)
-		assert.Equal(t, "repo-1", sel.RepoID)
-	})
-
-	t.Run("machine_ref_without_repo_id_fails", func(t *testing.T) {
-		_, err := NormalizeSelection(SelectorMachineRef, TargetInvocation, "inv-1", "")
-		require.Error(t, err)
-		assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
-	})
-
-	t.Run("empty_ref_fails", func(t *testing.T) {
-		_, err := NormalizeSelection(SelectorMachineRef, TargetWorktree, "", "repo-1")
-		require.Error(t, err)
-		assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
-	})
-
-	t.Run("unknown_source_fails", func(t *testing.T) {
-		_, err := NormalizeSelection("bogus", TargetWorktree, "ref", "repo-1")
-		require.Error(t, err)
-		assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
-	})
-}
-
-func TestNavigationKernel_ListRowSelection_UsesDaemonIDs(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	t.Run("normalization_prefers_daemon_ids", func(t *testing.T) {
-		sel, err := NormalizeSelection(SelectorListRow, TargetInvocation, "inv-full-id", "repo-from-daemon")
-		require.NoError(t, err)
-		assert.Equal(t, SelectorListRow, sel.SelectorSource)
-		assert.Equal(t, "inv-full-id", sel.Ref)
-		assert.Equal(t, "repo-from-daemon", sel.RepoID)
-	})
-
-	t.Run("list_row_without_repo_id_fails", func(t *testing.T) {
-		_, err := NormalizeSelection(SelectorListRow, TargetWorktree, "wt-1", "")
-		require.Error(t, err)
-		assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
-	})
-
-	t.Run("resolution_uses_list_row_repo_id", func(t *testing.T) {
-		var capturedRepoID string
-		deps := NavigationDeps{
-			ResolveRepo:     successRepo("cwd-repo"),
-			EnsureDaemon:    successDaemon(),
-			CheckAPIVersion: successDaemon(),
-			GetInvocation: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-				capturedRepoID = repoID
-				return invocationResult(repoID, "inv-1", "/path"), nil
-			},
-			IsInteractive: func() bool { return true },
-		}
-
-		intent := NavigationIntent{
-			Selection: NavigationSelection{
-				SelectorSource: SelectorListRow,
-				TargetKind:     TargetInvocation,
-				Ref:            "inv-1",
-				RepoID:         "daemon-repo-id", // from daemon list output
-			},
-		}
-
-		_, err := ResolveNavigation(ctx, intent, deps)
-		require.NoError(t, err)
-		assert.Equal(t, "daemon-repo-id", capturedRepoID, "kernel must use list_row repo_id, not cwd repo_id")
-	})
-}
-
-func TestNavigationKernel_ExplicitRefSelection_Deterministic(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	t.Run("preserves_ref_and_repo_scope", func(t *testing.T) {
-		sel, err := NormalizeSelection(SelectorExplicitRef, TargetWorktree, "alpha", "")
-		require.NoError(t, err)
-		assert.Equal(t, SelectorExplicitRef, sel.SelectorSource)
-		assert.Equal(t, "alpha", sel.Ref)
-		assert.Empty(t, sel.RepoID, "explicit_ref may have empty repo_id")
-	})
-
-	t.Run("daemon_resolution_deterministic", func(t *testing.T) {
-		deps := NavigationDeps{
-			ResolveRepo:     successRepo("repo-1"),
-			EnsureDaemon:    successDaemon(),
-			CheckAPIVersion: successDaemon(),
-			GetWorktree: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-				assert.Equal(t, "alpha", ref)
-				assert.Equal(t, "repo-1", repoID)
-				return worktreeResult("repo-1", "wt-alpha", "/abs/alpha"), nil
-			},
-			IsInteractive: func() bool { return true },
-		}
-
-		intent := NavigationIntent{
-			Selection: NavigationSelection{
-				SelectorSource: SelectorExplicitRef,
-				TargetKind:     TargetWorktree,
-				Ref:            "alpha",
-			},
-		}
-
-		result, err := ResolveNavigation(ctx, intent, deps)
-		require.NoError(t, err)
-		assert.Equal(t, "wt-alpha", result.ResolvedID)
-	})
-
-	t.Run("daemon_not_found_propagates", func(t *testing.T) {
-		deps := NavigationDeps{
-			ResolveRepo:     successRepo("repo-1"),
-			EnsureDaemon:    successDaemon(),
-			CheckAPIVersion: successDaemon(),
-			GetWorktree: func(ctx context.Context, ref, repoID string) (*NavigationResult, error) {
-				return nil, errors.New(errors.EWorktreeNotFound, "worktree 'missing' not found")
-			},
-			IsInteractive: func() bool { return true },
-		}
-
-		intent := NavigationIntent{
-			Selection: NavigationSelection{
-				SelectorSource: SelectorExplicitRef,
-				TargetKind:     TargetWorktree,
-				Ref:            "missing",
-			},
-		}
-
-		_, err := ResolveNavigation(ctx, intent, deps)
-		require.Error(t, err)
-		assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Tests: ambiguity candidate preservation
-// ---------------------------------------------------------------------------
 
 func TestNavigationKernel_ResolveWorktree_AmbiguousPreservesCandidates(t *testing.T) {
 	t.Parallel()
@@ -699,15 +514,11 @@ func TestNavigationKernel_ResolveWorktree_AmbiguousPreservesCandidates(t *testin
 
 	_, err := ResolveNavigation(ctx, intent, deps)
 	require.Error(t, err)
-
-	// Normalized to E_AMBIGUOUS (not entity-specific code)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err))
 
-	// Machine-readable candidate data preserved (not from message text)
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
 	require.NotNil(t, ae.Details)
-
 	assert.Equal(t, "worktree", ae.Details["target_kind"])
 	assert.Equal(t, "2", ae.Details["candidate_count"])
 
@@ -746,13 +557,11 @@ func TestNavigationKernel_ResolveInvocation_AmbiguousPreservesCandidates(t *test
 
 	_, err := ResolveNavigation(ctx, intent, deps)
 	require.Error(t, err)
-
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err))
 
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
 	require.NotNil(t, ae.Details)
-
 	assert.Equal(t, "invocation", ae.Details["target_kind"])
 	assert.Equal(t, "3", ae.Details["candidate_count"])
 

@@ -147,7 +147,7 @@ func (s *Store) InvocationStreamLogPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "stream.jsonl")
 }
 
-// ----- V2 Sandbox paths (legacy log fallback + sandbox state) -----
+// ----- V2 Sandbox paths -----
 
 // SandboxesDir returns the sandboxes directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/
@@ -165,42 +165,6 @@ func (s *Store) SandboxDir(repoID, invocationID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tree/
 func (s *Store) SandboxTreePath(repoID, invocationID string) string {
 	return filepath.Join(s.SandboxDir(repoID, invocationID), "tree")
-}
-
-// SandboxLogsDir returns the logs directory for a sandbox.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/
-func (s *Store) SandboxLogsDir(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxDir(repoID, invocationID), "logs")
-}
-
-// SandboxCheckpointsPath returns the path to a sandbox's checkpoints.json.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/checkpoints.json
-func (s *Store) SandboxCheckpointsPath(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxDir(repoID, invocationID), "checkpoints.json")
-}
-
-// SandboxRunnerStatusPath returns the sandbox-owned runner status path.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tree/.agency/state/runner_status.json
-func (s *Store) SandboxRunnerStatusPath(repoID, invocationID string) string {
-	return runnerstatus.StatusPath(s.SandboxTreePath(repoID, invocationID))
-}
-
-// SandboxRawLogPath returns the path to a sandbox's raw.jsonl log file.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/raw.jsonl
-func (s *Store) SandboxRawLogPath(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "raw.jsonl")
-}
-
-// SandboxStderrLogPath returns the path to a sandbox's stderr.log file.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/stderr.log
-func (s *Store) SandboxStderrLogPath(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "stderr.log")
-}
-
-// SandboxStreamLogPath returns the path to a sandbox's stream.jsonl file (normalized events).
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/logs/stream.jsonl
-func (s *Store) SandboxStreamLogPath(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxLogsDir(repoID, invocationID), "stream.jsonl")
 }
 
 // ----- Daemon state paths -----

@@ -20,7 +20,19 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	params := parseGetDiffParams(r)
+	params, invalid := parseGetDiffParams(r)
+	if invalid != nil {
+		s.writeAPIError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter '%s': %q", invalid.Param, invalid.Value),
+			"",
+			*invalid,
+		)
+		return
+	}
 	if err := validateGetDiffParams(params); err != nil {
 		s.writeAPIError(
 			w,

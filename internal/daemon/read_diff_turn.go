@@ -121,7 +121,7 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		)
 	}
 
-	turns := groupTimelineEntriesIntoTurns(entries, cpFile.Checkpoints)
+	turns := ProjectTimelineTurns(timelineEntriesFromSortable(entries), checkpointDTOsFromCheckpoints(cpFile.Checkpoints))
 	turnIndexByID := make(map[string]int, len(turns))
 	for i, turn := range turns {
 		turnIndexByID[turn.EntryID] = i

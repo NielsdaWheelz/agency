@@ -9,61 +9,18 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 )
 
-func timelineEntriesToPickerEntries(entries []timelineSortableEntry) []historypicker.TimelineEntry {
-	if len(entries) == 0 {
-		return nil
-	}
-
-	pickerEntries := make([]historypicker.TimelineEntry, len(entries))
-	for i, entry := range entries {
-		pickerEntries[i] = historypicker.TimelineEntry{
-			EntryID:   entry.dto.EntryID,
-			Kind:      entry.dto.Kind,
-			Timestamp: entry.dto.Timestamp,
-			Data:      entry.dto.Data,
-		}
-	}
-	return pickerEntries
-}
-
-func checkpointRefsFromCheckpoints(checkpoints []checkpoint.Checkpoint) []historypicker.CheckpointRef {
-	if len(checkpoints) == 0 {
-		return nil
-	}
-
-	refs := make([]historypicker.CheckpointRef, len(checkpoints))
-	for i, cp := range checkpoints {
-		refs[i] = historypicker.CheckpointRef{
-			ID:                   cp.ID,
-			Description:          cp.Description,
-			Diffstat:             cp.Diffstat,
-			ChangedPaths:         cp.ChangedPaths,
-			ChangedPathCount:     cp.ChangedPathCount,
-			ChangedPathTruncated: cp.ChangedPathTruncated,
-		}
-	}
-	return refs
-}
-
-func groupTimelineEntriesIntoTurns(entries []timelineSortableEntry, checkpoints []checkpoint.Checkpoint) []historypicker.Turn {
-	return historypicker.GroupTimelineIntoTurns(
-		timelineEntriesToPickerEntries(entries),
-		checkpointRefsFromCheckpoints(checkpoints),
-	)
-}
-
 func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []historypicker.Turn {
 	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil && !os.IsNotExist(err) {
 		// Best-effort only: review/read surfaces should still work when
 		// checkpoint metadata is unavailable or malformed.
-		return groupTimelineEntriesIntoTurns(entries, nil)
+		return ProjectTimelineTurns(timelineEntriesFromSortable(entries), nil)
 	}
 	if cpFile == nil {
-		return groupTimelineEntriesIntoTurns(entries, nil)
+		return ProjectTimelineTurns(timelineEntriesFromSortable(entries), nil)
 	}
-	return groupTimelineEntriesIntoTurns(entries, cpFile.Checkpoints)
+	return ProjectTimelineTurns(timelineEntriesFromSortable(entries), checkpointDTOsFromCheckpoints(cpFile.Checkpoints))
 }
 
 type invocationActivityProjection struct {
@@ -73,6 +30,181 @@ type invocationActivityProjection struct {
 }
 
 const maxActivitySummaryChars = 240
+
+func timelineEntriesFromSortable(entries []timelineSortableEntry) []TimelineEntryDTO {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	dtos := make([]TimelineEntryDTO, len(entries))
+	for i, entry := range entries {
+		dtos[i] = entry.dto
+	}
+	return dtos
+}
+
+func checkpointDTOsFromCheckpoints(checkpoints []checkpoint.Checkpoint) []CheckpointDTO {
+	if len(checkpoints) == 0 {
+		return nil
+	}
+
+	dtos := make([]CheckpointDTO, len(checkpoints))
+	for i, cp := range checkpoints {
+		dtos[i] = CheckpointDTO{
+			ID:                   cp.ID,
+			CreatedAt:            cp.CreatedAt,
+			Diffstat:             cp.Diffstat,
+			SnapshotCommit:       cp.SnapshotCommit,
+			IncludesUntracked:    cp.IncludesUntracked,
+			Trigger:              cp.Trigger,
+			ToolName:             cp.ToolName,
+			StreamSeq:            cp.StreamSeq,
+			Description:          cp.Description,
+			ChangedPaths:         append([]string(nil), cp.ChangedPaths...),
+			ChangedPathCount:     cp.ChangedPathCount,
+			ChangedPathTruncated: cp.ChangedPathTruncated,
+		}
+	}
+	return dtos
+}
+
+// ProjectTimelineTurns converts daemon timeline and checkpoint DTOs into the
+// grouped turn view used by history and restart flows.
+func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDTO) []historypicker.Turn {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	pickerEntries := make([]historypicker.TimelineEntry, len(entries))
+	for i, entry := range entries {
+		pickerEntries[i] = historypicker.TimelineEntry{
+			EntryID:   entry.EntryID,
+			Kind:      entry.Kind,
+			Timestamp: entry.Timestamp,
+			Data:      entry.Data,
+		}
+	}
+
+	pickerCheckpoints := make([]historypicker.CheckpointRef, len(checkpoints))
+	for i, cp := range checkpoints {
+		pickerCheckpoints[i] = historypicker.CheckpointRef{
+			ID:                   cp.ID,
+			Description:          cp.Description,
+			Diffstat:             cp.Diffstat,
+			ChangedPaths:         cp.ChangedPaths,
+			ChangedPathCount:     cp.ChangedPathCount,
+			ChangedPathTruncated: cp.ChangedPathTruncated,
+		}
+	}
+
+	return historypicker.GroupTimelineIntoTurns(pickerEntries, pickerCheckpoints)
+}
+
+// PaginateHistoryTurns returns a stable cursor page over projected turns.
+func PaginateHistoryTurns(turns []historypicker.Turn, cursor string, limit int) ([]historypicker.Turn, string) {
+	if len(turns) == 0 {
+		return nil, ""
+	}
+
+	start := 0
+	cursor = strings.TrimSpace(cursor)
+	if cursor != "" {
+		for i, turn := range turns {
+			if turn.EntryID == cursor {
+				start = i + 1
+				break
+			}
+		}
+	}
+
+	if start >= len(turns) {
+		return []historypicker.Turn{}, ""
+	}
+
+	end := start + limit
+	if end > len(turns) {
+		end = len(turns)
+	}
+
+	page := turns[start:end]
+	nextCursor := ""
+	if end < len(turns) && len(page) > 0 {
+		nextCursor = page[len(page)-1].EntryID
+	}
+	return page, nextCursor
+}
+
+// TimelineEntriesForTurn returns the raw timeline entries that belong to a turn.
+func TimelineEntriesForTurn(entries []TimelineEntryDTO, turns []historypicker.Turn, turnEntryID string) []TimelineEntryDTO {
+	if len(entries) == 0 || len(turns) == 0 || strings.TrimSpace(turnEntryID) == "" {
+		return nil
+	}
+
+	turnIdx := -1
+	for i, turn := range turns {
+		if turn.EntryID == turnEntryID {
+			turnIdx = i
+			break
+		}
+	}
+	if turnIdx < 0 {
+		return nil
+	}
+
+	startIdx := -1
+	for i, entry := range entries {
+		if entry.EntryID == turnEntryID {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return nil
+	}
+
+	endIdx := len(entries)
+	if turnIdx+1 < len(turns) {
+		nextTurnEntryID := turns[turnIdx+1].EntryID
+		for i := startIdx + 1; i < len(entries); i++ {
+			if entries[i].EntryID == nextTurnEntryID {
+				endIdx = i
+				break
+			}
+		}
+	}
+	if startIdx >= endIdx {
+		return nil
+	}
+
+	segment := make([]TimelineEntryDTO, endIdx-startIdx)
+	copy(segment, entries[startIdx:endIdx])
+	filtered := make([]TimelineEntryDTO, 0, len(segment))
+	for _, entry := range segment {
+		if includeInLastTurnJSON(entry.Kind) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func includeInLastTurnJSON(kind string) bool {
+	switch kind {
+	case "session_start", "final", "error", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
+		return false
+	default:
+		return true
+	}
+}
+
+// HistoryTurnExists reports whether a projected turn ID is present.
+func HistoryTurnExists(turns []historypicker.Turn, entryID string) bool {
+	for _, turn := range turns {
+		if turn.EntryID == entryID {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *Server) buildInvocationActivityProjection(
 	record *resolvedInvocation,
@@ -183,7 +315,7 @@ func latestMeaningfulTimelineEntry(entries []timelineSortableEntry) (timelineSor
 
 func isMeaningfulTimelineKind(kind string) bool {
 	switch kind {
-	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
+	case "session_start", "final", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status", "parse_error":
 		return false
 	default:
 		return true

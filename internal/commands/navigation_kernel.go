@@ -45,7 +45,6 @@ type NavigationSelection struct {
 
 // NavigationIntent describes what a CLI navigation command wants to do.
 type NavigationIntent struct {
-	Verb                     string // "path", "open", "shell", "enter", etc.
 	Selection                NavigationSelection
 	RequiresTTY              bool
 	BootstrapFallbackAllowed bool
@@ -53,11 +52,10 @@ type NavigationIntent struct {
 
 // NavigationResult holds the resolved navigation target after daemon-first resolution.
 type NavigationResult struct {
-	TargetKind       TargetKind
-	ResolvedRepoID   string
-	ResolvedID       string
-	ResolvedPath     string
-	ResolutionSource string // e.g., "daemon_get_worktree", "daemon_get_invocation", "bootstrap_fallback"
+	TargetKind     TargetKind
+	ResolvedRepoID string
+	ResolvedID     string
+	ResolvedPath   string
 }
 
 // ---------------------------------------------------------------------------
@@ -91,53 +89,6 @@ type NavigationDeps struct {
 	// intent AND daemon ensure/version check fails. If nil, no fallback is attempted
 	// even when the policy allows it.
 	FallbackCallback func(ctx context.Context) (*NavigationResult, error)
-}
-
-// ---------------------------------------------------------------------------
-// Selection normalization
-// ---------------------------------------------------------------------------
-
-// NormalizeSelection validates and normalizes a navigation selection input.
-// machine_ref and list_row require an explicit repo_id.
-func NormalizeSelection(source SelectorSource, targetKind TargetKind, ref string, repoID string) (*NavigationSelection, error) {
-	if ref == "" {
-		return nil, errors.New(errors.EInvalidArgument, "navigation ref must be non-empty")
-	}
-
-	switch source {
-	case SelectorExplicitRef:
-		return &NavigationSelection{
-			SelectorSource: SelectorExplicitRef,
-			TargetKind:     targetKind,
-			Ref:            ref,
-			RepoID:         repoID,
-		}, nil
-
-	case SelectorMachineRef:
-		if repoID == "" {
-			return nil, errors.New(errors.EInvalidArgument, "machine_ref selection requires explicit repo_id")
-		}
-		return &NavigationSelection{
-			SelectorSource: SelectorMachineRef,
-			TargetKind:     targetKind,
-			Ref:            ref,
-			RepoID:         repoID,
-		}, nil
-
-	case SelectorListRow:
-		if repoID == "" {
-			return nil, errors.New(errors.EInvalidArgument, "list_row selection requires repo_id from daemon list output")
-		}
-		return &NavigationSelection{
-			SelectorSource: SelectorListRow,
-			TargetKind:     targetKind,
-			Ref:            ref,
-			RepoID:         repoID,
-		}, nil
-
-	default:
-		return nil, errors.New(errors.EInvalidArgument, fmt.Sprintf("unknown selector source: %q", source))
-	}
 }
 
 // ---------------------------------------------------------------------------

@@ -25,13 +25,17 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	params := parseGetLogsParams(r)
-	if params.Offset < 0 {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "offset must be >= 0", "provide a non-negative byte offset", nil)
-		return
-	}
-	if params.Limit < 1 || params.Limit > MaxLogChunk {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), fmt.Sprintf("limit must be between 1 and %d", MaxLogChunk), fmt.Sprintf("provide a limit in [1, %d]", MaxLogChunk), nil)
+	params, invalid := parseGetLogsParams(r)
+	if invalid != nil {
+		s.writeAPIError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter '%s': %q", invalid.Param, invalid.Value),
+			"",
+			*invalid,
+		)
 		return
 	}
 

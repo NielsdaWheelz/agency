@@ -229,15 +229,15 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 
 		timer := time.NewTimer(250 * time.Millisecond)
 		defer timer.Stop()
-			select {
-			case triggerCh <- trigger:
-			case <-timer.C:
-				s.recordInvocationWarning(repoID, result.InvocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
-					"seq":       n.Seq,
-					"tool_name": n.ToolName,
-				})
-			}
-		})
+		select {
+		case triggerCh <- trigger:
+		case <-timer.C:
+			s.recordInvocationWarning(repoID, result.InvocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
+				"seq":       n.Seq,
+				"tool_name": n.ToolName,
+			})
+		}
+	})
 
 	proc := &SupervisedProcess{
 		InvocationID:          result.InvocationID,
@@ -470,9 +470,9 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 			meta.SemanticStatus = nil
 			meta.SemanticStatusUpdatedAt = ""
 		}
-		}); err != nil {
-			s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "meta_update_on_exit_failed", err.Error(), nil)
-		}
+	}); err != nil {
+		s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "meta_update_on_exit_failed", err.Error(), nil)
+	}
 
 	s.mu.Lock()
 	if current, ok := s.processes[proc.InvocationID]; ok && current == proc {

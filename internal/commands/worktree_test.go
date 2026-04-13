@@ -92,6 +92,36 @@ func setupWorktreeEnv(t *testing.T, name string) worktreeTestEnv {
 	}
 }
 
+func seedRepoIndexForWorktreeAmbiguityTests(t *testing.T, dataDir, repoID string) {
+	t.Helper()
+
+	repoRoot := filepath.Join(dataDir, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}))
+}
+
 func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, parentBranch string) string {
 	t.Helper()
 
@@ -262,6 +292,7 @@ func TestWorktreeShow_AmbiguousPreservesCandidates(t *testing.T) {
 	wtID2 := "20260201000000-bbbb"
 	createWorktreeInStore(t, dataTmp, repoID, wtID1, "feat-a", "agency/a", "main")
 	createWorktreeInStore(t, dataTmp, repoID, wtID2, "feat-b", "agency/b", "main")
+	seedRepoIndexForWorktreeAmbiguityTests(t, dataTmp, repoID)
 	startTestDaemonForWorktree(t, dataTmp)
 
 	t.Setenv("AGENCY_DATA_DIR", dataTmp)
@@ -345,6 +376,7 @@ func TestWorktreePath_AmbiguityUsesEAmbiguous(t *testing.T) {
 	repoID := "r1"
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-aaaa", "feat-a", "agency/a", "main")
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-bbbb", "feat-b", "agency/b", "main")
+	seedRepoIndexForWorktreeAmbiguityTests(t, dataTmp, repoID)
 	startTestDaemonForWorktree(t, dataTmp)
 
 	t.Setenv("AGENCY_DATA_DIR", dataTmp)
@@ -373,6 +405,7 @@ func TestWorktreeOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	repoID := "r1"
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-aaaa", "feat-a", "agency/a", "main")
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-bbbb", "feat-b", "agency/b", "main")
+	seedRepoIndexForWorktreeAmbiguityTests(t, dataTmp, repoID)
 	startTestDaemonForWorktree(t, dataTmp)
 
 	configDir := filepath.Join(dataTmp, "config")

@@ -181,6 +181,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
 
 	fsys := fs.NewRealFS()
+	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// Create store directories
 	repoStoreDir := filepath.Join(dataDir, "repos", repoID)
@@ -212,8 +213,32 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	metaPath := filepath.Join(worktreeDir, "meta.json")
 	require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
 
-	// Start test daemon
-	st := store.NewStore(fsys, dataDir, time.Now)
+	// Register the repo through the canonical registry before starting the daemon.
+	repoIndex := store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoIdentity.RepoKey: {
+				RepoID:     repoID,
+				Paths:      []string{repoDir},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}
+	repoRecord := store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoDir,
+		PreferredRoot:    repoDir,
+		AgencyJSONPath:   filepath.Join(repoDir, "agency.json"),
+		OriginPresent:    true,
+		OriginURL:        originURL,
+		OriginHost:       "github.com",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}
+	require.NoError(t, st.SaveRepoIndex(repoIndex))
+	require.NoError(t, st.SaveRepoRecord(repoRecord))
 	configDir := filepath.Join(dataDir, "config")
 	srv := daemon.NewServer(st, cr, fsys, configDir)
 
@@ -380,6 +405,36 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		InvocationID: invID,
 		SandboxPath:  sandboxTreeDir,
 	}
+}
+
+func seedRepoIndexForNavigationTests(t *testing.T, dataDir, repoID string) {
+	t.Helper()
+
+	repoRoot := filepath.Join(dataDir, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}))
 }
 
 // ---------------------------------------------------------------------------
@@ -677,6 +732,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
 
 	// Two invocations with shared prefix
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
@@ -841,6 +897,8 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
 
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
+
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
 		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
 		require.NoError(t, os.MkdirAll(invDir, 0755))
@@ -920,6 +978,8 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
 
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
+
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
 		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
 		require.NoError(t, os.MkdirAll(invDir, 0755))
@@ -997,6 +1057,7 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
 
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
 		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
@@ -1898,58 +1959,6 @@ func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testin
 	assert.Contains(t, jsonOut.String(), payloadMarker, "json output must preserve full payload fidelity")
 }
 
-func TestAgentHistory_FallbackTimelinePaginationRespectsLimitAndCursor(t *testing.T) {
-	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-fallback-pagination")
-	invocationID := "20260131201500-hfallback"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	// Use only non-turn event kinds so history falls back to raw timeline output.
-	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"status","data":{"state":"idle"}}`,
-	}
-	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var firstOut, secondOut, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
-		InvocationRef:   invocationID,
-		Limit:           2,
-		DataDirOverride: dataDir,
-	}, &firstOut, &stderr)
-	require.NoError(t, err)
-
-	first := firstOut.String()
-	assert.Contains(t, first, "stream:1")
-	assert.Contains(t, first, "stream:2")
-	assert.NotContains(t, first, "stream:3", "first page should respect limit when no turn projection exists")
-	assert.Contains(t, first, "next_cursor: stream:2")
-
-	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
-		InvocationRef:   invocationID,
-		Cursor:          "stream:2",
-		Limit:           2,
-		DataDirOverride: dataDir,
-	}, &secondOut, &stderr)
-	require.NoError(t, err)
-
-	second := secondOut.String()
-	assert.Contains(t, second, "stream:3")
-	assert.NotContains(t, second, "stream:1", "cursor continuation should advance past the previous page")
-	assert.NotContains(t, second, "stream:2", "cursor continuation should advance past the previous page")
-}
-
 func TestAgentHistory_InvalidCursorReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-invalid-cursor")
@@ -1976,39 +1985,6 @@ func TestAgentHistory_InvalidCursorReturnsEInvalidArgument(t *testing.T) {
 	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		Cursor:          "missing-turn-id",
-		Limit:           50,
-		DataDirOverride: dataDir,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
-}
-
-func TestAgentHistory_InvalidCursorFallbackTimelineReturnsEInvalidArgument(t *testing.T) {
-	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-invalid-cursor-fallback")
-	invocationID := "20260131201800-hcursor"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
-	}
-	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
-		InvocationRef:   invocationID,
-		Cursor:          "missing-entry-id",
 		Limit:           50,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -2057,47 +2033,6 @@ func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T
 	require.Len(t, payload.Entries, 1)
 	assert.Equal(t, "stream:1", payload.Entries[0].EntryID)
 	assert.Equal(t, "message", payload.Entries[0].Kind)
-}
-
-func TestAgentHistory_LastIncludesParseErrorFallbackEntries(t *testing.T) {
-	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last-ignore-parse-error")
-	invocationID := "20260131202100-hparse"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"parse_error","data":{"reason":"json_parse_error"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
-	}
-	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
-		InvocationRef:   invocationID,
-		JSON:            true,
-		Last:            true,
-		Limit:           100,
-		DataDirOverride: dataDir,
-	}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	var payload struct {
-		Entries []daemon.TimelineEntryDTO `json:"entries"`
-	}
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
-	require.Len(t, payload.Entries, 1)
-	assert.Equal(t, "stream:1", payload.Entries[0].EntryID)
-	assert.Equal(t, "parse_error", payload.Entries[0].Kind)
 }
 
 func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *testing.T) {
@@ -2492,7 +2427,7 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 	assert.Equal(t, float64(1), payload["checkpoint_id"])
 }
 
-func TestConvertToPickerTurns_SparseAssistantSummary_IncludesCheckpointMetadata(t *testing.T) {
+func TestProjectTimelineTurns_SparseAssistantSummary_IncludesCheckpointMetadata(t *testing.T) {
 	t.Parallel()
 
 	entries := []daemon.TimelineEntryDTO{
@@ -2525,7 +2460,7 @@ func TestConvertToPickerTurns_SparseAssistantSummary_IncludesCheckpointMetadata(
 		},
 	}
 
-	turns := convertToPickerTurns(entries, checkpoints)
+	turns := daemon.ProjectTimelineTurns(entries, checkpoints)
 	require.Len(t, turns, 1)
 	require.Equal(t, historypicker.TurnAssistant, turns[0].Kind)
 	assert.Equal(t, 1, turns[0].CheckpointID)

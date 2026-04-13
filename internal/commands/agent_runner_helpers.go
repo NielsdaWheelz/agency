@@ -75,17 +75,14 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cl
 
 	canonicalRunner, err := runners.Canonicalize(runner)
 	if err != nil {
-		if model != "" || effort != "" {
-			return nil, errors.NewWithDetails(
-				errors.EUsage,
-				"cannot apply --model/--effort to unrecognized runner: "+runner,
-				map[string]string{
-					"runner": runner,
-					"valid":  strings.Join(runners.CanonicalIDs(), ", "),
-				},
-			)
-		}
-		return append([]string(nil), runnerArgs...), nil
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"invalid runner: "+runner,
+			map[string]string{
+				"runner": runner,
+				"valid":  strings.Join(runners.CanonicalIDs(), ", "),
+			},
+		)
 	}
 
 	supportsModel := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex || canonicalRunner == runners.RunnerCursor
@@ -133,7 +130,14 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cl
 	case runners.RunnerCursor:
 		return mergeCursorRunnerArgs(runnerArgs, model, effort)
 	default:
-		return append([]string(nil), runnerArgs...), nil
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"invalid runner: "+canonicalRunner,
+			map[string]string{
+				"runner": canonicalRunner,
+				"valid":  strings.Join(runners.CanonicalIDs(), ", "),
+			},
+		)
 	}
 }
 

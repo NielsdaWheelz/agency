@@ -456,4 +456,3 @@ func TestWriteTranscript_InvocationEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "[invocation_started]")
 }
-

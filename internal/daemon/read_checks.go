@@ -219,7 +219,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 				data.BlockingReasons = append(data.BlockingReasons, reportViolationToReviewReason(violation))
 			} else if resolution != nil {
 				data.ReportSource = string(resolution.Source)
-				data.ReportDiagnostics = reportDiagnosticsToReview(resolution.Diagnostics)
+				data.ReportDiagnostics = reportDiagnostics(resolution.Diagnostics)
 			}
 		}
 	}

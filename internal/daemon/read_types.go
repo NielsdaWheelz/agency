@@ -34,11 +34,6 @@ type InvalidQueryArgumentDetails struct {
 	AllowedValues []string `json:"allowed_values"`
 }
 
-// CursorInvalidDetails is the details shape for E_CURSOR_INVALID errors.
-type CursorInvalidDetails struct {
-	Reason string `json:"reason"`
-}
-
 // ----- WorktreeDTO -----
 
 // WorktreeDTO is the canonical DTO for integration worktree responses.

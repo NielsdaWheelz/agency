@@ -1215,11 +1215,10 @@ func (ns *daemonNavSetup) buildNavDeps(cr exec.CommandRunner, cwd, repoFlag, cmd
 				return nil, err
 			}
 			return &NavigationResult{
-				TargetKind:       TargetInvocation,
-				ResolvedRepoID:   result.Invocation.RepoID,
-				ResolvedID:       result.Invocation.InvocationID,
-				ResolvedPath:     result.Invocation.SandboxPath,
-				ResolutionSource: "daemon_get_invocation",
+				TargetKind:     TargetInvocation,
+				ResolvedRepoID: result.Invocation.RepoID,
+				ResolvedID:     result.Invocation.InvocationID,
+				ResolvedPath:   result.Invocation.SandboxPath,
 			}, nil
 		},
 		IsInteractive: isInteractive,
@@ -1246,7 +1245,6 @@ func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent path", nil)
 	intent := NavigationIntent{
-		Verb: "path",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -1288,7 +1286,6 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent open", nil)
 	intent := NavigationIntent{
-		Verb: "open",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -1361,7 +1358,6 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent shell", nil)
 	intent := NavigationIntent{
-		Verb: "shell",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -1456,7 +1452,6 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	deps := ns.buildNavDeps(cr, cwd, opts.RepoFlag, "agent enter", isInteractive)
 	intent := NavigationIntent{
-		Verb: "enter",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetInvocation,
@@ -1762,7 +1757,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			))
 		}
 
-		turns := convertToPickerTurns(timelineEntries, checkpoints)
+		turns := daemon.ProjectTimelineTurns(timelineEntries, checkpoints)
 		if len(turns) == 0 {
 			return fail(errors.NewWithDetails(
 				errors.ECheckpointNotFound,
@@ -1924,32 +1919,6 @@ func fetchAllCheckpoints(ctx context.Context, client *daemonclient.Client, invoc
 	}
 }
 
-// convertToPickerTurns converts daemon timeline entries and checkpoints into
-// the grouped Turn representation used by the interactive history picker.
-func convertToPickerTurns(entries []daemon.TimelineEntryDTO, checkpoints []daemon.CheckpointDTO) []historypicker.Turn {
-	pickerEntries := make([]historypicker.TimelineEntry, len(entries))
-	for i, e := range entries {
-		pickerEntries[i] = historypicker.TimelineEntry{
-			EntryID:   e.EntryID,
-			Kind:      e.Kind,
-			Timestamp: e.Timestamp,
-			Data:      e.Data,
-		}
-	}
-	pickerCheckpoints := make([]historypicker.CheckpointRef, len(checkpoints))
-	for i, cp := range checkpoints {
-		pickerCheckpoints[i] = historypicker.CheckpointRef{
-			ID:                   cp.ID,
-			Description:          cp.Description,
-			Diffstat:             cp.Diffstat,
-			ChangedPaths:         cp.ChangedPaths,
-			ChangedPathCount:     cp.ChangedPathCount,
-			ChangedPathTruncated: cp.ChangedPathTruncated,
-		}
-	}
-	return historypicker.GroupTimelineIntoTurns(pickerEntries, pickerCheckpoints)
-}
-
 func resolveBoundedPromptInput(prompt, promptFile string, maxBytes int, missingPromptMessage, emptyPromptMessage string) (string, error) {
 	if prompt != "" && promptFile != "" {
 		return "", errors.New(errors.EUsage, "use either --prompt or --prompt-file, not both")
@@ -2079,68 +2048,41 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return writeAgentHistoryJSONFromDTO(stdout, result.Entries, result.NextCursor)
 	}
 
-	entries, turns, err := loadHistoryTimelineAndTurns(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
+	entries, err := fetchAllTimelineEntries(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
+	checkpoints, err := fetchAllCheckpoints(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return err
+	}
+	turns := daemon.ProjectTimelineTurns(entries, checkpoints)
 
 	if opts.Last {
-		if turn, ok := latestMeaningfulHistoryTurn(turns); ok {
-			if opts.JSON {
-				turnEntries := timelineEntriesForTurn(entries, turns, turn.EntryID)
-				if len(turnEntries) > 0 {
-					return writeAgentHistoryJSONFromDTO(stdout, turnEntries, "")
-				}
-				if entry, found := findTimelineEntryByID(entries, turn.EntryID); found {
-					return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
-				}
-			} else {
-				return writeAgentHistoryHumanFromTurns(stdout, []historypicker.Turn{turn}, "")
-			}
-		}
-
-		if entry, ok := latestMeaningfulTimelineEntry(entries); ok {
-			if opts.JSON {
-				return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
-			}
-			return writeAgentHistoryHumanFromDTO(stdout, []daemon.TimelineEntryDTO{entry}, "")
-		}
 		if opts.JSON {
-			return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{}, "")
-		}
-		return writeAgentHistoryHumanFromTurns(stdout, nil, "")
-	}
-
-	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" {
-		if len(turns) > 0 {
-			if !historyTurnIDExists(turns, cursor) {
-				return errors.NewWithDetails(
-					errors.EInvalidArgument,
-					"invalid value for parameter 'cursor': turn id not found",
-					map[string]string{
-						"param":  "cursor",
-						"cursor": cursor,
-					},
-				)
+			if len(turns) == 0 {
+				return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{}, "")
 			}
-		} else if !timelineEntryIDExists(entries, cursor) {
-			return errors.NewWithDetails(
-				errors.EInvalidArgument,
-				"invalid value for parameter 'cursor': timeline entry id not found",
-				map[string]string{
-					"param":  "cursor",
-					"cursor": cursor,
-				},
-			)
+			return writeAgentHistoryJSONFromDTO(stdout, daemon.TimelineEntriesForTurn(entries, turns, turns[len(turns)-1].EntryID), "")
 		}
+		if len(turns) == 0 {
+			return writeAgentHistoryHumanFromTurns(stdout, nil, "")
+		}
+		return writeAgentHistoryHumanFromTurns(stdout, []historypicker.Turn{turns[len(turns)-1]}, "")
 	}
 
-	page, nextCursor := paginateHistoryTurns(turns, opts.Cursor, opts.Limit)
-	if len(turns) == 0 {
-		// Fallback when no turn projection is available.
-		entryPage, entryNextCursor := paginateTimelineEntries(entries, opts.Cursor, opts.Limit)
-		return writeAgentHistoryHumanFromDTO(stdout, entryPage, entryNextCursor)
+	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" && !daemon.HistoryTurnExists(turns, cursor) {
+		return errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"invalid value for parameter 'cursor': turn id not found",
+			map[string]string{
+				"param":  "cursor",
+				"cursor": cursor,
+			},
+		)
 	}
+
+	page, nextCursor := daemon.PaginateHistoryTurns(turns, opts.Cursor, opts.Limit)
 	return writeAgentHistoryHumanFromTurns(stdout, page, nextCursor)
 }
 
@@ -2154,180 +2096,6 @@ func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO
 		Entries:    entries,
 		NextCursor: nextCursor,
 	})
-}
-
-func loadHistoryTimelineAndTurns(ctx context.Context, client *daemonclient.Client, invocationRef, repoID string) ([]daemon.TimelineEntryDTO, []historypicker.Turn, error) {
-	entries, err := fetchAllTimelineEntries(ctx, client, invocationRef, repoID)
-	if err != nil {
-		return nil, nil, err
-	}
-	checkpoints, err := fetchAllCheckpoints(ctx, client, invocationRef, repoID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return entries, convertToPickerTurns(entries, checkpoints), nil
-}
-
-func paginateHistoryTurns(turns []historypicker.Turn, cursor string, limit int) ([]historypicker.Turn, string) {
-	if len(turns) == 0 {
-		return nil, ""
-	}
-	start := 0
-	cursor = strings.TrimSpace(cursor)
-	if cursor != "" {
-		for i, turn := range turns {
-			if turn.EntryID == cursor {
-				start = i + 1
-				break
-			}
-		}
-	}
-	if start >= len(turns) {
-		return []historypicker.Turn{}, ""
-	}
-	end := start + limit
-	if end > len(turns) {
-		end = len(turns)
-	}
-	page := turns[start:end]
-	nextCursor := ""
-	if end < len(turns) && len(page) > 0 {
-		nextCursor = page[len(page)-1].EntryID
-	}
-	return page, nextCursor
-}
-
-func paginateTimelineEntries(entries []daemon.TimelineEntryDTO, cursor string, limit int) ([]daemon.TimelineEntryDTO, string) {
-	if len(entries) == 0 {
-		return nil, ""
-	}
-	start := 0
-	cursor = strings.TrimSpace(cursor)
-	if cursor != "" {
-		for i, entry := range entries {
-			if entry.EntryID == cursor {
-				start = i + 1
-				break
-			}
-		}
-	}
-	if start >= len(entries) {
-		return []daemon.TimelineEntryDTO{}, ""
-	}
-	end := start + limit
-	if end > len(entries) {
-		end = len(entries)
-	}
-	page := entries[start:end]
-	nextCursor := ""
-	if end < len(entries) && len(page) > 0 {
-		nextCursor = page[len(page)-1].EntryID
-	}
-	return page, nextCursor
-}
-
-func latestMeaningfulHistoryTurn(turns []historypicker.Turn) (historypicker.Turn, bool) {
-	if len(turns) == 0 {
-		return historypicker.Turn{}, false
-	}
-	return turns[len(turns)-1], true
-}
-
-func findTimelineEntryByID(entries []daemon.TimelineEntryDTO, entryID string) (daemon.TimelineEntryDTO, bool) {
-	for _, entry := range entries {
-		if entry.EntryID == entryID {
-			return entry, true
-		}
-	}
-	return daemon.TimelineEntryDTO{}, false
-}
-
-func timelineEntriesForTurn(entries []daemon.TimelineEntryDTO, turns []historypicker.Turn, turnEntryID string) []daemon.TimelineEntryDTO {
-	if len(entries) == 0 || len(turns) == 0 || strings.TrimSpace(turnEntryID) == "" {
-		return nil
-	}
-
-	turnIdx := -1
-	for i, turn := range turns {
-		if turn.EntryID == turnEntryID {
-			turnIdx = i
-			break
-		}
-	}
-	if turnIdx < 0 {
-		return nil
-	}
-
-	startIdx := -1
-	for i, entry := range entries {
-		if entry.EntryID == turnEntryID {
-			startIdx = i
-			break
-		}
-	}
-	if startIdx < 0 {
-		return nil
-	}
-
-	endIdx := len(entries)
-	if turnIdx+1 < len(turns) {
-		nextTurnEntryID := turns[turnIdx+1].EntryID
-		for i := startIdx + 1; i < len(entries); i++ {
-			if entries[i].EntryID == nextTurnEntryID {
-				endIdx = i
-				break
-			}
-		}
-	}
-	if startIdx >= endIdx {
-		return nil
-	}
-
-	segment := make([]daemon.TimelineEntryDTO, endIdx-startIdx)
-	copy(segment, entries[startIdx:endIdx])
-	filtered := make([]daemon.TimelineEntryDTO, 0, len(segment))
-	for _, entry := range segment {
-		if includeInLastTurnJSON(entry.Kind) {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered
-}
-
-func includeInLastTurnJSON(kind string) bool {
-	switch kind {
-	case "session_start", "final", "error", "raw_log_coverage", "checkpoint_event", "invocation_event", "usage", "status":
-		return false
-	default:
-		return true
-	}
-}
-
-func latestMeaningfulTimelineEntry(entries []daemon.TimelineEntryDTO) (daemon.TimelineEntryDTO, bool) {
-	for i := len(entries) - 1; i >= 0; i-- {
-		if includeInLastTurnJSON(entries[i].Kind) {
-			return entries[i], true
-		}
-	}
-	return daemon.TimelineEntryDTO{}, false
-}
-
-func historyTurnIDExists(turns []historypicker.Turn, entryID string) bool {
-	for _, turn := range turns {
-		if turn.EntryID == entryID {
-			return true
-		}
-	}
-	return false
-}
-
-func timelineEntryIDExists(entries []daemon.TimelineEntryDTO, entryID string) bool {
-	for _, entry := range entries {
-		if entry.EntryID == entryID {
-			return true
-		}
-	}
-	return false
 }
 
 func latestActivityToolCount(activity *daemon.InvocationLatestActivity) int {
@@ -2410,99 +2178,6 @@ func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, ne
 		_, _ = fmt.Fprintf(w, "\nnext_cursor: %s\n", nextCursor)
 	}
 	return nil
-}
-
-func writeAgentHistoryHumanFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
-	if len(entries) == 0 {
-		_, _ = fmt.Fprintln(w, "No timeline entries found.")
-	} else {
-		for _, entry := range entries {
-			_, _ = fmt.Fprintf(w, "%s  %s  %s  %s\n", entry.Timestamp, entry.EntryID, entry.Kind, timelineEntrySummary(entry))
-		}
-	}
-
-	if nextCursor != "" {
-		_, _ = fmt.Fprintf(w, "\nnext_cursor: %s\n", nextCursor)
-	}
-	return nil
-}
-
-func timelineEntrySummary(entry daemon.TimelineEntryDTO) string {
-	switch entry.Kind {
-	case "prompt_seed":
-		return truncateTimelineText(timelineString(entry.Data, "text"), 120)
-	case "message":
-		role := timelineString(entry.Data, "role")
-		text := truncateTimelineText(timelineString(entry.Data, "text"), 120)
-		if role != "" {
-			return role + ": " + text
-		}
-		return text
-	case "tool_use":
-		name := timelineString(entry.Data, "name")
-		command := timelineString(entry.Data, "command")
-		details := strings.TrimSpace(strings.TrimSpace(name + " " + command))
-		if details == "" {
-			details = "tool activity"
-		}
-		if exitCode, ok := timelineInt(entry.Data, "exit_code"); ok {
-			details += fmt.Sprintf(" (exit=%d)", exitCode)
-		}
-		return truncateTimelineText(details, 120)
-	case "raw_log_coverage":
-		if bytes, ok := timelineInt(entry.Data, "bytes"); ok {
-			return fmt.Sprintf("%d bytes captured", bytes)
-		}
-		return "raw log coverage present"
-	case "checkpoint_event", "invocation_event":
-		if kind := timelineString(entry.Data, "event_kind"); kind != "" {
-			return kind
-		}
-	case "followup_prompt":
-		return truncateTimelineText(timelineString(entry.Data, "text"), 120)
-	}
-	if kind := timelineString(entry.Data, "event_kind"); kind != "" {
-		return kind
-	}
-	return entry.Source
-}
-
-func timelineString(data map[string]interface{}, key string) string {
-	if data == nil {
-		return ""
-	}
-	if v, ok := data[key]; ok {
-		if s, ok := v.(string); ok {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
-}
-
-func timelineInt(data map[string]interface{}, key string) (int64, bool) {
-	if data == nil {
-		return 0, false
-	}
-	v, ok := data[key]
-	if !ok {
-		return 0, false
-	}
-	switch n := v.(type) {
-	case int:
-		return int64(n), true
-	case int64:
-		return n, true
-	case float64:
-		return int64(n), true
-	case json.Number:
-		i, err := n.Int64()
-		if err != nil {
-			return 0, false
-		}
-		return i, true
-	default:
-		return 0, false
-	}
 }
 
 func truncateTimelineText(value string, max int) string {

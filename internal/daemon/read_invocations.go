@@ -19,17 +19,11 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := parseListInvocationsParams(r)
-	if !isValidInvocationState(params.State) {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_ARGUMENT",
-			fmt.Sprintf("invalid value for parameter 'state': %q", params.State), "",
-			InvalidQueryArgumentDetails{Param: "state", Value: params.State, AllowedValues: validInvocationStates})
-		return
-	}
-	if !isValidInvocationMode(params.Mode) {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_ARGUMENT",
-			fmt.Sprintf("invalid value for parameter 'mode': %q", params.Mode), "",
-			InvalidQueryArgumentDetails{Param: "mode", Value: params.Mode, AllowedValues: validInvocationModes})
+	params, invalid := parseListInvocationsParams(r)
+	if invalid != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter '%s': %q", invalid.Param, invalid.Value), "",
+			*invalid)
 		return
 	}
 

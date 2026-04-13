@@ -19,15 +19,11 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := parseListWorktreesParams(r)
-	if !isValidWorktreeState(params.State) {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_ARGUMENT",
-			fmt.Sprintf("invalid value for parameter 'state': %q", params.State), "",
-			InvalidQueryArgumentDetails{
-				Param:         "state",
-				Value:         params.State,
-				AllowedValues: validWorktreeStates,
-			})
+	params, invalid := parseListWorktreesParams(r)
+	if invalid != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter '%s': %q", invalid.Param, invalid.Value), "",
+			*invalid)
 		return
 	}
 

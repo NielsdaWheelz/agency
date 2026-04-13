@@ -252,7 +252,6 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree path")
 	intent := NavigationIntent{
-		Verb: "path",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -286,7 +285,6 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree open")
 	intent := NavigationIntent{
-		Verb: "open",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -342,7 +340,6 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 
 	deps := ns.buildWorktreeNavDeps(cr, cwd, opts.RepoFlag, "worktree shell")
 	intent := NavigationIntent{
-		Verb: "shell",
 		Selection: NavigationSelection{
 			SelectorSource: SelectorExplicitRef,
 			TargetKind:     TargetWorktree,
@@ -397,11 +394,10 @@ func (ns *daemonNavSetup) buildWorktreeNavDeps(cr exec.CommandRunner, cwd, repoF
 				return nil, err
 			}
 			return &NavigationResult{
-				TargetKind:       TargetWorktree,
-				ResolvedRepoID:   result.Worktree.RepoID,
-				ResolvedID:       result.Worktree.WorktreeID,
-				ResolvedPath:     result.Worktree.TreePath,
-				ResolutionSource: "daemon_get_worktree",
+				TargetKind:     TargetWorktree,
+				ResolvedRepoID: result.Worktree.RepoID,
+				ResolvedID:     result.Worktree.WorktreeID,
+				ResolvedPath:   result.Worktree.TreePath,
 			}, nil
 		},
 	}

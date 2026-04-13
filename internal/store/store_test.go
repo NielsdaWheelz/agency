@@ -29,14 +29,11 @@ func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
 
 	_, err := s.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
-	sandboxPath := s.SandboxRawLogPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(sandboxPath), 0o700))
-	require.NoError(t, os.WriteFile(sandboxPath, []byte("sandbox raw\n"), 0o644))
 
 	preparedPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "raw")
 	require.NoError(t, err)
 	assert.Equal(t, s.InvocationRawLogPath(repoID, invocationID), preparedPath)
-	_, err = os.Stat(sandboxPath)
+	_, err = os.Stat(s.InvocationLogsDir(repoID, invocationID))
 	require.NoError(t, err)
 	_, err = os.Stat(preparedPath)
 	assert.True(t, os.IsNotExist(err))

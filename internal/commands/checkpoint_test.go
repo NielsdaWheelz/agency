@@ -268,6 +268,29 @@ func TestCheckpointLS_RepoFlagResolvesOutsideGitContext(t *testing.T) {
 		},
 	}
 	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, checkpoints)
+
+	st := store.NewStore(env.FS, env.DataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + env.RepoID: {
+				RepoID:     env.RepoID,
+				Paths:      []string{env.RepoPath},
+				LastSeenAt: "2026-01-15T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + env.RepoID,
+		RepoID:           env.RepoID,
+		RepoRootLastSeen: env.RepoPath,
+		PreferredRoot:    env.RepoPath,
+		AgencyJSONPath:   filepath.Join(env.RepoPath, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-15T12:00:00Z",
+		UpdatedAt:        "2026-01-15T12:00:00Z",
+	}))
 	startTestDaemonForCheckpoint(t, env)
 
 	var stdout, stderr bytes.Buffer

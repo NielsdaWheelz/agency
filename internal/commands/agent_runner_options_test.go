@@ -44,19 +44,19 @@ func TestResolveEffectiveRunnerArgs_ClaudeUsesDefaultsWhenFlagsMissing(t *testin
 	assert.Equal(t, []string{"--allowed-extra", "--model", "opus", "--effort", "medium"}, got)
 }
 
-func TestResolveEffectiveRunnerArgs_PreservesLegacyRunnerArgsWithoutDefaults(t *testing.T) {
+func TestResolveEffectiveRunnerArgs_InvalidRunnerRejectsEvenWithoutTypedFlags(t *testing.T) {
 	t.Parallel()
 
-	input := []string{"--allowed-extra", "--model=opus", "--effort=high"}
-	got, err := resolveEffectiveRunnerArgs(
-		"claude-code",
-		input,
+	_, err := resolveEffectiveRunnerArgs(
+		"unknown-runner",
+		[]string{"--allowed-extra"},
 		"",
 		"",
 		config.UserDefaults{},
 	)
-	require.NoError(t, err)
-	assert.Equal(t, input, got)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "invalid runner")
 }
 
 func TestResolveEffectiveRunnerArgs_ConflictingModelAcrossSourcesFails(t *testing.T) {

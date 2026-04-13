@@ -140,6 +140,7 @@ func TestHandleCheckpointApply_InvocationNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+	registerRepoForCheckpointTests(t, st, "test-repo")
 
 	body, _ := json.Marshal(CheckpointApplyRequest{CheckpointID: 1})
 	req := httptest.NewRequest(http.MethodPost, "/invocations/nonexistent/checkpoints/apply?repo_id=test-repo", bytes.NewReader(body))
@@ -202,12 +203,28 @@ func setupInvocationMeta(t *testing.T, st *store.Store, repoID, invocationID str
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 }
 
+func registerRepoForCheckpointTests(t *testing.T, st *store.Store, repoID string) {
+	t.Helper()
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoID: {
+				RepoID:     repoID,
+				Paths:      []string{"/tmp/" + repoID},
+				LastSeenAt: "2026-01-15T12:00:00Z",
+			},
+		},
+	}))
+}
+
 // 2.3 TestHandleCheckpointApply_WrongMode
 func TestHandleCheckpointApply_WrongMode(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+	registerRepoForCheckpointTests(t, st, "test-repo")
 
 	setupInvocationMeta(t, st, "test-repo", "test-inv", store.RunnerModeHeaded, store.InvocationStatusFinished)
 
@@ -230,6 +247,7 @@ func TestHandleCheckpointApply_StillRunning(t *testing.T) {
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+	registerRepoForCheckpointTests(t, st, "test-repo")
 
 	setupInvocationMeta(t, st, "test-repo", "test-inv", store.RunnerModeHeadless, store.InvocationStatusRunning)
 
@@ -252,6 +270,7 @@ func TestHandleCheckpointApply_RespectsRepoLock(t *testing.T) {
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+	registerRepoForCheckpointTests(t, st, "test-repo")
 
 	setupInvocationMeta(t, st, "test-repo", "test-inv", store.RunnerModeHeadless, store.InvocationStatusFinished)
 
@@ -279,6 +298,7 @@ func TestHandleCheckpointApply_Starting(t *testing.T) {
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+	registerRepoForCheckpointTests(t, st, "test-repo")
 
 	setupInvocationMeta(t, st, "test-repo", "test-inv", store.RunnerModeHeadless, store.InvocationStatusStarting)
 

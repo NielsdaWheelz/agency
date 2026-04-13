@@ -65,4 +65,3 @@ func (r *RealFS) CreateTemp(dir, pattern string) (string, io.WriteCloser, error)
 	}
 	return f.Name(), f, nil
 }
-

@@ -148,7 +148,6 @@ func trimLineEndings(line []byte) []byte {
 	return trimmed
 }
 
-
 // ExtractUintField scans a JSON prefix for a numeric object field.
 // It tolerates truncated JSON as long as `"field":<digits>` is present.
 func ExtractUintField(line []byte, field string) (uint64, bool) {

@@ -104,10 +104,10 @@ func TestReportViolationToReviewReason_MapsCodes(t *testing.T) {
 	assert.Contains(t, reason.Hint, ".agency/report")
 }
 
-func TestReportDiagnosticsToDaemon_MapsDiagnostics(t *testing.T) {
+func TestReportDiagnostics_MapsDiagnostics(t *testing.T) {
 	t.Parallel()
 
-	mapped := reportDiagnosticsToDaemon([]report.Diagnostic{
+	mapped := reportDiagnostics([]report.Diagnostic{
 		{
 			Code:    "report_conflict_json_precedence",
 			Message: "json wins",
@@ -120,8 +120,8 @@ func TestReportDiagnosticsToDaemon_MapsDiagnostics(t *testing.T) {
 	assert.Equal(t, "canonical", mapped[0].Source)
 }
 
-func TestReportDiagnosticsToDaemon_EmptyReturnsNil(t *testing.T) {
+func TestReportDiagnostics_EmptyReturnsNil(t *testing.T) {
 	t.Parallel()
-	assert.Nil(t, reportDiagnosticsToDaemon(nil))
-	assert.Nil(t, reportDiagnosticsToReview(nil))
+	assert.Nil(t, reportDiagnostics(nil))
+	assert.Nil(t, reportDiagnostics([]report.Diagnostic{}))
 }

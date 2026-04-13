@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -131,10 +130,7 @@ func (s *Server) loadRunnerSummaryBestEffort(record *resolvedInvocation) string 
 func getRepoIDsForQuery(s *Server, filterRepoRef string) ([]string, error) {
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {
-		if filterRepoRef == "" {
-			return []string{}, nil
-		}
-		return []string{filterRepoRef}, nil
+		return nil, err
 	}
 
 	if filterRepoRef == "" {
@@ -148,12 +144,6 @@ func getRepoIDsForQuery(s *Server, filterRepoRef string) ([]string, error) {
 	refs := s.buildRepoRefs(idx)
 	resolved, resolveErr := ids.ResolveRepoRef(filterRepoRef, refs)
 	if resolveErr != nil {
-		if _, ok := resolveErr.(*ids.ErrRepoNotFound); ok {
-			if _, statErr := os.Stat(s.Store.RepoDir(filterRepoRef)); statErr == nil {
-				return []string{filterRepoRef}, nil
-			}
-			return []string{}, nil
-		}
 		return nil, resolveErr
 	}
 	return []string{resolved.RepoID}, nil
@@ -194,7 +184,7 @@ func writeRepoLookupError(w http.ResponseWriter, s *Server, requestID string, er
 	}
 }
 
-func parseListWorktreesParams(r *http.Request) ListWorktreesParams {
+func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *InvalidQueryArgumentDetails) {
 	params := ListWorktreesParams{
 		State: "present",
 		Limit: 100,
@@ -204,19 +194,31 @@ func parseListWorktreesParams(r *http.Request) ListWorktreesParams {
 		params.RepoID = repoID
 	}
 	if state := r.URL.Query().Get("state"); state != "" {
+		if !isValidWorktreeState(state) {
+			return params, &InvalidQueryArgumentDetails{
+				Param:         "state",
+				Value:         state,
+				AllowedValues: validWorktreeStates,
+			}
+		}
 		params.State = state
 	}
 	if limit := r.URL.Query().Get("limit"); limit != "" {
-		if l, err := strconv.Atoi(limit); err == nil && l > 0 && l <= 500 {
-			params.Limit = l
+		l, err := strconv.Atoi(limit)
+		if err != nil || l < 1 || l > 500 {
+			return params, &InvalidQueryArgumentDetails{
+				Param: "limit",
+				Value: limit,
+			}
 		}
+		params.Limit = l
 	}
 	params.Cursor = r.URL.Query().Get("cursor")
 
-	return params
+	return params, nil
 }
 
-func parseListInvocationsParams(r *http.Request) ListInvocationsParams {
+func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *InvalidQueryArgumentDetails) {
 	params := ListInvocationsParams{
 		State: "all",
 		Mode:  "all",
@@ -233,22 +235,41 @@ func parseListInvocationsParams(r *http.Request) ListInvocationsParams {
 		params.WorktreeRef = worktreeRef
 	}
 	if state := r.URL.Query().Get("state"); state != "" {
+		if !isValidInvocationState(state) {
+			return params, &InvalidQueryArgumentDetails{
+				Param:         "state",
+				Value:         state,
+				AllowedValues: validInvocationStates,
+			}
+		}
 		params.State = state
 	}
 	if mode := r.URL.Query().Get("mode"); mode != "" {
+		if !isValidInvocationMode(mode) {
+			return params, &InvalidQueryArgumentDetails{
+				Param:         "mode",
+				Value:         mode,
+				AllowedValues: validInvocationModes,
+			}
+		}
 		params.Mode = mode
 	}
 	if limit := r.URL.Query().Get("limit"); limit != "" {
-		if l, err := strconv.Atoi(limit); err == nil && l > 0 && l <= 500 {
-			params.Limit = l
+		l, err := strconv.Atoi(limit)
+		if err != nil || l < 1 || l > 500 {
+			return params, &InvalidQueryArgumentDetails{
+				Param: "limit",
+				Value: limit,
+			}
 		}
+		params.Limit = l
 	}
 	params.Cursor = r.URL.Query().Get("cursor")
 
-	return params
+	return params, nil
 }
 
-func parseGetDiffParams(r *http.Request) GetDiffParams {
+func parseGetDiffParams(r *http.Request) (GetDiffParams, *InvalidQueryArgumentDetails) {
 	params := GetDiffParams{
 		IncludePatch:       true,
 		MaxPatchBytes:      2097152,
@@ -259,9 +280,14 @@ func parseGetDiffParams(r *http.Request) GetDiffParams {
 		params.IncludePatch = false
 	}
 	if maxPatch := r.URL.Query().Get("max_patch_bytes"); maxPatch != "" {
-		if m, err := strconv.Atoi(maxPatch); err == nil && m > 0 && m <= 5242880 {
-			params.MaxPatchBytes = m
+		m, err := strconv.Atoi(maxPatch)
+		if err != nil || m < 1 || m > 5242880 {
+			return params, &InvalidQueryArgumentDetails{
+				Param: "max_patch_bytes",
+				Value: maxPatch,
+			}
 		}
+		params.MaxPatchBytes = m
 	}
 	if includeUncommitted := r.URL.Query().Get("include_uncommitted"); includeUncommitted == "0" || includeUncommitted == "false" {
 		params.IncludeUncommitted = false
@@ -270,10 +296,10 @@ func parseGetDiffParams(r *http.Request) GetDiffParams {
 	params.TurnStartID = strings.TrimSpace(r.URL.Query().Get("turn_start"))
 	params.TurnEndID = strings.TrimSpace(r.URL.Query().Get("turn_end"))
 
-	return params
+	return params, nil
 }
 
-func parseGetLogsParams(r *http.Request) GetLogsParams {
+func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDetails) {
 	params := GetLogsParams{
 		Kind:  "raw",
 		Limit: 65536,
@@ -284,21 +310,27 @@ func parseGetLogsParams(r *http.Request) GetLogsParams {
 	}
 
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if o, err := strconv.ParseInt(offsetStr, 10, 64); err == nil {
-			params.Offset = o
-		} else {
-			params.Offset = -1
+		o, err := strconv.ParseInt(offsetStr, 10, 64)
+		if err != nil || o < 0 {
+			return params, &InvalidQueryArgumentDetails{
+				Param: "offset",
+				Value: offsetStr,
+			}
 		}
+		params.Offset = o
 	}
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil {
-			params.Limit = l
-		} else {
-			params.Limit = -1
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 1 || l > MaxLogChunk {
+			return params, &InvalidQueryArgumentDetails{
+				Param: "limit",
+				Value: limitStr,
+			}
 		}
+		params.Limit = l
 	}
 
-	return params
+	return params, nil
 }
 
 var (
@@ -307,27 +339,27 @@ var (
 	validInvocationModes  = []string{"headed", "headless", "all"}
 )
 
-func isValidWorktreeState(s string) bool {
-	for _, v := range validWorktreeStates {
-		if s == v {
+func isValidWorktreeState(state string) bool {
+	for _, valid := range validWorktreeStates {
+		if state == valid {
 			return true
 		}
 	}
 	return false
 }
 
-func isValidInvocationState(s string) bool {
-	for _, v := range validInvocationStates {
-		if s == v {
+func isValidInvocationState(state string) bool {
+	for _, valid := range validInvocationStates {
+		if state == valid {
 			return true
 		}
 	}
 	return false
 }
 
-func isValidInvocationMode(s string) bool {
-	for _, v := range validInvocationModes {
-		if s == v {
+func isValidInvocationMode(mode string) bool {
+	for _, valid := range validInvocationModes {
+		if mode == valid {
 			return true
 		}
 	}

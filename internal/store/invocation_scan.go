@@ -139,5 +139,3 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 
 	return records, nil
 }
-
-

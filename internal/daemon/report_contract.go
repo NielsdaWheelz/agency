@@ -71,22 +71,7 @@ func reportViolationToReviewReason(violation *report.Violation) InvocationReview
 	}
 }
 
-func reportDiagnosticsToDaemon(diags []report.Diagnostic) []ReportDiagnostic {
-	if len(diags) == 0 {
-		return nil
-	}
-	out := make([]ReportDiagnostic, 0, len(diags))
-	for _, d := range diags {
-		out = append(out, ReportDiagnostic{
-			Code:    d.Code,
-			Message: d.Message,
-			Source:  d.Source,
-		})
-	}
-	return out
-}
-
-func reportDiagnosticsToReview(diags []report.Diagnostic) []ReportDiagnostic {
+func reportDiagnostics(diags []report.Diagnostic) []ReportDiagnostic {
 	if len(diags) == 0 {
 		return nil
 	}

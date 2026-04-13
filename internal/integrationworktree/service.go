@@ -385,4 +385,3 @@ func HasIntegrationMarker(path string) bool {
 	_, err := os.Stat(markerPath)
 	return err == nil
 }
-

@@ -314,23 +314,20 @@ func TestHandleListWorktrees_StateFilter(t *testing.T) {
 	}
 }
 
-func TestHandleListWorktrees_EmptyResult(t *testing.T) {
+func TestHandleListWorktrees_UnknownRepoReturnsNotFound(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id=nonexistent-repo")
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 
 	resp := decodeAPIResponse(t, w)
-	assert.True(t, resp.OK)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_REPO_NOT_FOUND", resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo not found")
 
-	var data ListWorktreesData
-	decodeData(t, resp, &data)
-
-	// Should be empty array, not null
-	assert.NotNil(t, data.Worktrees)
-	assert.Len(t, data.Worktrees, 0)
+	assert.Empty(t, resp.Details)
 }
 
 func TestHandleGetWorktree_HappyPath(t *testing.T) {
@@ -1182,7 +1179,8 @@ func TestParseListWorktreesParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/worktrees", nil)
-		params := parseListWorktreesParams(req)
+		params, invalid := parseListWorktreesParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "present", params.State)
 		assert.Equal(t, 100, params.Limit)
 		assert.Empty(t, params.RepoID)
@@ -1192,11 +1190,32 @@ func TestParseListWorktreesParams(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/worktrees?repo_id=r1&state=all&limit=50&cursor=abc", nil)
-		params := parseListWorktreesParams(req)
+		params, invalid := parseListWorktreesParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "r1", params.RepoID)
 		assert.Equal(t, "all", params.State)
 		assert.Equal(t, 50, params.Limit)
 		assert.Equal(t, "abc", params.Cursor)
+	})
+
+	t.Run("invalid_state", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/worktrees?state=bogus", nil)
+		_, invalid := parseListWorktreesParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "state", invalid.Param)
+		assert.Equal(t, "bogus", invalid.Value)
+		assert.Equal(t, validWorktreeStates, invalid.AllowedValues)
+	})
+
+	t.Run("invalid_limit", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/worktrees?limit=0", nil)
+		_, invalid := parseListWorktreesParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "limit", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
+		assert.Nil(t, invalid.AllowedValues)
 	})
 }
 
@@ -1206,7 +1225,8 @@ func TestParseListInvocationsParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations", nil)
-		params := parseListInvocationsParams(req)
+		params, invalid := parseListInvocationsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "all", params.State)
 		assert.Equal(t, "all", params.Mode)
 		assert.Equal(t, 100, params.Limit)
@@ -1215,11 +1235,32 @@ func TestParseListInvocationsParams(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations?state=active&mode=headless&limit=25&worktree_ref=alpha", nil)
-		params := parseListInvocationsParams(req)
+		params, invalid := parseListInvocationsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "active", params.State)
 		assert.Equal(t, "headless", params.Mode)
 		assert.Equal(t, 25, params.Limit)
 		assert.Equal(t, "alpha", params.WorktreeRef)
+	})
+
+	t.Run("invalid_mode", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations?mode=bogus", nil)
+		_, invalid := parseListInvocationsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "mode", invalid.Param)
+		assert.Equal(t, "bogus", invalid.Value)
+		assert.Equal(t, validInvocationModes, invalid.AllowedValues)
+	})
+
+	t.Run("invalid_limit", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations?limit=0", nil)
+		_, invalid := parseListInvocationsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "limit", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
+		assert.Nil(t, invalid.AllowedValues)
 	})
 }
 
@@ -1229,7 +1270,8 @@ func TestParseGetDiffParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff", nil)
-		params := parseGetDiffParams(req)
+		params, invalid := parseGetDiffParams(req)
+		require.Nil(t, invalid)
 		assert.True(t, params.IncludePatch)
 		assert.Equal(t, 2097152, params.MaxPatchBytes)
 		assert.True(t, params.IncludeUncommitted)
@@ -1238,10 +1280,20 @@ func TestParseGetDiffParams(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?include_patch=false&max_patch_bytes=1000&include_uncommitted=0", nil)
-		params := parseGetDiffParams(req)
+		params, invalid := parseGetDiffParams(req)
+		require.Nil(t, invalid)
 		assert.False(t, params.IncludePatch)
 		assert.Equal(t, 1000, params.MaxPatchBytes)
 		assert.False(t, params.IncludeUncommitted)
+	})
+
+	t.Run("invalid_max_patch_bytes", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?max_patch_bytes=0", nil)
+		_, invalid := parseGetDiffParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "max_patch_bytes", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
 	})
 }
 
@@ -1251,7 +1303,8 @@ func TestParseGetLogsParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs", nil)
-		params := parseGetLogsParams(req)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "raw", params.Kind)
 		assert.Zero(t, params.Offset)
 		assert.Equal(t, 65536, params.Limit)
@@ -1260,10 +1313,29 @@ func TestParseGetLogsParams(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&offset=128&limit=1024", nil)
-		params := parseGetLogsParams(req)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "stderr", params.Kind)
 		assert.Equal(t, int64(128), params.Offset)
 		assert.Equal(t, 1024, params.Limit)
+	})
+
+	t.Run("invalid_offset", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?offset=-1", nil)
+		_, invalid := parseGetLogsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "offset", invalid.Param)
+		assert.Equal(t, "-1", invalid.Value)
+	})
+
+	t.Run("invalid_limit", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?limit=0", nil)
+		_, invalid := parseGetLogsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "limit", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
 	})
 }
 
@@ -1904,6 +1976,19 @@ func TestHandleListWorktrees_InvalidStateReturnsEInvalidArgument(t *testing.T) {
 	assert.Equal(t, []string{"present", "archived", "all"}, details.AllowedValues)
 }
 
+func TestHandleListWorktrees_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID+"&limit=0")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+}
+
 func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -1921,6 +2006,19 @@ func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "bogus", details.Value)
 	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+}
+
+func TestHandleListInvocations_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&limit=0")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 }
 
 func TestHandleListInvocations_InvalidModeReturnsEInvalidArgument(t *testing.T) {
@@ -1965,7 +2063,7 @@ func TestHandleListInvocations_InvalidFiltersFailClosed_DeterministicPrecedence(
 func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {
 	t.Parallel()
 
-	// Server with NO repo index loaded — getRepoIDsForQuery would fail with E_INTERNAL.
+	// Validation should fail before any repo resolution work happens.
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
@@ -1988,7 +2086,7 @@ func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T
 func TestHandleListInvocations_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {
 	t.Parallel()
 
-	// Server with NO repo index loaded.
+	// Validation should fail before any repo resolution work happens.
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
@@ -2340,63 +2438,6 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 	assert.True(t, hasCompleted, "normalized tool_end row must preserve exit_code")
 }
 
-func TestHandleGetInvocationTimeline_RejectsUnsupportedSchemaVersions(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-
-	streamLines := strings.Join([]string{
-		`{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"supported schema"}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
-
-	eventLines := strings.Join([]string{
-		`{"schema_version":"","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"unsupported schema event"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	assert.True(t, resp.OK)
-
-	var data struct {
-		Entries []struct {
-			EntryID string         `json:"entry_id"`
-			Kind    string         `json:"kind"`
-			Source  string         `json:"source"`
-			Data    map[string]any `json:"data"`
-		} `json:"entries"`
-	}
-	decodeData(t, resp, &data)
-
-	entryIDs := make([]string, 0, len(data.Entries))
-	parseErrorSources := make(map[string]bool)
-	for _, entry := range data.Entries {
-		entryIDs = append(entryIDs, entry.EntryID)
-		if entry.Kind != "parse_error" {
-			continue
-		}
-		reason, _ := entry.Data["reason"].(string)
-		if reason != "unsupported_schema_version" {
-			continue
-		}
-		parseErrorSources[entry.Source] = true
-	}
-
-	assert.Contains(t, entryIDs, "stream:2")
-	assert.NotContains(t, entryIDs, "stream:1")
-	assert.Contains(t, entryIDs, "inv_event:2:agency.checkpoint_created")
-	assert.NotContains(t, entryIDs, "inv_event:1:agency.followup_prompt")
-	assert.True(t, parseErrorSources["stream"], "unsupported stream schema must produce parse_error timeline diagnostics")
-	assert.True(t, parseErrorSources["invocation_event"], "unsupported invocation-event schema must produce parse_error timeline diagnostics")
-}
-
 func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -2464,206 +2505,55 @@ func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *t
 	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt", "timeline replay must preserve 5MB invocation-event lines accepted by live capture")
 }
 
-func TestHandleGetInvocationTimeline_EmitsParseErrorForMalformedPersistedLines(t *testing.T) {
+func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-
-	streamLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"broken"}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
-
-	eventLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"broken"}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=200")
-	require.Equal(t, http.StatusOK, w.Code)
-	resp := decodeAPIResponse(t, w)
-	require.True(t, resp.OK)
-
-	var data struct {
-		Entries []struct {
-			EntryID string         `json:"entry_id"`
-			Kind    string         `json:"kind"`
-			Source  string         `json:"source"`
-			Data    map[string]any `json:"data"`
-		} `json:"entries"`
-	}
-	decodeData(t, resp, &data)
-
-	entryIDs := make([]string, 0, len(data.Entries))
-	parseErrorSources := make(map[string]bool)
-	for _, entry := range data.Entries {
-		entryIDs = append(entryIDs, entry.EntryID)
-		if entry.Kind != "parse_error" {
-			continue
-		}
-		if reason, _ := entry.Data["reason"].(string); reason == "json_unmarshal_failed" {
-			parseErrorSources[entry.Source] = true
-		}
+	cases := []struct {
+		name       string
+		streamLine string
+		eventLine  string
+	}{
+		{
+			name:       "unsupported_schema_version",
+			streamLine: `{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}` + "\n",
+			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}` + "\n",
+		},
+		{
+			name:       "malformed_json",
+			streamLine: `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}` + "\n",
+			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"broken"` + "\n",
+		},
+		{
+			name:       "missing_kind",
+			streamLine: `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"","data":{"role":"assistant","text":"missing-kind"}}` + "\n",
+			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"","event":"","data":{"text":"missing-kind-and-event"}}` + "\n",
+		},
+		{
+			name:       "oversized_line",
+			streamLine: strings.Repeat("x", 9*1024*1024) + "\n",
+			eventLine:  strings.Repeat("x", 9*1024*1024) + "\n",
+		},
 	}
 
-	assert.Contains(t, entryIDs, "stream:1")
-	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt")
-	assert.True(t, parseErrorSources["stream"], "malformed stream lines must emit parse_error diagnostics")
-	assert.True(t, parseErrorSources["invocation_event"], "malformed invocation-event lines must emit parse_error diagnostics")
-}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
 
-func TestHandleGetInvocationTimeline_EmitsParseErrorForMissingKindOrEvent(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
+			logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+			require.NoError(t, os.MkdirAll(logsDir, 0o700))
+			require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(tc.streamLine), 0o644))
+			require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(tc.eventLine), 0o644))
 
-	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
 
-	streamLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"","data":{"role":"assistant","text":"missing-kind"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"still-replayed"}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
-
-	eventLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"","event":"","data":{"text":"missing-kind-and-event"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:22Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"still-replayed"}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=200")
-	require.Equal(t, http.StatusOK, w.Code)
-	resp := decodeAPIResponse(t, w)
-	require.True(t, resp.OK)
-
-	var data struct {
-		Entries []struct {
-			EntryID string         `json:"entry_id"`
-			Kind    string         `json:"kind"`
-			Source  string         `json:"source"`
-			Data    map[string]any `json:"data"`
-		} `json:"entries"`
+			resp := decodeAPIResponse(t, w)
+			assert.False(t, resp.OK)
+			assert.Equal(t, "E_STORE_CORRUPT", resp.ErrorCode)
+			assert.NotEmpty(t, resp.Message)
+		})
 	}
-	decodeData(t, resp, &data)
-
-	entryIDs := make([]string, 0, len(data.Entries))
-	parseErrorSources := make(map[string]bool)
-	for _, entry := range data.Entries {
-		entryIDs = append(entryIDs, entry.EntryID)
-		if entry.Kind != "parse_error" {
-			continue
-		}
-		if reason, _ := entry.Data["reason"].(string); reason == "missing_event_kind" {
-			parseErrorSources[entry.Source] = true
-		}
-	}
-
-	assert.Contains(t, entryIDs, "stream:1")
-	assert.Contains(t, entryIDs, "stream:3", "valid stream rows after missing-kind rows must still be replayed")
-	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt")
-	assert.Contains(t, entryIDs, "inv_event:3:agency.followup_prompt", "valid invocation-event rows after missing-kind rows must still be replayed")
-	assert.True(t, parseErrorSources["stream"], "missing stream kind rows must emit parse_error diagnostics")
-	assert.True(t, parseErrorSources["invocation_event"], "missing invocation-event kind/event rows must emit parse_error diagnostics")
-}
-
-func TestHandleGetInvocationTimeline_EmitsParseErrorWhenScanFails(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-
-	oversizedLine := strings.Repeat("x", 9*1024*1024) + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(oversizedLine), 0o644))
-	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(oversizedLine), 0o644))
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=200")
-	require.Equal(t, http.StatusOK, w.Code)
-	resp := decodeAPIResponse(t, w)
-	require.True(t, resp.OK)
-
-	var data struct {
-		Entries []struct {
-			Kind   string         `json:"kind"`
-			Source string         `json:"source"`
-			Data   map[string]any `json:"data"`
-		} `json:"entries"`
-	}
-	decodeData(t, resp, &data)
-
-	parseErrorSources := make(map[string]bool)
-	for _, entry := range data.Entries {
-		if entry.Kind != "parse_error" {
-			continue
-		}
-		if reason, _ := entry.Data["reason"].(string); reason == "line_too_large" {
-			parseErrorSources[entry.Source] = true
-		}
-	}
-
-	assert.True(t, parseErrorSources["stream"], "scanner failures in stream replay must emit parse_error diagnostics")
-	assert.True(t, parseErrorSources["invocation_event"], "scanner failures in invocation-event replay must emit parse_error diagnostics")
-}
-
-func TestHandleGetInvocationTimeline_ReplayContinuesAfterOversizedPersistedRows(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-
-	oversizedLine := strings.Repeat("x", 9*1024*1024) + "\n"
-	validStreamLine := `{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"after-oversized"}}` + "\n"
-	validEventLine := `{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:22Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"after-oversized-event"}}` + "\n"
-
-	require.NoError(t, os.WriteFile(
-		env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"),
-		[]byte(oversizedLine+validStreamLine),
-		0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		env.Store.InvocationEventsPath(env.RepoID, "inv-1"),
-		[]byte(oversizedLine+validEventLine),
-		0o644,
-	))
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=200")
-	require.Equal(t, http.StatusOK, w.Code)
-	resp := decodeAPIResponse(t, w)
-	require.True(t, resp.OK)
-
-	var data struct {
-		Entries []struct {
-			EntryID string         `json:"entry_id"`
-			Kind    string         `json:"kind"`
-			Source  string         `json:"source"`
-			Data    map[string]any `json:"data"`
-		} `json:"entries"`
-	}
-	decodeData(t, resp, &data)
-
-	entryIDs := make([]string, 0, len(data.Entries))
-	parseErrorSources := make(map[string]bool)
-	for _, entry := range data.Entries {
-		entryIDs = append(entryIDs, entry.EntryID)
-		if entry.Kind != "parse_error" {
-			continue
-		}
-		if reason, _ := entry.Data["reason"].(string); reason == "line_too_large" {
-			parseErrorSources[entry.Source] = true
-		}
-	}
-
-	assert.Contains(t, entryIDs, "stream:2", "valid stream rows after oversized rows must still be replayed")
-	assert.Contains(t, entryIDs, "inv_event:2:agency.followup_prompt", "valid invocation-event rows after oversized rows must still be replayed")
-	assert.True(t, parseErrorSources["stream"], "oversized stream rows must still emit parse_error diagnostics")
-	assert.True(t, parseErrorSources["invocation_event"], "oversized invocation-event rows must still emit parse_error diagnostics")
 }
 
 func TestHandleGetInvocationTimeline_InvocationEventIDsStayUniqueAcrossLineAndSeqFallback(t *testing.T) {
