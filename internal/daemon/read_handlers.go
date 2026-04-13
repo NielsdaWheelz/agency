@@ -417,10 +417,7 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 }
 
 // handleGetInvocationLogs handles GET /invocations/{ref}/logs.
-// Supports two modes:
-//   - Offset mode (PR-B): when "offset" query param is present, returns base64-encoded
-//     chunk with next_offset and total_bytes for resumable paging.
-//   - Tail mode (legacy): returns tail of file as string content.
+// Returns offset-based chunks with next_offset and total_bytes for resumable paging.
 func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
 
@@ -435,33 +432,16 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 	// Parse logs params
 	params := parseGetLogsParams(r)
 
-	// Validate offset mode params
-	if params.OffsetMode {
-		if params.Offset < 0 {
-			s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
-				"offset must be >= 0", "provide a non-negative byte offset", nil)
-			return
-		}
-		if params.Limit < 1 || params.Limit > MaxLogChunk {
-			s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
-				fmt.Sprintf("limit must be between 1 and %d", MaxLogChunk),
-				fmt.Sprintf("provide a limit in [1, %d]", MaxLogChunk), nil)
-			return
-		}
-	} else if tailBytesRaw := r.URL.Query().Get("tail_bytes"); tailBytesRaw != "" {
-		tailBytes, err := strconv.Atoi(tailBytesRaw)
-		if err != nil || tailBytes < 1 || tailBytes > MaxLogChunk {
-			s.writeAPIError(
-				w,
-				http.StatusBadRequest,
-				requestID,
-				string(errors.EInvalidArgument),
-				fmt.Sprintf("invalid value for parameter 'tail_bytes': %q", tailBytesRaw),
-				fmt.Sprintf("provide tail_bytes in [1, %d]", MaxLogChunk),
-				nil,
-			)
-			return
-		}
+	if params.Offset < 0 {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
+			"offset must be >= 0", "provide a non-negative byte offset", nil)
+		return
+	}
+	if params.Limit < 1 || params.Limit > MaxLogChunk {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
+			fmt.Sprintf("limit must be between 1 and %d", MaxLogChunk),
+			fmt.Sprintf("provide a limit in [1, %d]", MaxLogChunk), nil)
+		return
 	}
 
 	// Resolve invocation ref
@@ -484,50 +464,22 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 		params.Kind = "raw"
 	}
 
-	// Offset mode (PR-B)
-	if params.OffsetMode {
-		offsetData, err := s.readLogFileAtOffset(logPath, params.Offset, params.Limit)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// Determine hint based on kind
-				hint := "invocation may not have started or produced output yet"
-				if params.Kind == "stream" {
-					hint = "stream logs unavailable for this invocation; try --kind raw"
-				}
-				s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ELogNotFound),
-					fmt.Sprintf("logs not found for invocation %s", invocationRef), hint, nil)
-				return
-			}
-			s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
-			return
-		}
-		offsetData.Kind = params.Kind
-		s.writeAPIResponse(w, requestID, offsetData)
-		return
-	}
-
-	// Legacy tail mode
-	logsData, err := s.readLogFile(logPath, params)
+	offsetData, err := s.readLogFileAtOffset(logPath, params.Offset, params.Limit)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Return empty content for non-existent log files
-			s.writeAPIResponse(w, requestID, InvocationLogsData{
-				Kind:          params.Kind,
-				Content:       "",
-				Truncated:     false,
-				TotalBytes:    0,
-				ReturnedBytes: 0,
-				StartsMidline: false,
-				EndsMidline:   false,
-			})
+			hint := "invocation may not have started or produced output yet"
+			if params.Kind == "stream" {
+				hint = "stream logs unavailable for this invocation; try --kind raw"
+			}
+			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ELogNotFound),
+				fmt.Sprintf("logs not found for invocation %s", invocationRef), hint, nil)
 			return
 		}
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
 		return
 	}
-
-	logsData.Kind = params.Kind
-	s.writeAPIResponse(w, requestID, logsData)
+	offsetData.Kind = params.Kind
+	s.writeAPIResponse(w, requestID, offsetData)
 }
 
 // handleGetInvocationCheckpoints handles GET /invocations/{ref}/checkpoints.
@@ -983,69 +935,6 @@ func (s *Server) readLogFileAtOffset(logPath string, offset int64, limit int) (*
 	}, nil
 }
 
-// readLogFile reads a log file with tail/truncation support.
-func (s *Server) readLogFile(logPath string, params GetLogsParams) (*InvocationLogsData, error) {
-	// Get file info
-	info, err := os.Stat(logPath)
-	if err != nil {
-		return nil, err
-	}
-
-	totalBytes := info.Size()
-	tailBytes := int64(params.TailBytes)
-	if tailBytes <= 0 {
-		tailBytes = 65536 // 64KB default
-	}
-	if tailBytes > 1048576 { // 1MB max
-		tailBytes = 1048576
-	}
-
-	// Open file
-	f, err := os.Open(logPath)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-
-	var content []byte
-	var startsMidline, endsMidline, truncated bool
-
-	if totalBytes <= tailBytes {
-		// Read entire file
-		content, err = io.ReadAll(f)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Seek to tail position
-		offset := totalBytes - tailBytes
-		_, err = f.Seek(offset, io.SeekStart)
-		if err != nil {
-			return nil, err
-		}
-		content, err = io.ReadAll(f)
-		if err != nil {
-			return nil, err
-		}
-		truncated = true
-		startsMidline = true // We're starting from a non-zero offset
-	}
-
-	// Check if ends midline (no trailing newline)
-	if len(content) > 0 && content[len(content)-1] != '\n' {
-		endsMidline = true
-	}
-
-	return &InvocationLogsData{
-		Content:       string(content),
-		Truncated:     truncated,
-		TotalBytes:    totalBytes,
-		ReturnedBytes: len(content),
-		StartsMidline: startsMidline,
-		EndsMidline:   endsMidline,
-	}, nil
-}
-
 // ----- Parameter Parsing -----
 
 func parseListWorktreesParams(r *http.Request) ListWorktreesParams {
@@ -1129,37 +1018,26 @@ func parseGetDiffParams(r *http.Request) GetDiffParams {
 
 func parseGetLogsParams(r *http.Request) GetLogsParams {
 	params := GetLogsParams{
-		Kind:      "raw",
-		TailBytes: 65536, // 64KB
+		Kind:  "raw",
+		Limit: 65536,
 	}
 
 	if kind := r.URL.Query().Get("kind"); kind != "" {
 		params.Kind = kind
 	}
 
-	// PR-B: If "offset" query param is present, use offset mode.
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		params.OffsetMode = true
 		if o, err := strconv.ParseInt(offsetStr, 10, 64); err == nil {
 			params.Offset = o
 		} else {
-			params.Offset = -1 // will be caught by validation
+			params.Offset = -1
 		}
-		params.Limit = 65536 // 64KB default
-		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil {
-				params.Limit = l
-			} else {
-				params.Limit = -1 // will be caught by validation
-			}
-		}
-		return params
 	}
-
-	// Legacy tail mode
-	if tailBytes := r.URL.Query().Get("tail_bytes"); tailBytes != "" {
-		if t, err := strconv.Atoi(tailBytes); err == nil && t > 0 && t <= 1048576 {
-			params.TailBytes = t
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil {
+			params.Limit = l
+		} else {
+			params.Limit = -1
 		}
 	}
 

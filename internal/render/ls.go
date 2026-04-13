@@ -3,7 +3,6 @@ package render
 import (
 	"fmt"
 	"io"
-	"strings"
 	"time"
 )
 
@@ -225,26 +224,6 @@ func FormatHumanRows(summaries []RunSummary, now time.Time) []RunSummaryHumanRow
 		rows[i] = FormatHumanRow(s, now)
 	}
 	return rows
-}
-
-// TruncateForDisplay is a helper to safely truncate any string for display.
-func TruncateForDisplay(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen-1]) + "…"
-}
-
-// JoinStrings joins non-empty strings with the given separator.
-func JoinStrings(sep string, strs ...string) string {
-	var parts []string
-	for _, s := range strs {
-		if s != "" {
-			parts = append(parts, s)
-		}
-	}
-	return strings.Join(parts, sep)
 }
 
 // emptyLSMessage returns the appropriate message for an empty ls result.

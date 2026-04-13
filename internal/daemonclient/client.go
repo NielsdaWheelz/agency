@@ -121,34 +121,6 @@ func (c *Client) IsRunning(ctx context.Context) bool {
 	return err == nil && health.OK
 }
 
-// StartHeadless starts a headless invocation (legacy PR-04 endpoint).
-func (c *Client) StartHeadless(ctx context.Context, req *daemon.StartHeadlessRequest) (*daemon.StartHeadlessResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	url := fmt.Sprintf("http://daemon/invocations/%s/start_headless", req.InvocationID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var result daemon.StartHeadlessResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
 // ControlPlaneStartOpts holds options for control plane start (headless).
 type ControlPlaneStartOpts struct {
 	RepoRoot           string
@@ -325,7 +297,7 @@ func (c *Client) CheckAPIVersion(ctx context.Context) error {
 }
 
 // Stop sends a graceful stop signal to an invocation.
-func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon.StopResponse, error) {
+func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon.InvocationActionResponse, error) {
 	url := fmt.Sprintf("http://daemon/invocations/%s/stop?repo_id=%s", invocationID, repoID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
@@ -338,7 +310,7 @@ func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var result daemon.StopResponse
+	var result daemon.InvocationActionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
@@ -347,7 +319,7 @@ func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon
 }
 
 // Kill forcefully terminates an invocation.
-func (c *Client) Kill(ctx context.Context, repoID, invocationID string) (*daemon.KillResponse, error) {
+func (c *Client) Kill(ctx context.Context, repoID, invocationID string) (*daemon.InvocationActionResponse, error) {
 	url := fmt.Sprintf("http://daemon/invocations/%s/kill?repo_id=%s", invocationID, repoID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
@@ -360,7 +332,7 @@ func (c *Client) Kill(ctx context.Context, repoID, invocationID string) (*daemon
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var result daemon.KillResponse
+	var result daemon.InvocationActionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
@@ -1074,7 +1046,7 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 
 // GetInvocationChecksResult wraps the invocation checks response.
 type GetInvocationChecksResult struct {
-	Checks    daemon.InvocationChecksData
+	Checks    daemon.InvocationReviewData
 	RequestID string
 }
 
@@ -1133,7 +1105,7 @@ func (c *Client) GetInvocationChecks(ctx context.Context, ref string, repoID str
 		return nil, err
 	}
 	return &GetInvocationChecksResult{
-		Checks:    daemon.InvocationChecksData(review.Review),
+		Checks:    review.Review,
 		RequestID: review.RequestID,
 	}, nil
 }
@@ -1253,69 +1225,7 @@ func (c *Client) WorktreeUpdate(ctx context.Context, worktreeRef, repoID string)
 	return &result, nil
 }
 
-// GetInvocationLogsOpts holds options for getting invocation logs.
-type GetInvocationLogsOpts struct {
-	Kind      string // raw, stderr, stream (default: raw)
-	TailBytes int    // default 64KB, max 1MB
-}
-
-// GetInvocationLogsResult wraps the invocation logs response.
-type GetInvocationLogsResult struct {
-	Logs      daemon.InvocationLogsData
-	RequestID string
-}
-
-// GetInvocationLogs gets logs for an invocation via the daemon.
-func (c *Client) GetInvocationLogs(ctx context.Context, ref string, repoID string, opts GetInvocationLogsOpts) (*GetInvocationLogsResult, error) {
-	u := fmt.Sprintf("http://daemon/invocations/%s/logs?", url.PathEscape(ref))
-	if repoID != "" {
-		u += "repo_id=" + url.QueryEscape(repoID) + "&"
-	}
-	if opts.Kind != "" {
-		u += "kind=" + url.QueryEscape(opts.Kind) + "&"
-	}
-	if opts.TailBytes > 0 {
-		u += fmt.Sprintf("tail_bytes=%d&", opts.TailBytes)
-	}
-	u = u[:len(u)-1] // trim trailing & or ?
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var apiResp daemon.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
-	if !apiResp.OK {
-		return nil, errors.New(errors.Code(apiResp.ErrorCode), apiResp.Message)
-	}
-
-	// Decode data field
-	dataBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, err
-	}
-	var logs daemon.InvocationLogsData
-	if err := json.Unmarshal(dataBytes, &logs); err != nil {
-		return nil, err
-	}
-
-	return &GetInvocationLogsResult{
-		Logs:      logs,
-		RequestID: apiResp.RequestID,
-	}, nil
-}
-
-// GetInvocationLogsOffsetOpts holds options for offset-based log reads (PR-B).
+// GetInvocationLogsOffsetOpts holds options for offset-based log reads.
 type GetInvocationLogsOffsetOpts struct {
 	Kind   string // raw, stderr, stream (default: raw)
 	Offset int64  // byte offset from start of file
@@ -1328,7 +1238,7 @@ type GetInvocationLogsOffsetResult struct {
 	RequestID string
 }
 
-// GetInvocationLogsOffset gets logs at a byte offset for an invocation via the daemon (PR-B).
+// GetInvocationLogsOffset gets logs at a byte offset for an invocation via the daemon.
 func (c *Client) GetInvocationLogsOffset(ctx context.Context, ref string, repoID string, opts GetInvocationLogsOffsetOpts) (*GetInvocationLogsOffsetResult, error) {
 	u := fmt.Sprintf("http://daemon/invocations/%s/logs?", url.PathEscape(ref))
 	if repoID != "" {

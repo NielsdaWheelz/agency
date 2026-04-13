@@ -149,27 +149,12 @@ type WorktreeLSOpts struct {
 	AllRepos bool   // PR-A: --all-repos
 	All      bool
 	JSON     bool
-
-	// Watch is a deprecated legacy flag retained for explicit cutover errors.
-	Watch    bool
-	Interval time.Duration // default 500ms, min 250ms, max 5s
-
-	// SleepFn is retained for backward compatibility in tests.
-	SleepFn func(time.Duration)
-
-	// MaxIterations is retained for backward compatibility in tests.
-	MaxIterations int
 }
 
 // WorktreeLS lists integration worktrees.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
-// PR-B: Supports --watch for ANSI clear-screen redraw polling.
 func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeLSOpts, stdout, stderr io.Writer) error {
-	if opts.Watch {
-		return errors.New(errors.EUsage, "worktree ls --watch was removed; use `agency watch` for the unified workspace")
-	}
-
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

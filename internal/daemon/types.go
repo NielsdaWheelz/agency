@@ -30,30 +30,6 @@ const HeadedReconcileInterval = 3 * time.Second
 // Per PR-11 spec: at least 2 consecutive ticks (i.e., ≥1 full tick interval after first observation).
 const HeadedStartingGraceCount = 2
 
-// StartHeadlessRequest is the request body for POST /invocations/{id}/start_headless (legacy PR-04).
-type StartHeadlessRequest struct {
-	// RepoID is the repo identifier.
-	RepoID string `json:"repo_id"`
-
-	// InvocationID is the invocation identifier (created by CLI).
-	InvocationID string `json:"invocation_id"`
-
-	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases accepted).
-	Runner string `json:"runner"`
-
-	// SandboxPath is the absolute path to the sandbox tree (runner CWD).
-	SandboxPath string `json:"sandbox_path"`
-
-	// Prompt is the full prompt text.
-	Prompt string `json:"prompt"`
-
-	// RunnerArgs are optional pass-through args appended after the base command.
-	RunnerArgs []string `json:"runner_args,omitempty"`
-
-	// Env are optional environment variable overrides.
-	Env map[string]string `json:"env,omitempty"`
-}
-
 // ControlPlaneStartRequest is the request body for POST /invocations/start_headless (PR-05 control plane).
 // This is the new endpoint where daemon creates everything.
 type ControlPlaneStartRequest struct {
@@ -147,23 +123,6 @@ type IdempotencyEntry struct {
 	CreatedAt    int64 // Unix timestamp
 }
 
-// StartHeadlessResponse is the response body for POST /invocations/{id}/start_headless.
-type StartHeadlessResponse struct {
-	OK               bool      `json:"ok"`
-	PID              int       `json:"pid,omitempty"`
-	PGID             int       `json:"pgid,omitempty"`
-	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
-	AlreadyRunning   bool      `json:"already_running,omitempty"`
-	Orphaned         bool      `json:"orphaned,omitempty"`
-	LogPaths         *LogPaths `json:"log_paths,omitempty"`
-	RequestID        string    `json:"request_id,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
-}
-
 // LogPaths contains paths to log files.
 type LogPaths struct {
 	Raw    string `json:"raw"`
@@ -171,21 +130,8 @@ type LogPaths struct {
 	Stream string `json:"stream"`
 }
 
-// StopResponse is the response body for POST /invocations/{id}/stop.
-type StopResponse struct {
-	OK              bool   `json:"ok"`
-	InvocationID    string `json:"invocation_id,omitempty"`
-	RequestID       string `json:"request_id,omitempty"`
-	APIVersion      int    `json:"api_version"`
-	BuildVersion    string `json:"build_version,omitempty"`
-	ClientRequestID string `json:"client_request_id,omitempty"`
-	ErrorCode       string `json:"error_code,omitempty"`
-	Message         string `json:"message,omitempty"`
-	Hint            string `json:"hint,omitempty"`
-}
-
-// KillResponse is the response body for POST /invocations/{id}/kill.
-type KillResponse struct {
+// InvocationActionResponse is the shared response body for POST /invocations/{id}/stop and /kill.
+type InvocationActionResponse struct {
 	OK              bool   `json:"ok"`
 	InvocationID    string `json:"invocation_id,omitempty"`
 	RequestID       string `json:"request_id,omitempty"`

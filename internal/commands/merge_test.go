@@ -227,7 +227,7 @@ func TestIsGHPRNotFound(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := isGHPRNotFound(tt.err)
+			got := isPRNotFound(tt.err)
 			assert.Equal(t, tt.want, got)
 		})
 	}

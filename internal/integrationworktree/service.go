@@ -14,7 +14,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -387,23 +386,3 @@ func HasIntegrationMarker(path string) bool {
 	return err == nil
 }
 
-// ValidateRepoContext validates the repo context for worktree operations.
-// Checks: CWD is inside a git repo, parent tree is clean.
-func ValidateRepoContext(ctx context.Context, cr exec.CommandRunner, cwd string) (repoRoot string, err error) {
-	// Check we're inside a git repo
-	root, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return "", err
-	}
-
-	// Check parent tree is clean
-	clean, err := git.IsClean(ctx, cr, root.Path)
-	if err != nil {
-		return "", err
-	}
-	if !clean {
-		return "", errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash before creating a worktree")
-	}
-
-	return root.Path, nil
-}

@@ -790,7 +790,7 @@ func resolvePRForMerge(ctx context.Context, cr exec.CommandRunner, meta *store.R
 	pr, err := viewPRByHeadFullWithRetry(ctx, cr, workDir, ghRepo, head, meta.Branch, sleeper, eventsPath, repoID, meta.RunID)
 	if err != nil {
 		// Check if it's a "not found" error
-		if isGHPRNotFound(err) {
+		if isPRNotFound(err) {
 			appendMergeEvent(eventsPath, repoID, meta.RunID, "merge_failed", map[string]any{
 				"error_code": string(errors.ENoPR),
 				"step":       "pr_resolution",
@@ -993,11 +993,6 @@ func isGHPRViewSchemaError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "schema_error")
-}
-
-// isGHPRNotFound checks if the error indicates "no PR found".
-func isGHPRNotFound(err error) bool {
-	return isPRNotFound(err)
 }
 
 // prStateResult holds the result of PR state validation.

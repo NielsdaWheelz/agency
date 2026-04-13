@@ -388,13 +388,7 @@ func deriveTryLines(ae *AgencyError) []string {
 				}
 			}
 		}
-	case ERemoteOutOfDate:
-		if ae.Details != nil {
-			if runID := ae.Details["run_id"]; runID != "" {
-				lines = append(lines, fmt.Sprintf("agency push %s", runID))
-			}
-		}
-	case ENoPR:
+	case ERemoteOutOfDate, ENoPR:
 		if ae.Details != nil {
 			if runID := ae.Details["run_id"]; runID != "" {
 				lines = append(lines, fmt.Sprintf("agency push %s", runID))
@@ -405,24 +399,3 @@ func deriveTryLines(ae *AgencyError) []string {
 	return lines
 }
 
-// FormatHint formats a hint for output.
-// If hint already starts with "hint:", returns as-is.
-// Otherwise prepends "hint: ".
-func FormatHint(hint string) string {
-	if hint == "" {
-		return ""
-	}
-	if strings.HasPrefix(hint, "hint:") {
-		return hint
-	}
-	return "hint: " + hint
-}
-
-// GetHint extracts the hint from an error's details, if present.
-func GetHint(err error) string {
-	ae, ok := AsAgencyError(err)
-	if !ok || ae.Details == nil {
-		return ""
-	}
-	return ae.Details["hint"]
-}

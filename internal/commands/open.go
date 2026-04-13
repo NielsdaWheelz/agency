@@ -4,16 +4,13 @@ package commands
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
-	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // OpenOpts holds options for the open command.
@@ -33,7 +30,7 @@ type OpenOpts struct {
 
 // Open opens the run worktree in the configured editor.
 // Resolves run IDs globally and does not require repo cwd.
-func Open(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts OpenOpts, stdout, stderr io.Writer) error {
+func Open(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, opts OpenOpts) error {
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
 	}
@@ -57,7 +54,7 @@ func Open(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	runRef, record, err := resolveRunForOpen(dataDir, opts.RunID)
+	runRef, record, err := resolveRunGlobal(opts.RunID, dataDir)
 	if err != nil {
 		return err
 	}
@@ -108,14 +105,5 @@ func Open(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 			result.ExitCode,
 		)
 	}
-
-	_ = cwd
-	_ = stdout
-	_ = stderr
 	return nil
-}
-
-func resolveRunForOpen(dataDir, runID string) (ids.RunRef, *store.RunRecord, error) {
-	// Use the shared name-aware resolution helper
-	return resolveRunGlobal(runID, dataDir)
 }

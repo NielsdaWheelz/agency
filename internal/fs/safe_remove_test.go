@@ -173,7 +173,7 @@ func TestIsSubpath(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := IsSubpath(tt.target, tt.prefix)
+			got := isSubpath(tt.target, tt.prefix)
 			assert.Equal(t, tt.want, got)
 		})
 	}

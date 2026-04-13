@@ -46,19 +46,15 @@ type RunnerStatusDisplay struct {
 // ShowHumanData holds the data for human show output.
 type ShowHumanData struct {
 	// Core
-	RunID     string
-	Name      string
-	Runner    string
-	CreatedAt string // RFC3339
-	RepoID    string
-	RepoKey   string // may be empty
-	OriginURL string // may be empty
+	RunID  string
+	Name   string
+	Runner string
+	RepoID string
 
 	// Git/workspace
 	ParentBranch    string
 	Branch          string
 	WorktreePath    string
-	WorktreePresent bool
 	TmuxSessionName string
 	TmuxActive      bool
 
@@ -69,27 +65,12 @@ type ShowHumanData struct {
 	LastReportSyncAt string // RFC3339
 	LastReportHash   string // sha256 hex
 
-	// Report
-	ReportPath   string
-	ReportExists bool
-	ReportBytes  int
-
-	// Logs
-	SetupLogPath   string
-	VerifyLogPath  string
-	ArchiveLogPath string
-
 	// Derived
 	DerivedStatus string
 	Archived      bool
 
 	// Runner status (nil if no runner_status.json or invalid)
 	RunnerStatus *RunnerStatusDisplay
-
-	// Warnings
-	RepoNotFoundWarning    bool
-	WorktreeMissingWarning bool
-	TmuxUnavailableWarning bool
 }
 
 // WriteShowPaths writes --path output in the locked format.

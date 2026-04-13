@@ -107,7 +107,6 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 
 	// Get tmux session set (single call for efficiency)
 	tmuxSessions := getTmuxSessions(ctx, cr)
-	tmuxUnavailable := false // we don't know if tmux is unavailable, just that no sessions exist
 
 	// Compute local snapshot for the run
 	worktreePath := record.Meta.WorktreePath
@@ -166,13 +165,6 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	derived := status.Derive(record.Meta, snapshot)
 
-	// Best-effort repo root resolution
-	repoRoot := resolveRepoRootForShow(ctx, cr, cwd, record, dataDir)
-
-	// Determine if we should show warnings
-	repoNotFoundWarning := repoRoot == nil && record.Repo != nil
-	worktreeMissingWarning := !worktreePresent
-
 	// Print capture warnings (only for human mode, to stderr)
 	if opts.Capture && captureRes != nil && !captureRes.ok && !opts.JSON && !opts.Path {
 		_, _ = fmt.Fprintf(stderr, "warning: capture failed at stage '%s': %s\n", captureRes.stage, captureRes.errorMsg)
@@ -180,10 +172,12 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 
 	// Build output based on mode
 	if opts.Path {
+		repoRoot := resolveRepoRootForShow(ctx, cr, cwd, record, dataDir)
 		return outputShowPaths(stdout, repoRoot, worktreePath, runDir, logsDir, eventsPath, transcriptPath, reportPath)
 	}
 
 	if opts.JSON {
+		repoRoot := resolveRepoRootForShow(ctx, cr, cwd, record, dataDir)
 		return outputShowJSONWithCapture(stdout, record, repoRoot, runDir, eventsPath, transcriptPath, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, captureRes, runnerStatus)
 	}
 
@@ -202,7 +196,7 @@ func Show(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	// Human output
-	return outputShowHuman(stdout, record, repoRoot, runDir, derived, reportPath, reportExists, reportBytes, tmuxActive, worktreePresent, archived, setupLogPath, verifyLogPath, archiveLogPath, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable, runnerStatusDisplay)
+	return outputShowHuman(stdout, record, derived, tmuxActive, archived, runnerStatusDisplay)
 }
 
 // performCapture executes the capture flow: acquire lock, emit events, capture transcript.
@@ -578,22 +572,20 @@ func outputShowJSONWithCapture(stdout io.Writer, record *store.RunRecord, repoRo
 }
 
 // outputShowHuman writes the human-readable output.
-func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string, runDir string, derived status.Derived, reportPath string, reportExists bool, reportBytes int, tmuxActive, worktreePresent, archived bool, setupLogPath, verifyLogPath, archiveLogPath string, repoNotFoundWarning, worktreeMissingWarning, tmuxUnavailable bool, runnerStatusDisplay *render.RunnerStatusDisplay) error {
+func outputShowHuman(stdout io.Writer, record *store.RunRecord, derived status.Derived, tmuxActive, archived bool, runnerStatusDisplay *render.RunnerStatusDisplay) error {
 	meta := record.Meta
 
 	data := render.ShowHumanData{
 		// Core
-		RunID:     meta.RunID,
-		Name:      meta.Name,
-		Runner:    meta.Runner,
-		CreatedAt: meta.CreatedAt,
-		RepoID:    record.RepoID,
+		RunID:  meta.RunID,
+		Name:   meta.Name,
+		Runner: meta.Runner,
+		RepoID: record.RepoID,
 
 		// Git/workspace
 		ParentBranch:    meta.ParentBranch,
 		Branch:          meta.Branch,
 		WorktreePath:    meta.WorktreePath,
-		WorktreePresent: worktreePresent,
 		TmuxSessionName: meta.TmuxSessionName,
 		TmuxActive:      tmuxActive,
 
@@ -604,35 +596,12 @@ func outputShowHuman(stdout io.Writer, record *store.RunRecord, repoRoot *string
 		LastReportSyncAt: meta.LastReportSyncAt,
 		LastReportHash:   meta.LastReportHash,
 
-		// Report
-		ReportPath:   reportPath,
-		ReportExists: reportExists,
-		ReportBytes:  reportBytes,
-
-		// Logs
-		SetupLogPath:   setupLogPath,
-		VerifyLogPath:  verifyLogPath,
-		ArchiveLogPath: archiveLogPath,
-
 		// Derived
 		DerivedStatus: derived.DerivedStatus,
 		Archived:      archived,
 
 		// Runner status
 		RunnerStatus: runnerStatusDisplay,
-
-		// Warnings
-		RepoNotFoundWarning:    repoNotFoundWarning,
-		WorktreeMissingWarning: worktreeMissingWarning,
-		TmuxUnavailableWarning: tmuxUnavailable,
-	}
-
-	// Repo identity
-	if record.Repo != nil {
-		data.RepoKey = record.Repo.RepoKey
-		if record.Repo.OriginURL != nil {
-			data.OriginURL = *record.Repo.OriginURL
-		}
 	}
 
 	return render.WriteShowHuman(stdout, data)

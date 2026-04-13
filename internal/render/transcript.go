@@ -57,36 +57,6 @@ func WriteTranscript(w io.Writer, entries []TranscriptEntry, opts TranscriptOpts
 	return nil
 }
 
-// WriteRawTranscript pretty-prints raw JSONL content line by line.
-func WriteRawTranscript(w io.Writer, rawContent []byte, opts TranscriptOpts) error {
-	if len(rawContent) == 0 {
-		_, err := fmt.Fprintln(w, "No raw log content.")
-		return err
-	}
-
-	lines := bytes.Split(rawContent, []byte("\n"))
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-
-		var buf bytes.Buffer
-		if json.Indent(&buf, line, "", "  ") == nil {
-			_, err := fmt.Fprintln(w, buf.String())
-			if err != nil {
-				return err
-			}
-		} else {
-			_, err := fmt.Fprintln(w, string(line))
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func renderEntry(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
 	switch entry.Kind {
 	case "session_start":

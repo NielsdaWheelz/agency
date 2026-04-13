@@ -168,59 +168,6 @@ func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {
 	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
 }
 
-func TestFirstValidationError(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"nil error", nil, ""},
-		{"agency error", errors.New(errors.EInvalidAgencyJSON, "test message"), "test message"},
-		{"plain error", os.ErrNotExist, "file does not exist"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := FirstValidationError(tt.err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestFirstValidationError_Stability(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		fixture string
-		wantMsg string
-	}{
-		{"missing_scripts.json", "missing required field scripts.setup.path"},
-		{"wrong_version.json", "version must be 1"},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.fixture, func(t *testing.T) {
-			t.Parallel()
-			data, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
-			require.NoError(t, err, "failed to read fixture")
-			stub := newStubFS()
-			stub.files["/repo/agency.json"] = data
-
-			cfg, err := LoadAgencyConfig(stub, "/repo")
-			require.NoError(t, err, "load error")
-
-			_, err = ValidateAgencyConfig(cfg)
-			require.Error(t, err, "expected validation error")
-
-			msg := FirstValidationError(err)
-			assert.Equal(t, tc.wantMsg, msg)
-		})
-	}
-}
-
 func TestContainsWhitespace(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

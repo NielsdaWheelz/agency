@@ -301,11 +301,11 @@ func TestDeriveRepoIdentity_DifferentPaths(t *testing.T) {
 	assert.NotEqual(t, id1.RepoID, id2.RepoID, "different paths produced same RepoID")
 }
 
-func TestSha256Hex(t *testing.T) {
+func TestSha256HexFunction(t *testing.T) {
 	t.Parallel()
 
 	// Verify hash is lowercase hex and correct length
-	hash := Sha256Hex("test")
+	hash := sha256Hex("test")
 
 	assert.Len(t, hash, 64)
 
@@ -317,8 +317,8 @@ func TestSha256Hex(t *testing.T) {
 	}
 
 	// Verify determinism
-	hash2 := Sha256Hex("test")
-	assert.Equal(t, hash, hash2, "Sha256Hex not deterministic")
+	hash2 := sha256Hex("test")
+	assert.Equal(t, hash, hash2, "sha256Hex not deterministic")
 
 	// Known value test
 	// echo -n "test" | sha256sum -> 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08

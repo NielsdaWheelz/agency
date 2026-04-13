@@ -105,7 +105,7 @@ func ResolveRepoRoot(ctx context.Context, cr exec.CommandRunner, st *store.Store
 				root = strings.TrimSpace(repoRecord.RepoRootLastSeen)
 			}
 			if root != "" {
-				return CanonicalizePath(root), nil
+				return canonicalizePath(root), nil
 			}
 		}
 	}
@@ -114,11 +114,11 @@ func ResolveRepoRoot(ctx context.Context, cr exec.CommandRunner, st *store.Store
 	if err != nil {
 		return "", errors.Wrap(errors.EInternal, "failed to resolve repository root", err)
 	}
-	return CanonicalizePath(root.Path), nil
+	return canonicalizePath(root.Path), nil
 }
 
-// CanonicalizePath normalizes path comparisons to abs-clean-resolved path.
-func CanonicalizePath(path string) string {
+// canonicalizePath normalizes path comparisons to abs-clean-resolved path.
+func canonicalizePath(path string) string {
 	clean := filepath.Clean(path)
 	abs, err := filepath.Abs(clean)
 	if err == nil {

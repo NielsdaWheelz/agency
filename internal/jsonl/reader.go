@@ -148,12 +148,6 @@ func trimLineEndings(line []byte) []byte {
 	return trimmed
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 // ExtractUintField scans a JSON prefix for a numeric object field.
 // It tolerates truncated JSON as long as `"field":<digits>` is present.

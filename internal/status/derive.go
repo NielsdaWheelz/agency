@@ -93,20 +93,19 @@ func Derive(meta *store.RunMeta, in Snapshot) Derived {
 func deriveStatus(meta *store.RunMeta, in Snapshot) string {
 	// 1) Terminal outcomes always win (broken handled above)
 	// 2) merged
-	if isMerged(meta) {
+	if meta.Archive != nil && meta.Archive.MergedAt != "" {
 		return StatusMerged
 	}
 	// 3) abandoned
-	if isAbandoned(meta) {
+	if meta.Flags != nil && meta.Flags.Abandoned {
 		return StatusAbandoned
 	}
-
 	// 4) setup_failed
-	if isSetupFailed(meta) {
+	if meta.Flags != nil && meta.Flags.SetupFailed {
 		return StatusFailed
 	}
 	// 5) needs_attention
-	if isNeedsAttention(meta) {
+	if meta.Flags != nil && meta.Flags.NeedsAttention {
 		return StatusNeedsAttention
 	}
 
@@ -136,22 +135,3 @@ func deriveStatus(meta *store.RunMeta, in Snapshot) string {
 	return StatusIdle
 }
 
-// isMerged returns true if archive.merged_at is set.
-func isMerged(meta *store.RunMeta) bool {
-	return meta.Archive != nil && meta.Archive.MergedAt != ""
-}
-
-// isAbandoned returns true if flags.abandoned is set.
-func isAbandoned(meta *store.RunMeta) bool {
-	return meta.Flags != nil && meta.Flags.Abandoned
-}
-
-// isSetupFailed returns true if flags.setup_failed is set.
-func isSetupFailed(meta *store.RunMeta) bool {
-	return meta.Flags != nil && meta.Flags.SetupFailed
-}
-
-// isNeedsAttention returns true if flags.needs_attention is set.
-func isNeedsAttention(meta *store.RunMeta) bool {
-	return meta.Flags != nil && meta.Flags.NeedsAttention
-}

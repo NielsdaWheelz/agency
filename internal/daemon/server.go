@@ -451,13 +451,6 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
-	case "start_headless":
-		// Legacy PR-04 endpoint: POST /invocations/{id}/start_headless
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
-			return
-		}
-		s.handleStartHeadless(w, r, invocationRef)
 	case "stop":
 		if r.Method != http.MethodPost {
 			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")

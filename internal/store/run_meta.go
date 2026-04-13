@@ -250,7 +250,7 @@ func (s *Store) ReadMeta(repoID, runID string) (*RunMeta, error) {
 	}
 
 	var meta RunMeta
-	if err := jsonUnmarshal(data, &meta); err != nil {
+	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EStoreCorrupt,
 			"failed to parse meta.json",
@@ -279,7 +279,3 @@ func NewRunMeta(runID, repoID, name, runner, runnerCmd, parentBranch, branch, wo
 	}
 }
 
-// jsonUnmarshal wraps json.Unmarshal (can be stubbed for testing).
-func jsonUnmarshal(data []byte, v any) error {
-	return json.Unmarshal(data, v)
-}

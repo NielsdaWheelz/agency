@@ -263,15 +263,6 @@ type InvocationReviewData struct {
 	Navigation        InvocationReviewNavigation `json:"navigation"`
 }
 
-// InvocationCheckReason is retained as a compatibility alias.
-type InvocationCheckReason = InvocationReviewReason
-
-// InvocationChecksNavigation is retained as a compatibility alias.
-type InvocationChecksNavigation = InvocationReviewNavigation
-
-// InvocationChecksData is retained as a compatibility alias.
-type InvocationChecksData = InvocationReviewData
-
 // ----- Logs Response Types -----
 
 // InvocationLogsData is the data payload for GET /invocations/{id}/logs.
@@ -367,25 +358,13 @@ type ListInvocationsParams struct {
 
 // GetLogsParams holds query parameters for GET /invocations/{id}/logs.
 type GetLogsParams struct {
-	Kind      string // raw, stderr, stream (default: raw)
-	TailBytes int    // default 65536, max 1048576
-
-	// Offset mode (PR-B): when OffsetMode is true, use Offset+Limit instead of TailBytes.
-	OffsetMode bool
-	Offset     int64 // byte offset from start of file (>= 0)
-	Limit      int   // max bytes returned; clamped to [1, MaxLogChunk]
+	Kind   string // raw, stderr, stream (default: raw)
+	Offset int64  // byte offset from start of file (>= 0)
+	Limit  int    // max bytes returned; clamped to [1, MaxLogChunk]
 }
 
 // MaxLogChunk is the maximum bytes per offset-mode log read (1 MB).
 const MaxLogChunk = 1_048_576
-
-// InvocationLogsOffsetData is the data payload for offset-mode log reads (PR-B).
-type InvocationLogsOffsetData struct {
-	Kind       string `json:"kind"`        // raw, stderr, stream
-	DataB64    string `json:"data_b64"`    // raw bytes, base64-encoded
-	NextOffset int64  `json:"next_offset"` // offset + len(data)
-	TotalBytes int64  `json:"total_bytes"` // current file size
-}
 
 // ----- Timeline Response Types (S3 PR-01) -----
 

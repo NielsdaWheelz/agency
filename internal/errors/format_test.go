@@ -442,67 +442,6 @@ func TestReadTailNonexistentFile(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestGetHint verifies GetHint function.
-func TestGetHint(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		err      error
-		expected string
-	}{
-		{
-			name:     "with hint",
-			err:      NewWithDetails(EScriptFailed, "test", map[string]string{"hint": "fix it"}),
-			expected: "fix it",
-		},
-		{
-			name:     "no hint",
-			err:      NewWithDetails(EScriptFailed, "test", map[string]string{"other": "value"}),
-			expected: "",
-		},
-		{
-			name:     "nil details",
-			err:      New(EScriptFailed, "test"),
-			expected: "",
-		},
-		{
-			name:     "non-agency error",
-			err:      &testError{msg: "plain"},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			result := GetHint(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestFormatHint verifies FormatHint function.
-func TestFormatHint(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"", ""},
-		{"fix it", "hint: fix it"},
-		{"hint: already prefixed", "hint: already prefixed"},
-	}
-
-	for _, tt := range tests {
-		result := FormatHint(tt.input)
-		assert.Equal(t, tt.expected, result)
-	}
-}
-
 // testError is a simple error implementation for testing.
 type testError struct {
 	msg string

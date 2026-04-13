@@ -60,7 +60,7 @@ func DeriveRepoIdentity(absRepoRoot string, originURL string) RepoIdentity {
 	}
 
 	// Fallback to path-based key
-	pathHash := Sha256Hex(absRepoRoot)
+	pathHash := sha256Hex(absRepoRoot)
 	repoKey := fmt.Sprintf("path:%s", pathHash)
 	return RepoIdentity{
 		RepoKey:             repoKey,
@@ -72,12 +72,12 @@ func DeriveRepoIdentity(absRepoRoot string, originURL string) RepoIdentity {
 
 // deriveRepoID computes sha256(repoKey) and truncates to RepoIDLen hex chars.
 func deriveRepoID(repoKey string) string {
-	hash := Sha256Hex(repoKey)
+	hash := sha256Hex(repoKey)
 	return hash[:RepoIDLen]
 }
 
-// Sha256Hex computes the lowercase hex-encoded SHA256 of a string.
-func Sha256Hex(s string) string {
+// sha256Hex computes the lowercase hex-encoded SHA256 of a string.
+func sha256Hex(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
 }

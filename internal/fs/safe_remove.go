@@ -53,7 +53,7 @@ func SafeRemoveAll(target, allowedPrefix string) error {
 	}
 
 	// Check if target is under prefix (true subpath, not equal)
-	if !IsSubpath(resolvedTarget, resolvedPrefix) {
+	if !isSubpath(resolvedTarget, resolvedPrefix) {
 		return &ErrNotUnderPrefix{Target: target, Prefix: allowedPrefix}
 	}
 
@@ -61,10 +61,10 @@ func SafeRemoveAll(target, allowedPrefix string) error {
 	return os.RemoveAll(cleanTarget)
 }
 
-// IsSubpath returns true if target is a proper subpath of prefix.
+// isSubpath returns true if target is a proper subpath of prefix.
 // Both paths should already be cleaned and resolved.
 // Returns false if target equals prefix or is outside prefix.
-func IsSubpath(target, prefix string) bool {
+func isSubpath(target, prefix string) bool {
 	// Ensure prefix ends with separator for proper matching
 	prefixWithSep := prefix
 	if !strings.HasSuffix(prefixWithSep, string(filepath.Separator)) {
