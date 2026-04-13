@@ -3,7 +3,6 @@ package cobra
 import (
 	"context"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -110,8 +109,6 @@ func newWorktreeLSCmd() *cobra.Command {
 	var allRepos bool
 	var all bool
 	var jsonOut bool
-	var watch bool
-	var intervalStr string
 
 	cmd := &cobra.Command{
 		Use:   "ls",
@@ -120,10 +117,6 @@ func newWorktreeLSCmd() *cobra.Command {
 
 By default, only shows non-archived worktrees for the current repo.
 Use --repo to specify a repo by id/prefix, or --all-repos to list globally.
-
-The legacy --watch list redraw mode is removed.
-Use 'agency watch' for the unified full-screen workspace.
---watch is incompatible with --json.
 
 Example:
   agency worktree ls
@@ -134,19 +127,6 @@ Example:
   agency watch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if watch && jsonOut {
-				return errors.New(errors.EUsage, "--watch and --json cannot be used together")
-			}
-
-			var interval time.Duration
-			if watch && intervalStr != "" {
-				d, parseErr := parseWatchInterval(intervalStr)
-				if parseErr != nil {
-					return errors.New(errors.EInvalidArgument, parseErr.Error())
-				}
-				interval = d
-			}
-
 			cwd, err := os.Getwd()
 			if err != nil {
 				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
@@ -161,8 +141,6 @@ Example:
 				AllRepos: allRepos,
 				All:      all,
 				JSON:     jsonOut,
-				Watch:    watch,
-				Interval: interval,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -171,8 +149,6 @@ Example:
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	cmd.Flags().BoolVar(&watch, "watch", false, "Deprecated: use 'agency watch'")
-	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Deprecated with --watch; use 'agency watch --interval'")
 
 	return cmd
 }

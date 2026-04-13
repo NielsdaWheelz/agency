@@ -107,7 +107,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	// Get sandbox path and checkpoints directory
 	sandboxPath := meta.SandboxPath
-	checkpointsDir := s.Store.SandboxDir(repoID, invocationID)
+	checkpointsDir := s.Store.InvocationDir(repoID, invocationID)
 	eventsPath := s.Store.InvocationEventsPath(repoID, invocationID)
 
 	// Create applier and apply checkpoint

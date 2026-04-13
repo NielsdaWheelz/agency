@@ -190,7 +190,7 @@ func setupInvocationMeta(t *testing.T, st *store.Store, repoID, invocationID str
 		"/sandbox/path",
 		"agency/sandbox-"+invocationID,
 		"basecommit",
-		"claude",
+		"claude-code",
 		mode,
 		time.Now(),
 	)

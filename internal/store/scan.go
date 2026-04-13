@@ -4,6 +4,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -229,8 +230,6 @@ func scanRepoRuns(dataDir, repoID string, cache *repoJoinCache) ([]RunRecord, er
 // Different from Store.LoadRepoIndex:
 //   - Returns (*RepoIndex, nil) if file is missing (not empty index)
 //   - Returns (nil, error) if JSON is invalid
-//   - Accepts both { "schema_version": "1.0", "repos": {...} } format
-//     and legacy { "entries": {...} } format for compatibility
 func LoadRepoIndexForScan(dataDir string) (*RepoIndex, error) {
 	path := filepath.Join(dataDir, "repo_index.json")
 
@@ -242,21 +241,17 @@ func LoadRepoIndexForScan(dataDir string) (*RepoIndex, error) {
 		return nil, err
 	}
 
-	// Try standard format first
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	if _, ok := raw["entries"]; ok {
+		return nil, fmt.Errorf("unsupported legacy repo_index.json format")
+	}
+
 	var idx RepoIndex
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, err
-	}
-
-	// If standard format worked but repos is nil, try legacy format
-	if idx.Repos == nil {
-		// Try to parse as legacy format with "entries" key
-		var legacy struct {
-			Entries map[string]RepoIndexEntry `json:"entries"`
-		}
-		if json.Unmarshal(data, &legacy) == nil && legacy.Entries != nil {
-			idx.Repos = legacy.Entries
-		}
 	}
 
 	// Initialize empty map if still nil

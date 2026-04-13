@@ -113,7 +113,7 @@ func TestWriteLSJSON_SchemaVersion(t *testing.T) {
 func TestWriteLSJSON_AllFields(t *testing.T) {
 	createdAt := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
 	lastPushAt := time.Date(2026, 1, 10, 14, 0, 0, 0, time.UTC)
-	runner := "claude"
+	runner := "claude-code"
 	repoKey := "github:owner/repo"
 	originURL := "git@github.com:owner/repo.git"
 	prNumber := 123
@@ -158,7 +158,7 @@ func TestWriteLSJSON_AllFields(t *testing.T) {
 	assert.Equal(t, originURL, *s.OriginURL)
 	assert.Equal(t, "test run", s.Name)
 	require.NotNil(t, s.Runner)
-	assert.Equal(t, "claude", *s.Runner)
+	assert.Equal(t, "claude-code", *s.Runner)
 	assert.True(t, s.TmuxActive, "TmuxActive")
 	assert.True(t, s.WorktreePresent, "WorktreePresent")
 	assert.False(t, s.Archived, "Archived")
@@ -305,7 +305,7 @@ func TestWriteLSHuman_WithRows(t *testing.T) {
 func TestFormatHumanRow_TitleTruncation(t *testing.T) {
 	longTitle := "this is a very long title that exceeds fifty characters limit"
 	createdAt := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
-	runner := "claude"
+	runner := "claude-code"
 
 	summary := render.RunSummary{
 		RunID:         "run1",
@@ -315,8 +315,7 @@ func TestFormatHumanRow_TitleTruncation(t *testing.T) {
 		DerivedStatus: "active",
 	}
 
-	now := time.Date(2026, 1, 10, 14, 0, 0, 0, time.UTC)
-	row := render.FormatHumanRow(summary, now)
+	row := render.FormatHumanRow(summary)
 
 	// Title should be truncated with ellipsis
 	assert.LessOrEqual(t, len([]rune(row.Name)), render.NameMaxLen, "title length exceeds max")
@@ -333,8 +332,7 @@ func TestFormatHumanRow_BrokenRun(t *testing.T) {
 		DerivedStatus: status.StatusBroken,
 	}
 
-	now := time.Now()
-	row := render.FormatHumanRow(summary, now)
+	row := render.FormatHumanRow(summary)
 
 	assert.Equal(t, render.NameBroken, row.Name)
 	assert.Equal(t, "-", row.Summary)
@@ -352,14 +350,14 @@ func TestFormatHumanRow_UntitledRun(t *testing.T) {
 		DerivedStatus: "idle",
 	}
 
-	row := render.FormatHumanRow(summary, time.Now())
+	row := render.FormatHumanRow(summary)
 
 	assert.Equal(t, render.NameUntitled, row.Name)
 }
 
 func TestFormatHumanRow_ArchivedStatus(t *testing.T) {
 	createdAt := time.Now()
-	runner := "claude"
+	runner := "claude-code"
 
 	summary := render.RunSummary{
 		RunID:         "run1",
@@ -369,7 +367,7 @@ func TestFormatHumanRow_ArchivedStatus(t *testing.T) {
 		Archived:      true,
 	}
 
-	row := render.FormatHumanRow(summary, time.Now())
+	row := render.FormatHumanRow(summary)
 
 	assert.Equal(t, "idle (archived)", row.Status)
 }
@@ -455,7 +453,7 @@ func createValidMetaForLS(t *testing.T, dataDir, repoID, runID string, createdAt
 		RunID:         runID,
 		RepoID:        repoID,
 		Name:          "Test Run " + runID,
-		Runner:        "claude",
+		Runner:        "claude-code",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",
 		Branch:        "agency/test-" + runID,

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -17,7 +16,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/pipeline"
@@ -81,7 +79,10 @@ func (s *Service) SetWorkingDir(path string) {
 
 // CheckRepoSafe verifies repo safety (clean working tree, parent branch exists, etc.).
 func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState) error {
-	// Get current working directory
+	if st.Parent == "" {
+		return errors.New(errors.EParentBranchNotFound, "parent branch must be provided")
+	}
+
 	cwd := s.WorkingDirOverride
 	if cwd == "" {
 		var err error
@@ -91,57 +92,15 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 		}
 	}
 
-	// Determine parent branch: use from opts if provided, otherwise will be resolved from config later
-	parentBranch := st.Parent
-	if parentBranch == "" {
-		// Temporarily use a placeholder; will be validated after config is loaded
-		// For now, we need to pass something to CheckRepoSafe
-		// The actual parent branch will be validated in a real run when we have config
-		//
-		// Actually, looking at the pipeline order, CheckRepoSafe runs BEFORE LoadAgencyConfig.
-		// This means we need to either:
-		// 1. Load config first (but that changes order)
-		// 2. Do parent branch check in LoadAgencyConfig (after config loads)
-		// 3. Skip parent branch check if not provided, do it later
-		//
-		// Looking at the existing repo.CheckRepoSafe, it validates parent branch.
-		// The pipeline spec says CheckRepoSafe first, then LoadAgencyConfig.
-		// This means if --parent is not provided on CLI, we can't check it here.
-		//
-		// For now, let's handle this by:
-		// - If Parent is provided, validate it
-		// - If not provided, skip parent branch validation here (do it after config loads)
-		parentBranch = "__deferred__" // sentinel value
-	}
-
-	// Only run full CheckRepoSafe with parent validation if parent is provided
-	if parentBranch != "__deferred__" {
-		result, err := repo.CheckRepoSafe(ctx, s.cr, s.fsys, cwd, repo.CheckRepoSafeOpts{
-			ParentBranch:    parentBranch,
-			DataDirOverride: s.DataDirOverride,
-		})
-		if err != nil {
-			return err
-		}
-
-		// Populate pipeline state
-		st.RepoRoot = result.RepoRoot
-		st.RepoID = result.RepoID
-		st.RepoKey = result.RepoKey
-		st.OriginURL = result.OriginURL
-		st.DataDir = result.DataDir
-
-		// Check name uniqueness among active runs
-		return s.checkNameUnique(st)
-	}
-
-	// Parent not provided - do basic repo checks without parent validation
-	// The parent branch check will be done after config loads
-	result, err := checkRepoSafeWithoutParent(ctx, s.cr, s.fsys, cwd, s.DataDirOverride)
+	result, err := repo.CheckRepoSafe(ctx, s.cr, s.fsys, cwd, repo.CheckRepoSafeOpts{
+		ParentBranch:    st.Parent,
+		DataDirOverride: s.DataDirOverride,
+	})
 	if err != nil {
 		return err
 	}
 
+	// Populate pipeline state
 	st.RepoRoot = result.RepoRoot
 	st.RepoID = result.RepoID
 	st.RepoKey = result.RepoKey
@@ -150,29 +109,6 @@ func (s *Service) CheckRepoSafe(ctx context.Context, st *pipeline.PipelineState)
 
 	// Check name uniqueness among active runs
 	return s.checkNameUnique(st)
-}
-
-// checkRepoSafeWithoutParent performs repo safety checks without parent branch validation.
-// Parent branch will be validated later after config is loaded.
-func checkRepoSafeWithoutParent(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string) (*repo.RepoContext, error) {
-	// This is a simplified version that doesn't check parent branch.
-	// We'll use a dummy branch name that we know exists (HEAD) just to satisfy the API,
-	// but actually the gates.go will check parent branch existence.
-	//
-	// Actually, looking more closely, the gates.go does a separate branch existence check.
-	// Let me reconsider the design...
-	//
-	// The cleanest approach: have the pipeline do the parent branch check after
-	// LoadAgencyConfig if it wasn't already checked. Let's just pass a sentinel
-	// and document that we need to check parent branch later.
-	//
-	// For now, let's call the existing CheckRepoSafe but first check what the
-	// current branch is, and use that if parent is not specified.
-	// This defers the actual parent branch check.
-
-	// We need to load repo info even without parent branch validation.
-	// Let's inline the repo checks without the parent branch check.
-	return checkRepoContextOnly(ctx, cr, fsys, cwd, dataDirOverride)
 }
 
 // checkNameUnique verifies the run name is not already used by an active run.
@@ -209,40 +145,12 @@ func (s *Service) checkNameUnique(st *pipeline.PipelineState) error {
 	return ids.CheckNameUnique(st.Name, refs, isArchived)
 }
 
-// checkRepoContextOnly resolves repo context without running all gates.
-// This is used when parent branch will be validated later.
-func checkRepoContextOnly(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string) (*repo.RepoContext, error) {
-	// Import the packages we need and run the checks inline
-	// Since this is getting complex, let me just call the actual CheckRepoSafe
-	// with a branch we know exists - the current HEAD.
-
-	// Resolve repo root so we can distinguish "no repo" from "detached HEAD".
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get current branch
-	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: repoRoot.Path})
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get current branch", err)
-	}
-
-	currentBranch := strings.TrimSpace(result.Stdout)
-	if currentBranch == "" {
-		return nil, errors.New(errors.EParentBranchNotFound, "current branch is empty; provide --parent")
-	}
-
-	// Now call the full CheckRepoSafe with the current branch
-	// This validates everything except the *actual* parent branch the user wants
-	return repo.CheckRepoSafe(ctx, cr, fsys, repoRoot.Path, repo.CheckRepoSafeOpts{
-		ParentBranch:    currentBranch,
-		DataDirOverride: dataDirOverride,
-	})
-}
-
 // LoadAgencyConfig loads and validates agency.json, populates runner/setup info.
 func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineState) error {
+	if st.Parent == "" {
+		return errors.New(errors.EParentBranchNotFound, "parent branch must be provided")
+	}
+
 	// Load and validate config for S1 requirements
 	cfg, err := config.LoadAndValidateForS1(s.fsys, st.RepoRoot)
 	if err != nil {
@@ -278,53 +186,14 @@ func (s *Service) LoadAgencyConfig(ctx context.Context, st *pipeline.PipelineSta
 		return err
 	}
 
-	// Resolve parent branch
-	parentBranch := st.Parent
-	if parentBranch == "" {
-		result, err := s.cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: st.RepoRoot})
-		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get current branch", err)
-		}
-		parentBranch = strings.TrimSpace(result.Stdout)
-		if parentBranch == "" {
-			return errors.New(errors.EParentBranchNotFound, "current branch is empty; provide --parent")
-		}
-	}
-
-	// If parent branch wasn't checked in CheckRepoSafe (was deferred), validate it now
-	if st.Parent == "" {
-		// Need to validate the resolved parent branch exists
-		exists, err := branchExists(ctx, s.cr, st.RepoRoot, parentBranch)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			return errors.NewWithDetails(
-				errors.EParentBranchNotFound,
-				"local branch '"+parentBranch+"' not found; checkout or fetch parent locally",
-				map[string]string{"branch": parentBranch},
-			)
-		}
-	}
-
 	// Populate state
 	st.Runner = runnerName // Store the resolved runner name (may differ from CLI input)
 	st.ResolvedRunnerCmd = resolvedRunnerCmd
 	st.SetupScript = cfg.Scripts.Setup.Path
 	st.SetupTimeout = cfg.Scripts.Setup.Timeout
-	st.ParentBranch = parentBranch
+	st.ParentBranch = st.Parent
 
 	return nil
-}
-
-// branchExists checks if a local branch exists.
-func branchExists(ctx context.Context, cr exec.CommandRunner, repoRoot, branch string) (bool, error) {
-	ref := "refs/heads/" + branch
-	result, err := cr.Run(ctx, "git", []string{"show-ref", "--verify", ref}, exec.RunOpts{Dir: repoRoot})
-	if err != nil {
-		return false, errors.Wrap(errors.EInternal, "failed to check branch existence", err)
-	}
-	return result.ExitCode == 0, nil
 }
 
 // CreateWorktree creates the git worktree and .agency/ directories.

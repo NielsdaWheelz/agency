@@ -66,13 +66,6 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 		prompt          string
 	}{
 		{
-			name:            "claude alias",
-			runnerInput:     "claude",
-			canonicalRunner: "claude-code",
-			runnerArg:       "--model=opus",
-			prompt:          "cli e2e matrix claude alias",
-		},
-		{
 			name:            "claude-code canonical",
 			runnerInput:     "claude-code",
 			canonicalRunner: "claude-code",
@@ -106,13 +99,6 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			canonicalRunner: "cursor",
 			runnerArg:       "--profile=default",
 			prompt:          "cli e2e matrix cursor canonical",
-		},
-		{
-			name:            "cursor-cli alias",
-			runnerInput:     "cursor-cli",
-			canonicalRunner: "cursor",
-			runnerArg:       "--profile=default",
-			prompt:          "cli e2e matrix cursor alias",
 		},
 		{
 			name:            "droid canonical",
@@ -390,13 +376,11 @@ func writeE2EConfig(t *testing.T, configDir, fakeRunnerBin string) {
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude":      fakeRunnerBin,
 			"claude-code": fakeRunnerBin,
 			"codex":       fakeRunnerBin,
 			"amp":         fakeRunnerBin,
 			"opencode":    fakeRunnerBin,
 			"cursor":      fakeRunnerBin,
-			"cursor-cli":  fakeRunnerBin,
 			"droid":       fakeRunnerBin,
 		},
 	}

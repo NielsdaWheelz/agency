@@ -32,7 +32,7 @@ func DefaultUserConfig() UserConfig {
 	return UserConfig{
 		Version: 1,
 		Defaults: UserDefaults{
-			Runner:       "claude",
+			Runner:       "claude-code",
 			Editor:       "code",
 			ParentBranch: "main",
 		},

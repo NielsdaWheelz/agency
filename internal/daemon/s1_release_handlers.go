@@ -114,13 +114,6 @@ func (s *Server) handleS1FreezeReadiness(w http.ResponseWriter, r *http.Request)
 		code := errors.GetCode(svcErr)
 		if code == errors.EGateBlocked {
 			ae, _ := errors.AsAgencyError(svcErr)
-			data := S1FreezeReadinessData{
-				FreezeReady:     result.FreezeReady,
-				UnresolvedCount: result.UnresolvedCount,
-				SpecPath:        result.SpecPath,
-				FirstQuestion:   result.FirstQuestion,
-			}
-			_ = data
 			s.writeAPIError(w, http.StatusConflict, requestID, string(code), ae.Msg, "", ae.Details)
 			return
 		}

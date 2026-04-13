@@ -29,7 +29,7 @@ func setupResolveTestEnv(t *testing.T, runs []testRun) string {
 			RunID:         run.runID,
 			RepoID:        run.repoID,
 			Name:          run.name,
-			Runner:        "claude",
+			Runner:        "claude-code",
 			RunnerCmd:     "claude",
 			ParentBranch:  "main",
 			Branch:        "agency/test-" + run.runID[:4],

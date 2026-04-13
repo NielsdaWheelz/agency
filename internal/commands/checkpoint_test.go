@@ -135,7 +135,7 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 		repoDir,
 		"agency/sandbox-"+invocationID,
 		"basecommit",
-		"claude",
+		"claude-code",
 		mode,
 		time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
 	)
@@ -146,9 +146,7 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 
-	// Create sandbox dir and write checkpoints.json if checkpoints provided
-	sandboxDir := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID)
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationDir(repoID, invocationID), 0o700))
 
 	if checkpoints != nil {
 		cpFile := &checkpoint.CheckpointsFile{
@@ -156,7 +154,7 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 			Checkpoints:   checkpoints,
 		}
 		cpData, _ := json.MarshalIndent(cpFile, "", "  ")
-		require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+		require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpData, 0o644))
 	}
 
 	return &checkpointTestEnv{
@@ -164,7 +162,7 @@ func setupCheckpointTestEnv(t *testing.T, mode store.RunnerMode, status store.In
 		RepoPath:     repoDir,
 		RepoID:       repoID,
 		InvocationID: invocationID,
-		SandboxDir:   sandboxDir,
+		SandboxDir:   st.SandboxDir(repoID, invocationID),
 		Runner:       cr,
 		FS:           fsys,
 	}

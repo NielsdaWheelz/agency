@@ -17,7 +17,7 @@ func mkMeta(fn func(*store.RunMeta)) *store.RunMeta {
 		RunID:         "20260110-a3f2",
 		RepoID:        "abcd1234ef567890",
 		Name:          "test run",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",
 		Branch:        "agency/test-run-a3f2",

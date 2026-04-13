@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -29,7 +28,6 @@ Subcommands:
   start     Start a new agent invocation
   ls        List agent invocations
   show      Show details of an invocation
-  attach    Attach to a running headed invocation
   enter     Attach to a running headed invocation (canonical)
   stop      Stop an invocation gracefully (Ctrl-C)
   kill      Kill an invocation forcefully
@@ -55,7 +53,6 @@ Subcommands:
 		newAgentStartCmd(),
 		newAgentLSCmd(),
 		newAgentShowCmd(),
-		newAgentAttachCmd(),
 		newAgentStopCmd(),
 		newAgentKillCmd(),
 		newAgentDiffCmd(),
@@ -168,8 +165,6 @@ func newAgentLSCmd() *cobra.Command {
 	var worktree string
 	var all bool
 	var jsonOut bool
-	var watch bool
-	var intervalStr string
 
 	cmd := &cobra.Command{
 		Use:   "ls",
@@ -178,10 +173,6 @@ func newAgentLSCmd() *cobra.Command {
 
 By default, shows active invocations (not yet landed/discarded).
 Use --repo to specify a repo, or --all-repos to list globally.
-
-The legacy --watch list redraw mode is removed.
-Use 'agency watch' for the unified full-screen workspace.
---watch is incompatible with --json.
 
 Example:
   agency agent ls
@@ -192,19 +183,6 @@ Example:
   agency watch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if watch && jsonOut {
-				return errors.New(errors.EUsage, "--watch and --json cannot be used together")
-			}
-
-			var interval time.Duration
-			if watch && intervalStr != "" {
-				d, parseErr := parseWatchInterval(intervalStr)
-				if parseErr != nil {
-					return errors.New(errors.EInvalidArgument, parseErr.Error())
-				}
-				interval = d
-			}
-
 			cwd, err := os.Getwd()
 			if err != nil {
 				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
@@ -220,8 +198,6 @@ Example:
 				WorktreeRef: worktree,
 				All:         all,
 				JSON:        jsonOut,
-				Watch:       watch,
-				Interval:    interval,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -231,8 +207,6 @@ Example:
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Filter by integration worktree")
 	cmd.Flags().BoolVar(&all, "all", false, "Include finished (landed/discarded) invocations")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
-	cmd.Flags().BoolVar(&watch, "watch", false, "Deprecated: use 'agency watch'")
-	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Deprecated with --watch; use 'agency watch --interval'")
 
 	return cmd
 }
@@ -273,46 +247,6 @@ Example:
 
 	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-
-	return cmd
-}
-
-func newAgentAttachCmd() *cobra.Command {
-	var repoFlag string
-
-	cmd := &cobra.Command{
-		Use:   "attach <invocation_id|prefix>",
-		Short: "Compatibility alias for 'agent enter'",
-		Long: `Attach to a running headed invocation's tmux session.
-
-This command is a compatibility alias for 'agency agent enter'.
-Prefer 'agency agent enter' for canonical invocation navigation.
-
-This is only supported for headed (interactive) invocations.
-Detach from the session with Ctrl+b, d.
-
-Example:
-  agency agent attach 20260131
-  agency agent attach --repo abc123 20260131`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.AgentAttach(ctx, cr, fsys, cwd, commands.AgentAttachOpts{
-				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
-	}
-
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 
 	return cmd
 }
@@ -685,27 +619,6 @@ Example:
 	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
 
 	return cmd
-}
-
-// watchIntervalMin/Max define valid bounds for --interval.
-const (
-	watchIntervalMin = 250 * time.Millisecond
-	watchIntervalMax = 5 * time.Second
-)
-
-// parseWatchInterval parses and validates a --interval flag value.
-func parseWatchInterval(s string) (time.Duration, error) {
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, fmt.Errorf("--interval: %q is not a valid duration (use e.g. 500ms, 1s, 2.5s)", s)
-	}
-	if d < watchIntervalMin {
-		return 0, fmt.Errorf("--interval must be between 250ms and 5s")
-	}
-	if d > watchIntervalMax {
-		return 0, fmt.Errorf("--interval must be between 250ms and 5s")
-	}
-	return d, nil
 }
 
 func newAgentChatCmd() *cobra.Command {

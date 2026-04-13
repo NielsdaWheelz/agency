@@ -20,7 +20,7 @@ import (
 func startFakeDaemon(t *testing.T, handler http.Handler) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "dc")
+	dir, err := os.MkdirTemp("/tmp", "dc")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 

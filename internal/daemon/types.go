@@ -39,7 +39,7 @@ type ControlPlaneStartRequest struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string `json:"worktree_ref"`
 
-	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases accepted).
+	// Runner is the canonical runner id (claude-code, codex, amp, opencode, cursor, droid).
 	Runner string `json:"runner"`
 
 	// Prompt is the full prompt text (max 256KB).
@@ -132,15 +132,14 @@ type LogPaths struct {
 
 // InvocationActionResponse is the shared response body for POST /invocations/{id}/stop and /kill.
 type InvocationActionResponse struct {
-	OK              bool   `json:"ok"`
-	InvocationID    string `json:"invocation_id,omitempty"`
-	RequestID       string `json:"request_id,omitempty"`
-	APIVersion      int    `json:"api_version"`
-	BuildVersion    string `json:"build_version,omitempty"`
-	ClientRequestID string `json:"client_request_id,omitempty"`
-	ErrorCode       string `json:"error_code,omitempty"`
-	Message         string `json:"message,omitempty"`
-	Hint            string `json:"hint,omitempty"`
+	OK           bool   `json:"ok"`
+	InvocationID string `json:"invocation_id,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	APIVersion   int    `json:"api_version"`
+	BuildVersion string `json:"build_version,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	Message      string `json:"message,omitempty"`
+	Hint         string `json:"hint,omitempty"`
 }
 
 // ShutdownResponse is the response body for POST /shutdown.
@@ -641,7 +640,7 @@ type ControlPlaneStartHeadedRequest struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string `json:"worktree_ref"`
 
-	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases accepted).
+	// Runner is the canonical runner id (claude-code, codex, amp, opencode, cursor, droid).
 	Runner string `json:"runner"`
 
 	// InvocationName is an optional human-readable label.

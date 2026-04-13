@@ -35,7 +35,7 @@ func TestLoadUserConfig_MissingFile(t *testing.T) {
 	cfg, found, err := LoadUserConfig(stub, "/cfg")
 	require.NoError(t, err)
 	assert.False(t, found, "expected found=false for missing config")
-	assert.Equal(t, "claude", cfg.Defaults.Runner)
+	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
 	assert.Equal(t, "code", cfg.Defaults.Editor)
 	assert.Equal(t, "main", cfg.Defaults.ParentBranch)
 }
@@ -54,7 +54,7 @@ func TestLoadUserConfig_UnknownKeys(t *testing.T) {
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
   "version": 1,
-  "defaults": { "runner": "claude", "editor": "code" },
+	  "defaults": { "runner": "claude-code", "editor": "code" },
   "extra": "nope"
 }`)
 	_, _, err := LoadUserConfig(stub, "/cfg")
@@ -67,7 +67,7 @@ func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
   "version": 1,
-  "defaults": { "runner": "claude", "editor": "code", "unknown": "nope" }
+	  "defaults": { "runner": "claude-code", "editor": "code", "unknown": "nope" }
 }`)
 	_, _, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for unknown defaults keys")
@@ -134,15 +134,15 @@ func TestResolveRunnerCmd_Path(t *testing.T) {
 	cfg := UserConfig{
 		Version: 1,
 		Defaults: UserDefaults{
-			Runner: "custom",
+			Runner: "claude-code",
 			Editor: "code",
 		},
 		Runners: map[string]string{
-			"custom": "bin/runner",
+			"claude-code": "bin/runner",
 		},
 	}
 
-	cmd, err := ResolveRunnerCmd(stubRunner{}, fs.NewRealFS(), tmpDir, cfg, "custom")
+	cmd, err := ResolveRunnerCmd(stubRunner{}, fs.NewRealFS(), tmpDir, cfg, "claude-code")
 	require.NoError(t, err)
 	assert.Equal(t, binPath, cmd)
 }
@@ -159,7 +159,7 @@ func TestResolveEditorCmd_Path(t *testing.T) {
 	cfg := UserConfig{
 		Version: 1,
 		Defaults: UserDefaults{
-			Runner: "claude",
+			Runner: "claude-code",
 			Editor: "custom",
 		},
 		Editors: map[string]string{

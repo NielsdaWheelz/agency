@@ -3,7 +3,6 @@ package render
 import (
 	"fmt"
 	"io"
-	"time"
 )
 
 // Constants for human output formatting.
@@ -144,7 +143,7 @@ func formatRow(runID string, runIDW int, name string, nameW int, status string, 
 }
 
 // FormatHumanRow converts a RunSummary to a RunSummaryHumanRow for display.
-func FormatHumanRow(s RunSummary, now time.Time) RunSummaryHumanRow {
+func FormatHumanRow(s RunSummary) RunSummaryHumanRow {
 	row := RunSummaryHumanRow{
 		RunID: s.RunID,
 	}
@@ -218,10 +217,10 @@ func formatStatus(status string, archived bool) string {
 }
 
 // FormatHumanRows converts a slice of RunSummary to RunSummaryHumanRow.
-func FormatHumanRows(summaries []RunSummary, now time.Time) []RunSummaryHumanRow {
+func FormatHumanRows(summaries []RunSummary) []RunSummaryHumanRow {
 	rows := make([]RunSummaryHumanRow, len(summaries))
 	for i, s := range summaries {
-		rows[i] = FormatHumanRow(s, now)
+		rows[i] = FormatHumanRow(s)
 	}
 	return rows
 }

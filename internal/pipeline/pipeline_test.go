@@ -264,7 +264,7 @@ func TestOptsPassedToState(t *testing.T) {
 
 	opts := RunPipelineOpts{
 		Name:   "my-feature",
-		Runner: "claude",
+		Runner: "claude-code",
 		Parent: "main",
 		Attach: true,
 	}

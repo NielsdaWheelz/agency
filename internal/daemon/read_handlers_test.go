@@ -125,7 +125,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		SandboxPath:           "/tmp/sandbox/inv-1",
 		SandboxBranch:         "agency/sandbox-inv-1",
 		BaseCommit:            "abc123",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-10 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
@@ -143,7 +143,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		SandboxPath:           "/tmp/sandbox/inv-2",
 		SandboxBranch:         "agency/sandbox-inv-2",
 		BaseCommit:            "def456",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeaded,
 		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 		FinishedAt:            now.Add(-2 * time.Minute).Format(time.RFC3339),
@@ -162,7 +162,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		SandboxPath:           "/tmp/sandbox/inv-3",
 		SandboxBranch:         "agency/sandbox-inv-3",
 		BaseCommit:            "ghi789",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-1 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusFailed,
@@ -506,7 +506,7 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndReview(t *testin
 		meta.SemanticStatus = &working
 	}))
 
-	writeRunnerStatusForSandbox(t, sandboxPath, runnerstatus.RunnerStatus{
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
 		Status:        runnerstatus.StatusWorking,
 		UpdatedAt:     "2026-02-05T11:59:30Z",
@@ -516,11 +516,11 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndReview(t *testin
 		Risks:         []string{},
 	})
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
-	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(streamLine+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte(`{"raw":true}`+"\n"), 0o644))
+	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLine+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationRawLogPath(env.RepoID, "inv-1"), []byte(`{"raw":true}`+"\n"), 0o644))
 
 	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
 	require.True(t, listResp.OK)
@@ -589,7 +589,7 @@ func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup
 		Blockers:      []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, status)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 
 	working := runnerstatus.StatusWorking
@@ -627,9 +627,7 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	// Seed checkpoints.json in the sandbox dir for inv-1
-	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
 		SchemaVersion: "1.0",
@@ -650,7 +648,7 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	}
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
 
@@ -730,9 +728,8 @@ func TestHandleGetInvocationCheckpoints_MalformedFileReturnsInternalError(t *tes
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), []byte("{malformed"), 0o644))
+	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(env.Store.InvocationDir(env.RepoID, "inv-1"), "checkpoints.json"), []byte("{malformed"), 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -1059,91 +1056,12 @@ func TestPaginateCheckpoints(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// TIER 2: Log reading tests (Tests 26-29)
-// ---------------------------------------------------------------------------
-
-func TestReadLogFile(t *testing.T) {
-	t.Parallel()
-
-	t.Run("full_file", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "line1\nline2\nline3\n"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
-		require.NoError(t, err)
-
-		assert.Equal(t, content, data.Content)
-		assert.False(t, data.Truncated)
-		assert.False(t, data.StartsMidline)
-		assert.False(t, data.EndsMidline)
-		assert.Equal(t, int64(len(content)), data.TotalBytes)
-	})
-
-	t.Run("truncated_file", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "A long line that exceeds our tiny tail bytes limit.\nAnother line.\n"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 20})
-		require.NoError(t, err)
-
-		assert.True(t, data.Truncated)
-		assert.True(t, data.StartsMidline)
-		assert.Equal(t, int64(len(content)), data.TotalBytes)
-		assert.Equal(t, 20, data.ReturnedBytes)
-	})
-
-	t.Run("ends_midline", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "no trailing newline"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
-		require.NoError(t, err)
-
-		assert.True(t, data.EndsMidline)
-	})
-
-	t.Run("ends_newline", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "with trailing newline\n"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
-		require.NoError(t, err)
-
-		assert.False(t, data.EndsMidline)
-	})
-}
-
 func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
 	// Seed a raw log file for inv-1
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 	logContent := "{\"event\":\"start\"}\n{\"event\":\"output\",\"data\":\"hello\"}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1155,11 +1073,14 @@ func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
 
-	var data InvocationLogsData
+	var data InvocationLogsOffsetData
 	decodeData(t, resp, &data)
 
 	assert.Equal(t, "raw", data.Kind)
-	assert.Equal(t, logContent, data.Content)
+	assert.Equal(t, int64(len(logContent)), data.NextOffset)
+	decoded, err := base64.StdEncoding.DecodeString(data.DataB64)
+	require.NoError(t, err)
+	assert.Equal(t, logContent, string(decoded))
 	assert.Equal(t, int64(len(logContent)), data.TotalBytes)
 }
 
@@ -1170,16 +1091,11 @@ func TestHandleGetInvocationLogs_MissingFile(t *testing.T) {
 	// inv-2 has no log files
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/logs?repo_id="+env.RepoID)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 
 	resp := decodeAPIResponse(t, w)
-	assert.True(t, resp.OK)
-
-	var data InvocationLogsData
-	decodeData(t, resp, &data)
-
-	assert.Equal(t, "", data.Content)
-	assert.Equal(t, int64(0), data.TotalBytes)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
 }
 
 func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
@@ -1200,7 +1116,7 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 			env := setupReadTestEnv(t)
 
 			// Create the log file
-			logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+			logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 			require.NoError(t, os.MkdirAll(logsDir, 0o700))
 			content := "content for " + tt.kind + "\n"
 			require.NoError(t, os.WriteFile(filepath.Join(logsDir, tt.fileSuffix), []byte(content), 0o644))
@@ -1210,11 +1126,13 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code)
 
 			resp := decodeAPIResponse(t, w)
-			var data InvocationLogsData
+			var data InvocationLogsOffsetData
 			decodeData(t, resp, &data)
 
 			assert.Equal(t, tt.kind, data.Kind)
-			assert.Equal(t, content, data.Content)
+			decoded, err := base64.StdEncoding.DecodeString(data.DataB64)
+			require.NoError(t, err)
+			assert.Equal(t, content, string(decoded))
 		})
 	}
 }
@@ -1337,15 +1255,17 @@ func TestParseGetLogsParams(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs", nil)
 		params := parseGetLogsParams(req)
 		assert.Equal(t, "raw", params.Kind)
-		assert.Equal(t, 65536, params.TailBytes)
+		assert.Zero(t, params.Offset)
+		assert.Equal(t, 65536, params.Limit)
 	})
 
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&tail_bytes=1024", nil)
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&offset=128&limit=1024", nil)
 		params := parseGetLogsParams(req)
 		assert.Equal(t, "stderr", params.Kind)
-		assert.Equal(t, 1024, params.TailBytes)
+		assert.Equal(t, int64(128), params.Offset)
+		assert.Equal(t, 1024, params.Limit)
 	})
 }
 
@@ -1417,7 +1337,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 		SandboxPath:           repoDir,
 		SandboxBranch:         "main",
 		BaseCommit:            baseCommit,
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
@@ -1503,8 +1423,7 @@ func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
 	env := setupReadTestEnv(t)
 
 	// Seed 5 checkpoints
-	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
 		SchemaVersion: "1.0",
@@ -1518,7 +1437,7 @@ func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
 	}
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
 
 	// First page: limit=2
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=2")
@@ -1638,7 +1557,7 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 			SandboxPath:           "/tmp/sandbox/" + invID,
 			SandboxBranch:         "agency/sandbox-" + invID,
 			BaseCommit:            "abc",
-			Runner:                "claude",
+			Runner:                "claude-code",
 			Mode:                  store.RunnerModeHeadless,
 			StartedAt:             now.Add(-time.Duration(i) * time.Minute).Format(time.RFC3339),
 			Status:                store.InvocationStatusRunning,
@@ -1811,7 +1730,7 @@ func TestReadLogFileAtOffset(t *testing.T) {
 	}
 }
 
-func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
+func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 	t.Parallel()
 
 	t.Run("offset_read_happy_path", func(t *testing.T) {
@@ -1819,7 +1738,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		env := setupReadTestEnv(t)
 
 		// Seed a raw log file for inv-1
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		logContent := "abcdef"
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1845,7 +1764,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		logContent := "abcdef"
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1869,7 +1788,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		logContent := "abcdef"
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1892,7 +1811,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		env := setupReadTestEnv(t)
 
 		// Seed log file so we get past resolution
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
 
@@ -1941,7 +1860,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		env := setupReadTestEnv(t)
 
 		// Seed log file so we get past resolution
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
 
@@ -2247,7 +2166,7 @@ func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
 			SandboxPath:           "/tmp/sandbox/" + invID,
 			SandboxBranch:         "agency/sandbox-" + invID,
 			BaseCommit:            "abc",
-			Runner:                "claude",
+			Runner:                "claude-code",
 			Mode:                  store.RunnerModeHeadless,
 			StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 			Status:                store.InvocationStatusRunning,
@@ -2304,66 +2223,6 @@ func TestWorktreesRouting_MethodNotAllowed(t *testing.T) {
 // End S2 PR-01 acceptance tests
 // ---------------------------------------------------------------------------
 
-func TestParseGetLogsParams_OffsetMode(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		query          string
-		wantOffsetMode bool
-		wantOffset     int64
-		wantLimit      int
-		wantTailBytes  int
-	}{
-		{
-			name:           "offset_present_enables_offset_mode",
-			query:          "offset=100&limit=1024",
-			wantOffsetMode: true,
-			wantOffset:     100,
-			wantLimit:      1024,
-		},
-		{
-			name:           "offset_zero_is_offset_mode",
-			query:          "offset=0",
-			wantOffsetMode: true,
-			wantOffset:     0,
-			wantLimit:      65536, // default
-		},
-		{
-			name:          "no_offset_is_tail_mode",
-			query:         "tail_bytes=1024",
-			wantTailBytes: 1024,
-		},
-		{
-			name:           "invalid_offset_value",
-			query:          "offset=abc",
-			wantOffsetMode: true,
-			wantOffset:     -1,    // parse failure → -1
-			wantLimit:      65536, // default when limit not specified
-		},
-		{
-			name:           "invalid_limit_value",
-			query:          "offset=0&limit=abc",
-			wantOffsetMode: true,
-			wantLimit:      -1, // parse failure → -1
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?"+tt.query, nil)
-			params := parseGetLogsParams(req)
-			assert.Equal(t, tt.wantOffsetMode, params.OffsetMode)
-			if tt.wantOffsetMode {
-				assert.Equal(t, tt.wantOffset, params.Offset)
-				assert.Equal(t, tt.wantLimit, params.Limit)
-			} else {
-				assert.Equal(t, tt.wantTailBytes, params.TailBytes)
-			}
-		})
-	}
-}
-
 func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -2374,10 +2233,10 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 		meta.PromptPath = promptPath
 	}))
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 	require.NoError(t, os.WriteFile(
-		env.Store.SandboxRawLogPath(env.RepoID, "inv-1"),
+		env.Store.InvocationRawLogPath(env.RepoID, "inv-1"),
 		[]byte("{\"type\":\"raw\"}\n{\"type\":\"raw2\"}\n"),
 		0o644,
 	))
@@ -2388,7 +2247,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 			"seq":            1,
 			"timestamp":      "2026-02-05T11:50:10Z",
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role":         "assistant",
@@ -2401,7 +2260,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 			"seq":            2,
 			"timestamp":      "2026-02-05T11:50:20Z",
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "tool_start",
 			"data": map[string]any{
 				"name":    "shell",
@@ -2413,7 +2272,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 			"seq":            3,
 			"timestamp":      "2026-02-05T11:50:30Z",
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "tool_end",
 			"data": map[string]any{
 				"name":      "shell",
@@ -2423,7 +2282,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 		},
 	}
 
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	for _, ev := range streamEvents {
@@ -2487,14 +2346,14 @@ func TestHandleGetInvocationTimeline_RejectsUnsupportedSchemaVersions(t *testing
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	streamLines := strings.Join([]string{
-		`{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"supported schema"}}`,
+		`{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"supported schema"}}`,
 	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
 
 	eventLines := strings.Join([]string{
 		`{"schema_version":"","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"unsupported schema event"}}`,
@@ -2544,7 +2403,7 @@ func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *t
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	largeText := strings.Repeat("x", 5*1024*1024)
@@ -2554,7 +2413,7 @@ func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *t
 		"seq":            1,
 		"timestamp":      "2026-02-05T11:50:10Z",
 		"invocation_id":  "inv-1",
-		"runner":         "claude",
+		"runner":         "claude-code",
 		"kind":           "message",
 		"data": map[string]any{
 			"role": "assistant",
@@ -2564,7 +2423,7 @@ func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *t
 	streamLine, err := json.Marshal(streamEvent)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
-		env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"),
+		env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"),
 		append(streamLine, '\n'),
 		0o644,
 	))
@@ -2611,14 +2470,14 @@ func TestHandleGetInvocationTimeline_EmitsParseErrorForMalformedPersistedLines(t
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	streamLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"ok"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"broken"}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"broken"}`,
 	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
 
 	eventLines := strings.Join([]string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}`,
@@ -2663,15 +2522,15 @@ func TestHandleGetInvocationTimeline_EmitsParseErrorForMissingKindOrEvent(t *tes
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	streamLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"ok"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude","kind":"","data":{"role":"assistant","text":"missing-kind"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"still-replayed"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"","data":{"role":"assistant","text":"missing-kind"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"still-replayed"}}`,
 	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLines), 0o644))
 
 	eventLines := strings.Join([]string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}`,
@@ -2719,11 +2578,11 @@ func TestHandleGetInvocationTimeline_EmitsParseErrorWhenScanFails(t *testing.T) 
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	oversizedLine := strings.Repeat("x", 9*1024*1024) + "\n"
-	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(oversizedLine), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(oversizedLine), 0o644))
 	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(oversizedLine), 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=200")
@@ -2758,15 +2617,15 @@ func TestHandleGetInvocationTimeline_ReplayContinuesAfterOversizedPersistedRows(
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	oversizedLine := strings.Repeat("x", 9*1024*1024) + "\n"
-	validStreamLine := `{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"after-oversized"}}` + "\n"
+	validStreamLine := `{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"after-oversized"}}` + "\n"
 	validEventLine := `{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:22Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"after-oversized-event"}}` + "\n"
 
 	require.NoError(t, os.WriteFile(
-		env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"),
+		env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"),
 		[]byte(oversizedLine+validStreamLine),
 		0o644,
 	))
@@ -2850,11 +2709,11 @@ func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) 
 		meta.PromptPath = promptPath
 	}))
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte("raw-log\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationRawLogPath(env.RepoID, "inv-1"), []byte("raw-log\n"), 0o644))
 
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
@@ -2864,7 +2723,7 @@ func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) 
 			"seq":            i,
 			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role": "assistant",
@@ -2968,9 +2827,9 @@ func TestHandleGetInvocationTimeline_OrderDescReturnsReversedEntries(t *testing.
 	env := setupReadTestEnv(t)
 
 	// Seed 4 stream messages with ascending timestamps.
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
@@ -2980,7 +2839,7 @@ func TestHandleGetInvocationTimeline_OrderDescReturnsReversedEntries(t *testing.
 			"seq":            i,
 			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role": "assistant",
@@ -3023,9 +2882,9 @@ func TestHandleGetInvocationTimeline_OrderDescLimit1ReturnsLastEntry(t *testing.
 	env := setupReadTestEnv(t)
 
 	// Seed stream messages.
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
@@ -3035,7 +2894,7 @@ func TestHandleGetInvocationTimeline_OrderDescLimit1ReturnsLastEntry(t *testing.
 			"seq":            i,
 			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role": "assistant",
@@ -3081,34 +2940,6 @@ func TestHandleGetInvocationTimeline_OrderDescWithCursorReturnsEInvalidArgument(
 	resp := decodeAPIResponse(t, w)
 	assert.False(t, resp.OK)
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
-}
-
-func TestHandleGetInvocationLogs_TailBytesInvalidReturnsEInvalidArgument(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	tests := []struct {
-		name      string
-		tailBytes string
-	}{
-		{name: "zero", tailBytes: "0"},
-		{name: "too_large", tailBytes: "1048577"},
-		{name: "non_numeric", tailBytes: "abc"},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			w := env.doInvocationRequest(t, http.MethodGet,
-				"/invocations/inv-1/logs?repo_id="+env.RepoID+"&tail_bytes="+tc.tailBytes)
-
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-			resp := decodeAPIResponse(t, w)
-			assert.False(t, resp.OK)
-			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
-		})
-	}
 }
 
 func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocation(t *testing.T) {

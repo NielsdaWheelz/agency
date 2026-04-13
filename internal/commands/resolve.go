@@ -2,17 +2,12 @@
 package commands
 
 import (
-	"context"
 	"io"
 	"os"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/render"
-	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // ResolveOpts holds options for the resolve command.
@@ -29,7 +24,7 @@ type ResolveOpts struct {
 // - Makes no git changes
 // - If worktree present: prints action card to stdout, exits 0
 // - If worktree missing: prints partial guidance to stderr, exits with E_WORKTREE_MISSING
-func Resolve(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts ResolveOpts, stdout, stderr io.Writer) error {
+func Resolve(opts ResolveOpts, stdout, stderr io.Writer) error {
 	// Validate run_id provided
 	if opts.RunID == "" {
 		return errors.New(errors.EUsage, "run_id is required")
@@ -44,9 +39,6 @@ func Resolve(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 	// Resolve data directory
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 	dataDir := dirs.DataDir
-
-	// Create store
-	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// Resolve run by name or ID globally (read-only, no lock needed)
 	runRef, record, err := resolveRunGlobal(opts.RunID, dataDir)
@@ -64,7 +56,6 @@ func Resolve(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 	}
 
 	meta := record.Meta
-	_ = st // silence unused warning; store used only for resolution
 
 	// Build action card inputs using the ref the user invoked
 	// Per spec: use the same ref the user invoked in printed commands

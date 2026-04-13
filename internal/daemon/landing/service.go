@@ -496,13 +496,6 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 // cleanupAfterLand performs cleanup after successful landing.
 func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta) error {
 	var errs []string
-	artifactsPromoted := true
-
-	// Preserve runner status before removing the sandbox worktree tree.
-	if err := s.store.PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, meta.SandboxPath); err != nil {
-		errs = append(errs, fmt.Sprintf("runner status preservation: %v", err))
-		artifactsPromoted = false
-	}
 
 	// 1. Remove sandbox git worktree
 	_, err := s.runner.Run(ctx, "git", []string{
@@ -527,22 +520,10 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	// 4. Preserve any legacy sandbox-owned artifacts before removing sandbox dir.
-	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
-		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
-		artifactsPromoted = false
-	}
-	if err := s.store.PromoteSandboxCheckpointsToInvocation(repoID, invocationID); err != nil {
-		errs = append(errs, fmt.Sprintf("checkpoint preservation: %v", err))
-		artifactsPromoted = false
-	}
-
-	// 5. Remove sandbox directory once artifact preservation is safe.
-	if artifactsPromoted {
-		sandboxDir := s.store.SandboxDir(repoID, invocationID)
-		if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
-			errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
-		}
+	// 4. Remove sandbox directory.
+	sandboxDir := s.store.SandboxDir(repoID, invocationID)
+	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
+		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
 	}
 
 	if len(errs) > 0 {
@@ -669,13 +650,6 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 // cleanupSandbox removes the sandbox worktree, branch, and refs.
 func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta) error {
 	var errs []string
-	artifactsPromoted := true
-
-	// Preserve runner status before removing the sandbox worktree tree.
-	if err := s.store.PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, meta.SandboxPath); err != nil {
-		errs = append(errs, fmt.Sprintf("runner status preservation: %v", err))
-		artifactsPromoted = false
-	}
 
 	// 1. Remove sandbox git worktree
 	if meta.SandboxPath != "" {
@@ -704,22 +678,10 @@ func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repo
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	// 4. Preserve any legacy sandbox-owned artifacts before removing sandbox dir.
-	if err := s.store.PromoteSandboxLogsToInvocation(repoID, invocationID); err != nil {
-		errs = append(errs, fmt.Sprintf("log preservation: %v", err))
-		artifactsPromoted = false
-	}
-	if err := s.store.PromoteSandboxCheckpointsToInvocation(repoID, invocationID); err != nil {
-		errs = append(errs, fmt.Sprintf("checkpoint preservation: %v", err))
-		artifactsPromoted = false
-	}
-
-	// 5. Remove sandbox directory once artifact preservation is safe.
-	if artifactsPromoted {
-		sandboxDir := s.store.SandboxDir(repoID, invocationID)
-		if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
-			errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
-		}
+	// 4. Remove sandbox directory.
+	sandboxDir := s.store.SandboxDir(repoID, invocationID)
+	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
+		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
 	}
 
 	if len(errs) > 0 {

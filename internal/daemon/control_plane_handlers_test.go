@@ -33,7 +33,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 			req: ControlPlaneStartRequest{
 				RepoRoot:    "/tmp/repo",
 				WorktreeRef: "wt-1",
-				Runner:      "claude",
+				Runner:      "claude-code",
 				Prompt:      "test",
 			},
 			wantCode: "E_INVALID_REQUEST",
@@ -43,7 +43,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 			req: ControlPlaneStartRequest{
 				ClientRequestID: "test-uuid",
 				WorktreeRef:     "wt-1",
-				Runner:          "claude",
+				Runner:          "claude-code",
 				Prompt:          "test",
 			},
 			wantCode: "E_INVALID_REQUEST",
@@ -53,7 +53,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 			req: ControlPlaneStartRequest{
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
-				Runner:          "claude",
+				Runner:          "claude-code",
 				Prompt:          "test",
 			},
 			wantCode: "E_INVALID_REQUEST",
@@ -74,7 +74,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
-				Runner:          "claude",
+				Runner:          "claude-code",
 			},
 			wantCode: string(errors.EPromptRequired),
 		},
@@ -84,7 +84,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
-				Runner:          "claude",
+				Runner:          "claude-code",
 				Prompt:          strings.Repeat("x", MaxPromptSize+1),
 			},
 			wantCode: string(errors.EPromptTooLarge),
@@ -106,7 +106,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
-				Runner:          "claude",
+				Runner:          "claude-code",
 				Prompt:          "test",
 				RunnerArgs:      []string{"--output-format"},
 			},
@@ -118,7 +118,7 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
-				Runner:          "claude",
+				Runner:          "claude-code",
 				Prompt:          "test",
 				RunnerArgs:      []string{"-p"},
 			},
@@ -165,13 +165,11 @@ func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
 	t.Parallel()
 
 	runners := []string{
-		"claude",
 		"claude-code",
 		"codex",
 		"amp",
 		"opencode",
 		"cursor",
-		"cursor-cli",
 		"droid",
 	}
 
@@ -215,7 +213,7 @@ func TestControlPlaneStartHeadless_ErrorResponseIncludesRequestID(t *testing.T) 
 	reqPayload := ControlPlaneStartRequest{
 		RepoRoot:    "/tmp/repo",
 		WorktreeRef: "wt-1",
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "test",
 		// intentionally missing client_request_id
 	}
@@ -243,7 +241,7 @@ func TestControlPlaneStartHeaded_ErrorResponseIncludesRequestID(t *testing.T) {
 	reqPayload := ControlPlaneStartHeadedRequest{
 		RepoRoot:    "/tmp/repo",
 		WorktreeRef: "wt-1",
-		Runner:      "claude",
+		Runner:      "claude-code",
 		// intentionally missing client_request_id
 	}
 	body, _ := json.Marshal(reqPayload)
@@ -284,7 +282,7 @@ func TestControlPlaneStartHeaded_RunnerValidationErrors(t *testing.T) {
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
-				Runner:          "claude",
+				Runner:          "claude-code",
 				RunnerArgs:      []string{"--output-format"},
 			},
 			wantCode: string(errors.ERunnerArgConflict),
@@ -346,7 +344,7 @@ func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
 		ClientRequestID: "test-uuid",
 		RepoRoot:        fakeWorktreePath,
 		WorktreeRef:     "wt-1",
-		Runner:          "claude",
+		Runner:          "claude-code",
 		Prompt:          "test",
 	}
 	body, _ := json.Marshal(req)
@@ -378,7 +376,7 @@ func TestControlPlaneStart_WorktreeNotFound(t *testing.T) {
 		ClientRequestID: "test-uuid",
 		RepoRoot:        env.RepoPath,
 		WorktreeRef:     "nonexistent-worktree",
-		Runner:          "claude",
+		Runner:          "claude-code",
 		Prompt:          "test",
 	}
 	body, _ := json.Marshal(req)
@@ -409,7 +407,7 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 
 	// Write config pointing to nonexistent runner binary.
 	// Must include "defaults" for LoadUserConfig validation to pass.
-	cfg := `{"version":1,"defaults":{"runner":"claude","editor":"code"},"runners":{"claude":"/nonexistent/path/to/runner"}}`
+	cfg := `{"version":1,"defaults":{"runner":"claude-code","editor":"code"},"runners":{"claude-code":"/nonexistent/path/to/runner"}}`
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "write config")
 
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
@@ -435,7 +433,7 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 		ClientRequestID: "test-uuid",
 		RepoRoot:        env.RepoPath,
 		WorktreeRef:     "runner-test",
-		Runner:          "claude",
+		Runner:          "claude-code",
 		Prompt:          "test",
 	}
 	body, _ := json.Marshal(req)
@@ -484,7 +482,7 @@ func TestControlPlaneStart_RespectsRepoLock(t *testing.T) {
 		ClientRequestID: "test-uuid-lock",
 		RepoRoot:        env.RepoPath,
 		WorktreeRef:     "lock-test",
-		Runner:          "claude",
+		Runner:          "claude-code",
 		Prompt:          "test",
 	}
 	body, _ := json.Marshal(req)
@@ -534,7 +532,7 @@ func TestControlPlaneStartHeaded_RespectsRepoLock(t *testing.T) {
 		ClientRequestID: "test-uuid-lock-headed",
 		RepoRoot:        env.RepoPath,
 		WorktreeRef:     "lock-headed-test",
-		Runner:          "claude",
+		Runner:          "claude-code",
 	}
 	body, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headed", bytes.NewReader(body))

@@ -86,7 +86,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 
 	timelineEntries := s.collectTimelineEntries(record)
 
-	if runnerMeta, _, err := s.loadRunnerStatusForInvocation(record); err != nil {
+	if runnerMeta, err := s.loadRunnerStatusForInvocation(record); err != nil {
 		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
 			Code:    checkReasonRunnerStatusUnreadable,
 			Message: "runner status file could not be read",

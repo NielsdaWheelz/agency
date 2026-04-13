@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -108,7 +107,7 @@ func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationI
 		SandboxPath:           sandboxTreeDir,
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123def456",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  mode,
 		StartedAt:             time.Now().UTC().Format(time.RFC3339),
 		Status:                status,
@@ -214,113 +213,6 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	return repoDir, dataDir, repoID, worktreeID, cr, fsys
 }
 
-func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
-	t.Parallel()
-	// Use short paths to stay under macOS socket 104-byte limit
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "test-feature")
-	invocationID := "20260131130000-efgh"
-
-	// Create a headless invocation (after daemon is started)
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
-
-	// Need a separate FakeCommandRunner for the client call (daemon has its own)
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	fakeTmux := testutil.NewFakeTmuxClient()
-
-	var stdout, stderr bytes.Buffer
-	opts := AgentAttachOpts{
-		InvocationRef:   invocationID,
-		TmuxClient:      fakeTmux,
-		IsInteractive:   func() bool { return true },
-		DataDirOverride: dataDir,
-	}
-
-	err := AgentAttach(context.Background(), cr2, fsys, repoDir, opts, &stdout, &stderr)
-	require.Error(t, err, "AgentAttach error = nil, want E_INVOCATION_INVALID_MODE")
-
-	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
-}
-
-func TestAgentAttach_HeadedInvocation_SessionMissing(t *testing.T) {
-	t.Parallel()
-	// Use short paths to stay under macOS socket 104-byte limit
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "test-feature")
-	invocationID := "20260131130000-efgh"
-
-	// Create a headed invocation (after daemon is started)
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeaded, store.InvocationStatusRunning)
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	fakeTmux := testutil.NewFakeTmuxClient()
-	// default: Sessions map is empty, so HasSession returns false
-
-	var stdout, stderr bytes.Buffer
-	opts := AgentAttachOpts{
-		InvocationRef:   invocationID,
-		TmuxClient:      fakeTmux,
-		IsInteractive:   func() bool { return true },
-		DataDirOverride: dataDir,
-	}
-
-	err := AgentAttach(context.Background(), cr2, fsys, repoDir, opts, &stdout, &stderr)
-	require.Error(t, err, "AgentAttach error = nil, want E_SESSION_ENDED")
-
-	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
-}
-
-func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
-	env := setupAgentNavEnv(t, "attach-ambig", store.RunnerModeHeaded)
-
-	secondID := "20260131130000-zzzz"
-	secondInvDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations", secondID)
-	require.NoError(t, os.MkdirAll(secondInvDir, 0o755))
-
-	secondSandbox := filepath.Join(env.DataDir, "repos", env.RepoID, "sandboxes", secondID, "tree")
-	require.NoError(t, os.MkdirAll(secondSandbox, 0o755))
-
-	secondMeta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
-		InvocationID:          secondID,
-		IntegrationWorktreeID: env.WorktreeID,
-		SandboxPath:           secondSandbox,
-		SandboxBranch:         "agency/sandbox-" + secondID,
-		BaseCommit:            "abc123def456",
-		Runner:                "claude",
-		Mode:                  store.RunnerModeHeaded,
-		StartedAt:             "2026-01-31T13:10:00Z",
-		Status:                store.InvocationStatusRunning,
-	}
-	secondMetaBytes, _ := json.MarshalIndent(secondMeta, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(secondInvDir, "meta.json"), secondMetaBytes, 0o644))
-
-	fakeTmux := testutil.NewFakeTmuxClient()
-	var stdout, stderr bytes.Buffer
-	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentAttachOpts{
-			InvocationRef:   "20260131130000",
-			RepoFlag:        env.RepoID,
-			TmuxClient:      fakeTmux,
-			IsInteractive:   func() bool { return true },
-			DataDirOverride: env.DataDir,
-		}, &stdout, &stderr)
-
-	require.Error(t, err)
-	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err),
-		"compatibility attach should use shared navigation ambiguity semantics")
-	assert.Len(t, fakeTmux.HasSessionCalls, 0, "tmux preflight must not run for ambiguous targets")
-
-	ae, ok := errors.AsAgencyError(err)
-	require.True(t, ok)
-	assert.Equal(t, "invocation", ae.Details["target_kind"])
-	assert.Equal(t, "2", ae.Details["candidate_count"])
-}
-
 // ---------------------------------------------------------------------------
 // S2-PR04: Agent navigation convergence — setup helper
 // ---------------------------------------------------------------------------
@@ -387,7 +279,7 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		SandboxPath:           sandboxTreeDir,
 		SandboxBranch:         "agency/sandbox-" + invID,
 		BaseCommit:            "abc123def456",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  mode,
 		StartedAt:             "2026-01-31T13:00:00Z",
 		Status:                store.InvocationStatusRunning,
@@ -451,7 +343,7 @@ func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	out := stdout.String()
 	assert.Contains(t, out, env.InvocationID)
-	assert.Contains(t, out, "claude")
+	assert.Contains(t, out, "claude-code")
 	assert.Contains(t, out, "headed")
 }
 
@@ -466,7 +358,7 @@ func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 	out := stdout.String()
 	assert.Contains(t, out, "invocation_id:          "+env.InvocationID)
 	assert.Contains(t, out, "worktree_id:            "+env.WorktreeID)
-	assert.Contains(t, out, "runner:                 claude")
+	assert.Contains(t, out, "runner:                 claude-code")
 	assert.Contains(t, out, "mode:                   headed")
 	assert.Contains(t, out, "sandbox_path:           "+env.SandboxPath)
 }
@@ -485,7 +377,7 @@ func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	assert.Equal(t, env.InvocationID, dtos[0].InvocationID)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
-	assert.Equal(t, "claude", dtos[0].Runner)
+	assert.Equal(t, "claude-code", dtos[0].Runner)
 	assert.Equal(t, "headless", dtos[0].Mode)
 	assert.Equal(t, env.SandboxPath, dtos[0].SandboxPath)
 }
@@ -503,7 +395,7 @@ func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	assert.Equal(t, env.InvocationID, dto.InvocationID)
 	assert.Equal(t, env.RepoID, dto.RepoID)
-	assert.Equal(t, "claude", dto.Runner)
+	assert.Equal(t, "claude-code", dto.Runner)
 	assert.Equal(t, env.SandboxPath, dto.SandboxPath)
 }
 
@@ -526,10 +418,10 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), runnerBytes, 0o600))
 
 	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
-	logsDir := st.SandboxLogsDir(env.RepoID, env.InvocationID)
+	logsDir := st.InvocationLogsDir(env.RepoID, env.InvocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
+	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
 
 	var lsJSON, showJSON, reviewJSON, stderr bytes.Buffer
 
@@ -564,7 +456,7 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 
 	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
 	assert.Equal(t, shown.StatusSummary, review.StatusSummary)
-	assert.Equal(t, "waiting on api contract", review.StatusSummary)
+	assert.Equal(t, "latest activity summary", review.StatusSummary)
 
 	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
 	assert.Equal(t, shown.LatestActivity.TurnID, review.LatestActivity.TurnID)
@@ -579,18 +471,6 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	assert.Equal(t, shown.Navigation.DiffCommand, review.Navigation.DiffCommand)
 	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
 	assert.Equal(t, shown.Navigation.LatestTurnID, review.Navigation.LatestTurnID)
-
-	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{
-			RepoFlag:      env.RepoID,
-			Watch:         true,
-			Interval:      5 * time.Millisecond,
-			SleepFn:       func(time.Duration) {},
-			MaxIterations: 1,
-		}, io.Discard, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "agency watch")
 }
 
 func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
@@ -600,7 +480,7 @@ func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
 	err := writeAgentLSHumanFromDTO(&out, []daemon.InvocationDTO{
 		{
 			InvocationID:  "inv-1",
-			Runner:        "claude",
+			Runner:        "claude-code",
 			Mode:          "headless",
 			Status:        "running",
 			DisplayStatus: "working",
@@ -625,7 +505,7 @@ func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T)
 	err := writeAgentShowHumanFromDTO(&out, &daemon.InvocationDTO{
 		InvocationID:  "inv-1",
 		WorktreeID:    "wt-1",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		Mode:          "headless",
 		Status:        "running",
 		DisplayStatus: "working",
@@ -755,7 +635,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 			SchemaVersion: "1.0", InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -917,7 +797,7 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 			SchemaVersion: "1.0", InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -996,7 +876,7 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 			SchemaVersion: "1.0", InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -1074,7 +954,7 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 			SchemaVersion: "1.0", InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -1167,7 +1047,7 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 			SchemaVersion: "1.0", InvocationID: r.invID,
 			IntegrationWorktreeID: r.wtID, SandboxPath: sp,
 			SandboxBranch: "agency/sandbox-" + r.invID, BaseCommit: "abc",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-01-31T10:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imb, _ := json.MarshalIndent(im, "", "  ")
@@ -1439,14 +1319,14 @@ func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("{\"raw\":1}\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("{\"raw\":1}\n"), 0o644))
 
-	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamPath := st.InvocationStreamLogPath(repoID, invocationID)
 	streamBytes := "" +
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"checking"}}` + "\n" +
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"shell","command":"go test ./...","exit_code":0}}` + "\n"
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"checking"}}` + "\n" +
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"shell","command":"go test ./...","exit_code":0}}` + "\n"
 	require.NoError(t, os.WriteFile(streamPath, []byte(streamBytes), 0o644))
 
 	eventsPath := st.InvocationEventsPath(repoID, invocationID)
@@ -1499,15 +1379,15 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("raw\n"), 0o644))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("raw\n"), 0o644))
 
-	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamPath := st.InvocationStreamLogPath(repoID, invocationID)
 	streamBytes := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"one"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"two"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"shell","command":"echo hi"}}`,
-		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"shell","command":"echo hi","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"one"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"two"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_start","data":{"name":"shell","command":"echo hi"}}`,
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"shell","command":"echo hi","exit_code":0}}`,
 	}
 	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamBytes, "\n")+"\n"), 0o644))
 
@@ -1571,9 +1451,9 @@ func TestAgentLogs_PageToEOF(t *testing.T) {
 
 	// Seed a raw log file with known content
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("hello world\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("hello world\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1597,9 +1477,9 @@ func TestAgentLogs_FollowMode(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	logPath := st.SandboxRawLogPath(repoID, invocationID)
+	logPath := st.InvocationRawLogPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(logPath, []byte("line1\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
@@ -1641,9 +1521,9 @@ func TestAgentLogs_ContextCancellation(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("data\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("data\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1676,9 +1556,9 @@ func TestAgentLogs_StderrKind(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxStderrLogPath(repoID, invocationID), []byte("error output\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStderrLogPath(repoID, invocationID), []byte("error output\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1726,14 +1606,14 @@ func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 
 	// Write 5 stream messages.
-	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamPath := st.InvocationStreamLogPath(repoID, invocationID)
 	var lines []string
 	for i := 1; i <= 5; i++ {
 		lines = append(lines, fmt.Sprintf(
-			`{"schema_version":"1.0","seq":%d,"timestamp":"2026-02-05T11:50:%02dZ","invocation_id":"%s","runner":"claude","kind":"message","data":{"role":"assistant","text":"msg-%d"}}`,
+			`{"schema_version":"1.0","seq":%d,"timestamp":"2026-02-05T11:50:%02dZ","invocation_id":"%s","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"msg-%d"}}`,
 			i, 10+i, invocationID, i))
 	}
 	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644))
@@ -1775,15 +1655,15 @@ func TestAgentHistory_LastJSONReturnsAllEntriesFromLatestTurn(t *testing.T) {
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"working"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"Bash","command":"echo hi"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"Bash","command":"echo hi","exit_code":0}}`,
-		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"working"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_start","data":{"name":"Bash","command":"echo hi"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Bash","command":"echo hi","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1836,18 +1716,18 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) 
 	st := store.NewStore(fsys, dataDir, time.Now)
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(promptPath, []byte("investigate restart convergence"), 0o600))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"first assistant turn"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"Write","command":"internal/service.go","exit_code":0}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"second assistant turn"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"first assistant turn"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Write","command":"internal/service.go","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"second assistant turn"}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	eventsLines := strings.Join([]string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:15Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
@@ -1881,7 +1761,7 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) 
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1929,17 +1809,17 @@ func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testin
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	payloadMarker := "S8_PR03_LARGE_TOOL_PAYLOAD_" + strings.Repeat("x", 256)
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"applying edits","content_blocks":[{"type":"tool_use","name":"Edit","input":{"patch":"` + payloadMarker + `"}}]}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"Edit","command":"internal/service.go","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"applying edits","content_blocks":[{"type":"tool_use","name":"Edit","input":{"patch":"` + payloadMarker + `"}}]}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Edit","command":"internal/service.go","exit_code":0}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1972,18 +1852,18 @@ func TestAgentHistory_FallbackTimelinePaginationRespectsLimitAndCursor(t *testin
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	// Use only non-turn event kinds so history falls back to raw timeline output.
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"status","data":{"state":"idle"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"status","data":{"state":"idle"}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2024,16 +1904,16 @@ func TestAgentHistory_InvalidCursorReturnsEInvalidArgument(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"first"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"second"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"first"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"second"}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2057,16 +1937,16 @@ func TestAgentHistory_InvalidCursorFallbackTimelineReturnsEInvalidArgument(t *te
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"usage","data":{"input_tokens":12,"output_tokens":9}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2090,15 +1970,15 @@ func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"meaningful assistant turn"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"meaningful assistant turn"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2133,16 +2013,16 @@ func TestAgentHistory_LastIncludesParseErrorFallbackEntries(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"parse_error","data":{"reason":"json_parse_error"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"parse_error","data":{"reason":"json_parse_error"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2174,17 +2054,17 @@ func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *tes
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"working"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"unknown","data":{"runner_event_type":"cursor.weird_event","reason":"unrecognized_event_shape"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"final","data":{"duration_ms":1200}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"working"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"unknown","data":{"runner_event_type":"cursor.weird_event","reason":"unrecognized_event_shape"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2299,7 +2179,7 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 	st := store.NewStore(fsys, dataDir, time.Now)
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
@@ -2322,7 +2202,7 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
-		filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"),
+		st.InvocationCheckpointsPath(repoID, invocationID),
 		cpBytes,
 		0o644,
 	))
@@ -2336,11 +2216,11 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 	cfg := map[string]any{
 		"version": 1,
 		"defaults": map[string]string{
-			"runner": "claude",
+			"runner": "claude-code",
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude": runnerPath,
+			"claude-code": runnerPath,
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
@@ -2466,7 +2346,7 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 	st := store.NewStore(fsys, dataDir, time.Now)
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
@@ -2497,7 +2377,7 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
 
 	eventsLines := strings.Join([]string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
@@ -2515,11 +2395,11 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 	cfg := map[string]any{
 		"version": 1,
 		"defaults": map[string]string{
-			"runner": "claude",
+			"runner": "claude-code",
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude": runnerPath,
+			"claude-code": runnerPath,
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)

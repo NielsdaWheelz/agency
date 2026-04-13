@@ -25,13 +25,11 @@ func TestResolve(t *testing.T) {
 		wantID  string
 		wantErr bool
 	}{
-		{name: "legacy claude alias", input: "claude", wantID: "claude-code"},
 		{name: "canonical claude-code", input: "claude-code", wantID: "claude-code"},
 		{name: "codex", input: "codex", wantID: "codex"},
 		{name: "amp", input: "amp", wantID: "amp"},
 		{name: "opencode", input: "opencode", wantID: "opencode"},
 		{name: "cursor", input: "cursor", wantID: "cursor"},
-		{name: "legacy cursor-cli alias", input: "cursor-cli", wantID: "cursor"},
 		{name: "droid", input: "droid", wantID: "droid"},
 		{name: "unknown", input: "unknown", wantErr: true},
 		{name: "empty", input: "", wantErr: true},
@@ -114,7 +112,7 @@ func TestValidateHeadlessArgs(t *testing.T) {
 func TestBuildHeadlessArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildHeadlessArgs("claude", "fix bug", "/sandbox", []string{"--model", "opus"})
+	claudeArgs, err := BuildHeadlessArgs("claude-code", "fix bug", "/sandbox", []string{"--model", "opus"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
 
@@ -150,11 +148,11 @@ func TestBuildHeadlessArgs_RequiresPrompt(t *testing.T) {
 func TestBuildResumeArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildResumeArgs("claude", "continue from previous turn", "", []string{"--model", "opus"})
+	claudeArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "", []string{"--model", "opus"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--continue", "--model", "opus", "continue from previous turn"}, claudeArgs)
 
-	claudeExplicitArgs, err := BuildResumeArgs("claude", "continue from previous turn", "sess_abc123", []string{"--model", "opus"})
+	claudeExplicitArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "sess_abc123", []string{"--model", "opus"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--resume", "sess_abc123", "--model", "opus", "continue from previous turn"}, claudeExplicitArgs)
 
@@ -178,7 +176,7 @@ func TestBuildResumeArgs(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
 
-	assert.True(t, SupportsResumeTurns("claude"))
+	assert.True(t, SupportsResumeTurns("claude-code"))
 	assert.True(t, SupportsResumeTurns("codex"))
 	assert.True(t, SupportsResumeTurns("cursor"))
 	assert.False(t, SupportsResumeTurns("amp"))
@@ -187,7 +185,7 @@ func TestBuildResumeArgs(t *testing.T) {
 func TestBuildHeadedArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildHeadedArgs("claude", []string{"--model", "opus"})
+	claudeArgs, err := BuildHeadedArgs("claude-code", []string{"--model", "opus"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--model", "opus"}, claudeArgs)
 
@@ -220,12 +218,10 @@ func TestChatMode(t *testing.T) {
 		want   ChatMode
 	}{
 		{"claude-code", ChatModeResume},
-		{"claude", ChatModeResume},
 		{"codex", ChatModeResume},
 		{"amp", ChatModeStdin},
 		{"opencode", ChatModeResume},
 		{"cursor", ChatModeResume},
-		{"cursor-cli", ChatModeResume},
 		{"droid", ChatModeStdin},
 	}
 	for _, tt := range tests {
@@ -246,12 +242,10 @@ func TestInitialPromptMode(t *testing.T) {
 		want   InitialPromptMode
 	}{
 		{"claude-code", InitialPromptPositional},
-		{"claude", InitialPromptPositional},
 		{"codex", InitialPromptPositional},
 		{"amp", InitialPromptStdin},
 		{"opencode", InitialPromptPositional},
 		{"cursor", InitialPromptPositional},
-		{"cursor-cli", InitialPromptPositional},
 		{"droid", InitialPromptStdin},
 	}
 	for _, tt := range tests {
@@ -274,11 +268,9 @@ func TestChatMode_UnknownRunner(t *testing.T) {
 func TestHasSemanticAdapter(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, HasSemanticAdapter("claude"))
 	assert.True(t, HasSemanticAdapter("claude-code"))
 	assert.True(t, HasSemanticAdapter("codex"))
 	assert.True(t, HasSemanticAdapter("cursor"))
-	assert.True(t, HasSemanticAdapter("cursor-cli"))
 	assert.False(t, HasSemanticAdapter("amp"))
 	assert.False(t, HasSemanticAdapter("opencode"))
 	assert.False(t, HasSemanticAdapter("droid"))

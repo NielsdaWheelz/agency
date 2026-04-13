@@ -121,8 +121,7 @@ func LS(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string
 	}
 
 	// Human output
-	now := time.Now()
-	rows := render.FormatHumanRows(summaries, now)
+	rows := render.FormatHumanRows(summaries)
 
 	// Build context for empty state message
 	lsCtx := render.LSContext{

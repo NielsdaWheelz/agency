@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -21,7 +20,7 @@ func writeUserConfigForOpen(t *testing.T, configDir, editorCmd string) {
 	cfg := `{
   "version": 1,
   "defaults": {
-    "runner": "claude",
+    "runner": "claude-code",
     "editor": "code"
   },
   "editors": {
@@ -37,7 +36,7 @@ func TestOpen_RunNotFound(t *testing.T) {
 	configDir := t.TempDir()
 	writeUserConfigForOpen(t, configDir, "code")
 
-	err := Open(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), "", OpenOpts{RunID: "missing", DataDirOverride: dataDir, ConfigDirOverride: configDir}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := Open(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), OpenOpts{RunID: "missing", DataDirOverride: dataDir, ConfigDirOverride: configDir})
 	require.Error(t, err, "expected error for missing run")
 	require.Equal(t, errors.ERunNotFound, errors.GetCode(err))
 }
@@ -57,10 +56,10 @@ func TestOpen_WorktreeMissing(t *testing.T) {
 	_, err := st.EnsureRunDir(repoID, runID)
 	require.NoError(t, err, "EnsureRunDir")
 
-	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", "/missing/worktree", time.Now())
+	meta := store.NewRunMeta(runID, repoID, "test", "claude-code", "claude", "main", "agency/test-a3f2", "/missing/worktree", time.Now())
 	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
-	err = Open(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), "", OpenOpts{RunID: runID, DataDirOverride: dataDir, ConfigDirOverride: configDir}, &bytes.Buffer{}, &bytes.Buffer{})
+	err = Open(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), OpenOpts{RunID: runID, DataDirOverride: dataDir, ConfigDirOverride: configDir})
 	require.Error(t, err, "expected error for missing worktree")
 	require.Equal(t, errors.EWorktreeMissing, errors.GetCode(err))
 }
@@ -87,9 +86,9 @@ func TestOpen_Success(t *testing.T) {
 	_, err := st.EnsureRunDir(repoID, runID)
 	require.NoError(t, err, "EnsureRunDir")
 
-	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
+	meta := store.NewRunMeta(runID, repoID, "test", "claude-code", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
 	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
-	err = Open(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), "", OpenOpts{RunID: runID, DataDirOverride: dataDir, ConfigDirOverride: configDir}, &bytes.Buffer{}, &bytes.Buffer{})
+	err = Open(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), OpenOpts{RunID: runID, DataDirOverride: dataDir, ConfigDirOverride: configDir})
 	require.NoError(t, err)
 }

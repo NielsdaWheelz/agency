@@ -21,7 +21,11 @@ const (
 func getDirtyStatus(ctx context.Context, cr exec.CommandRunner, workDir string) (bool, string, error) {
 	result, err := cr.Run(ctx, "git", []string{"status", "--porcelain", "--untracked-files=all"}, exec.RunOpts{
 		Dir: workDir,
-		Env: nonInteractiveEnv(),
+		Env: map[string]string{
+			"GIT_TERMINAL_PROMPT": "0",
+			"GH_PROMPT_DISABLED":  "1",
+			"CI":                  "1",
+		},
 	})
 	if err != nil {
 		return false, "", errors.Wrap(errors.EInternal, "git status --porcelain failed to start", err)

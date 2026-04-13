@@ -6,6 +6,6 @@
     "archive": "scripts/agency_archive.sh"
   },
   "defaults": {
-    "runner": "claude"
+    "runner": "claude-code"
   }
 }

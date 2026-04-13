@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
@@ -231,6 +232,87 @@ func WriteCanonicalMarkdownBody(fsys agencyfs.FS, worktreePath, filename string,
 	}
 
 	return bodyPath, nil
+}
+
+type section struct {
+	name    string
+	content string
+}
+
+var (
+	headingAliases = map[string]string{
+		"summary":     "summary",
+		"overview":    "summary",
+		"how to test": "how to test",
+		"how-to-test": "how to test",
+		"testing":     "how to test",
+		"tests":       "how to test",
+	}
+	headingPattern = regexp.MustCompile(`^##\s+(.+)$`)
+	fencePattern   = regexp.MustCompile(`^\x60\x60\x60`)
+)
+
+func parseSections(content string) []section {
+	lines := strings.Split(content, "\n")
+	sections := make([]section, 0)
+
+	var currentSection *section
+	inFencedBlock := false
+
+	for _, line := range lines {
+		if fencePattern.MatchString(line) {
+			inFencedBlock = !inFencedBlock
+		}
+
+		if inFencedBlock {
+			if currentSection != nil {
+				currentSection.content += line + "\n"
+			}
+			continue
+		}
+
+		if match := headingPattern.FindStringSubmatch(line); match != nil {
+			if currentSection != nil {
+				sections = append(sections, *currentSection)
+			}
+
+			currentSection = &section{
+				name:    resolveAlias(normalizeHeading(match[1])),
+				content: "",
+			}
+			continue
+		}
+
+		if currentSection != nil {
+			currentSection.content += line + "\n"
+		}
+	}
+
+	if currentSection != nil {
+		sections = append(sections, *currentSection)
+	}
+
+	return sections
+}
+
+func normalizeHeading(title string) string {
+	return strings.TrimRight(strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(title))), " "), ":.-")
+}
+
+func resolveAlias(normalized string) string {
+	if canonical, ok := headingAliases[normalized]; ok {
+		return canonical
+	}
+	return normalized
+}
+
+func getSectionContent(sections []section, canonicalName string) string {
+	for _, s := range sections {
+		if s.name == canonicalName {
+			return s.content
+		}
+	}
+	return ""
 }
 
 func parseJSONCanonical(data []byte, jsonPath string) (CanonicalModel, *Violation) {

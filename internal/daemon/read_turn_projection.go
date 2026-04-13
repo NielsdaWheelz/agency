@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
@@ -243,19 +242,16 @@ func timelineDataString(data map[string]interface{}, key string) string {
 	return value
 }
 
-func (s *Server) loadRunnerStatusForInvocation(record *resolvedInvocation) (*runnerstatus.RunnerStatus, time.Time, error) {
+func (s *Server) loadRunnerStatusForInvocation(record *resolvedInvocation) (*runnerstatus.RunnerStatus, error) {
 	if s == nil || s.Store == nil || record == nil || record.Meta == nil {
-		return nil, time.Time{}, nil
-	}
-	if _, err := s.Store.PrepareInvocationRunnerStatusPath(record.RepoID, record.InvocationID, record.Meta.SandboxPath); err != nil {
-		return nil, time.Time{}, err
+		return nil, nil
 	}
 	invocationRoot := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	return runnerstatus.LoadWithModTime(invocationRoot)
+	return runnerstatus.Load(invocationRoot)
 }
 
 func (s *Server) loadRunnerSummaryBestEffort(record *resolvedInvocation) string {
-	statusMeta, _, err := s.loadRunnerStatusForInvocation(record)
+	statusMeta, err := s.loadRunnerStatusForInvocation(record)
 	if err != nil || statusMeta == nil {
 		return ""
 	}

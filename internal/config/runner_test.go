@@ -46,11 +46,11 @@ func TestResolveRunnerCmd_UnknownRunner_ReturnsRunnerNotConfigured(t *testing.T)
 
 	cfg := UserConfig{
 		Version:  1,
-		Defaults: UserDefaults{Runner: "claude"},
+		Defaults: UserDefaults{Runner: "claude-code"},
 		Runners:  map[string]string{},
 	}
 
-	// Unknown runner name that is neither "claude" nor "codex"
+	// Unknown runner name that is neither canonical nor custom.
 	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "my-custom-runner")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotConfigured, errors.GetCode(err))
@@ -65,11 +65,11 @@ func TestResolveRunnerCmd_TargetRunnerSet_RequiresExplicitConfig(t *testing.T) {
 	cr := &configTestRunner{}
 	cfg := UserConfig{
 		Version:  1,
-		Defaults: UserDefaults{Runner: "claude"},
+		Defaults: UserDefaults{Runner: "claude-code"},
 		Runners:  map[string]string{},
 	}
 
-	for _, runner := range []string{"claude", "claude-code", "codex", "amp", "opencode", "cursor", "cursor-cli", "droid"} {
+	for _, runner := range []string{"claude-code", "codex", "amp", "opencode", "cursor", "droid"} {
 		runner := runner
 		t.Run(runner, func(t *testing.T) {
 			t.Parallel()
@@ -98,7 +98,7 @@ func TestResolveRunnerCmd_TargetRunnerSet_ResolvesWhenExplicitlyConfigured(t *te
 		},
 	}
 
-	for _, runner := range []string{"claude", "claude-code", "codex", "amp", "opencode", "cursor", "cursor-cli", "droid"} {
+	for _, runner := range []string{"claude-code", "codex", "amp", "opencode", "cursor", "droid"} {
 		runner := runner
 		t.Run(runner, func(t *testing.T) {
 			t.Parallel()
@@ -109,62 +109,12 @@ func TestResolveRunnerCmd_TargetRunnerSet_ResolvesWhenExplicitlyConfigured(t *te
 	}
 }
 
-func TestResolveRunnerCmd_ClaudeAlias_ResolvesCanonicalRunnerConfig(t *testing.T) {
+func TestResolveRunnerCmd_ClaudeCode_RequiresCanonicalConfig(t *testing.T) {
 	t.Parallel()
 
 	configDir := t.TempDir()
 	fsys := fs.NewRealFS()
 	cr := &configTestRunner{}
-
-	runnerPath := filepath.Join(configDir, "runner")
-	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-
-	cfg := UserConfig{
-		Version: 1,
-		Runners: map[string]string{
-			"claude-code": "./runner",
-		},
-	}
-
-	cmd, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude")
-	require.NoError(t, err)
-	assert.Equal(t, runnerPath, cmd)
-}
-
-func TestResolveRunnerCmd_ClaudeAlias_PrefersCanonicalConfigWhenBothExist(t *testing.T) {
-	t.Parallel()
-
-	configDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	cr := &configTestRunner{}
-
-	canonicalPath := filepath.Join(configDir, "runner-canonical")
-	aliasPath := filepath.Join(configDir, "runner-alias")
-	require.NoError(t, os.WriteFile(canonicalPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	require.NoError(t, os.WriteFile(aliasPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-
-	cfg := UserConfig{
-		Version: 1,
-		Runners: map[string]string{
-			"claude-code": "./runner-canonical",
-			"claude":      "./runner-alias",
-		},
-	}
-
-	cmd, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude")
-	require.NoError(t, err)
-	assert.Equal(t, canonicalPath, cmd)
-}
-
-func TestResolveRunnerCmd_ClaudeCode_ResolvesLegacyClaudeConfig(t *testing.T) {
-	t.Parallel()
-
-	configDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	cr := &configTestRunner{}
-
-	runnerPath := filepath.Join(configDir, "runner")
-	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	cfg := UserConfig{
 		Version: 1,
@@ -173,9 +123,10 @@ func TestResolveRunnerCmd_ClaudeCode_ResolvesLegacyClaudeConfig(t *testing.T) {
 		},
 	}
 
-	cmd, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude-code")
-	require.NoError(t, err)
-	assert.Equal(t, runnerPath, cmd)
+	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude-code")
+	require.Error(t, err)
+	assert.Equal(t, errors.ERunnerNotConfigured, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "claude-code")
 }
 
 func TestResolveRunnerCmd_NotOnPath_ReturnsRunnerNotConfigured(t *testing.T) {
@@ -184,20 +135,20 @@ func TestResolveRunnerCmd_NotOnPath_ReturnsRunnerNotConfigured(t *testing.T) {
 	fsys := fs.NewRealFS()
 	cr := &configTestRunner{
 		lookPathErr: map[string]error{
-			"claude": fmt.Errorf("executable not found"),
+			"claude-code": fmt.Errorf("executable not found"),
 		},
 	}
 
 	cfg := UserConfig{
 		Version:  1,
-		Defaults: UserDefaults{Runner: "claude"},
+		Defaults: UserDefaults{Runner: "claude-code"},
 		Runners: map[string]string{
-			"claude": "claude",
+			"claude-code": "claude-code",
 		},
 	}
 
-	// "claude" is a known runner but not on PATH
-	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude")
+	// "claude-code" is a known runner but not on PATH.
+	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude-code")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotConfigured, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "not found on PATH")
@@ -216,11 +167,11 @@ func TestResolveRunnerCmd_PathNotExecutable_ReturnsRunnerNotConfigured(t *testin
 	cfg := UserConfig{
 		Version: 1,
 		Runners: map[string]string{
-			"custom": "./my-runner", // relative path triggers file stat check
+			"claude-code": "./my-runner", // relative path triggers file stat check
 		},
 	}
 
-	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "custom")
+	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude-code")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotConfigured, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "not executable")
@@ -235,11 +186,11 @@ func TestResolveRunnerCmd_PathNotFound_ReturnsRunnerNotConfigured(t *testing.T) 
 	cfg := UserConfig{
 		Version: 1,
 		Runners: map[string]string{
-			"custom": "./nonexistent-runner",
+			"claude-code": "./nonexistent-runner",
 		},
 	}
 
-	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "custom")
+	_, err := ResolveRunnerCmd(cr, fsys, configDir, cfg, "claude-code")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotConfigured, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "not found")

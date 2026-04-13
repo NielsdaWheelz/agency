@@ -55,11 +55,11 @@ func setupTempRepo(t *testing.T) (repoRoot, dataDir, configDir string) {
 	userConfig := `{
   "version": 1,
   "defaults": {
-    "runner": "sh",
+    "runner": "claude-code",
     "editor": "code"
   },
   "runners": {
-    "sh": "sh"
+    "claude-code": "sh"
   },
   "editors": {
     "code": "code"
@@ -230,6 +230,7 @@ func TestService_LoadAgencyConfig(t *testing.T) {
 	st := &pipeline.PipelineState{
 		RepoRoot: resolvedRepoRoot,
 		DataDir:  dataDir,
+		Parent:   "main",
 	}
 
 	err = svc.LoadAgencyConfig(ctx, st)
@@ -269,7 +270,7 @@ func TestService_WriteMeta_Success(t *testing.T) {
 		RepoID:       repoID,
 		DataDir:      dataDir,
 		ParentBranch: "main",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err = svc.CreateWorktree(ctx, st)
@@ -307,7 +308,7 @@ func TestService_WriteMeta_Success(t *testing.T) {
 	assert.Contains(t, content, `"run_id": "20260110120000-test"`, "meta.json should contain correct run_id")
 	assert.Contains(t, content, `"repo_id": "abcd1234ef567890"`, "meta.json should contain correct repo_id")
 	assert.Contains(t, content, `"name": "test-run"`, "meta.json should contain correct name")
-	assert.Contains(t, content, `"runner": "claude"`, "meta.json should contain correct runner")
+	assert.Contains(t, content, `"runner": "claude-code"`, "meta.json should contain correct runner")
 	assert.Contains(t, content, `"runner_cmd": "claude"`, "meta.json should contain correct runner_cmd")
 	assert.Contains(t, content, `"parent_branch": "main"`, "meta.json should contain correct parent_branch")
 	assert.Contains(t, content, `"created_at"`, "meta.json should contain created_at")
@@ -327,7 +328,7 @@ func TestService_WriteMeta_WorktreeMissing(t *testing.T) {
 		RepoID:       "abcd1234ef567890",
 		DataDir:      dataDir,
 		WorktreePath: "/nonexistent/path",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err := svc.WriteMeta(ctx, st)
@@ -365,7 +366,7 @@ func TestService_WriteMeta_RunDirCollision(t *testing.T) {
 		RepoID:       repoID,
 		DataDir:      dataDir,
 		ParentBranch: "main",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err = svc.CreateWorktree(ctx, st)
@@ -413,7 +414,7 @@ func TestService_RunSetup_Success(t *testing.T) {
 		RepoID:       repoID,
 		DataDir:      dataDir,
 		ParentBranch: "main",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err = svc.CreateWorktree(ctx, st)
@@ -494,7 +495,7 @@ func TestService_RunSetup_ScriptFailed(t *testing.T) {
 		RepoID:       repoID,
 		DataDir:      dataDir,
 		ParentBranch: "main",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err = svc.CreateWorktree(ctx, st)
@@ -561,7 +562,7 @@ func TestService_RunSetup_SetupJsonOkFalse(t *testing.T) {
 		RepoID:       repoID,
 		DataDir:      dataDir,
 		ParentBranch: "main",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err = svc.CreateWorktree(ctx, st)
@@ -629,7 +630,7 @@ func TestService_RunSetup_SetupJsonMalformed(t *testing.T) {
 		RepoID:       repoID,
 		DataDir:      dataDir,
 		ParentBranch: "main",
-		Runner:       "claude",
+		Runner:       "claude-code",
 	}
 
 	err = svc.CreateWorktree(ctx, st)
@@ -721,7 +722,12 @@ func TestService_StartTmux_Success(t *testing.T) {
 
 	// Now test StartTmux
 	err = svc.StartTmux(ctx, st)
-	require.NoError(t, err, "StartTmux failed")
+	if err != nil {
+		if errors.GetCode(err) == errors.ETmuxFailed && strings.Contains(err.Error(), "Operation not permitted") {
+			t.Skip("tmux is not permitted in this environment")
+		}
+		require.NoError(t, err, "StartTmux failed")
+	}
 
 	// Clean up tmux session (best-effort cleanup)
 	sessionName := "agency_" + runID

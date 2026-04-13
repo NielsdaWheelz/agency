@@ -48,7 +48,6 @@ runner commands must be configured in `config.json` under your agency config dir
 ```
 
 supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
-legacy aliases are accepted: `claude` -> `claude-code`, `cursor-cli` -> `cursor`.
 
 ## quick start
 
@@ -86,8 +85,7 @@ agency agent restart <invocation-id> --history     # interactive history selecto
 
 short alias parity for high-traffic s6 navigation/progression surfaces:
 - `agent review`: `-r/--repo`, `-j/--json`
-- `agent path|open|attach|enter`: `-r/--repo`
-- compatibility `path|open|attach`: `-r/--repo`
+- `agent path|open|enter`: `-r/--repo`
 
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
@@ -98,17 +96,9 @@ for `claude-code` and `codex`, `--model` and `--effort` apply.
 for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).
 for other runners, keep using `--runner-arg`.
 
-legacy `run` surface supports open-on-create:
-
-```bash
-agency run --name feature-x --open
-```
-
 non-interactive destructive flows require explicit confirmation via `--yes`:
 
 ```bash
-agency clean <run-id> --yes
-agency merge <run-id> --yes
 agency worktree rm <name|id|prefix> --yes
 agency worktree merge <worktree-ref> --yes
 ```
@@ -150,8 +140,7 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
-legacy compatibility commands (`agency push` / `agency merge`) are retained, but their report/body handling and merge-log persistence follow the same bounded-input + durable-write safety posture as canonical v2.1 flows.
-reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is strict and typed; headed/compatibility paths stay progression-capable with explicit diagnostics and deterministic fallback behavior.
+reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
 
 ## documentation
 

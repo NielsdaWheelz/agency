@@ -55,23 +55,21 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 
-	// Write config.json pointing "claude" at the fake runner binary.
+	// Write config.json pointing the canonical runners at the fake runner binary.
 	// Must include "defaults" for LoadUserConfig validation to pass.
 	runnerPath := fakeRunnerPath(t)
 	cfg := map[string]any{
 		"version": 1,
 		"defaults": map[string]string{
-			"runner": "claude",
+			"runner": "claude-code",
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude":      runnerPath,
 			"claude-code": runnerPath,
 			"codex":       runnerPath,
 			"amp":         runnerPath,
 			"opencode":    runnerPath,
 			"cursor":      runnerPath,
-			"cursor-cli":  runnerPath,
 			"droid":       runnerPath,
 		},
 	}
@@ -87,7 +85,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 
 	// Unix sockets on macOS have a ~104 byte path limit.
 	// Use a short temp dir for the socket to avoid exceeding it.
-	sockDir, err := os.MkdirTemp("", "dsock")
+	sockDir, err := os.MkdirTemp("/tmp", "dsock")
 	require.NoError(t, err, "mkdir sockdir")
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
@@ -222,7 +220,7 @@ func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, nam
 // startTestInvocation starts a headless invocation via the control plane.
 func startTestInvocation(t *testing.T, client *daemonclient.Client, repoRoot, worktreeRef, mode string) *daemon.ControlPlaneStartResponse {
 	t.Helper()
-	return startTestInvocationWithRunner(t, client, repoRoot, worktreeRef, "claude", mode)
+	return startTestInvocationWithRunner(t, client, repoRoot, worktreeRef, "claude-code", mode)
 }
 
 // startTestInvocationWithRunner starts a headless invocation with an explicit runner.
@@ -286,7 +284,7 @@ func startTestHeadedInvocation(t *testing.T, client *daemonclient.Client, repoRo
 	resp, err := client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: worktreeRef,
-		Runner:      "claude",
+		Runner:      "claude-code",
 	})
 	require.NoError(t, err, "control plane start headed")
 	require.True(t, resp.OK, "control plane start headed failed: %s - %s", resp.ErrorCode, resp.Message)

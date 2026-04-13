@@ -30,7 +30,7 @@ func TestLoadMaxStreamSeq_ExtractsSeqFromOversizedLinePrefix(t *testing.T) {
 		Seq:           42,
 		Timestamp:     "2026-02-05T11:50:10Z",
 		InvocationID:  "inv-1",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		Kind:          "message",
 		Data: map[string]any{
 			"text": strings.Repeat("x", maxTimelineLineBytes+1024),
@@ -53,7 +53,7 @@ func TestLoadMaxStreamSeq_ContinuesAfterOversizedRows(t *testing.T) {
 		Seq:           3,
 		Timestamp:     "2026-02-05T11:50:10Z",
 		InvocationID:  "inv-1",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		Kind:          "message",
 		Data: map[string]any{
 			"text": strings.Repeat("x", maxTimelineLineBytes+1024),
@@ -63,7 +63,7 @@ func TestLoadMaxStreamSeq_ContinuesAfterOversizedRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(oversizedLine), maxTimelineLineBytes)
 
-	validLine := []byte(`{"schema_version":"1.0","seq":9,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"text":"ok"}}` + "\n")
+	validLine := []byte(`{"schema_version":"1.0","seq":9,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"text":"ok"}}` + "\n")
 	require.NoError(t, os.WriteFile(streamPath, append(append(oversizedLine, '\n'), validLine...), 0o644))
 
 	assert.Equal(t, uint64(9), loadMaxStreamSeq(streamPath))

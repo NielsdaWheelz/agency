@@ -186,7 +186,7 @@ func TestIntegrationMarkerEnforcement(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 	})
 
@@ -228,7 +228,7 @@ func TestSandboxMarkerWritten(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 	})
 	require.NoError(t, err, "failed to create invocation")
@@ -289,7 +289,7 @@ func TestCleanupOnPartialFailure(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 	})
 	require.Error(t, err, "expected error when marker write fails")
@@ -356,7 +356,7 @@ func TestMultipleSandboxesPerWorktree(t *testing.T) {
 			IntegrationWorktreeMeta: wtMeta,
 			RepoRoot:                repoRoot,
 			RepoID:                  repoID,
-			Runner:                  "claude",
+			Runner:                  "claude-code",
 			Mode:                    store.RunnerModeHeaded,
 			InvocationName:          "test-agent-" + string(rune('a'+i)),
 		})
@@ -421,7 +421,7 @@ func TestIntegrationTreeUntouched(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 	})
 	require.NoError(t, err, "failed to create invocation")
@@ -527,7 +527,7 @@ func TestScanInvocations_IncompleteFields(t *testing.T) {
 
 	// Write valid JSON that is missing required fields (schema_version, started_at, invocation_id)
 	metaPath := filepath.Join(invocationDir, "meta.json")
-	require.NoError(t, os.WriteFile(metaPath, []byte(`{"runner":"claude"}`), 0o644))
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"runner":"claude-code"}`), 0o644))
 
 	records, err := store.ScanInvocationsForRepo(dataDir, repoID)
 	require.NoError(t, err)
@@ -655,7 +655,7 @@ func TestCreate_DuplicateName(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          "my-agent",
 	})
@@ -667,7 +667,7 @@ func TestCreate_DuplicateName(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          "my-agent",
 	})
@@ -719,7 +719,7 @@ func TestCreate_DuplicateNameAllowedAfterTerminal(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          "reusable",
 	})
@@ -737,7 +737,7 @@ func TestCreate_DuplicateNameAllowedAfterTerminal(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          "reusable",
 	})

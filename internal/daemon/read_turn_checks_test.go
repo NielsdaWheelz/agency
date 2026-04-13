@@ -94,14 +94,13 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 		SandboxPath:           repoDir,
 		SandboxBranch:         "main",
 		BaseCommit:            baseCommit,
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
 	}))
 
-	sandboxDir := st.SandboxDir(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationDir(repoID, invocationID), 0o700))
 	cpFile := checkpoint.CheckpointsFile{
 		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
@@ -127,7 +126,7 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
 
 	events := strings.Join([]string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
@@ -151,10 +150,10 @@ func setupAssistantTurnDiffFixture(t *testing.T) turnDiffFixture {
 	t.Helper()
 	fixture := setupTurnDiffFixture(t)
 
-	require.NoError(t, os.MkdirAll(fixture.env.Store.SandboxLogsDir(fixture.repoID, fixture.invocationID), 0o700))
-	streamPath := fixture.env.Store.SandboxStreamLogPath(fixture.repoID, fixture.invocationID)
+	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:09Z","invocation_id":"` + fixture.invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"assistant turn before checkpoint"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:09Z","invocation_id":"` + fixture.invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"assistant turn before checkpoint"}}`,
 	}
 	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
 
@@ -166,8 +165,8 @@ func setupLatestCheckpointAssistantTurnDiffFixture(t *testing.T) turnDiffFixture
 	t.Helper()
 	fixture := setupTurnDiffFixture(t)
 
-	require.NoError(t, os.MkdirAll(fixture.env.Store.SandboxLogsDir(fixture.repoID, fixture.invocationID), 0o700))
-	streamPath := fixture.env.Store.SandboxStreamLogPath(fixture.repoID, fixture.invocationID)
+	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn after checkpoint two"}}`,
 	}
@@ -197,15 +196,15 @@ func setupSingleCheckpointLatestAssistantTurnDiffFixture(t *testing.T) turnDiffF
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(fixture.env.Store.SandboxDir(fixture.repoID, fixture.invocationID), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationCheckpointsPath(fixture.repoID, fixture.invocationID), cpBytes, 0o644))
 
 	events := strings.Join([]string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + fixture.invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
 	}, "\n") + "\n"
 	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationEventsPath(fixture.repoID, fixture.invocationID), []byte(events), 0o644))
 
-	require.NoError(t, os.MkdirAll(fixture.env.Store.SandboxLogsDir(fixture.repoID, fixture.invocationID), 0o700))
-	streamPath := fixture.env.Store.SandboxStreamLogPath(fixture.repoID, fixture.invocationID)
+	require.NoError(t, os.MkdirAll(fixture.env.Store.InvocationLogsDir(fixture.repoID, fixture.invocationID), 0o700))
+	streamPath := fixture.env.Store.InvocationStreamLogPath(fixture.repoID, fixture.invocationID)
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + fixture.invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest assistant turn on first checkpoint"}}`,
 	}
@@ -213,15 +212,6 @@ func setupSingleCheckpointLatestAssistantTurnDiffFixture(t *testing.T) turnDiffF
 
 	fixture.selectedTurnID = "stream:1"
 	return fixture
-}
-
-func writeRunnerStatusForSandbox(t *testing.T, sandboxPath string, status runnerstatus.RunnerStatus) {
-	t.Helper()
-	stateDir := filepath.Join(sandboxPath, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0o700))
-	payload, err := json.Marshal(status)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), payload, 0o600))
 }
 
 func writeRunnerStatusForInvocation(t *testing.T, st *store.Store, repoID, invocationID string, status runnerstatus.RunnerStatus) {
@@ -405,7 +395,7 @@ func TestHandleGetInvocationReview_BlockedIncludesReasonsAndNavigation(t *testin
 		Questions:     []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, blockedStatus)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", blockedStatus)
 
 	blocked := runnerstatus.StatusBlocked
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
@@ -444,14 +434,14 @@ func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjec
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 
 	streamLines := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:00Z","invocation_id":"inv-1","runner":"claude","kind":"message","data":{"role":"assistant","text":"canonical latest turn"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:00Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"canonical latest turn"}}`,
 	}
-	require.NoError(t, os.WriteFile(env.Store.SandboxStreamLogPath(env.RepoID, "inv-1"), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte("{\"raw\":true}\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationRawLogPath(env.RepoID, "inv-1"), []byte("{\"raw\":true}\n"), 0o644))
 	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:01Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`+"\n",
 	), 0o644))
@@ -472,7 +462,7 @@ func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjec
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(env.Store.SandboxDir(env.RepoID, "inv-1"), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpBytes, 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -532,7 +522,7 @@ func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) 
 		Blockers:      []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
 	integrationTree := filepath.Join(t.TempDir(), "checks-ready-integration-tree")
 	agencyDir := filepath.Join(integrationTree, ".agency")
@@ -594,7 +584,7 @@ func TestHandleGetInvocationReview_UsesInvocationOwnedRunnerStatusAfterSandboxCl
 		Blockers:      []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
@@ -637,7 +627,7 @@ func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(
 		Blockers:      []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
 	integrationTree := filepath.Join(t.TempDir(), "integration-tree-missing-report")
 	require.NoError(t, os.MkdirAll(integrationTree, 0o755))
@@ -683,7 +673,7 @@ func TestHandleGetInvocationReview_HeadlessIncludesReportSourceAndDiagnostics(t 
 		Blockers:      []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, readyStatus)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
 	integrationTree := filepath.Join(t.TempDir(), "integration-tree-report-source")
 	agencyDir := filepath.Join(integrationTree, ".agency")
@@ -768,7 +758,7 @@ func TestHandleGetInvocationReview_InvalidRunnerSchemaBlocksReadiness(t *testing
 		Blockers:      []string{},
 		Risks:         []string{},
 	}
-	writeRunnerStatusForSandbox(t, sandboxPath, invalidSchema)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", invalidSchema)
 
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath

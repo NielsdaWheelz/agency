@@ -9,7 +9,6 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +71,7 @@ func TestInvocationLogPaths(t *testing.T) {
 	)
 }
 
-func TestPrepareInvocationRunnerStatusPath_PromotesLegacySandboxRunnerStatus(t *testing.T) {
+func TestResolveInvocationLogPath_ReturnsInvocationOwned(t *testing.T) {
 	t.Parallel()
 
 	dataDir := t.TempDir()
@@ -83,83 +82,7 @@ func TestPrepareInvocationRunnerStatusPath_PromotesLegacySandboxRunnerStatus(t *
 
 	_, err := s.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
-
-	legacyPath := s.SandboxRunnerStatusPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
-	legacyStatus := runnerstatus.RunnerStatus{
-		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
-		UpdatedAt:     "2026-03-18T12:00:00Z",
-		Summary:       "legacy sandbox status",
-		HowToTest:     "go test ./...",
-	}
-	legacyBytes, err := json.Marshal(legacyStatus)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(legacyPath, legacyBytes, 0o600))
-
-	preparedPath, err := s.PrepareInvocationRunnerStatusPath(repoID, invocationID, "")
-	require.NoError(t, err)
-	assert.Equal(t, s.InvocationRunnerStatusPath(repoID, invocationID), preparedPath)
-
-	promotedBytes, err := os.ReadFile(preparedPath)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(legacyBytes), string(promotedBytes))
-
-	// Status sync is copy-based because a live runner may still be writing.
-	_, err = os.Stat(legacyPath)
-	require.NoError(t, err)
-}
-
-func TestPromoteSandboxRunnerStatusToInvocation_UsesSandboxPathOverride(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	const repoID = "repo123"
-	const invocationID = "inv456"
-
-	_, err := s.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-
-	sandboxPath := filepath.Join(t.TempDir(), "custom-sandbox-tree")
-	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
-	sourcePath := runnerstatus.StatusPath(sandboxPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(sourcePath), 0o700))
-
-	sourceStatus := runnerstatus.RunnerStatus{
-		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusWorking,
-		UpdatedAt:     "2026-03-18T12:05:00Z",
-		Summary:       "override sandbox status",
-	}
-	sourceBytes, err := json.Marshal(sourceStatus)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(sourcePath, sourceBytes, 0o600))
-
-	require.NoError(t, s.PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, sandboxPath))
-
-	promotedPath := s.InvocationRunnerStatusPath(repoID, invocationID)
-	promotedBytes, err := os.ReadFile(promotedPath)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(sourceBytes), string(promotedBytes))
-}
-
-func TestResolveInvocationLogPath_PrefersInvocationOwned(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	const repoID = "repo123"
-	const invocationID = "inv456"
-
-	_, err := s.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(filepath.Dir(s.SandboxRawLogPath(repoID, invocationID)), 0o700))
-	require.NoError(t, os.WriteFile(s.SandboxRawLogPath(repoID, invocationID), []byte("legacy\n"), 0o644))
 	require.NoError(t, os.MkdirAll(s.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, os.WriteFile(s.InvocationRawLogPath(repoID, invocationID), []byte("canonical\n"), 0o644))
 
 	assert.Equal(t,
 		s.InvocationRawLogPath(repoID, invocationID),
@@ -171,7 +94,7 @@ func TestResolveInvocationLogPath_PrefersInvocationOwned(t *testing.T) {
 	)
 }
 
-func TestPrepareInvocationLogPath_PromotesLegacySandboxLog(t *testing.T) {
+func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
 	t.Parallel()
 
 	dataDir := t.TempDir()
@@ -182,23 +105,20 @@ func TestPrepareInvocationLogPath_PromotesLegacySandboxLog(t *testing.T) {
 
 	_, err := s.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
-	legacyPath := s.SandboxRawLogPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
-	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy raw\n"), 0o644))
+	sandboxPath := s.SandboxRawLogPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(sandboxPath), 0o700))
+	require.NoError(t, os.WriteFile(sandboxPath, []byte("sandbox raw\n"), 0o644))
 
 	preparedPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "raw")
 	require.NoError(t, err)
 	assert.Equal(t, s.InvocationRawLogPath(repoID, invocationID), preparedPath)
-
-	data, err := os.ReadFile(preparedPath)
+	_, err = os.Stat(sandboxPath)
 	require.NoError(t, err)
-	assert.Equal(t, "legacy raw\n", string(data))
-
-	_, err = os.Stat(legacyPath)
-	assert.True(t, os.IsNotExist(err), "legacy sandbox log should be moved into invocation storage")
+	_, err = os.Stat(preparedPath)
+	assert.True(t, os.IsNotExist(err))
 }
 
-func TestResolveInvocationCheckpointsDir_PrefersInvocationOwned(t *testing.T) {
+func TestResolveInvocationCheckpointsDir_ReturnsInvocationOwned(t *testing.T) {
 	t.Parallel()
 
 	dataDir := t.TempDir()
@@ -209,47 +129,12 @@ func TestResolveInvocationCheckpointsDir_PrefersInvocationOwned(t *testing.T) {
 
 	_, err := s.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
-
-	legacyPath := s.SandboxCheckpointsPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
-	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy checkpoints\n"), 0o644))
-
-	invocationPath := s.InvocationCheckpointsPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(invocationPath, []byte("invocation checkpoints\n"), 0o644))
 
 	assert.Equal(
 		t,
 		s.InvocationDir(repoID, invocationID),
 		s.ResolveInvocationCheckpointsDir(repoID, invocationID),
 	)
-}
-
-func TestPrepareInvocationCheckpointsPath_PromotesLegacySandboxCheckpoints(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	const repoID = "repo123"
-	const invocationID = "inv456"
-
-	_, err := s.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-
-	legacyPath := s.SandboxCheckpointsPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
-	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy checkpoints\n"), 0o644))
-
-	preparedPath, err := s.PrepareInvocationCheckpointsPath(repoID, invocationID)
-	require.NoError(t, err)
-	assert.Equal(t, s.InvocationCheckpointsPath(repoID, invocationID), preparedPath)
-
-	data, err := os.ReadFile(preparedPath)
-	require.NoError(t, err)
-	assert.Equal(t, "legacy checkpoints\n", string(data))
-
-	_, err = os.Stat(legacyPath)
-	assert.True(t, os.IsNotExist(err), "legacy sandbox checkpoints should be moved into invocation storage")
 }
 
 func TestReadInvocationMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {

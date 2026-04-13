@@ -17,7 +17,7 @@ type ParseResult struct {
 
 // Adapter defines the interface for runner-specific stream parsers.
 type Adapter interface {
-	// Name returns the runner name (e.g., "claude", "codex").
+	// Name returns the canonical runner name (e.g., "claude-code", "codex").
 	Name() string
 
 	// ParseLine parses a single JSONL line and returns normalized events.

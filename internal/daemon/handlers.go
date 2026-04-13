@@ -35,407 +35,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// handleStartHeadless handles POST /invocations/{id}/start_headless.
-func (s *Server) handleStartHeadless(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
-	writeErr := func(status int, code, message, hint string) {
-		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
-	}
-
-	// Parse request body
-	var req StartHeadlessRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
-		return
-	}
-
-	// Override invocation ID from URL path
-	req.InvocationID = invocationID
-
-	// Validate required fields
-	if req.RepoID == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id is required", "")
-		return
-	}
-	if req.Runner == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "")
-		return
-	}
-	if req.SandboxPath == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "sandbox_path is required", "")
-		return
-	}
-	if req.Prompt == "" {
-		writeErr(http.StatusBadRequest, string(errors.EPromptRequired), "prompt is required for headless invocation", "")
-		return
-	}
-
-	// Validation Gate 1: Check invocation meta exists
-	meta, err := s.Store.ReadInvocationMeta(req.RepoID, req.InvocationID)
-	if err != nil {
-		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-			writeErr(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "ensure invocation was created before calling start_headless")
-			return
-		}
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
-		return
-	}
-
-	// Validation Gate 2: Meta cross-validation
-	if meta.Mode != store.RunnerModeHeadless {
-		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "invocation mode is not headless", "this endpoint is only for headless invocations")
-		return
-	}
-	if meta.SandboxPath != req.SandboxPath {
-		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox_path in request does not match invocation meta", "verify sandbox was created correctly")
-		return
-	}
-
-	// Check for idempotency / already running
-	if meta.Status == store.InvocationStatusRunning && meta.PID != nil {
-		pid := *meta.PID
-		alive := s.PIDChecker(pid)
-
-		if alive {
-			// Check if this daemon instance is supervising it
-			if meta.DaemonInstanceID == s.InstanceID {
-				// Idempotent hit - we're already supervising this
-				resp := StartHeadlessResponse{
-					OK:               true,
-					RequestID:        requestID,
-					PID:              pid,
-					PGID:             safeIntPtr(meta.PGID),
-					DaemonInstanceID: s.InstanceID,
-					AlreadyRunning:   true,
-					Orphaned:         false,
-					LogPaths: &LogPaths{
-						Raw:    s.readableInvocationLogPath(req.RepoID, req.InvocationID, "raw"),
-						Stderr: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stderr"),
-						Stream: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stream"),
-					},
-				}
-				s.writeJSON(w, http.StatusOK, resp)
-				return
-			}
-
-			// Process alive but different daemon instance (or no instance) - orphaned
-			now := s.Clock().UTC().Format(time.RFC3339)
-			_ = s.Store.UpdateInvocationMeta(req.RepoID, req.InvocationID, func(m *store.InvocationMeta) {
-				m.Flags.Orphaned = true
-				m.OrphanedAt = now
-			})
-
-			resp := StartHeadlessResponse{
-				OK:               true,
-				RequestID:        requestID,
-				PID:              pid,
-				PGID:             safeIntPtr(meta.PGID),
-				DaemonInstanceID: s.InstanceID,
-				AlreadyRunning:   true,
-				Orphaned:         true,
-				LogPaths: &LogPaths{
-					Raw:    s.readableInvocationLogPath(req.RepoID, req.InvocationID, "raw"),
-					Stderr: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stderr"),
-					Stream: s.readableInvocationLogPath(req.RepoID, req.InvocationID, "stream"),
-				},
-			}
-			s.writeJSON(w, http.StatusOK, resp)
-			return
-		}
-
-		// PID is dead - mark as orphaned/failed
-		now := s.Clock().UTC().Format(time.RFC3339)
-		_ = s.Store.UpdateInvocationMeta(req.RepoID, req.InvocationID, func(m *store.InvocationMeta) {
-			m.Status = store.InvocationStatusFailed
-			m.ExitReason = "unknown"
-			m.FinishedAt = now
-			m.PID = nil
-			m.Flags.Orphaned = true
-			m.Flags.NeedsAttention = true
-			m.LifecycleOwner = ""
-		})
-
-		writeErr(http.StatusConflict, string(errors.EInvocationOrphaned), "invocation was running but PID is dead", "process exited without daemon observing; start a new invocation")
-		return
-	}
-
-	// Check for terminal status
-	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
-		writeErr(http.StatusConflict, string(errors.EInvocationTerminal), "invocation already in terminal state: "+string(meta.Status), "start a new invocation instead")
-		return
-	}
-
-	// Validation Gate 3: sandbox_path contains SANDBOX_MARKER
-	if !invocation.HasSandboxMarker(req.SandboxPath) {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox does not contain SANDBOX_MARKER", "verify sandbox was created correctly via agent start")
-		return
-	}
-
-	// Validation Gate 4: sandbox_path does NOT contain INTEGRATION_MARKER
-	integrationMarkerPath := filepath.Join(req.SandboxPath, ".agency", "INTEGRATION_MARKER")
-	if _, err := os.Stat(integrationMarkerPath); err == nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed), "sandbox contains INTEGRATION_MARKER - refusing to run in integration tree", "this is a bug - sandbox path resolved to integration tree")
-		return
-	}
-
-	// Validation Gate 5: sandbox_path equals computed expected path
-	expectedSandboxPath := s.Store.SandboxTreePath(req.RepoID, req.InvocationID)
-	if req.SandboxPath != expectedSandboxPath {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusBadRequest, string(errors.ESandboxValidationFailed),
-			fmt.Sprintf("sandbox_path does not match expected path: got %s, expected %s", req.SandboxPath, expectedSandboxPath),
-			"verify sandbox was created correctly")
-		return
-	}
-
-	// Validation Gate 6: runner is recognized and canonicalized.
-	canonicalRunner, err := runners.Canonicalize(req.Runner)
-	if err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusBadRequest, string(errors.ERunnerNotFound), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
-		return
-	}
-	req.Runner = canonicalRunner
-
-	// Validation Gate 7: headless reserved runner args are rejected.
-	if err := validateHeadlessRunnerArgs(req.Runner, req.RunnerArgs); err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerArgConflict
-		}
-		hint := "remove reserved flags from runner_args"
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		writeErr(http.StatusBadRequest, string(code), err.Error(), hint)
-		return
-	}
-
-	// Load user config for runner resolution
-	userCfg, err := s.LoadUserConfig()
-	if err != nil {
-		// Non-fatal, use defaults
-		userCfg = config.UserConfig{}
-	}
-
-	// Resolve runner command
-	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
-	if err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerNotConfigured
-		}
-		writeErr(
-			http.StatusBadRequest,
-			string(code),
-			"failed to resolve runner command: "+err.Error(),
-			"set explicit config.runners.<runner-id> mapping to an installed executable",
-		)
-		return
-	}
-
-	// Build command arguments
-	args, err := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, req.SandboxPath, req.RunnerArgs)
-	if err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerNotFound
-		}
-		writeErr(http.StatusBadRequest, string(code), err.Error(), "valid runners: "+strings.Join(runners.CanonicalIDs(), ", "))
-		return
-	}
-
-	// Create invocation-owned logs directory
-	logsDir := s.Store.InvocationLogsDir(req.RepoID, req.InvocationID)
-	if err := os.MkdirAll(logsDir, 0o700); err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to create logs directory: "+err.Error(), "")
-		return
-	}
-
-	// Write prompt file
-	promptPath := s.Store.InvocationPromptPath(req.RepoID, req.InvocationID)
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	promptSHA := hex.EncodeToString(promptHash[:])
-
-	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to write prompt file: "+err.Error(), "")
-		return
-	}
-
-	logFiles, err := s.openInvocationLogFiles(req.RepoID, req.InvocationID)
-	if err != nil {
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to open invocation log files: "+err.Error(), "")
-		return
-	}
-	rawLogPath := logFiles.RawPath
-	stderrLogPath := logFiles.StderrPath
-	streamLogPath := logFiles.StreamPath
-	rawFile := logFiles.RawFile
-	stderrFile := logFiles.StderrFile
-	streamFile := logFiles.StreamFile
-
-	// Set up deterministic, automation-safe environment for headless runner starts.
-	envOverlay := nonInteractiveRunnerEnv()
-	for k, v := range req.Env {
-		envOverlay[k] = v
-	}
-
-	// Create stdin pipe + chat relay for runners that support stdin streaming input.
-	stdinReader, chatRelay := createChatRelay(req.Runner)
-
-	// Start runner with live stdout/stderr pipes.
-	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
-		Dir:        req.SandboxPath,
-		Env:        envOverlay,
-		Stdin:      stdinReader,
-		StdoutPipe: true,
-		StderrPipe: true,
-		Setpgid:    true,
-	})
-	// Close the parent's copy of the stdin read end — the child has inherited the FD.
-	if stdinReader != nil {
-		_ = stdinReader.Close()
-	}
-	if err != nil {
-		if chatRelay != nil {
-			_ = chatRelay.Close()
-		}
-		logFiles.Close()
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to start runner: "+err.Error(), "")
-		return
-	}
-	if err := sendInitialPromptIfRequired(req.Runner, req.Prompt, chatRelay); err != nil {
-		if chatRelay != nil {
-			_ = chatRelay.Close()
-		}
-		if startedProc.PGID > 0 {
-			_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
-		}
-		logFiles.Close()
-		s.markInvocationFailed(req.RepoID, req.InvocationID, "start_failed")
-		writeErr(http.StatusInternalServerError, string(errors.ERunnerStartFailed), "failed to deliver initial prompt: "+err.Error(), "")
-		return
-	}
-
-	stdoutPipe := startedProc.StdoutPipe
-	stderrPipe := startedProc.StderrPipe
-	pid := startedProc.PID
-	pgid := startedProc.PGID
-
-	// PR-07/S4 PR-02: keep stream sequence monotonic across append boundaries
-	// even for legacy /start_headless path.
-	initialSeq := loadMaxStreamSeq(streamLogPath)
-	parser := stream.NewParser(req.InvocationID, req.Runner, s.Clock)
-	parser.SetInitialSeq(initialSeq)
-
-	// Create supervised process record
-	proc := &SupervisedProcess{
-		InvocationID:          req.InvocationID,
-		RepoID:                req.RepoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		PID:                   pid,
-		PGID:                  pgid,
-		SandboxPath:           req.SandboxPath,
-		RawLogFile:            rawLogPath,
-		StderrFile:            stderrLogPath,
-		StreamLogFile:         streamLogPath,
-		Runner:                req.Runner,
-		RepoRoot:              req.SandboxPath, // Legacy path lacks repo_root; sandbox root is sufficient fallback.
-		RunnerArgs:            append([]string(nil), req.RunnerArgs...),
-		Env:                   copyStringMap(req.Env),
-		Parser:                parser,
-		Relay:                 chatRelay,
-		done:                  make(chan struct{}),
-	}
-	if proc.Relay != nil {
-		proc.InitializeTurnTracking()
-	}
-	parser.SetFinalNotify(func(n stream.FinalNotification) {
-		s.handleSuccessfulFinalNotification(proc, n)
-	})
-	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
-		proc.SetResumeSessionID(n.SessionID)
-	})
-
-	// Register the process
-	s.mu.Lock()
-	s.processes[req.InvocationID] = proc
-	s.mu.Unlock()
-
-	// Update invocation meta
-	now := s.Clock().UTC().Format(time.RFC3339)
-	daemonPID := os.Getpid()
-	envKeys := sortedEnvKeys(req.Env)
-	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	err = s.Store.UpdateInvocationMeta(req.RepoID, req.InvocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusRunning
-		m.Runner = req.Runner
-		m.PID = &pid
-		m.PGID = &pgid
-		m.DaemonPID = &daemonPID
-		m.DaemonInstanceID = s.InstanceID
-		m.ClaimedAt = now
-		m.LifecycleOwner = "daemon"
-		m.PromptPath = promptPath
-		m.PromptSHA256 = promptSHA
-		m.RunnerArgs = runnerArgs
-		m.CustomEnvKeys = envKeys
-	})
-	if err != nil {
-		// Best-effort: kill the process we just started
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		_ = rawFile.Close()
-		_ = stderrFile.Close()
-		_ = streamFile.Close()
-		s.mu.Lock()
-		delete(s.processes, req.InvocationID)
-		s.mu.Unlock()
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "")
-		return
-	}
-
-	// PR-07: Start goroutine to stream and parse stdout
-	proc.streamWg.Add(2)
-	go s.streamAndParseOutput(proc, stdoutPipe, rawFile, streamFile)
-	// Stderr is still streamed without parsing
-	go s.streamOutput(proc, stderrPipe, stderrFile)
-
-	// Start goroutine to wait for process exit
-	go s.waitForExitWithFailureReason(proc, startedProc, rawFile, stderrFile, streamFile)
-
-	// Start goroutine to periodically flush lastOutputAt and semantic status
-	go s.runOutputFlushLoop(proc)
-	go s.runSemanticStatusFlushLoop(proc)
-
-	// Return success
-	resp := StartHeadlessResponse{
-		OK:               true,
-		RequestID:        requestID,
-		PID:              pid,
-		PGID:             pgid,
-		DaemonInstanceID: s.InstanceID,
-		AlreadyRunning:   false,
-		Orphaned:         false,
-		LogPaths: &LogPaths{
-			Raw:    rawLogPath,
-			Stderr: stderrLogPath,
-			Stream: streamLogPath,
-		},
-	}
-	s.writeJSON(w, http.StatusOK, resp)
-}
-
 // handleStop handles POST /invocations/{id}/stop.
 // PR-05 headless: SIGINT → wait 5s → SIGTERM → wait 2s → SIGKILL
 // PR-10 headed: tmux send-keys C-c (does not mark as finished; reconcile handles that)
@@ -467,15 +66,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 	// Early return if invocation is already in a terminal state
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
-		resp := StopResponse{
-			OK:              true,
-			InvocationID:    invocationID,
-			RequestID:       requestID,
-			APIVersion:      APIVersion,
-			BuildVersion:    version.FullVersion(),
-			ClientRequestID: "",
-		}
-		s.writeJSON(w, http.StatusOK, resp)
+		s.writeInvocationActionSuccess(w, requestID, invocationID)
 		return
 	}
 
@@ -484,15 +75,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	s.mu.RUnlock()
 	if completionSupervised && completionProc != nil && completionProc.SuccessfulCompletionObserved() {
 		s.scheduleStdinCompletionFinalize(completionProc)
-		resp := StopResponse{
-			OK:              true,
-			InvocationID:    invocationID,
-			RequestID:       requestID,
-			APIVersion:      APIVersion,
-			BuildVersion:    version.FullVersion(),
-			ClientRequestID: "",
-		}
-		s.writeJSON(w, http.StatusOK, resp)
+		s.writeInvocationActionSuccess(w, requestID, invocationID)
 		return
 	}
 
@@ -529,15 +112,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 					m.FinishedAt = finishedAt
 				})
 			}
-			resp := StopResponse{
-				OK:              true,
-				InvocationID:    invocationID,
-				RequestID:       requestID,
-				APIVersion:      APIVersion,
-				BuildVersion:    version.FullVersion(),
-				ClientRequestID: "",
-			}
-			s.writeJSON(w, http.StatusOK, resp)
+			s.writeInvocationActionSuccess(w, requestID, invocationID)
 			return
 		}
 
@@ -548,15 +123,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 			fmt.Fprintf(os.Stderr, "warning: could not send C-c to tmux session: %v\n", err)
 		}
 
-		resp := StopResponse{
-			OK:              true,
-			InvocationID:    invocationID,
-			RequestID:       requestID,
-			APIVersion:      APIVersion,
-			BuildVersion:    version.FullVersion(),
-			ClientRequestID: "",
-		}
-		s.writeJSON(w, http.StatusOK, resp)
+		s.writeInvocationActionSuccess(w, requestID, invocationID)
 		return
 	}
 
@@ -582,15 +149,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	// SIGINT → wait 5s → SIGTERM → wait 2s → SIGKILL
 	go s.stopEscalation(repoID, invocationID, pgid, supervised, proc)
 
-	resp := StopResponse{
-		OK:              true,
-		InvocationID:    invocationID,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    version.FullVersion(),
-		ClientRequestID: "",
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	s.writeInvocationActionSuccess(w, requestID, invocationID)
 }
 
 // stopEscalation performs the stop signal escalation: SIGINT → SIGTERM → SIGKILL
@@ -803,15 +362,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		}
 		s.mu.Unlock()
 
-		resp := KillResponse{
-			OK:              true,
-			InvocationID:    invocationID,
-			RequestID:       requestID,
-			APIVersion:      APIVersion,
-			BuildVersion:    version.FullVersion(),
-			ClientRequestID: "",
-		}
-		s.writeJSON(w, http.StatusOK, resp)
+		s.writeInvocationActionSuccess(w, requestID, invocationID)
 		return
 	}
 
@@ -854,15 +405,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		})
 	}
 
-	resp := KillResponse{
-		OK:              true,
-		InvocationID:    invocationID,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    version.FullVersion(),
-		ClientRequestID: "",
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	s.writeInvocationActionSuccess(w, requestID, invocationID)
 }
 
 // runOutputFlushLoop periodically flushes lastOutputAt to meta.json.
@@ -1017,6 +560,96 @@ func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, e
 	}
 }
 
+type controlPlaneStartErrorWriter func(status int, code, message, hint string)
+
+type controlPlaneStartResolved struct {
+	repoRoot     string
+	repoIdentity identity.RepoIdentity
+	wtRecord     *store.IntegrationWorktreeRecord
+	unlockRepo   func() error
+}
+
+func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot string, writeErr controlPlaneStartErrorWriter) (string, identity.RepoIdentity, bool) {
+	repoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "failed to resolve repo_root: "+err.Error(), "")
+		return "", identity.RepoIdentity{}, false
+	}
+	repoRoot, err = filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "failed to resolve repo_root symlinks: "+err.Error(), "")
+		return "", identity.RepoIdentity{}, false
+	}
+
+	if isInsideAgencyManagedWorktree(repoRoot, s.Store.DataDir) {
+		writeErr(http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
+			"repo_root is inside an agency-managed worktree",
+			"use the original repository, not a sandbox or integration worktree")
+		return "", identity.RepoIdentity{}, false
+	}
+
+	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
+	if err != nil {
+		writeErr(http.StatusBadRequest, string(errors.ENoRepo),
+			"repo_root is not inside a git repository: "+err.Error(), "")
+		return "", identity.RepoIdentity{}, false
+	}
+	repoRoot = gitRoot.Path
+	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
+	return repoRoot, repoIdentity, true
+}
+
+func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktreeRef string, lockOp string, writeErr controlPlaneStartErrorWriter, repoIdentity identity.RepoIdentity) (*controlPlaneStartResolved, bool) {
+	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to register repo: "+err.Error(), "")
+		return nil, false
+	}
+
+	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, worktreeRef, false)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		writeErr(http.StatusNotFound, string(code), err.Error(), "run 'agency worktree ls' to see available worktrees")
+		return nil, false
+	}
+	if wtRecord.Broken || wtRecord.Meta == nil {
+		writeErr(http.StatusBadRequest, string(errors.EWorktreeBroken),
+			"integration worktree exists but meta.json is unreadable",
+			"inspect or recreate the worktree")
+		return nil, false
+	}
+	if wtRecord.Meta.State != store.WorktreeStatePresent {
+		writeErr(http.StatusBadRequest, string(errors.EWorktreeNotFound),
+			"integration worktree is archived", "use a present (non-archived) integration worktree")
+		return nil, false
+	}
+
+	unlockRepo, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, lockOp)
+	if err != nil {
+		var lockedErr *agencylock.ErrLocked
+		if !stderrors.As(err, &lockedErr) {
+			writeErr(http.StatusInternalServerError, string(errors.EInternal),
+				"failed to acquire repository lock: "+err.Error(), "")
+			return nil, false
+		}
+		writeErr(http.StatusConflict, string(errors.ERepoLocked),
+			"repository is locked by another operation",
+			"wait for the other operation to complete")
+		return nil, false
+	}
+
+	return &controlPlaneStartResolved{
+		repoRoot:     repoRoot,
+		repoIdentity: repoIdentity,
+		wtRecord:     wtRecord,
+		unlockRepo:   unlockRepo,
+	}, true
+}
+
 // handleControlPlaneStartHeadless handles POST /invocations/start_headless (PR-05 control plane).
 // This is the new endpoint where daemon creates everything: invocation, sandbox, and starts runner.
 func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.Request) {
@@ -1098,40 +731,13 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		}
 	}
 
-	// 6. Resolve repo_root to canonical absolute path
-	repoRoot, err := filepath.Abs(req.RepoRoot)
-	if err != nil {
-		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST",
-			"failed to resolve repo_root: "+err.Error(), "", req.ClientRequestID)
+	// 6. Resolve repo_root to canonical absolute path and derive repo identity.
+	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
+		writeControlPlaneErr(status, code, message, hint, req.ClientRequestID)
+	})
+	if !ok {
 		return
 	}
-	repoRoot, err = filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		writeControlPlaneErr(http.StatusBadRequest, "E_INVALID_REQUEST",
-			"failed to resolve repo_root symlinks: "+err.Error(), "", req.ClientRequestID)
-		return
-	}
-
-	// 7. Recursion guard: reject if repo_root is inside agency-managed worktree
-	if isInsideAgencyManagedWorktree(repoRoot, s.Store.DataDir) {
-		writeControlPlaneErr(http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
-			"repo_root is inside an agency-managed worktree",
-			"use the original repository, not a sandbox or integration worktree", req.ClientRequestID)
-		return
-	}
-
-	// 8. Derive git root via git rev-parse --show-toplevel
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
-	if err != nil {
-		writeControlPlaneErr(http.StatusBadRequest, string(errors.ENoRepo),
-			"repo_root is not inside a git repository: "+err.Error(), "", req.ClientRequestID)
-		return
-	}
-	repoRoot = gitRoot.Path // Use the actual git root
-
-	// 9. Derive repo identity
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 
 	// 10. Check idempotency before doing any work
 	if existingID, isDuplicate := s.checkIdempotency(repoIdentity.RepoID, req.ClientRequestID); isDuplicate {
@@ -1144,63 +750,13 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		// If we can't read meta, fall through to create new (idempotency entry may be stale)
 	}
 
-	// 11. Self-register repo if needed
-	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
-		writeControlPlaneErr(http.StatusInternalServerError, "E_INTERNAL",
-			"failed to register repo: "+err.Error(), "", req.ClientRequestID)
+	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headless", func(status int, code, message, hint string) {
+		writeControlPlaneErr(status, code, message, hint, req.ClientRequestID)
+	}, repoIdentity)
+	if !ok {
 		return
 	}
-
-	// 12. Resolve integration worktree
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
-	wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, req.WorktreeRef, false)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
-		writeControlPlaneErr(http.StatusNotFound, string(code),
-			err.Error(), "run 'agency worktree ls' to see available worktrees", req.ClientRequestID)
-		return
-	}
-
-	if wtRecord.Broken || wtRecord.Meta == nil {
-		writeControlPlaneErr(http.StatusBadRequest, string(errors.EWorktreeBroken),
-			"integration worktree exists but meta.json is unreadable",
-			"inspect or recreate the worktree", req.ClientRequestID)
-		return
-	}
-
-	if wtRecord.Meta.State != store.WorktreeStatePresent {
-		writeControlPlaneErr(http.StatusBadRequest, string(errors.EWorktreeNotFound),
-			"integration worktree is archived", "use a present (non-archived) integration worktree", req.ClientRequestID)
-		return
-	}
-
-	// Serialize repo/worktree mutations with other mutating flows.
-	unlockRepo, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, "control_plane_start_headless")
-	if err != nil {
-		var lockedErr *agencylock.ErrLocked
-		if !stderrors.As(err, &lockedErr) {
-			writeControlPlaneErr(
-				http.StatusInternalServerError,
-				string(errors.EInternal),
-				"failed to acquire repository lock: "+err.Error(),
-				"",
-				req.ClientRequestID,
-			)
-			return
-		}
-		writeControlPlaneErr(
-			http.StatusConflict,
-			string(errors.ERepoLocked),
-			"repository is locked by another operation",
-			"wait for the other operation to complete",
-			req.ClientRequestID,
-		)
-		return
-	}
-	defer func() { _ = unlockRepo() }()
+	defer func() { _ = prep.unlockRepo() }()
 
 	// 13. Check invocation name uniqueness if name provided
 	if req.InvocationName != "" {
@@ -1214,8 +770,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	// 14. Create invocation and sandbox via invocation.Service.Create (unified path)
 	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
-		IntegrationWorktreeID:   wtRecord.WorktreeID,
-		IntegrationWorktreeMeta: wtRecord.Meta,
+		IntegrationWorktreeID:   prep.wtRecord.WorktreeID,
+		IntegrationWorktreeMeta: prep.wtRecord.Meta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoIdentity.RepoID,
 		Runner:                  req.Runner,
@@ -1252,7 +808,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 
 	// 15. Start the runner process
-	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, wtRecord.WorktreeID, req)
+	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, prep.wtRecord.WorktreeID, req)
 	if err != nil {
 		// Cleanup on failure
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "spawn_failed")
@@ -1341,6 +897,16 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) writeInvocationActionSuccess(w http.ResponseWriter, requestID, invocationID string) {
+	s.writeJSON(w, http.StatusOK, InvocationActionResponse{
+		OK:           true,
+		InvocationID: invocationID,
+		RequestID:    requestID,
+		APIVersion:   APIVersion,
+		BuildVersion: version.FullVersion(),
+	})
 }
 
 // validateRunnerArgs checks for universal reserved flags in runner args.
@@ -1540,7 +1106,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	parser.SetInitialSeq(initialSeq)
 
 	// PR-08: Create checkpoint engine
-	checkpointsDir := s.Store.SandboxDir(repoID, result.InvocationID)
+	checkpointsDir := s.Store.InvocationDir(repoID, result.InvocationID)
 	eventsPath := s.Store.InvocationEventsPath(repoID, result.InvocationID)
 
 	cpConfig := checkpoint.DefaultConfig()
@@ -2021,42 +1587,15 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	// 4. Resolve repo_root to canonical absolute path
-	repoRoot, err := filepath.Abs(req.RepoRoot)
-	if err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
-			"failed to resolve repo_root: "+err.Error(), "", req.ClientRequestID, requestID)
-		return
-	}
-	repoRoot, err = filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
-			"failed to resolve repo_root symlinks: "+err.Error(), "", req.ClientRequestID, requestID)
+	// 4. Resolve repo_root to canonical absolute path and derive repo identity.
+	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
+		s.writeHeadedError(w, status, code, message, hint, req.ClientRequestID, requestID)
+	})
+	if !ok {
 		return
 	}
 
-	// 5. Recursion guard: reject if repo_root is inside agency-managed worktree
-	if isInsideAgencyManagedWorktree(repoRoot, s.Store.DataDir) {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
-			"repo_root is inside an agency-managed worktree",
-			"use the original repository, not a sandbox or integration worktree", req.ClientRequestID, requestID)
-		return
-	}
-
-	// 6. Derive git root via git rev-parse --show-toplevel
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
-	if err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.ENoRepo),
-			"repo_root is not inside a git repository: "+err.Error(), "", req.ClientRequestID, requestID)
-		return
-	}
-	repoRoot = gitRoot.Path // Use the actual git root
-
-	// 7. Derive repo identity
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
-
-	// 8. Check idempotency before doing any work
+	// 5. Check idempotency before doing any work
 	if entry, isDuplicate := s.checkHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID); isDuplicate {
 		// Return the existing invocation
 		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
@@ -2067,69 +1606,15 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		// If we can't read meta, fall through to create new (idempotency entry may be stale)
 	}
 
-	// 9. Self-register repo if needed
-	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL",
-			"failed to register repo: "+err.Error(), "", req.ClientRequestID, requestID)
+	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headed", func(status int, code, message, hint string) {
+		s.writeHeadedError(w, status, code, message, hint, req.ClientRequestID, requestID)
+	}, repoIdentity)
+	if !ok {
 		return
 	}
+	defer func() { _ = prep.unlockRepo() }()
 
-	// 10. Resolve integration worktree
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
-	wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, req.WorktreeRef, false)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
-		s.writeHeadedError(w, http.StatusNotFound, string(code),
-			err.Error(), "run 'agency worktree ls' to see available worktrees", req.ClientRequestID, requestID)
-		return
-	}
-
-	if wtRecord.Broken || wtRecord.Meta == nil {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EWorktreeBroken),
-			"integration worktree exists but meta.json is unreadable",
-			"inspect or recreate the worktree", req.ClientRequestID, requestID)
-		return
-	}
-
-	if wtRecord.Meta.State != store.WorktreeStatePresent {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EWorktreeNotFound),
-			"integration worktree is archived", "use a present (non-archived) integration worktree", req.ClientRequestID, requestID)
-		return
-	}
-
-	// Serialize repo/worktree mutations with other mutating flows.
-	unlockRepo, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, "control_plane_start_headed")
-	if err != nil {
-		var lockedErr *agencylock.ErrLocked
-		if !stderrors.As(err, &lockedErr) {
-			s.writeHeadedError(
-				w,
-				http.StatusInternalServerError,
-				string(errors.EInternal),
-				"failed to acquire repository lock: "+err.Error(),
-				"",
-				req.ClientRequestID,
-				requestID,
-			)
-			return
-		}
-		s.writeHeadedError(
-			w,
-			http.StatusConflict,
-			string(errors.ERepoLocked),
-			"repository is locked by another operation",
-			"wait for the other operation to complete",
-			req.ClientRequestID,
-			requestID,
-		)
-		return
-	}
-	defer func() { _ = unlockRepo() }()
-
-	// 11. Check invocation name uniqueness if name provided
+	// 6. Check invocation name uniqueness if name provided
 	if req.InvocationName != "" {
 		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
 			s.writeHeadedError(w, http.StatusConflict, string(errors.EInvocationNameExists),
@@ -2138,13 +1623,13 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	// 12. Create invocation and sandbox via invocation.Service.Create
+	// 7. Create invocation and sandbox via invocation.Service.Create
 	// This is the unified path per PR-10 spec requirements
 	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
 
 	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
-		IntegrationWorktreeID:   wtRecord.WorktreeID,
-		IntegrationWorktreeMeta: wtRecord.Meta,
+		IntegrationWorktreeID:   prep.wtRecord.WorktreeID,
+		IntegrationWorktreeMeta: prep.wtRecord.Meta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoIdentity.RepoID,
 		Runner:                  req.Runner,
@@ -2162,7 +1647,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// 13. Resolve runner command
+	// 8. Resolve runner command
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
 		userCfg = config.UserConfig{}
@@ -2177,10 +1662,10 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// 14. Generate tmux session name
+	// 9. Generate tmux session name
 	sessionName := tmux.SessionName(createResult.InvocationID)
 
-	// 15. Preflight: check if session already exists
+	// 10. Preflight: check if session already exists
 	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
 	if err != nil {
 		// Non-fatal error checking, log but proceed
@@ -2233,7 +1718,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	proc := &SupervisedProcess{
 		InvocationID:          createResult.InvocationID,
 		RepoID:                repoIdentity.RepoID,
-		IntegrationWorktreeID: wtRecord.WorktreeID,
+		IntegrationWorktreeID: prep.wtRecord.WorktreeID,
 		Mode:                  "headed",
 		TmuxSession:           sessionName,
 		Runner:                req.Runner,

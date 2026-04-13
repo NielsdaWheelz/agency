@@ -35,12 +35,6 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{}`),
 		},
 		{
-			name:   "legacy_start_headless",
-			method: http.MethodPost,
-			path:   "/invocations/inv-1/start_headless",
-			body:   []byte(`{}`),
-		},
-		{
 			name:   "stop_missing_repo",
 			method: http.MethodPost,
 			path:   "/invocations/inv-1/stop",

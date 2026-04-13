@@ -18,7 +18,7 @@ import (
 // ApplyOptions controls checkpoint apply behavior for different callers.
 type ApplyOptions struct {
 	// RewindHeadToSnapshotBase resets HEAD to checkpoint.sandbox_head_sha before
-	// restoring the snapshot tree. This gives true retry semantics for restart.
+	// restoring the snapshot tree.
 	RewindHeadToSnapshotBase bool
 
 	// BackupRefPrefix controls where pre-apply HEAD backup refs are written.
@@ -117,12 +117,12 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 
 	snapshotBase := ""
 	if opts.RewindHeadToSnapshotBase {
-		snapshotBase, err = a.resolveSnapshotBase(ctx, cp)
-		if err != nil {
-			if errors.GetCode(err) != "" {
-				return nil, err
-			}
-			return nil, errors.Wrap(errors.ECheckpointFailed, "failed to resolve checkpoint base commit", err)
+		snapshotBase = strings.TrimSpace(cp.SandboxHeadSHA)
+		if snapshotBase == "" {
+			return nil, errors.New(errors.ECheckpointFailed, "checkpoint missing sandbox_head_sha")
+		}
+		if err := a.verifyCommitExists(ctx, snapshotBase); err != nil {
+			return nil, errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint sandbox head commit %s not found", snapshotBase))
 		}
 	}
 
@@ -194,39 +194,6 @@ func (a *Applier) verifyCommitExists(ctx context.Context, sha string) error {
 		return fmt.Errorf("git cat-file -t %s failed: %s", sha, verifyResult.Stderr)
 	}
 	return nil
-}
-
-func (a *Applier) resolveSnapshotBase(ctx context.Context, cp *Checkpoint) (string, error) {
-	if cp == nil {
-		return "", errors.New(errors.ECheckpointFailed, "checkpoint is nil")
-	}
-	if base := strings.TrimSpace(cp.SandboxHeadSHA); base != "" {
-		if err := a.verifyCommitExists(ctx, base); err != nil {
-			return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint sandbox head commit %s not found", base))
-		}
-		return base, nil
-	}
-
-	// Backward-compat fallback for legacy checkpoints without sandbox_head_sha:
-	// derive base from snapshot commit parent.
-	result, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"rev-parse", cp.SnapshotCommit + "^",
-	}, exec.RunOpts{})
-	if err != nil {
-		return "", err
-	}
-	if result.ExitCode != 0 {
-		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit for %s not found", cp.SnapshotCommit))
-	}
-	base := strings.TrimSpace(result.Stdout)
-	if base == "" {
-		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit for %s is empty", cp.SnapshotCommit))
-	}
-	if err := a.verifyCommitExists(ctx, base); err != nil {
-		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit %s not found", base))
-	}
-	return base, nil
 }
 
 func (a *Applier) currentHead(ctx context.Context) (string, error) {

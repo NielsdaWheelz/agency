@@ -32,7 +32,7 @@ type VerifyRecord struct {
 	// TimedOut and Cancelled are mutually exclusive.
 	TimedOut bool `json:"timed_out"`
 
-	// Cancelled is true if the user interrupted agency verify (SIGINT).
+	// Cancelled is true if the user interrupted the verify script (SIGINT).
 	// TimedOut and Cancelled are mutually exclusive.
 	Cancelled bool `json:"cancelled"`
 

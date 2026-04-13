@@ -55,7 +55,7 @@ func TestAgentDiff_TurnAware_HumanAndJSONAligned(t *testing.T) {
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
 
 	events := "" +
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}` + "\n" +
@@ -142,18 +142,18 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnUsesPreviousCheckpointBoundary(t
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
 
 	events := "" +
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}` + "\n" +
 		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}` + "\n"
 	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(events), 0o644))
 
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	stream := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest codex assistant turn"}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(stream, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(stream, "\n")+"\n"), 0o644))
 
 	daemonRunner.Responses["git -C "+sandboxPath+" rev-parse HEAD"] = testutil.FakeResponse{Stdout: "2222222\n"}
 	daemonRunner.Responses["git -C "+sandboxPath+" log --oneline 1111111..2222222"] = testutil.FakeResponse{Stdout: "2222222 checkpoint two\n"}
@@ -226,17 +226,17 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnSingleCheckpointUsesBaseBoundary
 	}
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
 
 	events := "" +
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}` + "\n"
 	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(events), 0o644))
 
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	stream := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"codex","kind":"message","data":{"role":"assistant","text":"latest codex assistant turn with one checkpoint"}}`,
 	}
-	require.NoError(t, os.WriteFile(st.SandboxStreamLogPath(repoID, invocationID), []byte(strings.Join(stream, "\n")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(stream, "\n")+"\n"), 0o644))
 
 	baseCommit := "abc123def456"
 	daemonRunner.Responses["git -C "+sandboxPath+" rev-parse HEAD"] = testutil.FakeResponse{Stdout: "1111111\n"}

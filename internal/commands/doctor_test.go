@@ -131,11 +131,11 @@ func writeUserConfig(t *testing.T, configDir string) {
 	cfg := `{
   "version": 1,
   "defaults": {
-    "runner": "claude",
+    "runner": "claude-code",
     "editor": "code"
   },
   "runners": {
-    "claude": "claude",
+    "claude-code": "claude",
     "codex": "codex"
   },
   "editors": {
@@ -227,7 +227,7 @@ func TestDoctor_Success(t *testing.T) {
 		"gh_version: gh version 2.40.0 (2024-01-15)",
 		"gh_authenticated: true",
 		"defaults_parent_branch: main",
-		"defaults_runner: claude",
+		"defaults_runner: claude-code",
 		"defaults_editor: code",
 		"runner_cmd: /usr/bin/claude",
 		"status: ok",

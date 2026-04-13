@@ -263,7 +263,7 @@ func TestInvocationMetaToDTO(t *testing.T) {
 		InvocationName:        "my-invocation",
 		IntegrationWorktreeID: "wt-456",
 		SandboxPath:           "/tmp/sandbox/inv-123",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             "2026-02-05T11:50:00Z",
 		FinishedAt:            "2026-02-05T11:55:00Z",
@@ -285,7 +285,7 @@ func TestInvocationMetaToDTO(t *testing.T) {
 	assert.Equal(t, "my-invocation", dto.InvocationName)
 	assert.Equal(t, "wt-456", dto.WorktreeID)
 	assert.Equal(t, "repo-abc", dto.RepoID)
-	assert.Equal(t, "claude", dto.Runner)
+	assert.Equal(t, "claude-code", dto.Runner)
 	assert.Equal(t, "headless", dto.Mode)
 	assert.Equal(t, "2026-02-05T11:50:00Z", dto.StartedAt)
 	assert.Equal(t, "2026-02-05T11:55:00Z", dto.FinishedAt)

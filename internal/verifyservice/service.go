@@ -4,6 +4,7 @@ package verifyservice
 
 import (
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"os"
@@ -206,7 +207,7 @@ func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Dur
 	}
 
 	// Step 7: Build environment for verify script (same as setup script per L0 contract)
-	env := buildVerifyEnv(meta, worktreePath, runDir, s.DataDir)
+	env := buildVerifyEnv(meta, worktreePath, runDir)
 
 	// Step 8: Run verify script via verify runner
 	runCfg := verify.RunConfig{
@@ -285,8 +286,7 @@ func (s *Service) VerifyRun(ctx context.Context, runRef string, timeout time.Dur
 }
 
 // buildVerifyEnv builds the environment variables for the verify script.
-// Per L0 contract, uses the same env injection as other scripts.
-func buildVerifyEnv(meta *store.RunMeta, worktreePath, runDir, dataDir string) []string {
+func buildVerifyEnv(meta *store.RunMeta, worktreePath, runDir string) []string {
 	// Start with current environment
 	env := os.Environ()
 
@@ -330,7 +330,7 @@ func augmentRecordError(recordPath string, errMsgs []string) {
 	}
 
 	var record store.VerifyRecord
-	if err := fs.UnmarshalJSON(data, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return
 	}
 

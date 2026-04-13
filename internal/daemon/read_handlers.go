@@ -429,6 +429,12 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 	// Get repo_id from query params (optional)
 	repoID := r.URL.Query().Get("repo_id")
 
+	if r.URL.Query().Has("tail_bytes") {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
+			"tail_bytes is no longer supported", "use offset and limit", nil)
+		return
+	}
+
 	// Parse logs params
 	params := parseGetLogsParams(r)
 

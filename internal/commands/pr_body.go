@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -118,12 +120,17 @@ func writeFallbackPRBody(ctx context.Context, cr exec.CommandRunner, fsys fs.FS,
 		return "", "", fmt.Errorf("failed to set pr body permissions: %w", err)
 	}
 
-	bodyHash := computeReportHash(fsys, bodyPath)
-	if bodyHash == "" {
+	bodyBytes, err := fsys.ReadFile(bodyPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read pr body: %w", err)
+	}
+	bodyHash := sha256.Sum256(bodyBytes)
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	if bodyHashHex == "" {
 		return "", "", fmt.Errorf("failed to compute pr body hash")
 	}
 
-	return bodyPath, bodyHash, nil
+	return bodyPath, bodyHashHex, nil
 }
 
 func gitLinesBounded(ctx context.Context, cr exec.CommandRunner, workDir string, args []string, max int) ([]string, bool, bool) {
@@ -152,7 +159,11 @@ func gitLinesBounded(ctx context.Context, cr exec.CommandRunner, workDir string,
 func gitText(ctx context.Context, cr exec.CommandRunner, workDir string, args []string) (string, bool) {
 	result, err := cr.Run(ctx, "git", args, exec.RunOpts{
 		Dir: workDir,
-		Env: nonInteractiveEnv(),
+		Env: map[string]string{
+			"GIT_TERMINAL_PROMPT": "0",
+			"GH_PROMPT_DISABLED":  "1",
+			"CI":                  "1",
+		},
 	})
 	if err != nil || result.ExitCode != 0 {
 		return "", false

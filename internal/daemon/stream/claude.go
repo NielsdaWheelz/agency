@@ -12,7 +12,7 @@ type ClaudeAdapter struct{}
 
 // Name returns the runner name.
 func (a *ClaudeAdapter) Name() string {
-	return "claude"
+	return "claude-code"
 }
 
 // claudeRawEvent represents a raw event from Claude stream-json output.

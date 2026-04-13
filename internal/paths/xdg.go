@@ -45,30 +45,19 @@ type Env interface {
 // Path joining is OS-correct via filepath.Join.
 // ~ inside env vars is treated as literal (not expanded).
 func ResolveDirs(env Env, homeDir string) Dirs {
-	return Dirs{
-		DataDir:   resolveDataDir(env, homeDir),
-		ConfigDir: resolveConfigDir(env, homeDir),
-		CacheDir:  resolveCacheDir(env, homeDir),
-	}
+	return resolveDirsWithOS(env, homeDir, isDarwin())
 }
 
-// IsDarwin returns true if the current OS is macOS.
-// Exported for testing purposes.
-func IsDarwin() bool {
+func isDarwin() bool {
 	return runtime.GOOS == "darwin"
 }
 
-// ResolveDirsWithOS is like ResolveDirs but accepts an explicit OS flag for testing.
-func ResolveDirsWithOS(env Env, homeDir string, isDarwin bool) Dirs {
+func resolveDirsWithOS(env Env, homeDir string, isDarwin bool) Dirs {
 	return Dirs{
 		DataDir:   resolveDataDirWithOS(env, homeDir, isDarwin),
 		ConfigDir: resolveConfigDirWithOS(env, homeDir, isDarwin),
 		CacheDir:  resolveCacheDirWithOS(env, homeDir, isDarwin),
 	}
-}
-
-func resolveDataDir(env Env, homeDir string) string {
-	return resolveDataDirWithOS(env, homeDir, IsDarwin())
 }
 
 func resolveDataDirWithOS(env Env, homeDir string, isDarwin bool) string {
@@ -88,10 +77,6 @@ func resolveDataDirWithOS(env Env, homeDir string, isDarwin bool) string {
 	return filepath.Join(homeDir, ".local", "share", "agency")
 }
 
-func resolveConfigDir(env Env, homeDir string) string {
-	return resolveConfigDirWithOS(env, homeDir, IsDarwin())
-}
-
 func resolveConfigDirWithOS(env Env, homeDir string, isDarwin bool) string {
 	// 1. AGENCY_CONFIG_DIR override
 	if v := env.Get("AGENCY_CONFIG_DIR"); v != "" {
@@ -107,10 +92,6 @@ func resolveConfigDirWithOS(env Env, homeDir string, isDarwin bool) string {
 	}
 	// 4. Default fallback
 	return filepath.Join(homeDir, ".config", "agency")
-}
-
-func resolveCacheDir(env Env, homeDir string) string {
-	return resolveCacheDirWithOS(env, homeDir, IsDarwin())
 }
 
 func resolveCacheDirWithOS(env Env, homeDir string, isDarwin bool) string {

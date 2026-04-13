@@ -36,7 +36,7 @@ func TestPath_WorktreeMissing(t *testing.T) {
 	_, err := st.EnsureRunDir(repoID, runID)
 	require.NoError(t, err, "EnsureRunDir")
 
-	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", "/missing/worktree", time.Now())
+	meta := store.NewRunMeta(runID, repoID, "test", "claude-code", "claude", "main", "agency/test-a3f2", "/missing/worktree", time.Now())
 	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	var stdout, stderr bytes.Buffer
@@ -59,7 +59,7 @@ func TestPath_Success(t *testing.T) {
 	_, err := st.EnsureRunDir(repoID, runID)
 	require.NoError(t, err, "EnsureRunDir")
 
-	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
+	meta := store.NewRunMeta(runID, repoID, "test", "claude-code", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
 	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	var stdout, stderr bytes.Buffer
@@ -87,7 +87,7 @@ func TestPath_ByName(t *testing.T) {
 	_, err := st.EnsureRunDir(repoID, runID)
 	require.NoError(t, err, "EnsureRunDir")
 
-	meta := store.NewRunMeta(runID, repoID, runName, "claude", "claude", "main", "agency/my-feature-a3f2", worktreePath, time.Now())
+	meta := store.NewRunMeta(runID, repoID, runName, "claude-code", "claude", "main", "agency/my-feature-a3f2", worktreePath, time.Now())
 	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	var stdout, stderr bytes.Buffer
@@ -112,7 +112,7 @@ func TestPath_ByPrefix(t *testing.T) {
 	_, err := st.EnsureRunDir(repoID, runID)
 	require.NoError(t, err, "EnsureRunDir")
 
-	meta := store.NewRunMeta(runID, repoID, "test", "claude", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
+	meta := store.NewRunMeta(runID, repoID, "test", "claude-code", "claude", "main", "agency/test-a3f2", worktreePath, time.Now())
 	require.NoError(t, st.WriteInitialMeta(repoID, runID, meta), "WriteInitialMeta")
 
 	// Use a prefix of the run_id

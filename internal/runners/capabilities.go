@@ -14,9 +14,6 @@ const (
 	RunnerCursor     = "cursor"
 	RunnerDroid      = "droid"
 
-	LegacyRunnerClaude    = "claude"
-	LegacyRunnerCursorCLI = "cursor-cli"
-
 	launchTokenExtraArgs   = "{extra_args}"
 	launchTokenPrompt      = "{prompt}"
 	launchTokenSandboxPath = "{sandbox_path}"
@@ -55,7 +52,6 @@ type Capability struct {
 
 	reservedArgs         []string // flags reserved in both headless and headed modes
 	reservedHeadlessArgs []string // flags reserved only in headless mode (permission/approval)
-	aliases              []string
 	headlessTemplate     []string
 	resumeTemplate       []string // template for session-resume follow-up turns (if supported)
 	headedTemplate       []string
@@ -76,14 +72,13 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
-		InitialPromptMode:    InitialPromptPositional,
-		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume"},
-		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
-		aliases:              []string{LegacyRunnerClaude},
-		headlessTemplate: []string{
-			"-p",
-			"--output-format", "stream-json",
+			ChatMode:             ChatModeResume,
+			InitialPromptMode:    InitialPromptPositional,
+			reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume"},
+			reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
+			headlessTemplate: []string{
+				"-p",
+				"--output-format", "stream-json",
 			"--input-format", "text",
 			"--verbose",
 			"--dangerously-skip-permissions",
@@ -160,15 +155,14 @@ var capabilityByID = map[string]Capability{
 		ID:                   RunnerCursor,
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
-		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
-		InitialPromptMode:    InitialPromptPositional,
-		reservedArgs:         []string{"-p", "--print", "--output-format", "--resume", "--continue", "--workspace"},
-		reservedHeadlessArgs: []string{"--force", "-f", "--yolo", "--trust"},
-		aliases:              []string{LegacyRunnerCursorCLI},
-		headlessTemplate: []string{
-			"-p",
-			"--output-format", "stream-json",
+			HasSemanticAdapter:   true,
+			ChatMode:             ChatModeResume,
+			InitialPromptMode:    InitialPromptPositional,
+			reservedArgs:         []string{"-p", "--print", "--output-format", "--resume", "--continue", "--workspace"},
+			reservedHeadlessArgs: []string{"--force", "-f", "--yolo", "--trust"},
+			headlessTemplate: []string{
+				"-p",
+				"--output-format", "stream-json",
 			"--force",
 			"--workspace", launchTokenSandboxPath,
 			launchTokenExtraArgs,
@@ -199,14 +193,12 @@ var capabilityByID = map[string]Capability{
 }
 
 var canonicalByInput = map[string]string{
-	RunnerClaudeCode:      RunnerClaudeCode,
-	LegacyRunnerClaude:    RunnerClaudeCode,
-	RunnerCodex:           RunnerCodex,
-	RunnerAmp:             RunnerAmp,
-	RunnerOpenCode:        RunnerOpenCode,
-	RunnerCursor:          RunnerCursor,
-	LegacyRunnerCursorCLI: RunnerCursor,
-	RunnerDroid:           RunnerDroid,
+	RunnerClaudeCode: RunnerClaudeCode,
+	RunnerCodex:      RunnerCodex,
+	RunnerAmp:        RunnerAmp,
+	RunnerOpenCode:   RunnerOpenCode,
+	RunnerCursor:     RunnerCursor,
+	RunnerDroid:      RunnerDroid,
 }
 
 // CanonicalIDs returns the supported canonical runner IDs in stable order.
@@ -216,7 +208,7 @@ func CanonicalIDs() []string {
 	return out
 }
 
-// Canonicalize resolves a runner input (including aliases) to canonical ID.
+// Canonicalize validates a canonical runner ID.
 func Canonicalize(runner string) (string, error) {
 	input := strings.TrimSpace(runner)
 	canonical, ok := canonicalByInput[input]
@@ -259,9 +251,7 @@ func ConfigLookupKeys(runner string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys := []string{capability.ID}
-	keys = append(keys, capability.aliases...)
-	return keys, nil
+	return []string{capability.ID}, nil
 }
 
 // ValidateArgs rejects user-supplied args that conflict with universal reserved flags.
@@ -370,20 +360,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 			}
 		}
 	}
-	if capability.ID == RunnerCursor && resumeSessionID != "" {
-		rewritten := make([]string, 0, len(args)+1)
-		replaced := false
-		for _, arg := range args {
-			if !replaced && arg == "--continue" {
-				rewritten = append(rewritten, "--resume", resumeSessionID)
-				replaced = true
-				continue
-			}
-			rewritten = append(rewritten, arg)
-		}
-		args = rewritten
-	}
-	if capability.ID == RunnerClaudeCode && resumeSessionID != "" {
+	if (capability.ID == RunnerCursor || capability.ID == RunnerClaudeCode) && resumeSessionID != "" {
 		rewritten := make([]string, 0, len(args)+1)
 		replaced := false
 		for _, arg := range args {
@@ -427,7 +404,7 @@ func BuildHeadedArgs(runner string, extraArgs []string) ([]string, error) {
 	return renderLaunchTemplate(capability.headedTemplate, "", "", extraArgs)
 }
 
-// ResolveChatMode returns the ChatMode for a runner (including aliases).
+// ResolveChatMode returns the ChatMode for a runner.
 func ResolveChatMode(runner string) (ChatMode, error) {
 	capability, err := Resolve(runner)
 	if err != nil {

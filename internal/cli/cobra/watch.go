@@ -3,6 +3,7 @@ package cobra
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -34,9 +35,12 @@ Keyboard shortcuts:
 Use --interval to tune periodic refresh cadence.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			interval, err := parseWatchInterval(intervalStr)
+			interval, err := time.ParseDuration(intervalStr)
 			if err != nil {
 				return errors.New(errors.EInvalidArgument, err.Error())
+			}
+			if interval < 250*time.Millisecond || interval > 5*time.Second {
+				return errors.New(errors.EInvalidArgument, "interval must be between 250ms and 5s")
 			}
 
 			cwd, err := os.Getwd()

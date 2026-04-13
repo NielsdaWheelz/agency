@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -334,163 +333,28 @@ func (s *Store) EnsureInvocationRunnerStatusDir(repoID, invocationID string) (st
 	return statusDir, nil
 }
 
-// ResolveInvocationLogsDir returns the best logs directory for an invocation.
-// Invocation-owned logs are preferred, but sandbox logs remain readable for
-// historical invocations created before durable log ownership.
+// ResolveInvocationLogsDir returns the canonical logs directory for an invocation.
 func (s *Store) ResolveInvocationLogsDir(repoID, invocationID string) string {
-	preferred := s.InvocationLogsDir(repoID, invocationID)
-	if s.logPathExists(preferred, true) {
-		return preferred
-	}
-
-	legacy := s.SandboxLogsDir(repoID, invocationID)
-	if s.logPathExists(legacy, true) {
-		return legacy
-	}
-
-	return preferred
+	return s.InvocationLogsDir(repoID, invocationID)
 }
 
-// ResolveInvocationLogPath returns the best log file path for reads.
-// Invocation-owned logs are preferred, with sandbox logs as a compatibility
-// fallback for historical invocations.
+// ResolveInvocationLogPath returns the canonical log file path for reads.
 func (s *Store) ResolveInvocationLogPath(repoID, invocationID, kind string) string {
-	preferred := s.invocationLogPathForKind(repoID, invocationID, kind)
-	if s.logPathExists(preferred, false) {
-		return preferred
-	}
-
-	legacy := s.sandboxLogPathForKind(repoID, invocationID, kind)
-	if s.logPathExists(legacy, false) {
-		return legacy
-	}
-
-	return preferred
+	return s.invocationLogPathForKind(repoID, invocationID, kind)
 }
 
-// ResolveInvocationCheckpointsDir returns the best checkpoints directory for reads.
-// Invocation-owned checkpoints are preferred, with sandbox checkpoints as a
-// compatibility fallback for historical invocations.
+// ResolveInvocationCheckpointsDir returns the canonical checkpoints directory for reads.
 func (s *Store) ResolveInvocationCheckpointsDir(repoID, invocationID string) string {
-	preferredDir := s.InvocationDir(repoID, invocationID)
-	if s.logPathExists(s.InvocationCheckpointsPath(repoID, invocationID), false) {
-		return preferredDir
-	}
-
-	legacyDir := s.SandboxDir(repoID, invocationID)
-	if s.logPathExists(s.SandboxCheckpointsPath(repoID, invocationID), false) {
-		return legacyDir
-	}
-
-	return preferredDir
+	return s.InvocationDir(repoID, invocationID)
 }
 
 // PrepareInvocationLogPath ensures the invocation-owned logs directory exists
-// and promotes a legacy sandbox-owned log file into invocation storage when
-// needed before returning the invocation-owned path.
+// before returning the canonical path.
 func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (string, error) {
 	if _, err := s.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
 		return "", err
 	}
-
-	dst := s.invocationLogPathForKind(repoID, invocationID, kind)
-	if s.logPathExists(dst, false) {
-		return dst, nil
-	}
-
-	src := s.sandboxLogPathForKind(repoID, invocationID, kind)
-	if s.logPathExists(src, false) {
-		if err := s.FS.Rename(src, dst); err != nil {
-			return "", errors.WrapWithDetails(
-				errors.EInvocationCreateFailed,
-				"failed to promote legacy sandbox log into invocation storage",
-				err,
-				map[string]string{
-					"source": src,
-					"dest":   dst,
-				},
-			)
-		}
-	}
-
-	return dst, nil
-}
-
-// PrepareInvocationCheckpointsPath ensures invocation-owned checkpoints path is
-// available and promotes a legacy sandbox-owned checkpoints.json into invocation
-// storage when needed.
-func (s *Store) PrepareInvocationCheckpointsPath(repoID, invocationID string) (string, error) {
-	invocationDir := s.InvocationDir(repoID, invocationID)
-	if err := s.FS.MkdirAll(invocationDir, 0o700); err != nil {
-		return "", errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to ensure invocation directory for checkpoint promotion",
-			err,
-			map[string]string{"invocation_dir": invocationDir},
-		)
-	}
-
-	dst := s.InvocationCheckpointsPath(repoID, invocationID)
-	if s.logPathExists(dst, false) {
-		return dst, nil
-	}
-
-	src := s.SandboxCheckpointsPath(repoID, invocationID)
-	if s.logPathExists(src, false) {
-		if err := s.FS.Rename(src, dst); err != nil {
-			return "", errors.WrapWithDetails(
-				errors.EInvocationCreateFailed,
-				"failed to promote legacy sandbox checkpoints into invocation storage",
-				err,
-				map[string]string{
-					"source": src,
-					"dest":   dst,
-				},
-			)
-		}
-	}
-
-	return dst, nil
-}
-
-// PrepareInvocationRunnerStatusPath ensures invocation-owned runner status path
-// is available and best-effort syncs sandbox-owned runner status into invocation
-// storage when a sandbox status file exists.
-func (s *Store) PrepareInvocationRunnerStatusPath(repoID, invocationID, sandboxPath string) (string, error) {
-	if _, err := s.EnsureInvocationRunnerStatusDir(repoID, invocationID); err != nil {
-		return "", err
-	}
-
-	dst := s.InvocationRunnerStatusPath(repoID, invocationID)
-	if err := s.syncRunnerStatusFromSandbox(repoID, invocationID, sandboxPath, dst); err != nil {
-		return "", err
-	}
-	return dst, nil
-}
-
-// PromoteSandboxLogsToInvocation migrates any legacy sandbox-owned invocation
-// logs into the invocation record directory. It is safe to call repeatedly.
-func (s *Store) PromoteSandboxLogsToInvocation(repoID, invocationID string) error {
-	for _, kind := range []string{"raw", "stderr", "stream"} {
-		if _, err := s.PrepareInvocationLogPath(repoID, invocationID, kind); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// PromoteSandboxCheckpointsToInvocation migrates a legacy sandbox-owned
-// checkpoints.json into invocation storage. It is safe to call repeatedly.
-func (s *Store) PromoteSandboxCheckpointsToInvocation(repoID, invocationID string) error {
-	_, err := s.PrepareInvocationCheckpointsPath(repoID, invocationID)
-	return err
-}
-
-// PromoteSandboxRunnerStatusToInvocation migrates sandbox-owned runner status
-// into invocation storage. It is safe to call repeatedly.
-func (s *Store) PromoteSandboxRunnerStatusToInvocation(repoID, invocationID, sandboxPath string) error {
-	_, err := s.PrepareInvocationRunnerStatusPath(repoID, invocationID, sandboxPath)
-	return err
+	return s.invocationLogPathForKind(repoID, invocationID, kind), nil
 }
 
 // WriteInvocationMeta writes the meta.json for an invocation atomically.
@@ -612,94 +476,4 @@ func (s *Store) invocationLogPathForKind(repoID, invocationID, kind string) stri
 	default:
 		return s.InvocationRawLogPath(repoID, invocationID)
 	}
-}
-
-func (s *Store) sandboxLogPathForKind(repoID, invocationID, kind string) string {
-	switch kind {
-	case "stderr":
-		return s.SandboxStderrLogPath(repoID, invocationID)
-	case "stream":
-		return s.SandboxStreamLogPath(repoID, invocationID)
-	default:
-		return s.SandboxRawLogPath(repoID, invocationID)
-	}
-}
-
-func (s *Store) logPathExists(path string, wantDir bool) bool {
-	if s == nil || s.FS == nil || path == "" {
-		return false
-	}
-	info, err := s.FS.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.IsDir() == wantDir
-}
-
-func (s *Store) syncRunnerStatusFromSandbox(repoID, invocationID, sandboxPath, dst string) error {
-	src := runnerstatus.StatusPath(strings.TrimSpace(sandboxPath))
-	if strings.TrimSpace(sandboxPath) == "" {
-		src = s.SandboxRunnerStatusPath(repoID, invocationID)
-	}
-	srcInfo, err := s.FS.Stat(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to stat sandbox runner status during promotion",
-			err,
-			map[string]string{"source": src},
-		)
-	}
-	if srcInfo.IsDir() {
-		return errors.NewWithDetails(
-			errors.EInvocationCreateFailed,
-			"sandbox runner status path is a directory",
-			map[string]string{"source": src},
-		)
-	}
-
-	if dstInfo, statErr := s.FS.Stat(dst); statErr == nil {
-		if dstInfo.IsDir() {
-			return errors.NewWithDetails(
-				errors.EInvocationCreateFailed,
-				"invocation runner status path is a directory",
-				map[string]string{"dest": dst},
-			)
-		}
-		if !srcInfo.ModTime().After(dstInfo.ModTime()) {
-			return nil
-		}
-	} else if !os.IsNotExist(statErr) {
-		return errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to stat invocation runner status path",
-			statErr,
-			map[string]string{"dest": dst},
-		)
-	}
-
-	payload, err := s.FS.ReadFile(src)
-	if err != nil {
-		return errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to read sandbox runner status during promotion",
-			err,
-			map[string]string{"source": src},
-		)
-	}
-	if err := fs.WriteFileAtomic(s.FS, dst, payload, 0o600); err != nil {
-		return errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to write invocation-owned runner status",
-			err,
-			map[string]string{
-				"source": src,
-				"dest":   dst,
-			},
-		)
-	}
-	return nil
 }

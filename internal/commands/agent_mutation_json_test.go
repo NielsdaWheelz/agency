@@ -72,7 +72,7 @@ func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testin
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
 		WorktreeRef: "does-not-exist",
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Headless:    true,
 		Prompt:      "hello",
 		JSON:        true,
@@ -271,7 +271,7 @@ func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, false, payload["ok"])
 	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
-	assert.NotEmpty(t, payload["request_id"])
+	assert.Empty(t, payload["request_id"])
 }
 
 func TestAgentRestart_JSONFailureTransportEnvelope(t *testing.T) {

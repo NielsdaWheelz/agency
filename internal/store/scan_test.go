@@ -72,7 +72,7 @@ func TestScanAllRuns_MismatchedMetaIdentity(t *testing.T) {
 		RunID:         "meta-run-id",  // Different from directory name
 		RepoID:        "meta-repo-id", // Different from directory name
 		Name:          "test",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		CreatedAt:     "2026-01-10T12:00:00Z",
 	}
 
@@ -321,7 +321,7 @@ func createValidMeta(t *testing.T, dataDir, repoID, runID string) {
 		RunID:         runID,
 		RepoID:        repoID,
 		Name:          "test-run",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		ParentBranch:  "main",
 		Branch:        "agency/test-" + runID,
 		WorktreePath:  "/path/to/worktree/" + runID,
@@ -425,7 +425,7 @@ func TestLoadRepoIndexForScan_LegacyFormat(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
 
-	// Legacy format with "entries" key instead of "repos"
+	// Legacy format with "entries" key instead of "repos" should be rejected.
 	content := `{
 		"entries": {
 			"github:owner/repo": {
@@ -439,12 +439,9 @@ func TestLoadRepoIndexForScan_LegacyFormat(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
 
 	idx, err := LoadRepoIndexForScan(dataDir)
-	require.NoError(t, err)
-	require.NotNil(t, idx)
-
-	entry, ok := idx.Repos["github:owner/repo"]
-	require.True(t, ok, "missing entry for github:owner/repo (from legacy format)")
-	assert.Equal(t, "abc123", entry.RepoID)
+	require.Error(t, err)
+	assert.Nil(t, idx)
+	assert.Contains(t, err.Error(), "legacy")
 }
 
 // Tests for PickRepoRoot

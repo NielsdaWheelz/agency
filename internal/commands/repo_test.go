@@ -43,11 +43,11 @@ func startRepoTestDaemon(t *testing.T) *repoTestEnv {
 	cfg := map[string]any{
 		"version": 1,
 		"defaults": map[string]string{
-			"runner": "claude",
+			"runner": "claude-code",
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude": "/bin/echo",
+			"claude-code": "/bin/echo",
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)

@@ -36,7 +36,7 @@ type AgentStartOpts struct {
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string
 
-	// Runner is the runner id (claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases supported).
+	// Runner is the canonical runner id (claude-code, codex, amp, opencode, cursor, droid).
 	Runner string
 
 	// Headless indicates whether to run in headless mode.
@@ -958,7 +958,6 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
-			envelope.ClientRequestID = resp.ClientRequestID
 			envelope.RequestID = resp.RequestID
 		})
 	}
@@ -998,11 +997,11 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, fs
 		if err := tmuxClient.Attach(ctx, resp.TmuxSession); err != nil {
 			// Attach failed but session exists - not a fatal error
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent attach %s' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent enter %s' to attach later.\n", shortID)
 		}
 	} else {
 		_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
-		_, _ = fmt.Fprintf(stdout, "Use 'agency agent attach %s' to attach.\n", shortID)
+		_, _ = fmt.Fprintf(stdout, "Use 'agency agent enter %s' to attach.\n", shortID)
 	}
 
 	return nil
@@ -1080,7 +1079,6 @@ func agentStartHeadlessControlPlane(ctx context.Context, cr exec.CommandRunner, 
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
-			envelope.ClientRequestID = resp.ClientRequestID
 			envelope.RequestID = resp.RequestID
 		})
 	}
@@ -1134,26 +1132,12 @@ type AgentLSOpts struct {
 
 	// JSON outputs as JSON.
 	JSON bool
-
-	// Watch is a deprecated legacy flag retained for explicit cutover errors.
-	Watch    bool
-	Interval time.Duration // default 500ms, min 250ms, max 5s
-
-	// SleepFn is retained for backward compatibility in tests.
-	SleepFn func(time.Duration)
-
-	// MaxIterations is retained for backward compatibility in tests.
-	MaxIterations int
 }
 
 // AgentLS lists agent invocations.
 // PR-12: Routes through daemon read API - CLI never reads store directly.
 // PR-A: Supports --repo / --all-repos for CWD-less operation.
 func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLSOpts, stdout, stderr io.Writer) error {
-	if opts.Watch {
-		return errors.New(errors.EUsage, "agent ls --watch was removed; use `agency watch` for the unified workspace")
-	}
-
 	// Resolve paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -1415,38 +1399,6 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	return nil
 }
 
-// AgentAttachOpts holds options for the agent attach command.
-type AgentAttachOpts struct {
-	// InvocationRef is the invocation reference (id or prefix).
-	InvocationRef string
-
-	// RepoFlag is the --repo flag value (PR-A).
-	RepoFlag string
-
-	// TmuxClient is the tmux client to use (optional, uses real client if nil).
-	TmuxClient tmux.Client
-
-	// IsInteractive reports whether the current session is an interactive terminal.
-	// If nil, defaults to checking os.Stdin via term.IsTerminal.
-	IsInteractive func() bool
-
-	// DataDirOverride, if set, is used instead of resolving from environment.
-	DataDirOverride string
-}
-
-// AgentAttach attaches to a running headed invocation's tmux session.
-// This is only supported for headed invocations.
-// PR-05: compatibility alias over canonical AgentEnter daemon-first resolution.
-func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentAttachOpts, stdout, stderr io.Writer) error {
-	return AgentEnter(ctx, cr, fsys, cwd, AgentEnterOpts{
-		InvocationRef:   opts.InvocationRef,
-		RepoFlag:        opts.RepoFlag,
-		IsInteractive:   opts.IsInteractive,
-		TmuxClient:      opts.TmuxClient,
-		DataDirOverride: opts.DataDirOverride,
-	}, stdout, stderr)
-}
-
 // realTmuxAttach performs a real interactive tmux attach with stdin/stdout/stderr connected.
 // This is the only way to get proper interactive terminal behavior.
 func realTmuxAttach(sessionName string) error {
@@ -1567,7 +1519,6 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
-			envelope.ClientRequestID = resp.ClientRequestID
 			envelope.RequestID = resp.RequestID
 		})
 	}
@@ -1938,14 +1889,6 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 		_, _ = fmt.Fprintf(w, "  turn:    %s\n", review.Navigation.LatestTurnID)
 	}
 	return nil
-}
-
-// AgentChecksOpts is retained as a compatibility alias.
-type AgentChecksOpts = AgentReviewOpts
-
-// AgentChecks is retained as a compatibility alias for AgentReview.
-func AgentChecks(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChecksOpts, stdout, stderr io.Writer) error {
-	return AgentReview(ctx, cr, fsys, cwd, AgentReviewOpts(opts), stdout, stderr)
 }
 
 const maxMergeConfirmationBytes = 64
@@ -2698,7 +2641,6 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
-			envelope.ClientRequestID = resp.ClientRequestID
 			envelope.RequestID = resp.RequestID
 		})
 	}
@@ -3912,7 +3854,6 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
-			envelope.ClientRequestID = resp.ClientRequestID
 			envelope.RequestID = resp.RequestID
 		})
 	}

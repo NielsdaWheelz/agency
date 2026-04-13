@@ -43,7 +43,7 @@ func TestArchive_ScriptFails_ReturnsEArchiveFailed(t *testing.T) {
 		RepoID:       repoID,
 		WorktreePath: worktreePath,
 		Name:         "Test Run",
-		Runner:       "claude",
+		Runner:       "claude-code",
 		Branch:       "agency/test-a3f2",
 		ParentBranch: "main",
 	}
@@ -101,7 +101,7 @@ func TestArchive_ScriptTimeout_ReturnsEArchiveFailed(t *testing.T) {
 		RepoID:       repoID,
 		WorktreePath: worktreePath,
 		Name:         "Test Run",
-		Runner:       "claude",
+		Runner:       "claude-code",
 		Branch:       "agency/test-a3f2",
 		ParentBranch: "main",
 	}
@@ -157,7 +157,7 @@ func TestArchive_DeleteFails_ReturnsEArchiveFailed(t *testing.T) {
 		RepoID:       repoID,
 		WorktreePath: worktreePath,
 		Name:         "Test Run",
-		Runner:       "claude",
+		Runner:       "claude-code",
 		Branch:       "agency/test-a3f2",
 		ParentBranch: "main",
 	}

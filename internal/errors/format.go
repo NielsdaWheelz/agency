@@ -371,31 +371,9 @@ func deriveTryLines(ae *AgencyError) []string {
 	var lines []string
 
 	switch ae.Code {
-	case ESessionNotFound:
-		if ae.Details != nil {
-			if runID := ae.Details["run_id"]; runID != "" {
-				lines = append(lines, fmt.Sprintf("agency resume %s", runID))
-			}
-		}
 	case EGhNotAuthenticated:
 		lines = append(lines, "gh auth login")
-	case EScriptFailed:
-		// Check if it's a verify failure
-		if isVerifyFailure(ae) {
-			if ae.Details != nil {
-				if runID := ae.Details["run_id"]; runID != "" {
-					lines = append(lines, fmt.Sprintf("agency verify %s", runID))
-				}
-			}
-		}
-	case ERemoteOutOfDate, ENoPR:
-		if ae.Details != nil {
-			if runID := ae.Details["run_id"]; runID != "" {
-				lines = append(lines, fmt.Sprintf("agency push %s", runID))
-			}
-		}
 	}
 
 	return lines
 }
-

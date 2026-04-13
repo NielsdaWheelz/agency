@@ -31,7 +31,7 @@ func TestResolveEffectiveRunnerArgs_ClaudeUsesDefaultsWhenFlagsMissing(t *testin
 	t.Parallel()
 
 	got, err := resolveEffectiveRunnerArgs(
-		"claude",
+		"claude-code",
 		[]string{"--allowed-extra"},
 		"",
 		"",

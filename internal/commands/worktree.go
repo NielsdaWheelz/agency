@@ -144,7 +144,6 @@ func openCreatedWorktree(ctx context.Context, cr exec.CommandRunner, fsys fs.FS,
 
 // WorktreeLSOpts holds options for the worktree ls command.
 type WorktreeLSOpts struct {
-	RepoPath string // deprecated: use RepoFlag
 	RepoFlag string // PR-A: --repo <repo_id>
 	AllRepos bool   // PR-A: --all-repos
 	All      bool
@@ -176,20 +175,8 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	// PR-A: Resolve repo context via daemon
-	// Support legacy --repo path as well as new --repo <id>
-	repoFlag := opts.RepoFlag
-	if repoFlag == "" && opts.RepoPath != "" {
-		// Legacy path-based --repo: register it and get the repo_id
-		result, regErr := client.RegisterRepo(ctx, opts.RepoPath)
-		if regErr != nil {
-			return regErr
-		}
-		repoFlag = result.RepoID
-	}
-
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      repoFlag,
+		RepoFlag:      opts.RepoFlag,
 		AllRepos:      opts.AllRepos,
 		AllowAllRepos: true,
 		CmdName:       "worktree ls",

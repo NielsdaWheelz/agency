@@ -23,7 +23,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	fakeRunnerBin := filepath.Join(tmpDir, "claude")
+	fakeRunnerBin := filepath.Join(tmpDir, "claude-code")
 	cmd := exec.Command("go", "build", "-o", fakeRunnerBin, "./testdata/fakerunner")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

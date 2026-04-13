@@ -157,7 +157,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 	applier := checkpoint.NewApplierWithWriter(
 		record.InvocationID,
 		meta.SandboxPath,
-		s.Store.SandboxDir(record.RepoID, record.InvocationID),
+		s.Store.InvocationDir(record.RepoID, record.InvocationID),
 		s.Store.InvocationEventsPath(record.RepoID, record.InvocationID),
 		s.Runner,
 		s.FS,

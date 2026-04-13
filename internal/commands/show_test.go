@@ -62,7 +62,7 @@ func TestWriteShowJSON_AllFields(t *testing.T) {
 		RunID:         "20260110-a3f2",
 		RepoID:        "abc123",
 		Name:          "test run",
-		Runner:        "claude",
+		Runner:        "claude-code",
 		RunnerCmd:     "claude",
 		ParentBranch:  "main",
 		Branch:        "agency/test-a3f2",
@@ -263,15 +263,11 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
 		Name:             "test run",
-		Runner:           "claude",
-		CreatedAt:        "2026-01-10T12:00:00Z",
+		Runner:           "claude-code",
 		RepoID:           "abc123",
-		RepoKey:          "github:owner/repo",
-		OriginURL:        "git@github.com:owner/repo.git",
 		ParentBranch:     "main",
 		Branch:           "agency/test-a3f2",
 		WorktreePath:     "/path/to/worktree",
-		WorktreePresent:  true,
 		TmuxSessionName:  "agency_20260110-a3f2",
 		TmuxActive:       true,
 		PRNumber:         123,
@@ -279,12 +275,6 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 		LastPushAt:       "2026-01-10T14:00:00Z",
 		LastReportSyncAt: "2026-01-10T14:00:00Z",
 		LastReportHash:   "abc123def456",
-		ReportPath:       "/path/to/worktree/.agency/report.md",
-		ReportExists:     true,
-		ReportBytes:      256,
-		SetupLogPath:     "/path/to/logs/setup.log",
-		VerifyLogPath:    "/path/to/logs/verify.log",
-		ArchiveLogPath:   "/path/to/logs/archive.log",
 		DerivedStatus:    "active",
 		Archived:         false,
 	}
@@ -298,7 +288,7 @@ func TestWriteShowHuman_BasicOutput(t *testing.T) {
 	assert.Contains(t, output, "run: 20260110-a3f2", "missing run field")
 	assert.Contains(t, output, "name: test run", "missing name field")
 	assert.Contains(t, output, "repo: abc123", "missing repo field")
-	assert.Contains(t, output, "runner: claude", "missing runner field")
+	assert.Contains(t, output, "runner: claude-code", "missing runner field")
 	assert.Contains(t, output, "parent: main", "missing parent field")
 	assert.Contains(t, output, "branch: agency/test-a3f2", "missing branch field")
 	assert.Contains(t, output, "worktree: /path/to/worktree", "missing worktree field")
@@ -328,13 +318,11 @@ func TestWriteShowHuman_UntitledRun(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
 		Name:            "", // empty title
-		Runner:          "claude",
-		CreatedAt:       "2026-01-10T12:00:00Z",
+		Runner:          "claude-code",
 		RepoID:          "abc123",
 		ParentBranch:    "main",
 		Branch:          "agency/test-a3f2",
 		WorktreePath:    "/path/to/worktree",
-		WorktreePresent: true,
 		TmuxSessionName: "agency_20260110-a3f2",
 		DerivedStatus:   "idle",
 		Archived:        false,
@@ -352,13 +340,11 @@ func TestWriteShowHuman_ArchivedStatus(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
 		Name:            "test run",
-		Runner:          "claude",
-		CreatedAt:       "2026-01-10T12:00:00Z",
+		Runner:          "claude-code",
 		RepoID:          "abc123",
 		ParentBranch:    "main",
 		Branch:          "agency/test-a3f2",
 		WorktreePath:    "/path/to/worktree",
-		WorktreePresent: false, // missing worktree
 		TmuxSessionName: "agency_20260110-a3f2",
 		DerivedStatus:   "idle",
 		Archived:        true,
@@ -377,13 +363,11 @@ func TestWriteShowHuman_WithPR(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:            "20260110-a3f2",
 		Name:             "test run",
-		Runner:           "claude",
-		CreatedAt:        "2026-01-10T12:00:00Z",
+		Runner:           "claude-code",
 		RepoID:           "abc123",
 		ParentBranch:     "main",
 		Branch:           "agency/test-a3f2",
 		WorktreePath:     "/path/to/worktree",
-		WorktreePresent:  true,
 		TmuxSessionName:  "agency_20260110-a3f2",
 		TmuxActive:       true,
 		PRNumber:         123,
@@ -413,13 +397,11 @@ func TestWriteShowHuman_NoPR(t *testing.T) {
 	data := render.ShowHumanData{
 		RunID:           "20260110-a3f2",
 		Name:            "test run",
-		Runner:          "claude",
-		CreatedAt:       "2026-01-10T12:00:00Z",
+		Runner:          "claude-code",
 		RepoID:          "abc123",
 		ParentBranch:    "main",
 		Branch:          "agency/test-a3f2",
 		WorktreePath:    "/path/to/worktree",
-		WorktreePresent: true,
 		TmuxSessionName: "agency_20260110-a3f2",
 		TmuxActive:      true,
 		PRNumber:        0,  // no PR
@@ -632,7 +614,7 @@ func createValidMetaForShow(t *testing.T, dataDir, repoID, runID, worktreePath s
 		RunID:           runID,
 		RepoID:          repoID,
 		Name:            "Test Run " + runID,
-		Runner:          "claude",
+		Runner:          "claude-code",
 		RunnerCmd:       "claude",
 		ParentBranch:    "main",
 		Branch:          "agency/test-" + runID,

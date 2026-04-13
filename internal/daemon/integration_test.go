@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -133,7 +134,7 @@ func TestDaemonControlPlaneStart(t *testing.T) {
 	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "test prompt",
 		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
 	})
@@ -169,7 +170,7 @@ func TestDaemonControlPlaneStart_LastOutputAtCapturedForParserRunner(t *testing.
 	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "emit output then exit",
 		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
 	})
@@ -242,13 +243,6 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 		runnerArgs      []string
 	}{
 		{
-			name:            "claude alias",
-			inputRunner:     "claude",
-			canonicalRunner: "claude-code",
-			prompt:          "headless launch args claude alias",
-			runnerArgs:      []string{"--model", "opus"},
-		},
-		{
 			name:            "claude-code canonical",
 			inputRunner:     "claude-code",
 			canonicalRunner: "claude-code",
@@ -281,13 +275,6 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			inputRunner:     "cursor",
 			canonicalRunner: "cursor",
 			prompt:          "headless launch args cursor",
-			runnerArgs:      []string{"--profile", "default"},
-		},
-		{
-			name:            "cursor-cli alias",
-			inputRunner:     "cursor-cli",
-			canonicalRunner: "cursor",
-			prompt:          "headless launch args cursor alias",
 			runnerArgs:      []string{"--profile", "default"},
 		},
 		{
@@ -539,7 +526,7 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "first claude turn",
 		Env: map[string]string{
 			"FAKE_RUNNER_MODE":          "claude-session-mutate-then-exit-ok",
@@ -668,7 +655,7 @@ func TestDaemonStopAfterClaudeSuccessfulFinalDoesNotRelabelFailed(t *testing.T) 
 	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "single claude turn",
 		Env: map[string]string{
 			"FAKE_RUNNER_MODE":     "claude-session-final-sleep",
@@ -714,7 +701,7 @@ func TestDaemonControlPlaneStart_ClaudeAliasCanonicalizesRunnerIdentity(t *testi
 	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "test prompt",
 		Env:         map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
 	})
@@ -774,7 +761,7 @@ func TestDaemonControlPlaneStart_PersistsRestartProfile(t *testing.T) {
 	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "persist runtime profile",
 		RunnerArgs:  []string{"--allowed-extra"},
 		Env: map[string]string{
@@ -919,7 +906,7 @@ func TestDaemonNameCollision(t *testing.T) {
 	resp1, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:       repoRoot,
 		WorktreeRef:    "name-test",
-		Runner:         "claude",
+		Runner:         "claude-code",
 		Prompt:         "test prompt",
 		InvocationName: "my-agent",
 		Env:            map[string]string{"FAKE_RUNNER_MODE": "sleep"},
@@ -931,7 +918,7 @@ func TestDaemonNameCollision(t *testing.T) {
 	resp2, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:       repoRoot,
 		WorktreeRef:    "name-test",
-		Runner:         "claude",
+		Runner:         "claude-code",
 		Prompt:         "test prompt 2",
 		InvocationName: "my-agent",
 		Env:            map[string]string{"FAKE_RUNNER_MODE": "sleep"},
@@ -1123,7 +1110,7 @@ func TestDaemonConcurrentStarts(t *testing.T) {
 		resp1, err1 = env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 			RepoRoot:    repoRoot,
 			WorktreeRef: "concurrent-a",
-			Runner:      "claude",
+			Runner:      "claude-code",
 			Prompt:      "prompt a",
 			Env:         map[string]string{"FAKE_RUNNER_MODE": "sleep"},
 		})
@@ -1133,7 +1120,7 @@ func TestDaemonConcurrentStarts(t *testing.T) {
 		resp2, err2 = env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 			RepoRoot:    repoRoot,
 			WorktreeRef: "concurrent-b",
-			Runner:      "claude",
+			Runner:      "claude-code",
 			Prompt:      "prompt b",
 			Env:         map[string]string{"FAKE_RUNNER_MODE": "sleep"},
 		})
@@ -1234,7 +1221,7 @@ func TestDaemonCheckpointLifecycle(t *testing.T) {
 
 	// Wait for the checkpoint engine to process the file write.
 	// With test debounce override (100ms), this should be fast.
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	require.Eventually(t, func() bool {
 		data, err := os.ReadFile(checkpointsPath)
 		if err != nil {
@@ -1318,7 +1305,7 @@ func TestDaemonSemanticCheckpoint_CodexMutatingCommandCreatesCheckpoint(t *testi
 	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
 	require.Equal(t, store.InvocationStatusFinished, meta.Status)
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var semanticCP *checkpoint.Checkpoint
 	require.Eventually(t, func() bool {
 		data, readErr := os.ReadFile(checkpointsPath)
@@ -1371,7 +1358,7 @@ func TestDaemonSemanticCheckpoint_CursorMutatingToolCallCreatesCheckpoint(t *tes
 	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
 	require.Equal(t, store.InvocationStatusFinished, meta.Status)
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var semanticCP *checkpoint.Checkpoint
 	require.Eventually(t, func() bool {
 		data, readErr := os.ReadFile(checkpointsPath)
@@ -1433,7 +1420,7 @@ func TestDaemonRestartFromCheckpoint_UnknownRunnerFailsDeterministically(t *test
 
 	repoRoot := setupTestGitRepo(t)
 	_, _, repoID := createTestWorktree(t, env.Client, repoRoot, "restart-unknown-runner")
-	startResp := startTestInvocationWithRunner(t, env.Client, repoRoot, "restart-unknown-runner", "claude", "exit-ok")
+	startResp := startTestInvocationWithRunner(t, env.Client, repoRoot, "restart-unknown-runner", "claude-code", "exit-ok")
 	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
 
 	// Seed checkpoints.json so restart reaches runner validation/execution.
@@ -1455,7 +1442,7 @@ func TestDaemonRestartFromCheckpoint_UnknownRunnerFailsDeterministically(t *test
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err, "marshal checkpoint file")
 	require.NoError(t, os.WriteFile(
-		filepath.Join(env.Store.SandboxDir(repoID, startResp.InvocationID), "checkpoints.json"),
+		env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID),
 		cpBytes,
 		0o644,
 	))
@@ -1489,7 +1476,7 @@ func TestDaemonRestartFromCheckpoint_ReusesStoredRunnerArgsWhenNotProvided(t *te
 	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "runner arg replay",
 		RunnerArgs:  []string{"--allowed-extra"},
 		Env: map[string]string{
@@ -1502,7 +1489,7 @@ func TestDaemonRestartFromCheckpoint_ReusesStoredRunnerArgsWhenNotProvided(t *te
 	testFilePath := filepath.Join(startResp.SandboxPath, "restart-reuse-args.txt")
 	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var cpData []byte
 	require.Eventually(t, func() bool {
 		var readErr error
@@ -1557,7 +1544,7 @@ func TestDaemonRestartFromCheckpoint_RequestRunnerArgsAreAppended(t *testing.T) 
 	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: wtID,
-		Runner:      "claude",
+		Runner:      "claude-code",
 		Prompt:      "runner arg append",
 		RunnerArgs:  []string{"--allowed-extra"},
 		Env: map[string]string{
@@ -1570,7 +1557,7 @@ func TestDaemonRestartFromCheckpoint_RequestRunnerArgsAreAppended(t *testing.T) 
 	testFilePath := filepath.Join(startResp.SandboxPath, "restart-append-args.txt")
 	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var cpData []byte
 	require.Eventually(t, func() bool {
 		var readErr error
@@ -1628,7 +1615,7 @@ func TestDaemonRestartFromCheckpoint_RejectsHeadlessReservedRunnerArgs(t *testin
 	testFilePath := filepath.Join(startResp.SandboxPath, "restart-headless-reserved-args.txt")
 	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var cpData []byte
 	require.Eventually(t, func() bool {
 		var readErr error
@@ -1678,7 +1665,7 @@ func TestDaemonRestartFromCheckpoint_OneFlowMaintainsInvocationContinuity(t *tes
 	testFilePath := filepath.Join(startResp.SandboxPath, "restart-checkpoint.txt")
 	require.NoError(t, os.WriteFile(testFilePath, []byte("checkpoint source\n"), 0o644))
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var cpData []byte
 	require.Eventually(t, func() bool {
 		var readErr error
@@ -1750,7 +1737,7 @@ func TestDaemonRestartFromCheckpoint_RewindsHeadToCheckpointBase(t *testing.T) {
 	checkpointFile := filepath.Join(startResp.SandboxPath, "checkpoint-source.txt")
 	require.NoError(t, os.WriteFile(checkpointFile, []byte("checkpoint source\n"), 0o644))
 
-	checkpointsPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
+	checkpointsPath := env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID)
 	var cpData []byte
 	require.Eventually(t, func() bool {
 		var readErr error
@@ -1834,7 +1821,7 @@ func TestDaemonRestartFromCheckpoint_StreamSeqRemainsMonotonic(t *testing.T) {
 	cpBytes, err := json.Marshal(cpFile)
 	require.NoError(t, err, "marshal checkpoint file")
 	require.NoError(t, os.WriteFile(
-		filepath.Join(env.Store.SandboxDir(repoID, startResp.InvocationID), "checkpoints.json"),
+		env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID),
 		cpBytes,
 		0o644,
 	))
@@ -1869,8 +1856,7 @@ func TestDaemonRestartFromCheckpoint_StreamSeqRemainsMonotonic(t *testing.T) {
 	}
 }
 
-// S4 PR-02: legacy /start_headless path must preserve stream seq monotonicity.
-func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
+func TestDaemonControlPlaneStart_CursorQueuedPromptResumesNextTurn(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -1878,159 +1864,38 @@ func TestDaemonLegacyStartHeadless_StreamSeqRemainsMonotonic(t *testing.T) {
 	env := startTestDaemon(t)
 	ctx := context.Background()
 
-	repoID := "repo-legacy-seq"
-	invocationID := "20260302160000-a1b2"
-	sandboxPath := env.Store.SandboxTreePath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Join(sandboxPath, ".agency"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, ".agency", "SANDBOX_MARKER"), []byte(""), 0o644))
-
-	legacyStreamPath := env.Store.SandboxStreamLogPath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacyStreamPath), 0o700))
-	seededMaxSeq := uint64(7)
-	seededLine := fmt.Sprintf(
-		`{"ts":"%s","invocation_id":"%s","kind":"lifecycle","source":"runner_stdout","payload":{"message":"seed"},"seq":%d}`+"\n",
-		time.Now().UTC().Format(time.RFC3339Nano),
-		invocationID,
-		seededMaxSeq,
-	)
-	require.NoError(t, os.WriteFile(legacyStreamPath, []byte(seededLine), 0o644))
-
-	_, err := env.Store.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-	meta := store.NewInvocationMeta(
-		invocationID,
-		"",
-		"wt-legacy-seq",
-		sandboxPath,
-		"agency/sandbox-"+invocationID,
-		"deadbeef",
-		"claude-code",
-		store.RunnerModeHeadless,
-		time.Now(),
-	)
-	require.NoError(t, env.Store.WriteInvocationMeta(repoID, invocationID, meta))
-
-	streamPath := env.Store.InvocationStreamLogPath(repoID, invocationID)
-
-	startResp, err := env.Client.StartHeadless(ctx, &daemon.StartHeadlessRequest{
-		RepoID:       repoID,
-		InvocationID: invocationID,
-		Runner:       "claude",
-		SandboxPath:  sandboxPath,
-		Prompt:       "legacy start monotonicity test",
-		Env: map[string]string{
-			"FAKE_RUNNER_MODE": "exit-ok",
-		},
-	})
-	require.NoError(t, err, "legacy start transport error")
-	require.True(t, startResp.OK, "legacy start failed: %s - %s", startResp.ErrorCode, startResp.Message)
-
-	waitForInvocationTerminal(t, env.Store, repoID, invocationID, 10*time.Second)
-
-	var streamData []byte
-	require.Eventually(t, func() bool {
-		data, readErr := os.ReadFile(streamPath)
-		if readErr != nil {
-			return false
-		}
-		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-		if len(lines) < 2 {
-			return false
-		}
-		seqCount := 0
-		for _, line := range lines {
-			var event struct {
-				Seq uint64 `json:"seq"`
-			}
-			if json.Unmarshal([]byte(line), &event) == nil && event.Seq > 0 {
-				seqCount++
-			}
-		}
-		if seqCount < 2 {
-			return false
-		}
-		streamData = data
-		return true
-	}, 15*time.Second, 50*time.Millisecond, "expected seeded + new sequence-bearing events")
-
-	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
-	require.GreaterOrEqual(t, len(lines), 2, "expected seeded event + parser events")
-
-	var seqs []uint64
-	for _, line := range lines {
-		var event struct {
-			Seq uint64 `json:"seq"`
-		}
-		if json.Unmarshal([]byte(line), &event) == nil && event.Seq > 0 {
-			seqs = append(seqs, event.Seq)
-		}
-	}
-	require.GreaterOrEqual(t, len(seqs), 2, "expected at least two sequence-bearing events")
-	for i := 1; i < len(seqs); i++ {
-		assert.Greater(t, seqs[i], seqs[i-1], "stream seq must remain strictly increasing for legacy start")
-	}
-	assert.GreaterOrEqual(t, seqs[len(seqs)-1], seededMaxSeq+1, "new events should continue after preexisting max seq")
-}
-
-func TestDaemonLegacyStartHeadless_CursorQueuedPromptResumesNextTurn(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	env := startTestDaemon(t)
-	ctx := context.Background()
-
-	repoID := "repo-legacy-cursor-resume"
-	invocationID := "20260302161000-c3d4"
-	sandboxPath := env.Store.SandboxTreePath(repoID, invocationID)
-	require.NoError(t, os.MkdirAll(filepath.Join(sandboxPath, ".agency"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, ".agency", "SANDBOX_MARKER"), []byte(""), 0o644))
-
-	_, err := env.Store.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-	meta := store.NewInvocationMeta(
-		invocationID,
-		"",
-		"wt-legacy-cursor-resume",
-		sandboxPath,
-		"agency/sandbox-"+invocationID,
-		"deadbeef",
-		"cursor",
-		store.RunnerModeHeadless,
-		time.Now(),
-	)
-	require.NoError(t, env.Store.WriteInvocationMeta(repoID, invocationID, meta))
+	repoRoot := setupTestGitRepo(t)
+	worktreeID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cursor-resume")
 
 	capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
-	startResp, err := env.Client.StartHeadless(ctx, &daemon.StartHeadlessRequest{
-		RepoID:       repoID,
-		InvocationID: invocationID,
-		Runner:       "cursor",
-		SandboxPath:  sandboxPath,
-		Prompt:       "first cursor turn",
-		RunnerArgs:   []string{"--model", "sonnet-4.6-thinking"},
+	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: worktreeID,
+		Runner:      "cursor",
+		Prompt:      "first cursor turn",
+		RunnerArgs:  []string{"--model", "sonnet-4.6-thinking"},
 		Env: map[string]string{
 			"FAKE_RUNNER_MODE":         "cursor-session-sleep-then-exit-ok",
 			"FAKE_RUNNER_SLEEP_MS":     "1200",
-			"FAKE_RUNNER_SESSION_ID":   "sess_legacy_cursor_resume_test",
+			"FAKE_RUNNER_SESSION_ID":   "sess_cursor_resume_test",
 			"FAKE_RUNNER_CAPTURE_PATH": capturePath,
 		},
 	})
-	require.NoError(t, err, "legacy start transport error")
-	require.True(t, startResp.OK, "legacy start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+	require.NoError(t, err)
+	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
 
-	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, invocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
 		Prompt: "second cursor turn",
 	})
 	require.NoError(t, err, "follow-up transport error")
 	require.True(t, followResp.OK, "follow-up failed: %s - %s", followResp.ErrorCode, followResp.Message)
 	assert.Equal(t, "queued", followResp.DeliveryMode)
 
-	metaAfter := waitForInvocationTerminal(t, env.Store, repoID, invocationID, 8*time.Second)
+	metaAfter := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 8*time.Second)
 	assert.Equal(t, store.InvocationStatusFinished, metaAfter.Status)
 	assert.Empty(t, metaAfter.FailureReason)
 
-	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, invocationID))
+	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
 	require.NoError(t, readErr, "read raw log")
 	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful cursor turns")
 
@@ -2038,7 +1903,7 @@ func TestDaemonLegacyStartHeadless_CursorQueuedPromptResumesNextTurn(t *testing.
 	assert.Equal(t, "cursor-session-sleep-then-exit-ok", capture.Mode)
 	assert.Equal(
 		t,
-		[]string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_legacy_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"},
+		[]string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"},
 		capture.Args,
 	)
 }
@@ -2068,7 +1933,7 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	gitExec(t, sandboxPath, "add", "new-file.txt")
 	gitExec(t, sandboxPath, "commit", "-m", "sandbox commit")
 
-	// Seed legacy sandbox-owned checkpoints to validate post-cleanup durability.
+	// Seed invocation-owned checkpoints to validate post-cleanup durability.
 	cpFile := checkpoint.CheckpointsFile{
 		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
@@ -2082,9 +1947,9 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	}
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID), cpData, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID), cpData, 0o644))
 
-	// Seed sandbox-owned runner_status.json to validate post-cleanup durability.
+	// Seed invocation-owned runner_status.json to validate post-cleanup durability.
 	landStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
 		Status:        runnerstatus.StatusReadyForReview,
@@ -2094,7 +1959,7 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	}
 	landStatusBytes, err := json.Marshal(landStatus)
 	require.NoError(t, err)
-	landStatusPath := runnerstatus.StatusPath(sandboxPath)
+	landStatusPath := env.Store.InvocationRunnerStatusPath(repoID, startResp.InvocationID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(landStatusPath), 0o700))
 	require.NoError(t, os.WriteFile(landStatusPath, landStatusBytes, 0o600))
 
@@ -2140,9 +2005,11 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	_, err = os.Stat(invocationRunnerStatusPath)
 	require.NoError(t, err, "invocation-owned runner status should survive landing cleanup")
 
-	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
+	logsResp, err := env.Client.GetInvocationLogsOffset(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{})
 	require.NoError(t, err, "logs API should still work after landing cleanup")
-	assert.NotEmpty(t, strings.TrimSpace(logsResp.Logs.Content))
+	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Logs.DataB64)
+	require.NoError(t, err)
+	assert.NotEmpty(t, strings.TrimSpace(string(logBytes)))
 
 	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
 	require.NoError(t, err, "timeline API should still work after landing cleanup")
@@ -2428,43 +2295,35 @@ func TestDaemonDiscard(t *testing.T) {
 	startResp := startTestInvocation(t, env.Client, repoRoot, "discard-basic", "exit-ok")
 	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 5*time.Second)
 
-	sandboxPath := startResp.SandboxPath
-
-	// Simulate a legacy invocation whose logs still live only in the sandbox.
-	legacyRawPath := env.Store.SandboxRawLogPath(repoID, startResp.InvocationID)
-	legacyStreamPath := env.Store.SandboxStreamLogPath(repoID, startResp.InvocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacyRawPath), 0o700))
-	require.NoError(t, os.Rename(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID), legacyRawPath))
-	require.NoError(t, os.Rename(env.Store.InvocationStreamLogPath(repoID, startResp.InvocationID), legacyStreamPath))
-	legacyCheckpointPath := env.Store.SandboxCheckpointsPath(repoID, startResp.InvocationID)
 	cpFile := checkpoint.CheckpointsFile{
 		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
 			{
-				ID:                7,
+				ID:                1,
 				CreatedAt:         time.Now().UTC().Format(time.RFC3339),
-				SnapshotCommit:    "discarded-checkpoint",
+				SnapshotCommit:    gitExec(t, repoRoot, "rev-parse", "HEAD"),
 				IncludesUntracked: true,
 			},
 		},
 	}
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(legacyCheckpointPath, cpData, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID), cpData, 0o644))
 
-	// Seed sandbox-owned runner_status.json to validate post-cleanup durability.
-	discardStatus := runnerstatus.RunnerStatus{
+	landStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
 		Status:        runnerstatus.StatusReadyForReview,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
-		Summary:       "discarded invocation runner status",
+		Summary:       "discard invocation runner status",
 		HowToTest:     "go test ./...",
 	}
-	discardStatusBytes, err := json.Marshal(discardStatus)
+	landStatusBytes, err := json.Marshal(landStatus)
 	require.NoError(t, err)
-	discardStatusPath := runnerstatus.StatusPath(sandboxPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(discardStatusPath), 0o700))
-	require.NoError(t, os.WriteFile(discardStatusPath, discardStatusBytes, 0o600))
+	invocationRunnerStatusPath := env.Store.InvocationRunnerStatusPath(repoID, startResp.InvocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(invocationRunnerStatusPath), 0o700))
+	require.NoError(t, os.WriteFile(invocationRunnerStatusPath, landStatusBytes, 0o600))
+
+	sandboxPath := startResp.SandboxPath
 
 	resp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
 	require.NoError(t, err)
@@ -2487,18 +2346,14 @@ func TestDaemonDiscard(t *testing.T) {
 	require.NoError(t, err, "invocation-owned stream log should survive discard cleanup")
 	_, err = os.Stat(env.Store.InvocationCheckpointsPath(repoID, startResp.InvocationID))
 	require.NoError(t, err, "invocation-owned checkpoints should survive discard cleanup")
-	invocationRunnerStatusPath := filepath.Join(
-		env.Store.InvocationDir(repoID, startResp.InvocationID),
-		".agency",
-		"state",
-		"runner_status.json",
-	)
 	_, err = os.Stat(invocationRunnerStatusPath)
 	require.NoError(t, err, "invocation-owned runner status should survive discard cleanup")
 
-	logsResp, err := env.Client.GetInvocationLogs(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOpts{})
+	logsResp, err := env.Client.GetInvocationLogsOffset(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{})
 	require.NoError(t, err, "logs API should still work after discard cleanup")
-	assert.NotEmpty(t, strings.TrimSpace(logsResp.Logs.Content))
+	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Logs.DataB64)
+	require.NoError(t, err)
+	assert.NotEmpty(t, strings.TrimSpace(string(logBytes)))
 
 	timelineResp, err := env.Client.GetInvocationTimeline(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationTimelineOpts{Limit: 50})
 	require.NoError(t, err, "timeline API should still work after discard cleanup")
@@ -2507,7 +2362,7 @@ func TestDaemonDiscard(t *testing.T) {
 	checkpointsResp, err := env.Client.ListCheckpoints(ctx, startResp.InvocationID, repoID, daemonclient.ListCheckpointsOpts{Limit: 50})
 	require.NoError(t, err, "checkpoints API should still work after discard cleanup")
 	require.Len(t, checkpointsResp.Checkpoints, 1)
-	assert.Equal(t, 7, checkpointsResp.Checkpoints[0].ID)
+	assert.Equal(t, 1, checkpointsResp.Checkpoints[0].ID)
 
 	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "review API should still work after discard cleanup")
@@ -2691,12 +2546,6 @@ func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 		runnerArgs      []string
 	}{
 		{
-			name:            "claude alias",
-			inputRunner:     "claude",
-			canonicalRunner: "claude-code",
-			runnerArgs:      []string{"--model", "opus"},
-		},
-		{
 			name:            "claude-code canonical",
 			inputRunner:     "claude-code",
 			canonicalRunner: "claude-code",
@@ -2723,12 +2572,6 @@ func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 		{
 			name:            "cursor canonical",
 			inputRunner:     "cursor",
-			canonicalRunner: "cursor",
-			runnerArgs:      []string{"--profile", "default"},
-		},
-		{
-			name:            "cursor-cli alias",
-			inputRunner:     "cursor-cli",
 			canonicalRunner: "cursor",
 			runnerArgs:      []string{"--profile", "default"},
 		},
@@ -2800,7 +2643,7 @@ func TestDaemonHeadedStartIdempotent(t *testing.T) {
 	reqBody := daemon.ControlPlaneStartHeadedRequest{
 		RepoRoot:        repoRoot,
 		WorktreeRef:     "headed-idem",
-		Runner:          "claude",
+		Runner:          "claude-code",
 		ClientRequestID: clientRequestID,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
@@ -2870,7 +2713,7 @@ func TestDaemonHeadedStartTmuxSessionExists(t *testing.T) {
 	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: "headed-exists",
-		Runner:      "claude",
+		Runner:      "claude-code",
 	})
 	require.NoError(t, err)
 
@@ -2900,7 +2743,7 @@ func TestDaemonHeadedStartTmuxCreationFails(t *testing.T) {
 	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: "headed-fail",
-		Runner:      "claude",
+		Runner:      "claude-code",
 	})
 	require.NoError(t, err)
 
@@ -2925,7 +2768,7 @@ func TestDaemonHeadedStartWithName(t *testing.T) {
 	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:       repoRoot,
 		WorktreeRef:    "headed-named",
-		Runner:         "claude",
+		Runner:         "claude-code",
 		InvocationName: "my-headed-agent",
 	})
 	require.NoError(t, err)

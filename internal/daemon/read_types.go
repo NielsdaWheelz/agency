@@ -263,17 +263,12 @@ type InvocationReviewData struct {
 	Navigation        InvocationReviewNavigation `json:"navigation"`
 }
 
-// ----- Logs Response Types -----
-
-// InvocationLogsData is the data payload for GET /invocations/{id}/logs.
-type InvocationLogsData struct {
-	Kind          string `json:"kind"` // raw, stderr, stream
-	Content       string `json:"content"`
-	Truncated     bool   `json:"truncated"`
-	TotalBytes    int64  `json:"total_bytes"`
-	ReturnedBytes int    `json:"returned_bytes"`
-	StartsMidline bool   `json:"starts_midline"`
-	EndsMidline   bool   `json:"ends_midline"`
+// InvocationLogsOffsetData is the data payload for GET /invocations/{id}/logs.
+type InvocationLogsOffsetData struct {
+	Kind       string `json:"kind"` // raw, stderr, stream
+	DataB64    string `json:"data_b64"`
+	NextOffset int64  `json:"next_offset"`
+	TotalBytes int64  `json:"total_bytes"`
 }
 
 // ----- Pagination Cursor Types -----

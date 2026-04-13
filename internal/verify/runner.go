@@ -100,7 +100,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	record.StartedAt = startTime.Format(time.RFC3339Nano)
 
 	// Write header to log file (matching setup.log style, best-effort diagnostic output)
-	_, _ = fmt.Fprintf(logFile, "# agency verify log\n")
+	_, _ = fmt.Fprintf(logFile, "# verify log\n")
 	_, _ = fmt.Fprintf(logFile, "# timestamp: %s\n", startTime.Format(time.RFC3339))
 	_, _ = fmt.Fprintf(logFile, "# command: sh -lc %s\n", cfg.Script)
 	_, _ = fmt.Fprintf(logFile, "# cwd: %s\n", cfg.WorkDir)

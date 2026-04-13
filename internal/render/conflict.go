@@ -46,8 +46,8 @@ type ConflictCardInputs struct {
 //	3. git rebase origin/main
 //	4. resolve conflicts, then:
 //	   git add -A && git rebase --continue
-//	5. agency push feature-x --force-with-lease
-//	6. agency merge feature-x
+//	5. agency worktree sync feature-x --force-with-lease
+//	6. agency worktree merge feature-x
 //
 //	alt: cd "/path/to/worktree"
 func WriteConflictCard(w io.Writer, inputs ConflictCardInputs) {
@@ -72,8 +72,8 @@ func WriteConflictCard(w io.Writer, inputs ConflictCardInputs) {
 	_, _ = fmt.Fprintf(w, "3. git rebase origin/%s\n", base)
 	_, _ = fmt.Fprintln(w, "4. resolve conflicts, then:")
 	_, _ = fmt.Fprintln(w, "   git add -A && git rebase --continue")
-	_, _ = fmt.Fprintf(w, "5. agency push %s --force-with-lease\n", ref)
-	_, _ = fmt.Fprintf(w, "6. agency merge %s\n", ref)
+	_, _ = fmt.Fprintf(w, "5. agency worktree sync %s --force-with-lease\n", ref)
+	_, _ = fmt.Fprintf(w, "6. agency worktree merge %s\n", ref)
 	_, _ = fmt.Fprintln(w)
 
 	// Alt section - cd fallback

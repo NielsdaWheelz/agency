@@ -1330,7 +1330,7 @@ func TestApplier_Apply_EmitsStartedAndAppliedEvents(t *testing.T) {
 	assert.Equal(t, EventKindCheckpointApplied, events[1].Kind)
 }
 
-func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing.T) {
+func TestApplier_ApplyWithOptions_RewindHeadUsesSandboxHeadSHA(t *testing.T) {
 	t.Parallel()
 	sandboxPath := t.TempDir()
 	checkpointsDir := t.TempDir()
@@ -1338,9 +1338,9 @@ func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
 
 	cpFile := &CheckpointsFile{
-		SchemaVersion: SchemaVersionLegacy,
+		SchemaVersion: SchemaVersion,
 		Checkpoints: []Checkpoint{
-			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111"},
+			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111", SandboxHeadSHA: "parent0001"},
 		},
 	}
 	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
@@ -1351,7 +1351,6 @@ func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing
 	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
 
 	sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
-	sr.stub(fmt.Sprintf("git -C %s rev-parse aaa111^", sandboxPath), exec.CmdResult{Stdout: "parent0001\n"})
 	sr.stub(fmt.Sprintf("git -C %s cat-file -t parent0001", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
 	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath), exec.CmdResult{Stdout: "head-before-apply\n"})
 	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp1 head-before-apply", sandboxPath), exec.CmdResult{})
@@ -1364,6 +1363,36 @@ func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing
 
 	calls := sr.callKeys()
 	assert.Contains(t, calls, fmt.Sprintf("git -C %s reset --hard parent0001", sandboxPath))
+	assert.NotContains(t, calls, fmt.Sprintf("git -C %s rev-parse aaa111^", sandboxPath))
+}
+
+func TestApplier_ApplyWithOptions_RewindHeadRequiresSandboxHeadSHA(t *testing.T) {
+	t.Parallel()
+	sandboxPath := t.TempDir()
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	cpFile := &CheckpointsFile{
+		SchemaVersion: SchemaVersion,
+		Checkpoints: []Checkpoint{
+			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111"},
+		},
+	}
+	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
+
+	sr := newStubRunner()
+	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
+
+	sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+
+	_, err := applier.ApplyWithOptions(context.Background(), 1, ApplyOptions{RewindHeadToSnapshotBase: true})
+	require.Error(t, err)
+	assert.Equal(t, errors.ECheckpointFailed, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "sandbox_head_sha")
+	assert.NotContains(t, sr.callKeys(), fmt.Sprintf("git -C %s rev-parse", sandboxPath))
 }
 
 // 1.12 TestApplier_Apply_NotFound

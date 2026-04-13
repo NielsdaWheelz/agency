@@ -16,106 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
-	"github.com/NielsdaWheelz/agency/internal/verifyservice"
 )
-
-// --- ENotInteractive tests ---
-
-func TestAgentAttach_NotInteractive_ReturnsENotInteractive(t *testing.T) {
-	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, cr, fsys := setupAgentTestEnv(t, "test-feature")
-	invocationID := "20260131130000-efgh"
-
-	// Create a headed invocation
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeaded, store.InvocationStatusRunning)
-
-	fakeTmux := testutil.NewFakeTmuxClient()
-	fakeTmux.AlwaysHasSession = true
-
-	var stdout, stderr bytes.Buffer
-	opts := AgentAttachOpts{
-		InvocationRef:   invocationID,
-		TmuxClient:      fakeTmux,
-		IsInteractive:   func() bool { return false }, // NOT interactive
-		DataDirOverride: dataDir,
-	}
-
-	err := AgentAttach(context.Background(), cr, fsys, repoDir, opts, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "interactive terminal")
-}
-
-// --- EInvalidRepoPath tests ---
-
-func TestRun_InvalidRepoPath_NotExist_ReturnsEInvalidRepoPath(t *testing.T) {
-	t.Parallel()
-	cr := testutil.NewFakeCommandRunner()
-	fsys := fs.NewRealFS()
-
-	var stdout, stderr bytes.Buffer
-	opts := RunOpts{
-		Name:     "test",
-		RepoPath: "/nonexistent/path/to/nowhere",
-	}
-
-	err := Run(context.Background(), cr, fsys, t.TempDir(), opts, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidRepoPath, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "does not exist")
-}
-
-func TestRun_InvalidRepoPath_NotDir_ReturnsEInvalidRepoPath(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-
-	// Create a file (not a directory)
-	filePath := filepath.Join(tmpDir, "not-a-dir")
-	require.NoError(t, os.WriteFile(filePath, []byte("hello"), 0644))
-
-	cr := testutil.NewFakeCommandRunner()
-	fsys := fs.NewRealFS()
-
-	var stdout, stderr bytes.Buffer
-	opts := RunOpts{
-		Name:     "test",
-		RepoPath: filePath,
-	}
-
-	err := Run(context.Background(), cr, fsys, tmpDir, opts, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidRepoPath, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "not a directory")
-}
-
-func TestRun_InvalidRepoPath_NotGitRepo_ReturnsEInvalidRepoPath(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-
-	// Create a directory that is NOT a git repo
-	notRepoDir := filepath.Join(tmpDir, "not-a-repo")
-	require.NoError(t, os.MkdirAll(notRepoDir, 0755))
-
-	cr := testutil.NewFakeCommandRunner()
-	// Simulate git rev-parse failing (not a git repo)
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{
-		ExitCode: 128,
-		Stderr:   "fatal: not a git repository",
-		Err:      assert.AnError,
-	}
-	fsys := fs.NewRealFS()
-
-	var stdout, stderr bytes.Buffer
-	opts := RunOpts{
-		Name:     "test",
-		RepoPath: notRepoDir,
-	}
-
-	err := Run(context.Background(), cr, fsys, tmpDir, opts, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidRepoPath, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "not inside a git repository")
-}
 
 func TestInit_InvalidRepoPath_ReturnsEInvalidRepoPath(t *testing.T) {
 	t.Parallel()
@@ -154,12 +55,11 @@ func TestOpen_BrokenMeta_ReturnsERunBroken(t *testing.T) {
 	metaPath := filepath.Join(runDir, "meta.json")
 	require.NoError(t, os.WriteFile(metaPath, []byte("not valid json"), 0644))
 
-	var stdout, stderr bytes.Buffer
-	err := Open(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", OpenOpts{
+	err := Open(context.Background(), testutil.NewFakeCommandRunner(), fsys, OpenOpts{
 		RunID:             runID,
 		DataDirOverride:   dataDir,
 		ConfigDirOverride: configDir,
-	}, &stdout, &stderr)
+	})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunBroken, errors.GetCode(err))
@@ -181,14 +81,14 @@ func TestResolveRun_AmbiguousName_ReturnsERunRefAmbiguous(t *testing.T) {
 	runID1 := "20260115120000-a3f2"
 	_, err := st.EnsureRunDir(repoID1, runID1)
 	require.NoError(t, err)
-	meta1 := store.NewRunMeta(runID1, repoID1, "my-run", "claude", "claude", "main", "agency/my-run-a3f2", "/tmp/wt1", now)
+	meta1 := store.NewRunMeta(runID1, repoID1, "my-run", "claude-code", "claude", "main", "agency/my-run-a3f2", "/tmp/wt1", now)
 	require.NoError(t, st.WriteInitialMeta(repoID1, runID1, meta1))
 
 	repoID2 := "repo-bbb444555666"
 	runID2 := "20260115130000-b4c5"
 	_, err = st.EnsureRunDir(repoID2, runID2)
 	require.NoError(t, err)
-	meta2 := store.NewRunMeta(runID2, repoID2, "my-run", "claude", "claude", "main", "agency/my-run-b4c5", "/tmp/wt2", now)
+	meta2 := store.NewRunMeta(runID2, repoID2, "my-run", "claude-code", "claude", "main", "agency/my-run-b4c5", "/tmp/wt2", now)
 	require.NoError(t, st.WriteInitialMeta(repoID2, runID2, meta2))
 
 	// Resolve by name "my-run" which exists in both repos - should be ambiguous
@@ -215,14 +115,14 @@ func TestResolveRun_AmbiguousName_ErrorMessageContainsCandidates(t *testing.T) {
 	runID1 := "20260115120000-a3f2"
 	_, err := st.EnsureRunDir(repoID1, runID1)
 	require.NoError(t, err)
-	meta1 := store.NewRunMeta(runID1, repoID1, "dup-name", "claude", "claude", "main", "b1", "/tmp/w1", now)
+	meta1 := store.NewRunMeta(runID1, repoID1, "dup-name", "claude-code", "claude", "main", "b1", "/tmp/w1", now)
 	require.NoError(t, st.WriteInitialMeta(repoID1, runID1, meta1))
 
 	repoID2 := "repo-bbb444555666"
 	runID2 := "20260115130000-b4c5"
 	_, err = st.EnsureRunDir(repoID2, runID2)
 	require.NoError(t, err)
-	meta2 := store.NewRunMeta(runID2, repoID2, "dup-name", "claude", "claude", "main", "b2", "/tmp/w2", now)
+	meta2 := store.NewRunMeta(runID2, repoID2, "dup-name", "claude-code", "claude", "main", "b2", "/tmp/w2", now)
 	require.NoError(t, st.WriteInitialMeta(repoID2, runID2, meta2))
 
 	rctx := &RunResolutionContext{DataDir: dataDir}
@@ -259,7 +159,7 @@ func TestResolveRun_ThreeWayAmbiguous_ReturnsERunRefAmbiguous(t *testing.T) {
 	for _, r := range repos {
 		_, err := st.EnsureRunDir(r.repoID, r.runID)
 		require.NoError(t, err)
-		meta := store.NewRunMeta(r.runID, r.repoID, "shared-name", "claude", "claude", "main", "b", "/tmp/w", now)
+		meta := store.NewRunMeta(r.runID, r.repoID, "shared-name", "claude-code", "claude", "main", "b", "/tmp/w", now)
 		require.NoError(t, st.WriteInitialMeta(r.repoID, r.runID, meta))
 	}
 
@@ -332,58 +232,6 @@ func TestCheckScript_AbsolutePathNotExecutable_ReturnsEScriptNotExecutable(t *te
 	require.Error(t, err)
 	assert.Equal(t, errors.EScriptNotExecutable, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "not executable")
-}
-
-// --- EScriptTimeout tests ---
-
-func TestFormatVerifyOutput_TimedOut_ReturnsEScriptTimeout(t *testing.T) {
-	t.Parallel()
-	record := &store.VerifyRecord{
-		RunID:    "20260115120000-a3f2",
-		OK:       false,
-		TimedOut: true,
-		LogPath:  "/data/repos/abc123/runs/20260115120000-a3f2/logs/verify.log",
-	}
-	result := &verifyservice.VerifyRunResult{Record: record}
-
-	var stdout, stderr bytes.Buffer
-	err := formatVerifyOutput(result, nil, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EScriptTimeout, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "verify timed out")
-	// Error details should be carried in the error, not printed to stderr
-	assert.Empty(t, stderr.String(), "errors must not be printed to stderr; main.go handles error printing")
-	ae, ok := errors.AsAgencyError(err)
-	require.True(t, ok)
-	assert.Contains(t, ae.Details["log"], "verify.log")
-	assert.Contains(t, ae.Details["record"], "verify_record.json")
-}
-
-// --- EScriptFailed (companion test for completeness) ---
-
-func TestFormatVerifyOutput_ScriptFailed_ReturnsEScriptFailed(t *testing.T) {
-	t.Parallel()
-	exitCode := 1
-	record := &store.VerifyRecord{
-		RunID:    "20260115120000-a3f2",
-		OK:       false,
-		TimedOut: false,
-		ExitCode: &exitCode,
-		LogPath:  "/data/repos/abc123/runs/20260115120000-a3f2/logs/verify.log",
-	}
-	result := &verifyservice.VerifyRunResult{Record: record}
-
-	var stdout, stderr bytes.Buffer
-	err := formatVerifyOutput(result, nil, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EScriptFailed, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "verify failed")
-	// Error details should be carried in the error, not printed to stderr
-	assert.Empty(t, stderr.String(), "errors must not be printed to stderr; main.go handles error printing")
-	ae, ok := errors.AsAgencyError(err)
-	require.True(t, ok)
-	assert.Contains(t, ae.Details["log"], "verify.log")
-	assert.Contains(t, ae.Details["record"], "verify_record.json")
 }
 
 // --- EInvalidRepoPath via ResolveRunContext (runresolver.go) ---
@@ -488,7 +336,7 @@ func TestDoctor_ScriptNotFound_ReturnsEScriptNotFound(t *testing.T) {
 	dataDir := t.TempDir()
 
 	// Write valid user config
-	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude", "editor": "code"}, "runners": {"claude": "claude"}}`
+	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude-code", "editor": "code"}, "runners": {"claude-code": "claude"}}`
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userCfgJSON), 0644))
 
@@ -537,7 +385,7 @@ func TestDoctor_ScriptNotExecutable_ReturnsEScriptNotExecutable(t *testing.T) {
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
 
-	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude", "editor": "code"}, "runners": {"claude": "claude"}}`
+	userCfgJSON := `{"version": 1, "defaults": {"runner": "claude-code", "editor": "code"}, "runners": {"claude-code": "claude"}}`
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(userCfgJSON), 0644))
 

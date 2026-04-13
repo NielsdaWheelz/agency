@@ -340,7 +340,7 @@ func TestCursorAdapter_ParseLine_ToolCallCompleted_DeterministicKeyPriority(t *t
 	assert.Equal(t, 0, ev.Data["exit_code"])
 }
 
-func TestParser_StreamAndParse_ClaudeFixture(t *testing.T) {
+func TestParser_StreamAndParse_ClaudeCodeFixture(t *testing.T) {
 	t.Parallel()
 	// Read fixture
 	fixturePath := filepath.Join("testdata", "claude_stream.jsonl")
@@ -348,7 +348,7 @@ func TestParser_StreamAndParse_ClaudeFixture(t *testing.T) {
 	require.NoError(t, err, "Failed to read fixture")
 
 	// Create parser
-	parser := NewParser("test-inv-1", "claude", fixedClock)
+	parser := NewParser("test-inv-1", "claude-code", fixedClock)
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
@@ -542,7 +542,7 @@ func TestParser_StreamAndParse_MalformedMidStream(t *testing.T) {
 	require.NoError(t, err, "Failed to read fixture")
 
 	// Create parser
-	parser := NewParser("test-inv-3", "claude", fixedClock)
+	parser := NewParser("test-inv-3", "claude-code", fixedClock)
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
@@ -587,7 +587,7 @@ func TestParser_StreamAndParse_NoTrailingNewline(t *testing.T) {
 	}
 
 	// Create parser
-	parser := NewParser("test-inv-4", "claude", fixedClock)
+	parser := NewParser("test-inv-4", "claude-code", fixedClock)
 
 	// Create temp files
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
@@ -629,7 +629,7 @@ func TestParser_SeqMonotonic(t *testing.T) {
 {"type":"result","subtype":"success"}
 `
 
-	parser := NewParser("test-inv-seq", "claude", fixedClock)
+	parser := NewParser("test-inv-seq", "claude-code", fixedClock)
 
 	rawFile, _ := os.CreateTemp("", "raw-*.jsonl")
 	defer func() { _ = os.Remove(rawFile.Name()) }()
@@ -662,7 +662,7 @@ func TestParser_SeqMonotonic(t *testing.T) {
 func TestParser_StreamAndParse_OversizedLineEmitsParseErrorAndContinues(t *testing.T) {
 	t.Parallel()
 
-	parser := NewParser("test-invocation", "claude", fixedClock)
+	parser := NewParser("test-invocation", "claude-code", fixedClock)
 
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
 	require.NoError(t, err)
@@ -710,7 +710,7 @@ func TestParser_StreamAndParse_OversizedLineEmitsParseErrorAndContinues(t *testi
 }
 
 func TestParser_StreamAndParse_OversizedLinePersistsRawBeforeTerminator(t *testing.T) {
-	parser := NewParser("test-invocation-streaming", "claude", fixedClock)
+	parser := NewParser("test-invocation-streaming", "claude-code", fixedClock)
 
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
 	require.NoError(t, err)
@@ -776,7 +776,7 @@ func TestParser_StreamAndParse_OversizedLinePersistsRawBeforeTerminator(t *testi
 }
 
 func TestParser_StreamAndParse_OversizedLineWithReaderErrorStillEmitsParseError(t *testing.T) {
-	parser := NewParser("test-invocation-read-error", "claude", fixedClock)
+	parser := NewParser("test-invocation-read-error", "claude-code", fixedClock)
 
 	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
 	require.NoError(t, err)
@@ -814,13 +814,13 @@ func TestGetAdapter(t *testing.T) {
 		runner  string
 		wantNil bool
 	}{
-		{"claude", false},
+		{"claude", true},
 		{"claude-code", false},
 		{"codex", false},
 		{"amp", true},
 		{"opencode", true},
 		{"cursor", false},
-		{"cursor-cli", false},
+		{"cursor-cli", true},
 		{"droid", true},
 		{"unknown", true},
 		{"", true},
@@ -843,7 +843,7 @@ func TestGetAdapter(t *testing.T) {
 func TestParser_StreamAndParse_RawWriteFailureReturnsError(t *testing.T) {
 	t.Parallel()
 
-	parser := NewParser("test-inv-raw-write-fail", "claude", fixedClock)
+	parser := NewParser("test-inv-raw-write-fail", "claude-code", fixedClock)
 
 	rawFile, err := os.CreateTemp("", "raw-ro-*.jsonl")
 	require.NoError(t, err)
@@ -873,7 +873,7 @@ func TestParser_CheckpointNotify_MutatingTool(t *testing.T) {
 		notifications = append(notifications, n)
 	}
 
-	parser := NewParser("test-inv-notify", "claude", fixedClock)
+	parser := NewParser("test-inv-notify", "claude-code", fixedClock)
 	parser.SetCheckpointNotify(notifyFn)
 
 	rawFile, err := os.CreateTemp("", "raw-notify-*.jsonl")
@@ -915,7 +915,7 @@ func TestParser_CheckpointNotify_NonMutatingTool_NoNotification(t *testing.T) {
 		notifications = append(notifications, n)
 	}
 
-	parser := NewParser("test-inv-no-notify", "claude", fixedClock)
+	parser := NewParser("test-inv-no-notify", "claude-code", fixedClock)
 	parser.SetCheckpointNotify(notifyFn)
 
 	rawFile, err := os.CreateTemp("", "raw-nonotify-*.jsonl")
@@ -944,7 +944,7 @@ func TestParser_CheckpointNotify_NilNotifyFn(t *testing.T) {
 	t.Parallel()
 
 	// Parser without checkpoint notify should not panic
-	parser := NewParser("test-inv-nil-notify", "claude", fixedClock)
+	parser := NewParser("test-inv-nil-notify", "claude-code", fixedClock)
 	// No SetCheckpointNotify call
 
 	rawFile, err := os.CreateTemp("", "raw-nilnotify-*.jsonl")
@@ -1123,7 +1123,7 @@ func TestParser_SessionStartNotify_ExtractsCursorSessionID(t *testing.T) {
 func TestParser_StreamAndParse_StreamWriteFailureReturnsError(t *testing.T) {
 	t.Parallel()
 
-	parser := NewParser("test-inv-stream-write-fail", "claude", fixedClock)
+	parser := NewParser("test-inv-stream-write-fail", "claude-code", fixedClock)
 
 	rawFile, err := os.CreateTemp("", "raw-ok-*.jsonl")
 	require.NoError(t, err)
@@ -1166,7 +1166,7 @@ func (a *oversizedNormalizedEventAdapter) ParseLine(_ []byte) (*ParseResult, err
 func TestParser_StreamAndParse_OversizedNormalizedEventFallsBackToParseError(t *testing.T) {
 	t.Parallel()
 
-	parser := NewParser("test-inv-oversized-normalized", "claude", fixedClock)
+	parser := NewParser("test-inv-oversized-normalized", "claude-code", fixedClock)
 	parser.Adapter = &oversizedNormalizedEventAdapter{}
 
 	rawFile, err := os.CreateTemp("", "raw-oversized-normalized-*.jsonl")
@@ -1289,10 +1289,10 @@ func TestParser_StreamAndParse_S8DirectCorpusClosure_D01ToD04_Parseable(t *testi
 		runner  string
 		fixture string
 	}{
-		{name: "claude_d01", runner: "claude", fixture: "claude_d01_assistant_only.jsonl"},
-		{name: "claude_d02", runner: "claude", fixture: "claude_d02_read_search_no_edit.jsonl"},
-		{name: "claude_d03", runner: "claude", fixture: "claude_d03_command_long_output.jsonl"},
-		{name: "claude_d04", runner: "claude", fixture: "claude_d04_single_edit.jsonl"},
+		{name: "claude_d01", runner: "claude-code", fixture: "claude_d01_assistant_only.jsonl"},
+		{name: "claude_d02", runner: "claude-code", fixture: "claude_d02_read_search_no_edit.jsonl"},
+		{name: "claude_d03", runner: "claude-code", fixture: "claude_d03_command_long_output.jsonl"},
+		{name: "claude_d04", runner: "claude-code", fixture: "claude_d04_single_edit.jsonl"},
 		{name: "codex_d01", runner: "codex", fixture: "codex_d01_assistant_only.jsonl"},
 		{name: "codex_d02", runner: "codex", fixture: "codex_d02_read_search_no_edit.jsonl"},
 		{name: "codex_d03", runner: "codex", fixture: "codex_d03_command_long_output.jsonl"},
@@ -1461,7 +1461,7 @@ func TestParser_StreamAndParse_S8CodexD06_PreservesFailedCommandExitCode(t *test
 func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "claude", "claude_d06_failure.jsonl")
+	events := parseS8FixtureEvents(t, "claude-code", "claude_d06_failure.jsonl")
 	require.NotEmpty(t, events)
 
 	sawToolResultMessage := false
@@ -1496,7 +1496,7 @@ func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testin
 func TestParser_StreamAndParse_S8ClaudeD05_UnknownEventDiagnosticEmitted(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "claude", "claude_d05_success.jsonl")
+	events := parseS8FixtureEvents(t, "claude-code", "claude_d05_success.jsonl")
 	require.NotEmpty(t, events)
 
 	sawUnknownDiagnostic := false

@@ -21,11 +21,7 @@ func TestS6PR03_ProgressionAndNavigationShortAliases(t *testing.T) {
 		{name: "agent review json", newCmd: newAgentReviewCmd, flagName: "json", shorthand: "j"},
 		{name: "agent path repo", newCmd: newAgentPathCmd, flagName: "repo", shorthand: "r"},
 		{name: "agent open repo", newCmd: newAgentOpenCmd, flagName: "repo", shorthand: "r"},
-		{name: "agent attach repo", newCmd: newAgentAttachCmd, flagName: "repo", shorthand: "r"},
 		{name: "agent enter repo", newCmd: newAgentEnterCmd, flagName: "repo", shorthand: "r"},
-		{name: "path repo", newCmd: newPathCmd, flagName: "repo", shorthand: "r"},
-		{name: "open repo", newCmd: newOpenCmd, flagName: "repo", shorthand: "r"},
-		{name: "attach repo", newCmd: newAttachCmd, flagName: "repo", shorthand: "r"},
 	}
 
 	for _, tt := range tests {
@@ -50,11 +46,7 @@ func TestS6PR03_ProgressionAndNavigationAliasParsing(t *testing.T) {
 		{name: "agent review parses -r and -j", newCmd: newAgentReviewCmd, args: []string{"-r", "repo-1", "-j"}},
 		{name: "agent path parses -r", newCmd: newAgentPathCmd, args: []string{"-r", "repo-1"}},
 		{name: "agent open parses -r", newCmd: newAgentOpenCmd, args: []string{"-r", "repo-1"}},
-		{name: "agent attach parses -r", newCmd: newAgentAttachCmd, args: []string{"-r", "repo-1"}},
 		{name: "agent enter parses -r", newCmd: newAgentEnterCmd, args: []string{"-r", "repo-1"}},
-		{name: "path parses -r", newCmd: newPathCmd, args: []string{"-r", "repo-1"}},
-		{name: "open parses -r", newCmd: newOpenCmd, args: []string{"-r", "repo-1"}},
-		{name: "attach parses -r", newCmd: newAttachCmd, args: []string{"-r", "repo-1"}},
 	}
 
 	for _, tt := range tests {
@@ -89,28 +81,8 @@ func TestS6PR03_HelpShowsShortAliases(t *testing.T) {
 			containsParts: []string{"-r, --repo"},
 		},
 		{
-			name:          "agent attach help",
-			args:          []string{"agent", "attach", "--help"},
-			containsParts: []string{"-r, --repo"},
-		},
-		{
 			name:          "agent enter help",
 			args:          []string{"agent", "enter", "--help"},
-			containsParts: []string{"-r, --repo"},
-		},
-		{
-			name:          "compat path help",
-			args:          []string{"path", "--help"},
-			containsParts: []string{"-r, --repo"},
-		},
-		{
-			name:          "compat open help",
-			args:          []string{"open", "--help"},
-			containsParts: []string{"-r, --repo"},
-		},
-		{
-			name:          "compat attach help",
-			args:          []string{"attach", "--help"},
 			containsParts: []string{"-r, --repo"},
 		},
 	}

@@ -16,44 +16,38 @@ func TestValidateRunnerArgs(t *testing.T) {
 		wantError bool
 	}{
 		{
-			name:      "claude: no args",
-			runner:    "claude",
-			args:      nil,
-			wantError: false,
-		},
-		{
 			name:      "claude: valid args",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--model", "opus"},
 			wantError: false,
 		},
 		{
 			name:      "claude: reserved --output-format",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--output-format", "json"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved --output-format=",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--output-format=json"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved -p",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"-p"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved --print",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--print"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved --verbose",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--verbose"},
 			wantError: true,
 		},
@@ -138,12 +132,6 @@ func TestValidateRunnerArgs(t *testing.T) {
 		{
 			name:      "cursor: no args",
 			runner:    "cursor",
-			args:      nil,
-			wantError: false,
-		},
-		{
-			name:      "cursor-cli alias: no args",
-			runner:    "cursor-cli",
 			args:      nil,
 			wantError: false,
 		},
@@ -278,16 +266,8 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 		wantArgs    []string
 	}{
 		{
-			name:        "claude basic",
-			runner:      "claude",
-			prompt:      "fix the bug",
-			sandboxPath: "/sandbox/path",
-			extraArgs:   nil,
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "fix the bug"},
-		},
-		{
 			name:        "claude with extra args",
-			runner:      "claude",
+			runner:      "claude-code",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "opus"},
@@ -342,14 +322,6 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			wantArgs:    []string{"-p", "--output-format", "stream-json", "--force", "--workspace", "/sandbox/path", "--profile", "default", "fix the bug"},
 		},
 		{
-			name:        "cursor-cli alias basic",
-			runner:      "cursor-cli",
-			prompt:      "fix the bug",
-			sandboxPath: "/sandbox/path",
-			extraArgs:   []string{"--profile", "default"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--force", "--workspace", "/sandbox/path", "--profile", "default", "fix the bug"},
-		},
-		{
 			name:        "droid basic",
 			runner:      "droid",
 			prompt:      "fix the bug",
@@ -383,7 +355,7 @@ func TestBuildRunnerArgsForHeaded(t *testing.T) {
 	}{
 		{
 			name:      "claude headed",
-			runner:    "claude",
+			runner:    "claude-code",
 			extraArgs: []string{"--model", "opus"},
 			wantArgs:  []string{"--model", "opus"},
 		},

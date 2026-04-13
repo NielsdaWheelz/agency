@@ -2,7 +2,7 @@
   "version": 1,
   "defaults": {
     "parent_branch": "",
-    "runner": "claude"
+    "runner": "claude-code"
   },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
