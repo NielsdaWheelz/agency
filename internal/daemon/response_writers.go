@@ -162,20 +162,6 @@ func (s *Server) writeDiscardError(w http.ResponseWriter, status int, requestID,
 	s.writeJSON(w, status, resp)
 }
 
-func (s *Server) writeRepoError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := RepoRegisterResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		GitSHA:       version.Commit,
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
-}
-
 func (s *Server) writeWorktreeError(w http.ResponseWriter, status int, code, message, hint string) {
 	resp := WorktreeCreateResponse{
 		OK:           false,

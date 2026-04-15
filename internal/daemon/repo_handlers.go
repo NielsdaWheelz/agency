@@ -3,17 +3,21 @@ package daemon
 
 import (
 	"encoding/json"
+	stderrors "errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/repoevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/ids"
+	agencylock "github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // handleRepos handles requests to /repos/...
@@ -23,6 +27,14 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleRepoRegister(w, r)
+		return
+	}
+
+	if r.URL.Path == "/repos/rm" && r.Method != http.MethodGet {
+		if !s.requireMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleRepoRm(w, r)
 		return
 	}
 
@@ -57,80 +69,95 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 	requestID := getOrCreateRequestID(r)
 
 	var req RepoRegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: "+err.Error(), "", nil)
+		return
+	}
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: expected a single JSON object", "", nil)
 		return
 	}
 
 	if req.RepoRoot == "" {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_root is required", "")
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_root is required", "", nil)
 		return
 	}
 
-	// 1. Canonicalize: Abs → EvalSymlinks
 	absRoot, err := filepath.Abs(req.RepoRoot)
 	if err != nil {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible),
-			"failed to resolve repo_root: "+err.Error(), "")
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible), "failed to resolve repo_root: "+err.Error(), "", nil)
 		return
 	}
 
-	// 2. Check accessibility
 	if _, err := os.Stat(absRoot); err != nil {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible),
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible),
 			"cannot access repo_root: "+err.Error(),
-			"ensure the path exists and is readable")
+			"ensure the path exists and is readable",
+			nil)
 		return
 	}
 
 	absRoot, err = filepath.EvalSymlinks(absRoot)
 	if err != nil {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible),
-			"failed to resolve symlinks for repo_root: "+err.Error(), "")
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible), "failed to resolve symlinks for repo_root: "+err.Error(), "", nil)
 		return
 	}
 
-	// 3. Normalize to git toplevel via git rev-parse --show-toplevel
 	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, absRoot)
 	if err != nil {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, string(errors.ERepoNotAGitRepo),
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoNotAGitRepo),
 			"not a git repository: "+err.Error(),
-			"pass a path inside a git repository")
+			"pass a path inside a git repository",
+			nil)
 		return
 	}
 	canonicalRoot := gitRoot.Path
 
-	// EvalSymlinks on the canonical root too (git may return a non-canonical path)
 	canonicalRoot, err = filepath.EvalSymlinks(canonicalRoot)
 	if err != nil {
-		s.writeRepoError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible),
-			"failed to resolve symlinks for git toplevel: "+err.Error(), "")
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoRootInaccessible), "failed to resolve symlinks for git toplevel: "+err.Error(), "", nil)
 		return
 	}
 
-	// 4. Derive repo identity
 	originInfo := git.GetOriginInfo(ctx, s.Runner, canonicalRoot)
 	repoIdentity := identity.DeriveRepoIdentity(canonicalRoot, originInfo.URL)
 
-	// 5. Register in repo_index.json
+	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "repo register")
+	if err != nil {
+		var lockErr *agencylock.ErrLocked
+		if stderrors.As(err, &lockErr) {
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete", nil)
+			return
+		}
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to acquire repo lock: "+err.Error(), "", nil)
+		return
+	}
+	defer func() { _ = unlock() }()
+
+	if err := s.appendRepoEvent(repoIdentity.RepoID, "agency.repo_register_started", map[string]any{
+		"repo_key":       repoIdentity.RepoKey,
+		"preferred_root": canonicalRoot,
+	}); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append repo event: "+err.Error(), "", nil)
+		return
+	}
+
 	if err := s.ensureRepoRegistered(repoIdentity, canonicalRoot); err != nil {
-		s.writeRepoError(w, http.StatusInternalServerError, requestID, "E_INTERNAL",
-			"failed to register repo: "+err.Error(), "")
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to register repo: "+err.Error(), "", nil)
 		return
 	}
 
-	// 6. Upsert repo.json with PreferredRoot
 	if err := s.ensureRepoRecordWithPreferredRoot(repoIdentity, canonicalRoot, originInfo); err != nil {
-		s.writeRepoError(w, http.StatusInternalServerError, requestID, "E_INTERNAL",
-			"failed to update repo record: "+err.Error(), "")
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to update repo record: "+err.Error(), "", nil)
 		return
 	}
 
-	// 7. Reload state for response
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {
-		s.writeRepoError(w, http.StatusInternalServerError, requestID, "E_INTERNAL",
-			"failed to load repo index: "+err.Error(), "")
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo index: "+err.Error(), "", nil)
 		return
 	}
 
@@ -148,22 +175,22 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 	preferredRoot := rec.PreferredRoot
 	accessible := isRootAccessible(preferredRoot)
 
-	resp := RepoRegisterResponse{
-		OK:           true,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		GitSHA:       version.Commit,
-		RequestID:    requestID,
-		Data: &RepoRegisterData{
-			RepoID:                  repoIdentity.RepoID,
-			RepoKey:                 repoIdentity.RepoKey,
-			Paths:                   entry.Paths,
-			PreferredRoot:           preferredRoot,
-			PreferredRootAccessible: accessible,
-			LastSeenAt:              entry.LastSeenAt,
-		},
+	if err := s.appendRepoEvent(repoIdentity.RepoID, "agency.repo_register_succeeded", map[string]any{
+		"repo_key":       repoIdentity.RepoKey,
+		"preferred_root": preferredRoot,
+	}); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append repo event: "+err.Error(), "", nil)
+		return
 	}
-	s.writeJSON(w, http.StatusOK, resp)
+
+	s.writeAPIResponse(w, requestID, RepoRegisterData{
+		RepoID:                  repoIdentity.RepoID,
+		RepoKey:                 repoIdentity.RepoKey,
+		Paths:                   entry.Paths,
+		PreferredRoot:           preferredRoot,
+		PreferredRootAccessible: accessible,
+		LastSeenAt:              entry.LastSeenAt,
+	})
 }
 
 // handleListRepos handles GET /repos.
@@ -336,4 +363,140 @@ func (s *Server) buildRepoRefs(idx store.RepoIndex) []ids.RepoRef {
 		refs = append(refs, ref)
 	}
 	return refs
+}
+
+func (s *Server) appendRepoEvent(repoID, kind string, data map[string]any) error {
+	writer := s.RepoEvents
+	if writer == nil {
+		writer = repoevents.NewWriter(s.Clock)
+	}
+	_, err := writer.Append(s.Store.RepoEventsPath(repoID), repoID, kind, data)
+	return err
+}
+
+// handleRepoRm handles POST /repos/rm.
+func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
+	requestID := getOrCreateRequestID(r)
+
+	var req RepoRmRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: "+err.Error(), "", nil)
+		return
+	}
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: expected a single JSON object", "", nil)
+		return
+	}
+
+	repoRef := strings.TrimSpace(req.RepoRef)
+	if repoRef == "" {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_ref is required", "", nil)
+		return
+	}
+
+	idx, err := s.Store.LoadRepoIndex()
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo index: "+err.Error(), "", nil)
+		return
+	}
+
+	refs := s.buildRepoRefs(idx)
+	resolved, resolveErr := ids.ResolveRepoRef(repoRef, refs)
+	if resolveErr != nil {
+		switch e := resolveErr.(type) {
+		case *ids.ErrRepoAmbiguous:
+			candidates := make([]string, len(e.Candidates))
+			for i, c := range e.Candidates {
+				candidates[i] = c.RepoID
+			}
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoIDAmbiguous), e.Error(), "use a more specific name, repo key, or full repo id", AmbiguousDetails{Candidates: candidates})
+		default:
+			s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound), resolveErr.Error(), "run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register", nil)
+		}
+		return
+	}
+
+	unlock, err := s.repoLock.Lock(resolved.RepoID, "repo rm")
+	if err != nil {
+		var lockErr *agencylock.ErrLocked
+		if stderrors.As(err, &lockErr) {
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete", nil)
+			return
+		}
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to acquire repo lock: "+err.Error(), "", nil)
+		return
+	}
+	defer func() { _ = unlock() }()
+
+	idx, err = s.Store.LoadRepoIndex()
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo index: "+err.Error(), "", nil)
+		return
+	}
+
+	repoKey := ""
+	for key, entry := range idx.Repos {
+		if entry.RepoID == resolved.RepoID {
+			repoKey = key
+			break
+		}
+	}
+	if repoKey == "" {
+		s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound), "repo not found: "+repoRef, "run 'agency repo ls' to see registered repos, or 'agency repo add <path>' to register", nil)
+		return
+	}
+
+	worktrees, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, resolved.RepoID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to scan integration worktrees: "+err.Error(), "", nil)
+		return
+	}
+	for _, record := range worktrees {
+		if record.Broken || record.Meta == nil || record.Meta.State == store.WorktreeStatePresent {
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoHasWorktrees), "integration worktrees exist for repo "+resolved.RepoID, "remove or archive repo worktrees before unregistering the repo", nil)
+			return
+		}
+	}
+
+	invocations, err := store.ScanInvocationsForRepo(s.Store.DataDir, resolved.RepoID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to scan invocations: "+err.Error(), "", nil)
+		return
+	}
+	for _, record := range invocations {
+		if record.Broken || record.Meta == nil || record.Meta.Status == store.InvocationStatusStarting || record.Meta.Status == store.InvocationStatusRunning {
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoHasInvocations), "running invocations exist for repo "+resolved.RepoID, "stop or finish repo invocations before unregistering the repo", nil)
+			return
+		}
+	}
+
+	if err := s.appendRepoEvent(resolved.RepoID, "agency.repo_rm_started", map[string]any{
+		"repo_key": repoKey,
+	}); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append repo event: "+err.Error(), "", nil)
+		return
+	}
+
+	delete(idx.Repos, repoKey)
+	if err := s.Store.SaveRepoIndex(idx); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to update repo index: "+err.Error(), "", nil)
+		return
+	}
+
+	if err := s.appendRepoEvent(resolved.RepoID, "agency.repo_rm_succeeded", map[string]any{
+		"repo_key":           repoKey,
+		"removed_from_index": true,
+	}); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append repo event: "+err.Error(), "", nil)
+		return
+	}
+
+	s.writeAPIResponse(w, requestID, RepoRmData{
+		RepoID:           resolved.RepoID,
+		RepoKey:          repoKey,
+		RemovedFromIndex: true,
+	})
 }

@@ -39,3 +39,12 @@ func (c *Client) GetRepo(ctx context.Context, repoRef string) (*daemon.Result[da
 	}
 	return decodeResult[daemon.RepoDTO](apiResp)
 }
+
+// RepoRm removes a registered repository via the daemon.
+func (c *Client) RepoRm(ctx context.Context, repoRef string) (*daemon.Result[daemon.RepoRmData], error) {
+	apiResp, err := c.doAPIRequest(ctx, http.MethodPost, daemonBaseURL+"/repos/rm", daemon.RepoRmRequest{RepoRef: repoRef})
+	if err != nil {
+		return nil, err
+	}
+	return decodeResult[daemon.RepoRmData](apiResp)
+}

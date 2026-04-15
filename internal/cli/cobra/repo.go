@@ -20,17 +20,19 @@ by specifying --repo.
 Subcommands:
   add     Register a repository path
   ls      List registered repositories
+  rm      Remove a registered repository
   show    Show details of a registered repository`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency repo <add|ls|show>")
+			return errors.New(errors.EUsage, "specify a subcommand: agency repo <add|ls|rm|show>")
 		},
 	}
 
 	cmd.AddCommand(
 		newRepoAddCmd(),
 		newRepoLSCmd(),
+		newRepoRmCmd(),
 		newRepoShowCmd(),
 	)
 
@@ -132,6 +134,39 @@ Example:
 		},
 	}
 
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+
+	return cmd
+}
+
+func newRepoRmCmd() *cobra.Command {
+	var yes bool
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "rm <repo_ref>",
+		Short: "Remove a registered repository",
+		Long: `Remove a registered repository from the daemon's registry.
+
+Example:
+  agency repo rm agency --yes
+  agency repo rm 769749d77af0806f --yes --json`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			return commands.RepoRm(ctx, cr, fsys, commands.RepoRmOpts{
+				RepoRef: args[0],
+				Yes:     yes,
+				JSON:    jsonOutput,
+			}, cmd.OutOrStdout(), cmd.OutOrStderr())
+		},
+	}
+
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm removal without prompting")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 
 	return cmd

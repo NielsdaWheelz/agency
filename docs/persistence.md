@@ -14,3 +14,4 @@ This document covers on-disk state, schema contracts, atomic writes, scans, and 
 - Targeted loads should fail closed on invalid JSON or schema drift.
 - Broad scans may mark broken records and continue.
 - Private runtime state uses private permissions.
+- Daemon mutation event logs are append-only runtime records; append failures fail the mutation.

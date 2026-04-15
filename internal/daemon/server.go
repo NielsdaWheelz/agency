@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/repoevents"
 	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -41,6 +42,9 @@ type Server struct {
 
 	// WorktreeEvents appends worktree-scoped events with shared sequencing.
 	WorktreeEvents *worktreeevents.Writer
+
+	// RepoEvents appends repo-scoped events with shared sequencing.
+	RepoEvents repoevents.Appender
 
 	// PIDChecker checks if a PID is alive (injectable for testing).
 	PIDChecker func(int) bool
@@ -137,6 +141,9 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		return server.Clock()
 	})
 	server.WorktreeEvents = worktreeevents.NewWriter(func() time.Time {
+		return server.Clock()
+	})
+	server.RepoEvents = repoevents.NewWriter(func() time.Time {
 		return server.Clock()
 	})
 	return server

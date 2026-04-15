@@ -6,7 +6,7 @@ This document covers daemon ownership, lifecycle, and mutation rules.
 
 ## Rules
 
-- The daemon is the canonical mutable owner for integration worktree and invocation control-plane state.
+- The daemon is the canonical mutable owner for repo registry, integration worktree, and invocation control-plane state.
 - CLI commands may validate inputs locally, but should route daemon-owned mutations through the daemon client.
 - Daemon socket, pid, and log paths live under `AGENCY_DATA_DIR`.
 - Clients must check daemon API compatibility before relying on daemon behavior.

@@ -41,6 +41,12 @@ func (s *Store) RepoRecordPath(repoID string) string {
 	return filepath.Join(s.RepoDir(repoID), "repo.json")
 }
 
+// RepoEventsPath returns the path to a repo's events.jsonl.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/events.jsonl
+func (s *Store) RepoEventsPath(repoID string) string {
+	return filepath.Join(s.RepoDir(repoID), "events.jsonl")
+}
+
 // ----- V2 Integration Worktree paths (Slice 8) -----
 
 // IntegrationWorktreesDir returns the integration worktrees directory for a repo.

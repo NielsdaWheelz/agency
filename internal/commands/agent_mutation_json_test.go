@@ -271,7 +271,7 @@ func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, false, payload["ok"])
 	assert.Equal(t, string(errors.EInvocationNotFound), payload["error_code"])
-	assert.Empty(t, payload["request_id"])
+	assert.NotEmpty(t, payload["request_id"])
 }
 
 func TestAgentRestart_JSONFailureTransportEnvelope(t *testing.T) {

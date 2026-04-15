@@ -295,6 +295,15 @@ func TestLoadRepoRecord_MissingFile(t *testing.T) {
 	assert.Empty(t, rec.RepoID)
 }
 
+func TestRepoEventsPath(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	assert.Equal(t, filepath.Join(dataDir, "repos", "abc123", "events.jsonl"), s.RepoEventsPath("abc123"))
+}
+
 // TestRepoRecordRoundtrip tests save/load cycle for repo records.
 func TestRepoRecordRoundtrip(t *testing.T) {
 	t.Parallel()

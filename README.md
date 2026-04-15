@@ -101,6 +101,7 @@ non-interactive destructive flows require explicit confirmation via `--yes`:
 ```bash
 agency worktree rm <name|id|prefix> --yes
 agency worktree pr merge <worktree-ref> --yes
+agency repo rm <repo-ref> --yes
 ```
 
 automation-friendly mutation json:
@@ -116,6 +117,8 @@ agency worktree rebase <worktree-ref> --json
 agency agent discard <invocation-id> --json
 agency agent chat <invocation-id> --prompt "continue" --json
 agency agent restart <invocation-id> --checkpoint 3 --json
+agency repo add --json
+agency repo rm <repo-ref> --yes --json
 ```
 
 all mutation `--json` responses use a stable envelope with deterministic fields:

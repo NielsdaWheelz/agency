@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -109,28 +110,38 @@ type RepoAddOpts struct {
 
 // RepoAdd registers a repository with the daemon.
 func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAddOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
 	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	path := opts.Path
 	if path == "" {
 		path, err = os.Getwd()
 		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+			return fail(errors.Wrap(errors.EInternal, "failed to get cwd", err))
 		}
 	}
 
 	result, err := client.RegisterRepo(ctx, path)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data)
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.RequestID = result.RequestID
+			envelope.RepoID = result.Data.RepoID
+			envelope.RepoKey = result.Data.RepoKey
+			envelope.PreferredRoot = result.Data.PreferredRoot
+		})
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Registered repo\n")
@@ -253,6 +264,79 @@ func runAttachedInDir(ctx context.Context, command string, args []string, dir st
 type RepoShowOpts struct {
 	RepoRef string
 	JSON    bool
+}
+
+// RepoRmOpts holds options for the repo rm command.
+type RepoRmOpts struct {
+	RepoRef        string
+	Yes            bool
+	JSON           bool
+	IsInteractive  func() bool
+	ConfirmationIn io.Reader
+}
+
+// RepoRm removes a registered repository from the daemon registry.
+func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmOpts, stdout, stderr io.Writer) error {
+	_ = cr
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+
+	if strings.TrimSpace(opts.RepoRef) == "" {
+		return fail(errors.New(errors.EUsage, "repo_ref is required"))
+	}
+
+	if !opts.Yes {
+		isInteractive := opts.IsInteractive
+		if isInteractive == nil {
+			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
+		}
+		if !isInteractive() {
+			return fail(errors.NewWithDetails(
+				errors.EConfirmationRequired,
+				"non-interactive repo removal requires explicit confirmation",
+				map[string]string{"hint": "re-run with --yes"},
+			))
+		}
+
+		_, _ = fmt.Fprint(stderr, "confirm: type 'rm' to proceed: ")
+		confirmationIn := opts.ConfirmationIn
+		if confirmationIn == nil {
+			confirmationIn = os.Stdin
+		}
+		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
+		if err != nil {
+			return fail(err)
+		}
+		if token != "rm" {
+			return fail(errors.New(errors.EAborted, "repo remove confirmation failed; expected 'rm'"))
+		}
+	}
+
+	client, err := ensureDaemonClient(ctx, fsys, "")
+	if err != nil {
+		return fail(err)
+	}
+
+	result, err := client.RepoRm(ctx, opts.RepoRef)
+	if err != nil {
+		return fail(err)
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.RequestID = result.RequestID
+			envelope.RepoID = result.Data.RepoID
+			envelope.RepoKey = result.Data.RepoKey
+			envelope.RemovedFromIndex = result.Data.RemovedFromIndex
+		})
+	}
+
+	_, _ = fmt.Fprintf(stdout, "Removed repository %s\n", result.Data.RepoID)
+	return nil
 }
 
 // RepoShow shows details for a registered repository.

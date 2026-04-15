@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,4 +342,29 @@ func TestRepoShow_FormatOutput_Inaccessible(t *testing.T) {
 
 	assert.Contains(t, stdout.String(), "accessible:     no")
 	_ = r // prevent unused
+}
+
+func TestRepoRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := RepoRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), RepoRmOpts{
+		RepoRef:       "abc123",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+}
+
+func TestRepoRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := RepoRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), RepoRmOpts{
+		RepoRef:        "abc123",
+		IsInteractive:  func() bool { return true },
+		ConfirmationIn: strings.NewReader("no\n"),
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }

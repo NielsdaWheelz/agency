@@ -152,6 +152,9 @@ type agentMutationEnvelope struct {
 
 	InvocationID            string                    `json:"invocation_id,omitempty"`
 	RepoID                  string                    `json:"repo_id,omitempty"`
+	RepoKey                 string                    `json:"repo_key,omitempty"`
+	PreferredRoot           string                    `json:"preferred_root,omitempty"`
+	RemovedFromIndex        bool                      `json:"removed_from_index,omitempty"`
 	IntegrationWorktreeID   string                    `json:"integration_worktree_id,omitempty"`
 	IntegrationWorktreeName string                    `json:"integration_worktree_name,omitempty"`
 	SandboxPath             string                    `json:"sandbox_path,omitempty"`

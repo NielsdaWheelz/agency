@@ -78,6 +78,20 @@ func TestWorktreeCmd_LegacyMergeRemoved(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown command")
 }
 
+func TestRepoCmd_HelpShowsRmSubcommand(t *testing.T) {
+	stdout, _, err := executeCmd("repo", "--help")
+	require.NoError(t, err, "expected repo help to render")
+	assert.Contains(t, stdout, "rm")
+	assert.Contains(t, stdout, "Remove a registered repository")
+}
+
+func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {
+	stdout, _, err := executeCmd("repo", "rm", "--help")
+	require.NoError(t, err, "expected repo rm help to render")
+	assert.Contains(t, stdout, "--yes")
+	assert.Contains(t, stdout, "--json")
+}
+
 func TestWorktreeCmd_HelpShowsPRSubcommands(t *testing.T) {
 	stdout, _, err := executeCmd("worktree", "--help")
 	require.NoError(t, err, "expected worktree help to render")

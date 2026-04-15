@@ -118,10 +118,18 @@ func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBod
 
 func decodeResult[T any](apiResp *daemon.RawAPIResponse) (*daemon.Result[T], error) {
 	if !apiResp.OK {
+		details := map[string]string{}
+		if apiResp.Hint != "" {
+			details["hint"] = apiResp.Hint
+		}
+		if apiResp.RequestID != "" {
+			details["request_id"] = apiResp.RequestID
+		}
 		return nil, &DaemonReadError{
 			AgencyErr: &errors.AgencyError{
-				Code: errors.Code(apiResp.ErrorCode),
-				Msg:  apiResp.Message,
+				Code:    errors.Code(apiResp.ErrorCode),
+				Msg:     apiResp.Message,
+				Details: details,
 			},
 			Hint:       apiResp.Hint,
 			RawDetails: append(json.RawMessage(nil), apiResp.Details...),

@@ -7,23 +7,6 @@ type RepoRegisterRequest struct {
 	RepoRoot string `json:"repo_root"`
 }
 
-// RepoRegisterResponse is the response for POST /repos/register.
-type RepoRegisterResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	GitSHA       string `json:"git_sha,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-
-	// Data (on success)
-	Data *RepoRegisterData `json:"data,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
-}
-
 // RepoRegisterData is the data payload for a successful register response.
 type RepoRegisterData struct {
 	RepoID                  string   `json:"repo_id"`
@@ -56,4 +39,16 @@ type OriginDTO struct {
 // ListReposData is the data payload for GET /repos.
 type ListReposData struct {
 	Repos []RepoDTO `json:"repos"`
+}
+
+// RepoRmRequest is the request body for POST /repos/rm.
+type RepoRmRequest struct {
+	RepoRef string `json:"repo_ref"`
+}
+
+// RepoRmData is the data payload for a successful repo unregister response.
+type RepoRmData struct {
+	RepoID           string `json:"repo_id"`
+	RepoKey          string `json:"repo_key"`
+	RemovedFromIndex bool   `json:"removed_from_index"`
 }
