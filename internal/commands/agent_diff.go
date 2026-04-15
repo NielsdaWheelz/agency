@@ -16,7 +16,7 @@ import (
 // AgentDiffOpts holds options for the agent diff command.
 type AgentDiffOpts struct {
 	InvocationRef   string
-	RepoFlag        string
+	RepoRef         string
 	JSON            bool
 	TurnID          string
 	TurnRange       string
@@ -40,7 +40,7 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent diff",
 	})

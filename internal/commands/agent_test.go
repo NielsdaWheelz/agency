@@ -412,7 +412,7 @@ func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
@@ -426,7 +426,7 @@ func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
@@ -442,7 +442,7 @@ func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dtos []daemon.InvocationDTO
@@ -461,7 +461,7 @@ func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dto daemon.InvocationDTO
@@ -500,7 +500,7 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	var lsJSON, showJSON, reviewJSON, stderr bytes.Buffer
 
 	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &lsJSON, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &lsJSON, &stderr)
 	require.NoError(t, err)
 
 	var listedRows []daemon.InvocationDTO
@@ -511,7 +511,7 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	require.NotNil(t, listed.Navigation)
 
 	err = AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true}, &showJSON, &stderr)
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true}, &showJSON, &stderr)
 	require.NoError(t, err)
 	var shown daemon.InvocationDTO
 	require.NoError(t, json.Unmarshal(showJSON.Bytes(), &shown))
@@ -519,7 +519,7 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	require.NotNil(t, shown.Navigation)
 
 	err = AgentReview(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentReviewOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &reviewJSON, &stderr)
+		AgentReviewOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &reviewJSON, &stderr)
 	require.NoError(t, err)
 	var review daemon.InvocationReviewData
 	require.NoError(t, json.Unmarshal(reviewJSON.Bytes(), &review))
@@ -745,7 +745,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	showErr := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		AgentShowOpts{InvocationRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, showErr)
 	assert.Equal(t, errors.EInvocationIDAmbiguous, errors.GetCode(showErr),
@@ -766,7 +766,7 @@ func TestAgentPath_UsesDaemonResolution(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentPathOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	assert.Equal(t, env.SandboxPath+"\n", stdout.String(),
@@ -779,7 +779,7 @@ func TestAgentOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	cwd, args := readShimRecord(t, recordFile)
@@ -797,7 +797,7 @@ func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShellOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentShellOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	cwd, args := readShimRecord(t, recordFile)
@@ -906,7 +906,7 @@ func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 		err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 			AgentEnterOpts{
 				InvocationRef:   env.InvocationID,
-				RepoFlag:        env.RepoID,
+				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
 				TmuxClient:      fakeTmux,
 				DataDirOverride: env.DataDir,
@@ -940,7 +940,7 @@ func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 		err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 			AgentEnterOpts{
 				InvocationRef:   env.InvocationID,
-				RepoFlag:        env.RepoID,
+				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
 				TmuxClient:      fakeTmux,
 				DataDirOverride: env.DataDir,
@@ -1026,7 +1026,7 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	pathErr := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		AgentPathOpts{InvocationRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, pathErr)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(pathErr),
@@ -1108,7 +1108,7 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	openErr := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: "20260201000000", RepoFlag: repoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: "20260201000000", RepoRef: repoID, Editor: shimPath}, &stdout, &stderr)
 
 	require.Error(t, openErr)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(openErr),
@@ -1190,7 +1190,7 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	enterErr := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentEnterOpts{
 			InvocationRef:   "20260201000000",
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			IsInteractive:   func() bool { return true },
 			TmuxClient:      fakeTmux,
 			DataDirOverride: dataTmp,
@@ -1309,7 +1309,7 @@ func TestAgentPath_OutputsDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentPathOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	printedPath := strings.TrimSpace(stdout.String())
@@ -1323,11 +1323,11 @@ func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.
 	var humanOut, jsonOut, stderr bytes.Buffer
 
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID}, &humanOut, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID}, &humanOut, &stderr)
 	require.NoError(t, err)
 
 	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &jsonOut, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &jsonOut, &stderr)
 	require.NoError(t, err)
 
 	humanStr := humanOut.String()
@@ -1358,7 +1358,7 @@ func TestAgentEnter_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentEnterOpts{
 			InvocationRef:   env.InvocationID,
-			RepoFlag:        env.RepoID,
+			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return true },
 			TmuxClient:      fakeTmux,
 			DataDirOverride: env.DataDir,
@@ -1385,7 +1385,7 @@ func TestAgentEnter_NotInteractive_ReturnsENotInteractive(t *testing.T) {
 	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentEnterOpts{
 			InvocationRef:   env.InvocationID,
-			RepoFlag:        env.RepoID,
+			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return false },
 			DataDirOverride: env.DataDir,
 		}, &stdout, &stderr)
@@ -1414,21 +1414,21 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 			switch verb {
 			case "path":
 				navErr = AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentPathOpts{InvocationRef: ref, RepoFlag: env.RepoID}, &stdout, &stderr)
+					AgentPathOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
 			case "open":
 				shimPath, _ := createShimScript(t)
 				navErr = AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentOpenOpts{InvocationRef: ref, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+					AgentOpenOpts{InvocationRef: ref, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
 			case "shell":
 				shimPath, _ := createShimScript(t)
 				t.Setenv("SHELL", shimPath)
 				navErr = AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentShellOpts{InvocationRef: ref, RepoFlag: env.RepoID}, &stdout, &stderr)
+					AgentShellOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
 			case "enter":
 				navErr = AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 					AgentEnterOpts{
 						InvocationRef:   ref,
-						RepoFlag:        env.RepoID,
+						RepoRef:         env.RepoID,
 						IsInteractive:   func() bool { return true },
 						TmuxClient:      testutil.NewFakeTmuxClient(),
 						DataDirOverride: env.DataDir,
@@ -1459,7 +1459,7 @@ func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))
@@ -1484,7 +1484,7 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShellOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentShellOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))

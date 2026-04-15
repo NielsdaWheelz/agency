@@ -254,7 +254,7 @@ func TestCheckpointLS_TableOutput_UsesSharedChangedPathPreview(t *testing.T) {
 	assert.NotContains(t, out, "paths:pkg/math/add.go, pkg/math/subtract.go (+1 more)", "legacy bespoke preview format must not be used")
 }
 
-func TestCheckpointLS_RepoFlagResolvesOutsideGitContext(t *testing.T) {
+func TestCheckpointLS_RepoRefResolvesOutsideGitContext(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -296,14 +296,14 @@ func TestCheckpointLS_RepoFlagResolvesOutsideGitContext(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := CheckpointLS(context.Background(), testutil.NewFakeCommandRunner(), env.FS, t.TempDir(), CheckpointLSOpts{
 		InvocationRef:   env.InvocationID,
-		RepoFlag:        env.RepoID,
+		RepoRef:         env.RepoID,
 		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "checkpoint ls with --repo should not depend on local git context")
 	assert.Contains(t, stdout.String(), "cp:1")
 }
 
-func TestCheckpointApply_RepoFlagResolvesOutsideGitContext(t *testing.T) {
+func TestCheckpointApply_RepoRefResolvesOutsideGitContext(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -360,7 +360,7 @@ func TestCheckpointApply_RepoFlagResolvesOutsideGitContext(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err = CheckpointApply(context.Background(), testutil.NewFakeCommandRunner(), env.FS, t.TempDir(), CheckpointApplyOpts{
 		InvocationRef:   env.InvocationID,
-		RepoFlag:        env.RepoID,
+		RepoRef:         env.RepoID,
 		CheckpointID:    1,
 		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)

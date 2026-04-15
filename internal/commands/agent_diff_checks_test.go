@@ -77,7 +77,7 @@ func TestAgentDiff_TurnAware_HumanAndJSONAligned(t *testing.T) {
 
 	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		TurnID:          turnID,
 		DataDirOverride: dataDir,
 	}, &humanOut, &errOut)
@@ -85,7 +85,7 @@ func TestAgentDiff_TurnAware_HumanAndJSONAligned(t *testing.T) {
 
 	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		TurnID:          turnID,
 		JSON:            true,
 		DataDirOverride: dataDir,
@@ -169,7 +169,7 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnUsesPreviousCheckpointBoundary(t
 
 	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		TurnID:          turnID,
 		DataDirOverride: dataDir,
 	}, &humanOut, &errOut)
@@ -177,7 +177,7 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnUsesPreviousCheckpointBoundary(t
 
 	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		TurnID:          turnID,
 		JSON:            true,
 		DataDirOverride: dataDir,
@@ -253,7 +253,7 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnSingleCheckpointUsesBaseBoundary
 
 	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		TurnID:          turnID,
 		DataDirOverride: dataDir,
 	}, &humanOut, &errOut)
@@ -261,7 +261,7 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnSingleCheckpointUsesBaseBoundary
 
 	err = AgentDiff(context.Background(), cr2, fsys, repoDir, AgentDiffOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		TurnID:          turnID,
 		JSON:            true,
 		DataDirOverride: dataDir,
@@ -325,14 +325,14 @@ func TestAgentReview_Blocked_HumanAndJSONAligned(t *testing.T) {
 	var humanOut, jsonOut, errOut bytes.Buffer
 	err = AgentReview(context.Background(), cr2, fsys, repoDir, AgentReviewOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 	}, &humanOut, &errOut)
 	require.NoError(t, err)
 
 	err = AgentReview(context.Background(), cr2, fsys, repoDir, AgentReviewOpts{
 		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &jsonOut, &errOut)

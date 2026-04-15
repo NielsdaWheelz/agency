@@ -15,7 +15,7 @@ import (
 // WorktreePathOpts holds options for the worktree path command.
 type WorktreePathOpts struct {
 	WorktreeRef string
-	RepoFlag    string
+	RepoRef     string
 }
 
 // WorktreePath outputs the path to an integration worktree.
@@ -26,7 +26,7 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree path",
 	})
@@ -46,7 +46,7 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // WorktreeOpenOpts holds options for the worktree open command.
 type WorktreeOpenOpts struct {
 	WorktreeRef string
-	RepoFlag    string
+	RepoRef     string
 	Editor      string
 }
 
@@ -58,7 +58,7 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree open",
 	})
@@ -100,7 +100,7 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // WorktreeShellOpts holds options for the worktree shell command.
 type WorktreeShellOpts struct {
 	WorktreeRef string
-	RepoFlag    string
+	RepoRef     string
 }
 
 // WorktreeShell opens a shell in an integration worktree.
@@ -111,7 +111,7 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree shell",
 	})

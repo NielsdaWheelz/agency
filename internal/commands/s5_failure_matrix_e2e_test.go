@@ -45,7 +45,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -76,7 +76,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -107,7 +107,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -138,7 +138,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -195,7 +195,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRSync(ctx, cr, fsys, repoDir, WorktreePRSyncOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			JSON:            true,
 			DataDirOverride: dataDir,
 		}, &stdout, &stderr)
@@ -238,7 +238,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,

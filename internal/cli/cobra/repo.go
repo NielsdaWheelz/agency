@@ -106,11 +106,11 @@ func newRepoShowCmd() *cobra.Command {
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "show <name|repo-key|id|prefix>",
+		Use:   "show <repo_ref>",
 		Short: "Show details of a registered repository",
 		Long: `Show details of a registered repository.
 
-The argument can be a repo name, owner/repo, full repo key, repo id, or unique prefix.
+Accepted repo ref forms: name, owner/repo, repo key, id, or unique prefix.
 
 Example:
   agency repo show agency
@@ -126,8 +126,8 @@ Example:
 			}
 
 			return commands.RepoShow(ctx, cr, fsys, commands.RepoShowOpts{
-				RepoID: args[0],
-				JSON:   jsonOutput,
+				RepoRef: args[0],
+				JSON:    jsonOutput,
 			}, cmd.OutOrStdout(), cmd.OutOrStderr())
 		},
 	}

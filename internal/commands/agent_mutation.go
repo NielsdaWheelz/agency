@@ -19,7 +19,7 @@ import (
 // AgentStopOpts holds options for the agent stop command.
 type AgentStopOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 	TmuxClient    tmux.Client
 	JSON          bool
 }
@@ -39,7 +39,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent stop",
 	})
@@ -89,7 +89,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 // AgentKillOpts holds options for the agent kill command.
 type AgentKillOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 	TmuxClient    tmux.Client
 	JSON          bool
 }
@@ -109,7 +109,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent kill",
 	})
@@ -158,7 +158,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 // AgentLandOpts holds options for the agent land command.
 type AgentLandOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 	Apply         bool
 	RequireBase   bool
 	JSON          bool
@@ -179,7 +179,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent land",
 	})
@@ -248,7 +248,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 // AgentDiscardOpts holds options for the agent discard command.
 type AgentDiscardOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 	JSON          bool
 }
 
@@ -267,7 +267,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent discard",
 	})
@@ -317,7 +317,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // AgentChatOpts holds options for the agent chat command.
 type AgentChatOpts struct {
 	InvocationRef   string
-	RepoFlag        string
+	RepoRef         string
 	Prompt          string
 	PromptFile      string
 	JSON            bool
@@ -350,7 +350,7 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent chat",
 	})
@@ -404,7 +404,7 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 // AgentRestartOpts holds options for the agent restart command.
 type AgentRestartOpts struct {
 	InvocationRef       string
-	RepoFlag            string
+	RepoRef             string
 	CheckpointID        int
 	InteractiveHistory  bool
 	RunnerArgs          []string
@@ -469,7 +469,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent restart",
 	})

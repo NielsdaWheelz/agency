@@ -7,7 +7,7 @@ import (
 )
 
 func newWorktreePathCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 
 	cmd := &cobra.Command{
 		Use:   "path <name|id|prefix>",
@@ -19,7 +19,7 @@ Outputs only the path, suitable for scripting:
 
 Example:
   agency worktree path my-feature
-  agency worktree path --repo abc123 my-feature`,
+  agency worktree path --repo agency my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -29,17 +29,17 @@ Example:
 
 			return commands.WorktreePath(ctx, cr, fsys, cwd, commands.WorktreePathOpts{
 				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
+				RepoRef:     repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
 }
 
 func newWorktreeOpenCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var editor string
 
 	cmd := &cobra.Command{
@@ -49,7 +49,7 @@ func newWorktreeOpenCmd() *cobra.Command {
 
 Example:
   agency worktree open my-feature
-  agency worktree open --repo abc123 my-feature
+  agency worktree open --repo agency my-feature
   agency worktree open my-feature --editor cursor`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -60,19 +60,19 @@ Example:
 
 			return commands.WorktreeOpen(ctx, cr, fsys, cwd, commands.WorktreeOpenOpts{
 				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
+				RepoRef:     repoRef,
 				Editor:      editor,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
 	return cmd
 }
 
 func newWorktreeShellCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 
 	cmd := &cobra.Command{
 		Use:   "shell <name|id|prefix>",
@@ -84,7 +84,7 @@ Exiting the shell returns control to agency.
 
 Example:
   agency worktree shell my-feature
-  agency worktree shell --repo abc123 my-feature`,
+  agency worktree shell --repo agency my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -94,11 +94,11 @@ Example:
 
 			return commands.WorktreeShell(ctx, cr, fsys, cwd, commands.WorktreeShellOpts{
 				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
+				RepoRef:     repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
 }

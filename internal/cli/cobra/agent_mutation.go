@@ -11,7 +11,7 @@ import (
 )
 
 func newAgentStopCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -24,7 +24,7 @@ The runner may ignore the signal; use 'kill' for forceful termination.
 
 Example:
   agency agent stop 20260131
-  agency agent stop --repo abc123 20260131`,
+  agency agent stop --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -34,19 +34,19 @@ Example:
 
 			return commands.AgentStop(ctx, cr, fsys, cwd, commands.AgentStopOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	return cmd
 }
 
 func newAgentKillCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -60,7 +60,7 @@ The sandbox is preserved for inspection.
 
 Example:
   agency agent kill 20260131
-  agency agent kill --repo abc123 20260131`,
+  agency agent kill --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -70,19 +70,19 @@ Example:
 
 			return commands.AgentKill(ctx, cr, fsys, cwd, commands.AgentKillOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	return cmd
 }
 
 func newAgentLandCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var apply bool
 	var requireBase bool
 	var jsonOut bool
@@ -97,7 +97,7 @@ If the sandbox has no commits but has uncommitted changes, use --apply.
 
 Example:
   agency agent land 20260131
-  agency agent land --repo abc123 my-invocation --apply
+  agency agent land --repo agency my-invocation --apply
   agency agent land 20260131 --require-base`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -108,7 +108,7 @@ Example:
 
 			return commands.AgentLand(ctx, cr, fsys, cwd, commands.AgentLandOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 				Apply:         apply,
 				RequireBase:   requireBase,
 				JSON:          jsonOut,
@@ -116,7 +116,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Apply uncommitted changes (when no commits exist)")
 	cmd.Flags().BoolVar(&requireBase, "require-base", false, "Fail if integration has diverged from base_commit")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
@@ -124,7 +124,7 @@ Example:
 }
 
 func newAgentDiscardCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -137,7 +137,7 @@ then forcefully killed after 5 seconds).
 
 Example:
   agency agent discard 20260131
-  agency agent discard --repo abc123 my-invocation`,
+  agency agent discard --repo agency my-invocation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -147,19 +147,19 @@ Example:
 
 			return commands.AgentDiscard(ctx, cr, fsys, cwd, commands.AgentDiscardOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	return cmd
 }
 
 func newAgentChatCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var prompt string
 	var promptFile string
 	var jsonOut bool
@@ -174,7 +174,7 @@ daemon control plane using client_request_id semantics.
 
 Example:
   agency agent chat 20260131 --prompt "continue with test fixes"
-  agency agent chat --repo abc123 my-invocation --prompt-file followup.md
+  agency agent chat --repo agency my-invocation --prompt-file followup.md
   agency agent chat --json 20260131 --prompt "next step"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -185,7 +185,7 @@ Example:
 
 			return commands.AgentChat(ctx, cr, fsys, cwd, commands.AgentChatOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 				Prompt:        prompt,
 				PromptFile:    promptFile,
 				JSON:          jsonOut,
@@ -193,7 +193,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Follow-up prompt text")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing follow-up prompt")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
@@ -201,7 +201,7 @@ Example:
 }
 
 func newAgentRestartCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var checkpointID int
 	var historySelector bool
 	var runnerArgs []string
@@ -230,7 +230,7 @@ Deterministic mapping rule for --history:
 Example:
   agency agent restart 20260131 --checkpoint 3
   agency agent restart 20260131 --history
-  agency agent restart --repo abc123 my-invocation --checkpoint 7
+  agency agent restart --repo agency my-invocation --checkpoint 7
   agency agent restart 20260131 --checkpoint 3 --runner-arg "--model=sonnet"
   agency agent restart 20260131 --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
   agency agent restart --json 20260131 --checkpoint 3`,
@@ -251,7 +251,7 @@ Example:
 
 			return commands.AgentRestart(ctx, cr, fsys, cwd, commands.AgentRestartOpts{
 				InvocationRef:      args[0],
-				RepoFlag:           repoFlag,
+				RepoRef:            repoRef,
 				CheckpointID:       checkpointID,
 				InteractiveHistory: historySelector,
 				RunnerArgs:         runnerArgs,
@@ -263,7 +263,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
 	cmd.Flags().BoolVar(&historySelector, "history", false, "Select timeline history interactively (arrow keys)")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to restarted runner (repeatable)")

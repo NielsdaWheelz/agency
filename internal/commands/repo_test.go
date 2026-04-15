@@ -118,17 +118,27 @@ func setupRepoTestGitRepo(t *testing.T) string {
 
 // -------- ResolveRepoViaClient tests --------
 
-func TestResolveRepoViaClient_ExplicitRepoFlag(t *testing.T) {
-	t.Parallel()
-	// No daemon needed — explicit --repo bypasses CWD resolution entirely.
+func TestResolveRepoViaClient_ExplicitRepoRef(t *testing.T) {
+	// Needs a real daemon because explicit --repo now resolves to canonical repo_id here.
+	env := startRepoTestDaemon(t)
+	repoDir := setupRepoTestGitRepo(t)
+	crReal := exec.NewRealRunner()
+
+	ctx := context.Background()
+	remoteAdd, err := crReal.Run(ctx, "git", []string{"remote", "add", "origin", "git@github.com:owner/agency.git"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, remoteAdd.ExitCode, remoteAdd.Stderr)
+
+	reg, err := env.Client.RegisterRepo(ctx, repoDir)
+	require.NoError(t, err)
+
 	cr := testutil.NewFakeCommandRunner()
-	// Client is nil; it must not be called when --repo is set.
-	result, err := ResolveRepoViaClient(context.Background(), cr, nil, "/irrelevant", ResolveRepoContextOpts{
-		RepoFlag: "abc123",
-		CmdName:  "agency worktree show",
+	result, err := ResolveRepoViaClient(ctx, cr, env.Client, "/irrelevant", ResolveRepoContextOpts{
+		RepoRef: "agency",
+		CmdName: "agency worktree show",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "abc123", result.RepoID)
+	assert.Equal(t, reg.Data.RepoID, result.RepoID)
 	assert.False(t, result.AllRepos)
 }
 
@@ -149,7 +159,7 @@ func TestResolveRepoViaClient_MutualExclusion_ReturnsEUsage(t *testing.T) {
 	t.Parallel()
 	cr := testutil.NewFakeCommandRunner()
 	_, err := ResolveRepoViaClient(context.Background(), cr, nil, "/irrelevant", ResolveRepoContextOpts{
-		RepoFlag:      "abc123",
+		RepoRef:       "abc123",
 		AllRepos:      true,
 		AllowAllRepos: true,
 		CmdName:       "agency worktree ls",

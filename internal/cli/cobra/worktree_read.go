@@ -7,7 +7,7 @@ import (
 )
 
 func newWorktreeLSCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var allRepos bool
 	var all bool
 	var jsonOut bool
@@ -18,12 +18,12 @@ func newWorktreeLSCmd() *cobra.Command {
 		Long: `List integration worktrees for the current repository.
 
 By default, only shows non-archived worktrees for the current repo.
-Use --repo to specify a repo by id/prefix, or --all-repos to list globally.
+Use --repo to specify a repo ref (name, owner/repo, repo key, id, or prefix), or --all-repos to list globally.
 
 Example:
   agency worktree ls
   agency worktree ls --all
-  agency worktree ls --repo abc123
+  agency worktree ls --repo agency
   agency worktree ls --all-repos
   agency worktree ls --json
   agency watch`,
@@ -35,7 +35,7 @@ Example:
 			}
 
 			return commands.WorktreeLS(ctx, cr, fsys, cwd, commands.WorktreeLSOpts{
-				RepoFlag: repoFlag,
+				RepoRef:  repoRef,
 				AllRepos: allRepos,
 				All:      all,
 				JSON:     jsonOut,
@@ -43,7 +43,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Filter by repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -52,7 +52,7 @@ Example:
 }
 
 func newWorktreeShowCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -64,7 +64,7 @@ The worktree can be specified by name, id, or unique prefix.
 
 Example:
   agency worktree show my-feature
-  agency worktree show --repo abc123 my-feature
+  agency worktree show --repo agency my-feature
   agency worktree show --json my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -75,13 +75,13 @@ Example:
 
 			return commands.WorktreeShow(ctx, cr, fsys, cwd, commands.WorktreeShowOpts{
 				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
+				RepoRef:     repoRef,
 				JSON:        jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd

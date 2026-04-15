@@ -30,7 +30,7 @@ func TestWorktreeMerge_NonInteractiveRequiresYes(t *testing.T) {
 
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return false },
 	}, ioDiscard{}, ioDiscard{})
@@ -49,7 +49,7 @@ func TestWorktreeMerge_InteractiveConfirmationRejected(t *testing.T) {
 
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return true },
 		ConfirmationIn:  strings.NewReader("nope\n"),
@@ -67,7 +67,7 @@ func TestWorktreeMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 	longToken := strings.Repeat("x", maxMergeConfirmationBytes+1) + "\n"
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return true },
 		ConfirmationIn:  strings.NewReader(longToken),
@@ -113,7 +113,7 @@ func TestWorktreeMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		Yes:             true,
 		JSON:            true,
 		DataDirOverride: dataDir,
@@ -163,7 +163,7 @@ func TestWorktreeMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		Yes:             true,
 		JSON:            true,
 		DataDirOverride: dataDir,

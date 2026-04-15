@@ -354,7 +354,7 @@ const (
 
 // ListWorktreesParams holds query parameters for GET /worktrees.
 type ListWorktreesParams struct {
-	RepoID string // optional, filter by repo
+	RepoID string // optional, filter by canonical repo_id
 	State  string // present, archived, all (default: present)
 	Limit  int    // default 100, max 500
 	Cursor string // opaque pagination cursor
@@ -362,7 +362,7 @@ type ListWorktreesParams struct {
 
 // ListInvocationsParams holds query parameters for GET /invocations.
 type ListInvocationsParams struct {
-	RepoID      string // optional, filter by repo
+	RepoID      string // optional, filter by canonical repo_id
 	WorktreeRef string // optional, filter by worktree ref (name/id/prefix)
 	State       string // active, finished, all (default: all)
 	Mode        string // headed, headless, all (default: all)

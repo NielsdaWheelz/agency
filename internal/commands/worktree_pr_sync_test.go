@@ -47,7 +47,7 @@ func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -81,7 +81,7 @@ func TestWorktreePRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 
 	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 	}, ioDiscard{}, ioDiscard{})
 	require.Error(t, err)
@@ -104,7 +104,7 @@ func TestWorktreePRSync_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -146,7 +146,7 @@ func TestWorktreePRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
 	require.Error(t, err)
@@ -190,7 +190,7 @@ func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRSync(context.Background(), cr, fsys, repoDir, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		ForceWithLease:  true,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)

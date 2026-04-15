@@ -39,7 +39,7 @@ func (d *watchActionDispatcher) Enter(ctx context.Context, invocationID, repoID 
 	return d.capture(func(stdout, stderr io.Writer) error {
 		return AgentEnter(ctx, d.cr, d.fsys, d.cwd, AgentEnterOpts{
 			InvocationRef:   invocationID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			DataDirOverride: d.dataDirOverride,
 		}, stdout, stderr)
 	})
@@ -49,7 +49,7 @@ func (d *watchActionDispatcher) Open(ctx context.Context, invocationID, repoID s
 	return d.capture(func(stdout, stderr io.Writer) error {
 		return AgentOpen(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
 			InvocationRef:   invocationID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			DataDirOverride: d.dataDirOverride,
 		}, stdout, stderr)
 	})
@@ -59,7 +59,7 @@ func (d *watchActionDispatcher) PRSync(ctx context.Context, worktreeID, repoID s
 	return d.capture(func(stdout, stderr io.Writer) error {
 		return WorktreePRSync(ctx, d.cr, d.fsys, d.cwd, WorktreePRSyncOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			DataDirOverride: d.dataDirOverride,
 		}, stdout, stderr)
 	})

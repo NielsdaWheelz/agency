@@ -11,7 +11,7 @@ import (
 
 // ListWorktreesOpts holds options for listing worktrees.
 type ListWorktreesOpts struct {
-	RepoID string // optional, filter by repo
+	RepoID string // optional, filter by canonical repo_id
 	State  string // present, archived, all (default: present)
 	Limit  int    // default 100, max 500
 	Cursor string // opaque pagination cursor
@@ -41,8 +41,7 @@ func (c *Client) ListWorktrees(ctx context.Context, opts ListWorktreesOpts) (*da
 	return decodeResult[daemon.ListWorktreesData](apiResp)
 }
 
-// GetWorktree gets a single worktree by reference via the daemon, preserving
-// structured read errors for ambiguity and hint propagation.
+// GetWorktree gets a single worktree by reference within an optional canonical repo_id scope.
 func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.WorktreeDTO], error) {
 	u := fmt.Sprintf("%s/worktrees/%s", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
@@ -58,7 +57,7 @@ func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*d
 
 // ListInvocationsOpts holds options for listing invocations.
 type ListInvocationsOpts struct {
-	RepoID      string // optional, filter by repo
+	RepoID      string // optional, filter by canonical repo_id
 	WorktreeRef string // optional, filter by worktree ref
 	State       string // active, finished, all (default: all)
 	Mode        string // headed, headless, all (default: all)
@@ -96,8 +95,7 @@ func (c *Client) ListInvocations(ctx context.Context, opts ListInvocationsOpts) 
 	return decodeResult[daemon.ListInvocationsData](apiResp)
 }
 
-// GetInvocation gets a single invocation by reference via the daemon,
-// preserving structured read errors for ambiguity and hint propagation.
+// GetInvocation gets a single invocation by reference within an optional canonical repo_id scope.
 func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationDTO], error) {
 	u := fmt.Sprintf("%s/invocations/%s", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {

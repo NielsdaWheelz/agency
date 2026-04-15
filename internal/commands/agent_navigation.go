@@ -21,7 +21,7 @@ import (
 // AgentPathOpts holds options for the agent path command.
 type AgentPathOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 }
 
 // AgentPath outputs the daemon-resolved sandbox path for an invocation.
@@ -32,7 +32,7 @@ func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent path",
 	})
@@ -52,7 +52,7 @@ func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 // AgentOpenOpts holds options for the agent open command.
 type AgentOpenOpts struct {
 	InvocationRef   string
-	RepoFlag        string
+	RepoRef         string
 	Editor          string // override for tests; empty uses config/env/default
 	DataDirOverride string
 }
@@ -65,7 +65,7 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent open",
 	})
@@ -120,7 +120,7 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 // AgentShellOpts holds options for the agent shell command.
 type AgentShellOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 }
 
 // AgentShell opens a shell with cwd set to the daemon-resolved sandbox path.
@@ -131,7 +131,7 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent shell",
 	})
@@ -179,7 +179,7 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 // AgentEnterOpts holds options for the agent enter command.
 type AgentEnterOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 
 	IsInteractive   func() bool
 	TmuxClient      tmux.Client
@@ -210,7 +210,7 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent enter",
 	})

@@ -13,7 +13,7 @@ import (
 
 // WorktreeLSOpts holds options for the worktree ls command.
 type WorktreeLSOpts struct {
-	RepoFlag string
+	RepoRef  string
 	AllRepos bool
 	All      bool
 	JSON     bool
@@ -27,7 +27,7 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllRepos:      opts.AllRepos,
 		AllowAllRepos: true,
 		CmdName:       "worktree ls",
@@ -77,7 +77,7 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 // WorktreeShowOpts holds options for the worktree show command.
 type WorktreeShowOpts struct {
 	WorktreeRef string
-	RepoFlag    string
+	RepoRef     string
 	JSON        bool
 }
 
@@ -89,7 +89,7 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree show",
 	})

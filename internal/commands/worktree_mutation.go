@@ -15,7 +15,7 @@ import (
 // WorktreeRmOpts holds options for the worktree rm command.
 type WorktreeRmOpts struct {
 	WorktreeRef string
-	RepoFlag    string
+	RepoRef     string
 	Force       bool
 	Yes         bool
 
@@ -36,7 +36,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree rm",
 	})
@@ -90,7 +90,7 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 // WorktreePRSyncOpts holds options for the worktree pr sync command.
 type WorktreePRSyncOpts struct {
 	WorktreeRef     string
-	RepoFlag        string
+	RepoRef         string
 	AllowDirty      bool
 	ForceWithLease  bool
 	JSON            bool
@@ -112,7 +112,7 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree pr sync",
 	})
@@ -172,7 +172,7 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 // WorktreePRMergeOpts holds options for the worktree merge command.
 type WorktreePRMergeOpts struct {
 	WorktreeRef    string
-	RepoFlag       string
+	RepoRef        string
 	Squash         bool
 	Merge          bool
 	Rebase         bool
@@ -249,7 +249,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree merge",
 	})
@@ -315,7 +315,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 // WorktreeUpdateOpts holds options for the worktree update command.
 type WorktreeUpdateOpts struct {
 	WorktreeRef     string
-	RepoFlag        string
+	RepoRef         string
 	JSON            bool
 	DataDirOverride string
 }
@@ -335,7 +335,7 @@ func WorktreeUpdate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "worktree update",
 	})

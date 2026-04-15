@@ -29,7 +29,7 @@ func TestWorktreeUpdate_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreeUpdate(context.Background(), cr, fsys, repoDir, WorktreeUpdateOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -62,7 +62,7 @@ func TestWorktreeUpdate_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := WorktreeUpdate(context.Background(), cr, fsys, repoDir, WorktreeUpdateOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)

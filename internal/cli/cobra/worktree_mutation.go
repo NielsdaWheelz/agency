@@ -8,7 +8,7 @@ import (
 )
 
 func newWorktreeRmCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var force bool
 	var yes bool
 
@@ -24,7 +24,7 @@ The worktree record is retained (archived state) but the tree directory is remov
 
 Example:
   agency worktree rm my-feature
-  agency worktree rm --repo abc123 my-feature
+  agency worktree rm --repo agency my-feature
   agency worktree rm my-feature --force`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -35,14 +35,14 @@ Example:
 
 			return commands.WorktreeRm(ctx, cr, fsys, cwd, commands.WorktreeRmOpts{
 				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
+				RepoRef:     repoRef,
 				Force:       force,
 				Yes:         yes,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm remove in non-interactive mode")
 
@@ -64,7 +64,7 @@ func newWorktreePRCmd() *cobra.Command {
 }
 
 func newWorktreePRSyncCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 	var allowDirty bool
 	var forceWithLease bool
@@ -79,7 +79,7 @@ branch-scoped pull request.
 
 Example:
   agency worktree pr sync my-feature
-  agency worktree pr sync --repo abc123 my-feature
+  agency worktree pr sync --repo agency my-feature
   agency worktree pr sync --allow-dirty my-feature
   agency worktree pr sync --force-with-lease my-feature
   agency worktree pr sync --json my-feature`,
@@ -92,7 +92,7 @@ Example:
 
 			return commands.WorktreePRSync(ctx, cr, fsys, cwd, commands.WorktreePRSyncOpts{
 				WorktreeRef:    args[0],
-				RepoFlag:       repoFlag,
+				RepoRef:        repoRef,
 				AllowDirty:     allowDirty,
 				ForceWithLease: forceWithLease,
 				JSON:           jsonOut,
@@ -100,7 +100,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
 	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
@@ -109,7 +109,7 @@ Example:
 }
 
 func newWorktreeMergeCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 	var squash bool
 	var merge bool
@@ -129,7 +129,7 @@ Non-interactive executions must pass --yes.
 
 Example:
   agency worktree merge my-feature
-  agency worktree merge --repo abc123 my-feature
+  agency worktree merge --repo agency my-feature
   agency worktree merge --yes --json my-feature
   agency worktree merge --merge my-feature
   agency worktree merge --rebase --no-delete-branch my-feature`,
@@ -142,7 +142,7 @@ Example:
 
 			return commands.WorktreePRMerge(ctx, cr, fsys, cwd, commands.WorktreePRMergeOpts{
 				WorktreeRef:    args[0],
-				RepoFlag:       repoFlag,
+				RepoRef:        repoRef,
 				Squash:         squash,
 				Merge:          merge,
 				Rebase:         rebase,
@@ -153,7 +153,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
 	cmd.Flags().BoolVar(&merge, "merge", false, "Use regular merge strategy")
@@ -165,7 +165,7 @@ Example:
 }
 
 func newWorktreeUpdateCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
@@ -178,7 +178,7 @@ the rebase cannot be applied cleanly.
 
 Example:
   agency worktree update my-feature
-  agency worktree update --repo abc123 my-feature
+  agency worktree update --repo agency my-feature
   agency worktree update --json my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -189,13 +189,13 @@ Example:
 
 			return commands.WorktreeUpdate(ctx, cr, fsys, cwd, commands.WorktreeUpdateOpts{
 				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
+				RepoRef:     repoRef,
 				JSON:        jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd

@@ -217,7 +217,7 @@ func TestWorktreeLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
@@ -231,7 +231,7 @@ func TestWorktreeShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
@@ -249,7 +249,7 @@ func TestWorktreeLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dtos []daemon.WorktreeDTO
@@ -270,7 +270,7 @@ func TestWorktreeShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dto daemon.WorktreeDTO
@@ -300,7 +300,7 @@ func TestWorktreeShow_AmbiguousPreservesCandidates(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShowOpts{WorktreeRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		WorktreeShowOpts{WorktreeRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EWorktreeIDAmbiguous, errors.GetCode(err),
@@ -321,7 +321,7 @@ func TestWorktreePath_UsesDaemonResolution(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreePathOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreePathOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	assert.Equal(t, env.TreePath+"\n", stdout.String(),
@@ -336,7 +336,7 @@ func TestWorktreeOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	err := WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		WorktreeOpenOpts{
 			WorktreeRef: env.WorktreeID,
-			RepoFlag:    env.RepoID,
+			RepoRef:     env.RepoID,
 			Editor:      shimPath,
 		}, &stdout, &stderr)
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestWorktreeShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShellOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreeShellOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	cwd, args := readShimRecord(t, recordFile)
@@ -384,7 +384,7 @@ func TestWorktreePath_AmbiguityUsesEAmbiguous(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreePathOpts{WorktreeRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		WorktreePathOpts{WorktreeRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err),
@@ -419,7 +419,7 @@ func TestWorktreeOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	err = WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		WorktreeOpenOpts{
 			WorktreeRef: "20260201000000",
-			RepoFlag:    repoID,
+			RepoRef:     repoID,
 			Editor:      shimPath,
 		}, &stdout, &stderr)
 
@@ -484,7 +484,7 @@ func TestWorktreePath_OutputsDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreePathOpts{WorktreeRef: "pathout", RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreePathOpts{WorktreeRef: "pathout", RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	printedPath := strings.TrimSpace(stdout.String())
@@ -498,11 +498,11 @@ func TestWorktreeHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testi
 	var humanOut, jsonOut, stderr bytes.Buffer
 
 	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID}, &humanOut, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID}, &humanOut, &stderr)
 	require.NoError(t, err)
 
 	err = WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID, JSON: true}, &jsonOut, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID, JSON: true}, &jsonOut, &stderr)
 	require.NoError(t, err)
 
 	humanStr := humanOut.String()
@@ -528,7 +528,7 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 		err := WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 			WorktreeOpenOpts{
 				WorktreeRef: "nonexistent-worktree",
-				RepoFlag:    env.RepoID,
+				RepoRef:     env.RepoID,
 				Editor:      shimPath,
 			}, &stdout, &stderr)
 
@@ -547,7 +547,7 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 
 		var stdout, stderr bytes.Buffer
 		err := WorktreeShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			WorktreeShellOpts{WorktreeRef: "nonexistent-worktree", RepoFlag: env.RepoID}, &stdout, &stderr)
+			WorktreeShellOpts{WorktreeRef: "nonexistent-worktree", RepoRef: env.RepoID}, &stdout, &stderr)
 
 		require.Error(t, err)
 		code := errors.GetCode(err)
@@ -564,7 +564,7 @@ func TestWorktreeRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *tes
 	var stdout, stderr bytes.Buffer
 	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
 		WorktreeRef:   env.WorktreeID,
-		RepoFlag:      env.RepoID,
+		RepoRef:       env.RepoID,
 		IsInteractive: func() bool { return false },
 	}, &stdout, &stderr)
 	require.Error(t, err)
@@ -577,7 +577,7 @@ func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T
 	var stdout, stderr bytes.Buffer
 	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
 		WorktreeRef:    env.WorktreeID,
-		RepoFlag:       env.RepoID,
+		RepoRef:        env.RepoID,
 		IsInteractive:  func() bool { return true },
 		ConfirmationIn: strings.NewReader("no\n"),
 	}, &stdout, &stderr)

@@ -238,7 +238,7 @@ This is an automated e2e test - no manual testing required.
 	var prSyncStdout, prSyncStderr bytes.Buffer
 	require.NoError(t, WorktreePRSync(ctx, cr, fsys, repoRoot, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoIdentity.RepoID,
+		RepoRef:         repoIdentity.RepoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &prSyncStdout, &prSyncStderr), "worktree pr sync failed\nstderr:\n%s", prSyncStderr.String())
@@ -265,7 +265,7 @@ This is an automated e2e test - no manual testing required.
 	var mergeStdout, mergeStderr bytes.Buffer
 	require.NoError(t, WorktreePRMerge(ctx, cr, fsys, repoRoot, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoIdentity.RepoID,
+		RepoRef:         repoIdentity.RepoID,
 		Yes:             true,
 		DataDirOverride: dataDir,
 	}, &mergeStdout, &mergeStderr), "worktree merge failed\nstderr:\n%s", mergeStderr.String())

@@ -28,8 +28,8 @@ type RepoContextResult struct {
 
 // ResolveRepoContextOpts controls how repo context resolution works.
 type ResolveRepoContextOpts struct {
-	// RepoFlag is the value of the --repo flag (repo_id or unique prefix).
-	RepoFlag string
+	// RepoRef is the value of the --repo flag (name, owner/repo, repo key, id, or prefix).
+	RepoRef string
 	// AllRepos is the value of the --all-repos flag (list commands only).
 	AllRepos bool
 	// AllowAllRepos controls whether --all-repos is accepted.
@@ -42,7 +42,7 @@ type ResolveRepoContextOpts struct {
 // ResolveRepoViaClient resolves repo context for a CLI command.
 func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *daemonclient.Client, cwd string, opts ResolveRepoContextOpts) (*RepoContextResult, error) {
 	// Mutual exclusion
-	if opts.RepoFlag != "" && opts.AllRepos {
+	if opts.RepoRef != "" && opts.AllRepos {
 		return nil, errors.New(errors.EUsage, "--repo and --all-repos are mutually exclusive")
 	}
 
@@ -51,9 +51,18 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 		return nil, errors.New(errors.EUsage, "--all-repos is not supported for "+opts.CmdName+"; specify --repo instead")
 	}
 
-	// Explicit --repo flag: use directly
-	if opts.RepoFlag != "" {
-		return &RepoContextResult{RepoID: opts.RepoFlag}, nil
+	// Explicit --repo: resolve once here, then pass canonical repo_id below the command boundary.
+	if opts.RepoRef != "" {
+		if client == nil {
+			return nil, errors.New(errors.EInternal, "daemon client is required to resolve --repo")
+		}
+
+		result, err := client.GetRepo(ctx, opts.RepoRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return &RepoContextResult{RepoID: result.Data.RepoID}, nil
 	}
 
 	// --all-repos: return empty repo_id (list globally)
@@ -70,7 +79,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 				errors.ENoRepoContext,
 				"no repo context (not in a git repo)",
 				map[string]string{
-					"hint": "run \"agency repo ls\" then re-run with --repo <name>, or pass --all-repos, or register a repo with \"agency repo add /path/to/repo\"",
+					"hint": "run \"agency repo ls\" then re-run with --repo <repo_ref>, or pass --all-repos, or register a repo with \"agency repo add /path/to/repo\"",
 				},
 			)
 		}
@@ -78,7 +87,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 			errors.ENoRepoContext,
 			fmt.Sprintf("cannot resolve %s without a repo context", opts.CmdName),
 			map[string]string{
-				"hint": "run \"agency repo ls\" and re-run with \"--repo <name>\", or register a repo: \"agency repo add /path/to/repo\"",
+				"hint": "run \"agency repo ls\" and re-run with \"--repo <repo_ref>\", or register a repo: \"agency repo add /path/to/repo\"",
 			},
 		)
 	}
@@ -242,8 +251,8 @@ func runAttachedInDir(ctx context.Context, command string, args []string, dir st
 
 // RepoShowOpts holds options for the repo show command.
 type RepoShowOpts struct {
-	RepoID string
-	JSON   bool
+	RepoRef string
+	JSON    bool
 }
 
 // RepoShow shows details for a registered repository.
@@ -253,7 +262,7 @@ func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoS
 		return err
 	}
 
-	result, err := client.GetRepo(ctx, opts.RepoID)
+	result, err := client.GetRepo(ctx, opts.RepoRef)
 	if err != nil {
 		return err
 	}

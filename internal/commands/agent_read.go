@@ -21,8 +21,8 @@ type AgentLSOpts struct {
 	// WorktreeRef filters by integration worktree (optional).
 	WorktreeRef string
 
-	// RepoFlag is the --repo flag value.
-	RepoFlag string
+	// RepoRef is the --repo flag value.
+	RepoRef string
 
 	// AllRepos lists across all repos.
 	AllRepos bool
@@ -42,7 +42,7 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllRepos:      opts.AllRepos,
 		AllowAllRepos: true,
 		CmdName:       "agent ls",
@@ -80,8 +80,8 @@ type AgentShowOpts struct {
 	// InvocationRef is the invocation reference (id or prefix).
 	InvocationRef string
 
-	// RepoFlag is the --repo flag value.
-	RepoFlag string
+	// RepoRef is the --repo flag value.
+	RepoRef string
 
 	// JSON outputs as JSON.
 	JSON bool
@@ -95,7 +95,7 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent show",
 	})
@@ -121,8 +121,8 @@ type AgentReviewOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
-	// RepoFlag is the --repo flag value.
-	RepoFlag string
+	// RepoRef is the --repo flag value.
+	RepoRef string
 
 	// JSON outputs as JSON.
 	JSON bool
@@ -139,7 +139,7 @@ func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent review",
 	})
@@ -165,8 +165,8 @@ type AgentHistoryOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
-	// RepoFlag is the --repo flag value.
-	RepoFlag string
+	// RepoRef is the --repo flag value.
+	RepoRef string
 
 	// JSON outputs as JSON.
 	JSON bool
@@ -209,7 +209,7 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent history",
 	})
@@ -274,8 +274,8 @@ type AgentLogsOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
-	// RepoFlag is the --repo flag value.
-	RepoFlag string
+	// RepoRef is the --repo flag value.
+	RepoRef string
 
 	// Kind is the log kind: raw, stderr, stream (default: raw).
 	Kind string
@@ -306,7 +306,7 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent logs",
 	})

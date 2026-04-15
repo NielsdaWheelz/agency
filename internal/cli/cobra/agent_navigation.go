@@ -7,7 +7,7 @@ import (
 )
 
 func newAgentOpenCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 
 	cmd := &cobra.Command{
 		Use:   "open <invocation_ref>",
@@ -16,7 +16,7 @@ func newAgentOpenCmd() *cobra.Command {
 
 Example:
   agency agent open 20260131
-  agency agent open --repo abc123 my-invocation`,
+  agency agent open --repo agency my-invocation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -26,17 +26,17 @@ Example:
 
 			return commands.AgentOpen(ctx, cr, fsys, cwd, commands.AgentOpenOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
 }
 
 func newAgentPathCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 
 	cmd := &cobra.Command{
 		Use:   "path <invocation_ref>",
@@ -47,7 +47,7 @@ The path is resolved via the daemon and printed to stdout.
 
 Example:
   agency agent path 20260131
-  agency agent path --repo abc123 my-invocation
+  agency agent path --repo agency my-invocation
   cd $(agency agent path 20260131)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -58,17 +58,17 @@ Example:
 
 			return commands.AgentPath(ctx, cr, fsys, cwd, commands.AgentPathOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
 }
 
 func newAgentShellCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 
 	cmd := &cobra.Command{
 		Use:   "shell <invocation_ref>",
@@ -79,7 +79,7 @@ The sandbox path is resolved via the daemon before shell dispatch.
 
 Example:
   agency agent shell 20260131
-  agency agent shell --repo abc123 my-invocation`,
+  agency agent shell --repo agency my-invocation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -89,17 +89,17 @@ Example:
 
 			return commands.AgentShell(ctx, cr, fsys, cwd, commands.AgentShellOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVar(&repoFlag, "repo", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
 }
 
 func newAgentEnterCmd() *cobra.Command {
-	var repoFlag string
+	var repoRef string
 
 	cmd := &cobra.Command{
 		Use:   "enter <invocation_ref>",
@@ -111,7 +111,7 @@ Headless invocations are rejected. Detach from the session with Ctrl+b, d.
 
 Example:
   agency agent enter 20260131
-  agency agent enter --repo abc123 20260131`,
+  agency agent enter --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -121,11 +121,11 @@ Example:
 
 			return commands.AgentEnter(ctx, cr, fsys, cwd, commands.AgentEnterOpts{
 				InvocationRef: args[0],
-				RepoFlag:      repoFlag,
+				RepoRef:       repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
 }

@@ -19,7 +19,7 @@ import (
 // CheckpointLSOpts holds options for the agent checkpoint ls command.
 type CheckpointLSOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 	JSON          bool
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
@@ -43,7 +43,7 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	// Resolve repo context through daemon-first contract.
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent checkpoint ls",
 	})
@@ -122,7 +122,7 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 // CheckpointApplyOpts holds options for the agent checkpoint apply command.
 type CheckpointApplyOpts struct {
 	InvocationRef string
-	RepoFlag      string
+	RepoRef       string
 	CheckpointID  int
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
@@ -144,7 +144,7 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoFlag:      opts.RepoFlag,
+		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
 		CmdName:       "agent checkpoint apply",
 	})

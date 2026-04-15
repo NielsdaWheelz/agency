@@ -127,13 +127,13 @@ func (s *Server) loadRunnerSummaryBestEffort(record *resolvedInvocation) string 
 	return strings.TrimSpace(statusMeta.Summary)
 }
 
-func getRepoIDsForQuery(s *Server, filterRepoRef string) ([]string, error) {
+func getRepoIDsForQuery(s *Server, repoID string) ([]string, error) {
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {
 		return nil, err
 	}
 
-	if filterRepoRef == "" {
+	if repoID == "" {
 		repoIDs := make([]string, 0, len(idx.Repos))
 		for _, entry := range idx.Repos {
 			repoIDs = append(repoIDs, entry.RepoID)
@@ -141,12 +141,13 @@ func getRepoIDsForQuery(s *Server, filterRepoRef string) ([]string, error) {
 		return repoIDs, nil
 	}
 
-	refs := s.buildRepoRefs(idx)
-	resolved, resolveErr := ids.ResolveRepoRef(filterRepoRef, refs)
-	if resolveErr != nil {
-		return nil, resolveErr
+	for _, entry := range idx.Repos {
+		if entry.RepoID == repoID {
+			return []string{repoID}, nil
+		}
 	}
-	return []string{resolved.RepoID}, nil
+
+	return nil, &ids.ErrRepoNotFound{Input: repoID}
 }
 
 func writeRepoLookupError(w http.ResponseWriter, s *Server, requestID string, err error, notFoundHint string) {
