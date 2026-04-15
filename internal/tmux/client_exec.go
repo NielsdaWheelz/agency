@@ -67,21 +67,6 @@ func (c *ExecClient) NewSession(ctx context.Context, name, cwd string, argv []st
 	return nil
 }
 
-// Attach implements Client.Attach.
-// Uses: tmux attach -t <name>
-func (c *ExecClient) Attach(ctx context.Context, name string) error {
-	args := []string{"attach", "-t", name}
-	result, err := c.runner.Run(ctx, "tmux", args, exec.RunOpts{})
-	if err != nil {
-		return err
-	}
-
-	if result.ExitCode != 0 {
-		return c.formatError("attach", result.ExitCode, result.Stderr)
-	}
-	return nil
-}
-
 // KillSession implements Client.KillSession.
 // Uses: tmux kill-session -t <name>
 func (c *ExecClient) KillSession(ctx context.Context, name string) error {

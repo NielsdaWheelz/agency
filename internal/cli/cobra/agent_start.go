@@ -28,7 +28,8 @@ func newAgentStartCmd() *cobra.Command {
 An agent invocation runs a runner (Claude, Codex, etc.) inside an isolated
 sandbox worktree derived from the integration branch.
 
-For headed mode (default): creates sandbox, launches tmux session, and attaches.
+For headed mode (default): requires an interactive terminal, creates the sandbox,
+launches the tmux session, and attaches.
 Use --detached to start without attaching.
 
 For headless mode: creates sandbox and runs the runner via the daemon.
@@ -73,7 +74,7 @@ Example:
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use (defaults to config defaults.runner)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional name for the invocation")
-	cmd.Flags().BoolVar(&detached, "detached", false, "Start but do not attach (headed mode only)")
+	cmd.Flags().BoolVar(&detached, "detached", false, "Skip attach in headed mode")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")

@@ -33,11 +33,6 @@ type Client interface {
 	// Returns error if argv is empty or if tmux fails.
 	NewSession(ctx context.Context, name, cwd string, argv []string) error
 
-	// Attach attaches to an existing tmux session.
-	// This blocks until the user detaches.
-	// Returns error if session does not exist or attach fails.
-	Attach(ctx context.Context, name string) error
-
 	// KillSession kills an existing tmux session.
 	// Returns error if session does not exist or kill fails.
 	KillSession(ctx context.Context, name string) error

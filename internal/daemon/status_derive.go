@@ -180,6 +180,7 @@ func InvocationMetaToDTO(meta *store.InvocationMeta, repoID string, logsDir stri
 		RepoID:         repoID,
 		Runner:         meta.Runner,
 		Mode:           string(meta.Mode),
+		TmuxSession:    meta.TmuxSession,
 		StartedAt:      meta.StartedAt,
 		FinishedAt:     meta.FinishedAt,
 		LastOutputAt:   meta.LastOutputAt,

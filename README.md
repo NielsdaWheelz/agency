@@ -55,7 +55,7 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 cd myrepo
 agency repo add                              # register this repo
 agency worktree create --name my-feature     # create an isolated branch
-agency agent start --worktree my-feature     # launch claude-code in a tmux session
+agency agent start --worktree my-feature     # headed start requires an interactive terminal; use --detached to skip attach
 # Ctrl+b, d to detach from tmux
 agency watch                                 # full-screen readiness workspace (interactive tty; enter/o/p actions)
 agency agent ls                              # concise invocation list

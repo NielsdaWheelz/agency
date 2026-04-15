@@ -234,7 +234,10 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		)
 	}
 
-	sessionName := tmux.SessionName(invocation.Data.InvocationID)
+	sessionName := invocation.Data.TmuxSession
+	if sessionName == "" {
+		sessionName = tmux.SessionName(invocation.Data.InvocationID)
+	}
 
 	tmuxClient := opts.TmuxClient
 	if tmuxClient == nil {

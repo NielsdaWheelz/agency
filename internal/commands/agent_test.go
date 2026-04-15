@@ -18,6 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
@@ -155,6 +156,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	require.NoError(t, st.SaveRepoRecord(repoRecord))
 	configDir := filepath.Join(dataDir, "config")
 	srv := daemon.NewServer(st, cr, fsys, configDir)
+	srv.TmuxClient = testutil.NewFakeTmuxClient()
 
 	socketPath := st.DaemonSocketPath()
 	listener, err := net.Listen("unix", socketPath)
@@ -177,6 +179,56 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
 
 	return repoDir, dataDir, repoID, worktreeID, cr, fsys
+}
+
+type agentStartHeadedTestEnv struct {
+	RepoDir    string
+	DataDir    string
+	RepoID     string
+	Runner     exec.CommandRunner
+	FS         fs.FS
+	RecordFile string
+}
+
+func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCode int) agentStartHeadedTestEnv {
+	t.Helper()
+
+	repoDir, dataDir, repoID, _, fakeRunner, fsys := setupAgentTestEnvShort(t, worktreeName)
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	cfg := map[string]any{
+		"version": 1,
+		"defaults": map[string]string{
+			"runner": "claude-code",
+			"editor": "code",
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	shimDir := t.TempDir()
+	recordFile := filepath.Join(shimDir, "record.txt")
+	shimPath := filepath.Join(shimDir, "tmux")
+	script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\nexit %d\n", recordFile, recordFile, tmuxExitCode)
+	require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	return agentStartHeadedTestEnv{
+		RepoDir:    repoDir,
+		DataDir:    dataDir,
+		RepoID:     repoID,
+		Runner:     fakeRunner,
+		FS:         fsys,
+		RecordFile: recordFile,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -756,35 +808,153 @@ func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 		"shell should be invoked with -l (login)")
 }
 
-func TestAgentEnter_UsesDaemonResolution_HeadedOnly(t *testing.T) {
-	env := setupAgentNavEnv(t, "enter-test", store.RunnerModeHeaded)
+// ---------------------------------------------------------------------------
+// S2-PR04 Acceptance 2.5: headed start attach cutover
+// ---------------------------------------------------------------------------
 
-	fakeTmux := testutil.NewFakeTmuxClient()
-	sessionName := tmux.SessionName(env.InvocationID)
-	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
-
-	var attachCalled bool
-	var attachedSession string
+func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-noterm", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
-			InvocationRef:   env.InvocationID,
-			RepoFlag:        env.RepoID,
-			IsInteractive:   func() bool { return true },
-			TmuxClient:      fakeTmux,
-			DataDirOverride: env.DataDir,
-			TmuxAttachFn: func(sess string) error {
-				attachCalled = true
-				attachedSession = sess
-				return nil
-			},
-		}, &stdout, &stderr)
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		WorktreeRef:   "start-noterm",
+		Runner:        "claude-code",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
+
+	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
+	_, statErr := os.Stat(invocationsDir)
+	assert.True(t, os.IsNotExist(statErr), "headed start must not create an invocation before the interactive gate")
+
+	_, recordErr := os.Stat(env.RecordFile)
+	assert.True(t, os.IsNotExist(recordErr), "tmux attach shim must not be invoked")
+}
+
+func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-detached", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		WorktreeRef:   "start-detached",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	assert.True(t, attachCalled, "tmux attach must be called")
-	assert.Equal(t, sessionName, attachedSession,
-		"tmux session target must be derived from daemon-resolved invocation_id via tmux.SessionName")
+	assert.Contains(t, stdout.String(), "Session started in detached mode.")
+	assert.Contains(t, stdout.String(), "Use 'agency agent enter ")
+	assert.Empty(t, stderr.String())
+
+	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
+	entries, readErr := os.ReadDir(invocationsDir)
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1, "headed start should create exactly one invocation")
+
+	_, recordErr := os.Stat(env.RecordFile)
+	assert.True(t, os.IsNotExist(recordErr), "detached headed start must not attach")
+}
+
+func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		WorktreeRef:   "start-attach-fail",
+		Runner:        "claude-code",
+		IsInteractive: func() bool { return true },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	require.Contains(t, output, "tmux_session:")
+	session := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  tmux_session:") {
+			session = strings.TrimSpace(strings.TrimPrefix(line, "  tmux_session:"))
+			break
+		}
+	}
+	require.NotEmpty(t, session, "headed start must print the tmux session it attached to")
+
+	cwd, args := readShimRecord(t, env.RecordFile)
+	assert.NotEmpty(t, cwd)
+	assert.Equal(t, "attach -t "+session, args)
+	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
+	assert.Contains(t, stderr.String(), "Use 'agency agent enter ")
+}
+
+func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
+	t.Run("stored session wins", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "enter-stored", store.RunnerModeHeaded)
+		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+		storedSession := "agency_explicit_enter"
+		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+			meta.TmuxSession = storedSession
+		}))
+
+		fakeTmux := testutil.NewFakeTmuxClient()
+		fakeTmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
+
+		var attachCalled bool
+		var attachedSession string
+
+		var stdout, stderr bytes.Buffer
+		err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentEnterOpts{
+				InvocationRef:   env.InvocationID,
+				RepoFlag:        env.RepoID,
+				IsInteractive:   func() bool { return true },
+				TmuxClient:      fakeTmux,
+				DataDirOverride: env.DataDir,
+				TmuxAttachFn: func(sess string) error {
+					attachCalled = true
+					attachedSession = sess
+					return nil
+				},
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		assert.True(t, attachCalled, "tmux attach must be called")
+		assert.Equal(t, storedSession, attachedSession, "stored tmux_session must win over the derived name")
+	})
+
+	t.Run("fallback to derived session", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "enter-fallback", store.RunnerModeHeaded)
+		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+			meta.TmuxSession = ""
+		}))
+
+		fakeTmux := testutil.NewFakeTmuxClient()
+		fallbackSession := tmux.SessionName(env.InvocationID)
+		fakeTmux.Sessions[fallbackSession] = testutil.FakeTmuxSession{Name: fallbackSession}
+
+		var attachCalled bool
+		var attachedSession string
+
+		var stdout, stderr bytes.Buffer
+		err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentEnterOpts{
+				InvocationRef:   env.InvocationID,
+				RepoFlag:        env.RepoID,
+				IsInteractive:   func() bool { return true },
+				TmuxClient:      fakeTmux,
+				DataDirOverride: env.DataDir,
+				TmuxAttachFn: func(sess string) error {
+					attachCalled = true
+					attachedSession = sess
+					return nil
+				},
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		assert.True(t, attachCalled, "tmux attach must be called")
+		assert.Equal(t, fallbackSession, attachedSession, "agent enter must fall back to tmux.SessionName(invocation_id)")
+	})
 }
 
 func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {

@@ -40,7 +40,6 @@ type FakeTmuxClient struct {
 	HasSessionErr  error
 	KillSessionErr error
 	SendKeysErr    error
-	AttachErr      error
 
 	// HasSessionFunc, when non-nil, overrides the default HasSession logic.
 	// Useful for tests that need sequential/conditional results (e.g. race-condition tests).
@@ -51,7 +50,6 @@ type FakeTmuxClient struct {
 	NewSessionCalls  []FakeTmuxNewSessionCall
 	SendKeysCalls    []FakeTmuxSendKeysCall
 	KillSessionCalls []string
-	AttachCalls      []string
 	HasSessionCalls  []string
 }
 
@@ -87,14 +85,6 @@ func (f *FakeTmuxClient) NewSession(_ context.Context, name, cwd string, argv []
 	}
 	f.Sessions[name] = FakeTmuxSession{Name: name, CWD: cwd, Argv: argv}
 	return nil
-}
-
-// Attach implements tmux.Client.
-func (f *FakeTmuxClient) Attach(_ context.Context, name string) error {
-	f.Mu.Lock()
-	defer f.Mu.Unlock()
-	f.AttachCalls = append(f.AttachCalls, name)
-	return f.AttachErr
 }
 
 // KillSession implements tmux.Client.

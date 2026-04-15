@@ -84,6 +84,7 @@ type InvocationDTO struct {
 	RepoID         string `json:"repo_id"`
 	Runner         string `json:"runner"`
 	Mode           string `json:"mode"` // "headed" or "headless"
+	TmuxSession    string `json:"tmux_session,omitempty"`
 
 	// Timestamps
 	StartedAt    string `json:"started_at"`

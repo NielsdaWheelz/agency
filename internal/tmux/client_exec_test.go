@@ -237,59 +237,6 @@ func TestExecClient_NewSession(t *testing.T) {
 	}
 }
 
-func TestExecClient_Attach(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		session   string
-		responses []fakeResponse
-		wantErr   bool
-		wantArgs  []string
-	}{
-		{
-			name:    "attach success",
-			session: "agency_abc",
-			responses: []fakeResponse{
-				{Result: exec.CmdResult{ExitCode: 0}},
-			},
-			wantErr:  false,
-			wantArgs: []string{"attach", "-t", "agency_abc"},
-		},
-		{
-			name:    "attach failure",
-			session: "agency_abc",
-			responses: []fakeResponse{
-				{Result: exec.CmdResult{ExitCode: 1, Stderr: "no session"}},
-			},
-			wantErr:  true,
-			wantArgs: []string{"attach", "-t", "agency_abc"},
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			runner := newFakeRunner(tt.responses...)
-			client := NewExecClient(runner)
-
-			err := client.Attach(context.Background(), tt.session)
-
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-
-			require.Len(t, runner.calls, 1)
-
-			call := runner.calls[0]
-			assert.Equal(t, "tmux", call.Name)
-			assert.Equal(t, tt.wantArgs, call.Args)
-		})
-	}
-}
-
 func TestExecClient_KillSession(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -14,7 +15,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // AgentStartOpts holds options for the agent start command.
@@ -56,8 +56,8 @@ type AgentStartOpts struct {
 	// NoIncludeUntracked excludes untracked files from checkpoint snapshots.
 	NoIncludeUntracked bool
 
-	// TmuxClient is the tmux client to use (optional, uses real client if nil).
-	TmuxClient tmux.Client
+	IsInteractive func() bool
+	TmuxAttachFn  func(sessionName string) error
 }
 
 // AgentStart starts a new agent invocation.
@@ -73,6 +73,21 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	if fsys == nil {
 		fsys = fs.NewRealFS()
+	}
+	if !opts.Headless && !opts.Detached {
+		isInteractive := opts.IsInteractive
+		if isInteractive == nil {
+			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
+		}
+		if !isInteractive() {
+			return fail(errors.NewWithDetails(
+				errors.ENotInteractive,
+				"headed start requires an interactive terminal",
+				map[string]string{
+					"hint": "re-run in an interactive terminal or pass --detached",
+				},
+			))
+		}
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
@@ -105,11 +120,11 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fail(agentStartHeadlessControlPlane(ctx, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
 	}
 
-	return fail(agentStartHeadedControlPlane(ctx, cr, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
+	return fail(agentStartHeadedControlPlane(ctx, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
 }
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane.
-func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
+func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
 	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
@@ -181,13 +196,11 @@ func agentStartHeadedControlPlane(ctx context.Context, cr exec.CommandRunner, re
 	if !opts.Detached {
 		_, _ = fmt.Fprintf(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)\n")
 
-		// Get tmux client - use provided or create new
-		tmuxClient := opts.TmuxClient
-		if tmuxClient == nil {
-			tmuxClient = tmux.NewExecClient(cr)
+		attachFn := opts.TmuxAttachFn
+		if attachFn == nil {
+			attachFn = realTmuxAttach
 		}
-
-		if err := tmuxClient.Attach(ctx, resp.TmuxSession); err != nil {
+		if err := attachFn(resp.TmuxSession); err != nil {
 			// Attach failed but session exists - not a fatal error
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
 			_, _ = fmt.Fprintf(stderr, "Use 'agency agent enter %s' to attach later.\n", shortID)
