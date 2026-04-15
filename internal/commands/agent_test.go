@@ -880,7 +880,8 @@ func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-noterm", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), env.FS, AgentStartOpts{
+		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-noterm",
 		Runner:        "claude-code",
 		IsInteractive: func() bool { return false },
@@ -897,11 +898,24 @@ func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
 	assert.True(t, os.IsNotExist(recordErr), "tmux attach shim must not be invoked")
 }
 
+func TestAgentStart_RequiresRepoRef(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), fs.NewRealFS(), AgentStartOpts{
+		WorktreeRef: "missing-repo",
+		Headless:    true,
+		Prompt:      "hello",
+	}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
 func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-detached", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), env.FS, AgentStartOpts{
+		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-detached",
 		Runner:        "claude-code",
 		Detached:      true,
@@ -926,7 +940,8 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), env.FS, AgentStartOpts{
+		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-attach-fail",
 		Runner:        "claude-code",
 		IsInteractive: func() bool { return true },

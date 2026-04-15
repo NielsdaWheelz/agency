@@ -20,6 +20,7 @@ import (
 
 // WorktreeCreateOpts holds options for the worktree create command.
 type WorktreeCreateOpts struct {
+	RepoRef      string
 	Name         string
 	ParentBranch string
 	Open         bool
@@ -27,9 +28,17 @@ type WorktreeCreateOpts struct {
 }
 
 // WorktreeCreate creates a new integration worktree.
-func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
+func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
+	repoRef := strings.TrimSpace(opts.RepoRef)
+	if repoRef == "" {
+		return errors.New(errors.EUsage, "--repo is required")
+	}
 	if strings.TrimSpace(opts.Name) == "" {
 		return errors.New(errors.EUsage, "--name is required")
+	}
+	parentBranch := strings.TrimSpace(opts.ParentBranch)
+	if parentBranch == "" {
+		return errors.New(errors.EUsage, "--parent is required")
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
@@ -37,14 +46,20 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return err
 	}
 
-	// Validate repo context (basic check - daemon does full validation)
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	repo, err := ns.client.GetRepo(ctx, repoRef)
 	if err != nil {
-		return errors.New(errors.ENoRepo, "not inside a git repository")
+		return err
+	}
+	if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
+		return errors.NewWithDetails(
+			errors.ERepoRootInaccessible,
+			"repo preferred_root is not accessible",
+			map[string]string{"repo": repoRef, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+		)
 	}
 
 	// Check parent tree is clean (daemon doesn't check this)
-	clean, err := git.IsClean(ctx, cr, repoRoot.Path)
+	clean, err := git.IsClean(ctx, cr, repo.Data.PreferredRoot)
 	if err != nil {
 		return err
 	}
@@ -57,9 +72,9 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 	// Call daemon to create worktree
 	result, err := ns.client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
-		RepoRoot:       repoRoot.Path,
+		RepoRoot:       repo.Data.PreferredRoot,
 		Name:           opts.Name,
-		ParentBranch:   opts.ParentBranch,
+		ParentBranch:   parentBranch,
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {

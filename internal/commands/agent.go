@@ -12,13 +12,14 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
 // AgentStartOpts holds options for the agent start command.
 type AgentStartOpts struct {
+	// RepoRef is the repository reference (name, key, id, or prefix).
+	RepoRef string
+
 	// WorktreeRef is the integration worktree reference (name, id, or prefix).
 	WorktreeRef string
 
@@ -61,7 +62,7 @@ type AgentStartOpts struct {
 }
 
 // AgentStart starts a new agent invocation.
-func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
+func AgentStart(ctx context.Context, fsys fs.FS, opts AgentStartOpts, stdout, stderr io.Writer) error {
 	fail := func(err error) error {
 		if err == nil || !opts.JSON {
 			return err
@@ -70,6 +71,10 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	if strings.TrimSpace(opts.WorktreeRef) == "" {
 		return fail(errors.New(errors.EUsage, "--worktree is required"))
+	}
+	repoRef := strings.TrimSpace(opts.RepoRef)
+	if repoRef == "" {
+		return fail(errors.New(errors.EUsage, "--repo is required"))
 	}
 	if fsys == nil {
 		fsys = fs.NewRealFS()
@@ -99,10 +104,16 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fail(err)
 	}
 
-	// Get repo context
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	repo, err := ns.client.GetRepo(ctx, repoRef)
 	if err != nil {
-		return fail(errors.New(errors.ENoRepo, "not inside a git repository"))
+		return fail(err)
+	}
+	if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
+		return fail(errors.NewWithDetails(
+			errors.ERepoRootInaccessible,
+			"repo preferred_root is not accessible",
+			map[string]string{"repo": repoRef, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+		))
 	}
 
 	// Validate runner
@@ -117,10 +128,10 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	opts.RunnerArgs = effectiveRunnerArgs
 
 	if opts.Headless {
-		return fail(agentStartHeadlessControlPlane(ctx, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
+		return fail(agentStartHeadlessControlPlane(ctx, repo.Data.PreferredRoot, ns.client, opts, runner, stdout, stderr))
 	}
 
-	return fail(agentStartHeadedControlPlane(ctx, repoRoot.Path, ns.client, opts, runner, stdout, stderr))
+	return fail(agentStartHeadedControlPlane(ctx, repo.Data.PreferredRoot, ns.client, opts, runner, stdout, stderr))
 }
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane.

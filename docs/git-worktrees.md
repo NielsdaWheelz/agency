@@ -15,7 +15,8 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 ## Rules
 
 - Repo discovery must resolve one clean absolute repo root.
-- Creating a worktree requires a git repo with commits, a clean parent tree, and an existing parent branch.
+- `agency worktree create` and `agency agent start` require an explicit `--repo` selector and must not infer repository context from the current directory.
+- Creating a worktree requires a registered repo, a git repo with commits, a clean parent tree, and an existing parent branch.
 - Integration worktrees are stable collaboration surfaces.
 - Sandboxes are disposable execution surfaces.
 - Landing and discard flows must preserve enough durable state to explain the outcome after restart.

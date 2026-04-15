@@ -4,9 +4,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
+	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newAgentStartCmd() *cobra.Command {
+	var repoRef string
 	var worktree string
 	var runner string
 	var headless bool
@@ -39,21 +41,17 @@ Checkpoints are automatically created during headless execution. Use
 --no-include-untracked to exclude untracked files from checkpoint snapshots.
 
 Example:
-  agency agent start --worktree my-feature
-  agency agent start --worktree my-feature --runner claude-code
-  agency agent start --worktree my-feature --detached
-  agency agent start --worktree my-feature --name arch-agent
-  agency agent start --worktree my-feature --headless --prompt "Fix the bug"
-  agency agent start --worktree my-feature --headless --prompt-file task.md
-  agency agent start --worktree my-feature --headless --no-include-untracked`,
+  agency agent start --repo agency --worktree my-feature
+  agency agent start --repo agency --worktree my-feature --runner claude-code
+  agency agent start --repo agency --worktree my-feature --detached
+  agency agent start --repo agency --worktree my-feature --name arch-agent
+  agency agent start --repo agency --worktree my-feature --headless --prompt "Fix the bug"
+  agency agent start --repo agency --worktree my-feature --headless --prompt-file task.md
+  agency agent start --repo agency --worktree my-feature --headless --no-include-untracked`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
+			return commands.AgentStart(cmd.Context(), fs.NewRealFS(), commands.AgentStartOpts{
+				RepoRef:            repoRef,
 				WorktreeRef:        worktree,
 				Runner:             runner,
 				Headless:           headless,
@@ -70,6 +68,7 @@ Example:
 		},
 	}
 
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo name, key, id, or prefix (required)")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Integration worktree to run against (required)")
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use (defaults to config defaults.runner)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")

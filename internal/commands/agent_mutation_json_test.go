@@ -40,15 +40,12 @@ func assertMutationEnvelopeShape(t *testing.T, payload map[string]any) {
 }
 
 func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "start-json")
+	_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "start-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), fsys, AgentStartOpts{
+		RepoRef:     repoID,
 		WorktreeRef: "start-json",
 		Headless:    true,
 		JSON:        true,
@@ -62,15 +59,12 @@ func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 }
 
 func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "start-json-daemon-fail")
+	_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "start-json-daemon-fail")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), fsys, AgentStartOpts{
+		RepoRef:     repoID,
 		WorktreeRef: "does-not-exist",
 		Runner:      "claude-code",
 		Headless:    true,

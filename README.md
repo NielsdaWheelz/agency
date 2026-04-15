@@ -51,11 +51,13 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 
 ## quick start
 
+Register the repo once, then use explicit `--repo` selectors from any cwd for create/start flows.
+`--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
+
 ```bash
-cd myrepo
-agency repo add                              # register this repo
-agency worktree create --name my-feature     # create an isolated branch
-agency agent start --worktree my-feature     # headed start requires an interactive terminal; use --detached to skip attach
+agency repo add /path/to/myrepo              # register this repo once
+agency worktree create --repo <repo-ref> --name my-feature --parent main
+agency agent start --repo <repo-ref> --worktree my-feature # headed start requires an interactive terminal; use --detached to skip attach
 # Ctrl+b, d to detach from tmux
 agency watch                                 # full-screen readiness workspace (interactive tty; enter/o/p actions)
 agency agent ls                              # concise invocation list
@@ -65,8 +67,8 @@ agency agent land <invocation-id> --apply    # land changes back to worktree
 headless (fire-and-forget):
 
 ```bash
-agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
-agency agent start --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
+agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
+agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
 agency agent logs <invocation-id> --follow
 agency agent chat <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
@@ -84,6 +86,8 @@ agency agent restart <invocation-id> --history     # interactive history selecto
 ```
 
 short alias parity for high-traffic s6 navigation/progression surfaces:
+- `worktree create`: `-r/--repo`
+- `agent start`: `-r/--repo`
 - `agent review`: `-r/--repo`, `-j/--json`
 - `agent path|open|enter`: `-r/--repo`
 
@@ -107,7 +111,7 @@ agency repo rm <repo-ref> --yes
 automation-friendly mutation json:
 
 ```bash
-agency agent start --worktree my-feature --headless --prompt "fix bug" --json
+agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "fix bug" --json
 agency agent stop <invocation-id> --json
 agency agent kill <invocation-id> --json
 agency agent land <invocation-id> --json

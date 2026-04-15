@@ -585,6 +585,26 @@ func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
 
+func TestWorktreeCreate_RequiresRepoRef(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := WorktreeCreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), WorktreeCreateOpts{
+		Name:         "missing-repo",
+		ParentBranch: "main",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestWorktreeCreate_RequiresParent(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := WorktreeCreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), WorktreeCreateOpts{
+		RepoRef: "repo-1",
+		Name:    "missing-parent",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
 func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
 	dataDir, err := os.MkdirTemp("", "wd")
@@ -596,23 +616,25 @@ func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *te
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, regErr)
 
 	editorPath := filepath.Join(t.TempDir(), "editor-fail.sh")
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 17\n"), 0o755))
 
 	var stdout, stderr bytes.Buffer
-	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name:   "open-fail",
-		Open:   true,
-		Editor: editorPath,
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), WorktreeCreateOpts{
+		RepoRef:      reg.Data.RepoID,
+		Name:         "open-fail",
+		ParentBranch: "main",
+		Open:         true,
+		Editor:       editorPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "open_status: failed")
 	assert.Contains(t, stderr.String(), "warning: workspace created but open dispatch failed: editor exited with code 17")
 
-	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
-	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
-	require.NoError(t, regErr)
 	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{
 		RepoID: reg.Data.RepoID,
 		State:  "present",
@@ -633,15 +655,20 @@ func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, regErr)
 
 	editorPath := filepath.Join(t.TempDir(), "editor-ok.sh")
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	var stdout, stderr bytes.Buffer
-	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name:   "open-ok",
-		Open:   true,
-		Editor: editorPath,
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), WorktreeCreateOpts{
+		RepoRef:      reg.Data.RepoID,
+		Name:         "open-ok",
+		ParentBranch: "main",
+		Open:         true,
+		Editor:       editorPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "open_status: opened")

@@ -41,6 +41,10 @@ type invocationShowResponse struct {
 	Runner string `json:"runner"`
 }
 
+type repoAddResponse struct {
+	RepoID string `json:"repo_id"`
+}
+
 type launchCapture struct {
 	Args []string `json:"args"`
 	CWD  string   `json:"cwd"`
@@ -143,11 +147,24 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 				"AGENCY_LOCAL_E2E_TEST_CASE": tc.name,
 			}
 
-			create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "--name", worktreeName)
+			add := runAgencyCLI(t, agencyBin, repoDir, env, "repo", "add", "--json")
+			require.Equalf(t, 0, add.ExitCode, "repo add failed\nstdout:\n%s\nstderr:\n%s", add.Stdout, add.Stderr)
+			var repo repoAddResponse
+			require.NoError(t, json.Unmarshal([]byte(add.Stdout), &repo), "invalid repo add json: %s", add.Stdout)
+			require.NotEmpty(t, repo.RepoID)
+
+			nonGitCWD := mustMkdirTemp(t, "agency-e2e-cwd-*")
+			create := runAgencyCLI(t, agencyBin, nonGitCWD, env,
+				"worktree", "create",
+				"--repo", repo.RepoID,
+				"--name", worktreeName,
+				"--parent", "main",
+			)
 			require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
 
-			start := runAgencyCLI(t, agencyBin, repoDir, env,
+			start := runAgencyCLI(t, agencyBin, nonGitCWD, env,
 				"agent", "start",
+				"--repo", repo.RepoID,
 				"--worktree", worktreeName,
 				"--runner", tc.runnerInput,
 				"--headless",
@@ -225,11 +242,25 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 		"AGENCY_LOCAL_E2E":    "1",
 	}
 
-	create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "--name", "e2e-conflict")
+	add := runAgencyCLI(t, agencyBin, repoDir, env, "repo", "add", "--json")
+	require.Equalf(t, 0, add.ExitCode, "repo add failed\nstdout:\n%s\nstderr:\n%s", add.Stdout, add.Stderr)
+	var repo repoAddResponse
+	require.NoError(t, json.Unmarshal([]byte(add.Stdout), &repo), "invalid repo add json: %s", add.Stdout)
+	require.NotEmpty(t, repo.RepoID)
+
+	nonGitCWD := mustMkdirTemp(t, "agency-e2e-cwd-*")
+	create := runAgencyCLI(t, agencyBin, nonGitCWD,
+		env,
+		"worktree", "create",
+		"--repo", repo.RepoID,
+		"--name", "e2e-conflict",
+		"--parent", "main",
+	)
 	require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
 
-	start := runAgencyCLI(t, agencyBin, repoDir, env,
+	start := runAgencyCLI(t, agencyBin, nonGitCWD, env,
 		"agent", "start",
+		"--repo", repo.RepoID,
 		"--worktree", "e2e-conflict",
 		"--runner", "cursor",
 		"--headless",
