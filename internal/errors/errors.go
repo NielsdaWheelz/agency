@@ -200,29 +200,6 @@ const (
 	ELogNotFound     Code = "E_LOG_NOT_FOUND"    // log file does not exist or kind unavailable
 	EInvalidArgument Code = "E_INVALID_ARGUMENT" // invalid parameter (offset, limit, interval, etc.)
 
-	// v2.1 Slice S1 gate corpus error codes (PR-01)
-	EGateSetInvalid               Code = "E_GATE_SET_INVALID"                // gate set source cannot be parsed or resolved
-	EGateItemNotFound             Code = "E_GATE_ITEM_NOT_FOUND"             // referenced issue path does not exist
-	EGateItemInvalid              Code = "E_GATE_ITEM_INVALID"               // issue stub shape is invalid for gate evaluation
-	EGateItemAcceptanceIncomplete Code = "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE" // issue acceptance checklist is not fully complete
-	EGateItemTestsIncomplete      Code = "E_GATE_ITEM_TESTS_INCOMPLETE"      // required automated test evidence is missing or failing
-	EGateItemEvidenceMissing      Code = "E_GATE_ITEM_EVIDENCE_MISSING"      // closure attempted without non-empty evidence_refs
-	EGateItemClosureBlockMissing  Code = "E_GATE_ITEM_CLOSURE_BLOCK_MISSING" // required closure evidence block is absent
-
-	// v2.1 Slice S1 gate item lifecycle error codes (PR-02)
-	EGateTransitionInvalid    Code = "E_GATE_TRANSITION_INVALID"     // requested gate item state transition is illegal
-	EGateApprovalRequired     Code = "E_GATE_APPROVAL_REQUIRED"      // transition caller role does not satisfy policy
-	EGateReopenReasonRequired Code = "E_GATE_REOPEN_REASON_REQUIRED" // reopen transition is missing reason or evidence
-	EGateE2ERequired          Code = "E_GATE_E2E_REQUIRED"           // closure requires GH e2e evidence for this gate item
-
-	// v2.1 Slice S1 gate readiness error codes (PR-03)
-	EGateSetDrift Code = "E_GATE_SET_DRIFT" // canonical gate membership and issue-map are inconsistent
-	EGateBlocked  Code = "E_GATE_BLOCKED"   // gate or slice attempted to complete while blockers remain
-
-	// v2.1 Slice S1 gate set change validation error codes (PR-04)
-	EGateChangeReasonRequired   Code = "E_GATE_CHANGE_REASON_REQUIRED"   // gate-set change omits non-empty reason
-	EGateChangeTargetRequired   Code = "E_GATE_CHANGE_TARGET_REQUIRED"   // gate-set change has missing or invalid target fields
-	EGateChangeApprovalRequired Code = "E_GATE_CHANGE_APPROVAL_REQUIRED" // remove/replace gate-set change lacks explicit approver
 )
 
 // AgencyError is the standard error type for agency errors.

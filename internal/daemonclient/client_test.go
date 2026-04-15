@@ -262,27 +262,6 @@ func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 				return err
 			},
 		},
-		{
-			name: "GetS1ReleaseReadiness",
-			call: func() error {
-				_, err := client.GetS1ReleaseReadiness(context.Background(), "repo-1")
-				return err
-			},
-		},
-		{
-			name: "GetS1ClosureReport",
-			call: func() error {
-				_, err := client.GetS1ClosureReport(context.Background(), "repo-1")
-				return err
-			},
-		},
-		{
-			name: "GetS1FreezeReadiness",
-			call: func() error {
-				_, err := client.GetS1FreezeReadiness(context.Background(), "repo-1")
-				return err
-			},
-		},
 	}
 
 	for _, tt := range tests {

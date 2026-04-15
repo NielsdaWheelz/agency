@@ -39,30 +39,3 @@ func (c *Client) GetRepo(ctx context.Context, repoID string) (*daemon.Result[dae
 	}
 	return decodeResult[daemon.RepoDTO](apiResp)
 }
-
-// GetS1ReleaseReadiness queries the daemon for S1 release readiness.
-func (c *Client) GetS1ReleaseReadiness(ctx context.Context, repoID string) (*daemon.Result[daemon.S1ReleaseReadinessData], error) {
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/spec/v2.1/s1/release/readiness?repo_id="+url.QueryEscape(repoID), nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.S1ReleaseReadinessData](apiResp)
-}
-
-// GetS1ClosureReport queries the daemon for the S1 closure report.
-func (c *Client) GetS1ClosureReport(ctx context.Context, repoID string) (*daemon.Result[daemon.S1ClosureReportData], error) {
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/spec/v2.1/s1/release/closure-report?repo_id="+url.QueryEscape(repoID), nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.S1ClosureReportData](apiResp)
-}
-
-// GetS1FreezeReadiness queries the daemon for S1 freeze readiness.
-func (c *Client) GetS1FreezeReadiness(ctx context.Context, repoID string) (*daemon.Result[daemon.S1FreezeReadinessData], error) {
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, daemonBaseURL+"/spec/v2.1/s1/release/freeze-readiness?repo_id="+url.QueryEscape(repoID), nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.S1FreezeReadinessData](apiResp)
-}

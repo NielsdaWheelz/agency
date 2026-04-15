@@ -1,1 +1,0 @@
-../../../valid_synced/docs/issues/new-issue.md

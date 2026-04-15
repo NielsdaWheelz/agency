@@ -1,1 +1,0 @@
-../../../valid_blocked/docs/issues/gate-a-2.md

@@ -32,7 +32,6 @@ Subcommands:
 		newRepoAddCmd(),
 		newRepoLSCmd(),
 		newRepoShowCmd(),
-		newRepoS1Cmd(),
 	)
 
 	return cmd
@@ -134,122 +133,6 @@ Example:
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-
-	return cmd
-}
-
-func newRepoS1Cmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "s1",
-		Short: "S1 release gate operations",
-		Long: `S1 release gate enforcement and reporting.
-
-Subcommands:
-  readiness   Check S1 release readiness
-  report      Generate S1 closure evidence report
-  freeze      Check S1 freeze readiness`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency repo s1 <readiness|report|freeze>")
-		},
-	}
-
-	cmd.AddCommand(
-		newRepoS1ReadinessCmd(),
-		newRepoS1ReportCmd(),
-		newRepoS1FreezeCmd(),
-	)
-
-	return cmd
-}
-
-func newRepoS1ReadinessCmd() *cobra.Command {
-	var jsonOutput bool
-	var repoID string
-
-	cmd := &cobra.Command{
-		Use:   "readiness",
-		Short: "Check S1 release readiness",
-		Long: `Check whether Slice S1 gates are ready for release.
-
-Returns READY when all Gate A and Gate B items are closed,
-or BLOCKED with details of blocking items.
-
-Example:
-  agency repo s1 readiness
-  agency repo s1 readiness --json
-  agency repo s1 readiness --repo <repo_id>`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			return commands.RepoS1Readiness(ctx, cr, fsys, cwd, commands.RepoS1ReadinessOpts{
-				RepoID: repoID,
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
-	}
-
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
-
-	return cmd
-}
-
-func newRepoS1ReportCmd() *cobra.Command {
-	var jsonOutput bool
-	var repoID string
-
-	cmd := &cobra.Command{
-		Use:   "report",
-		Short: "Generate S1 closure evidence report",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			return commands.RepoS1ClosureReport(ctx, cr, fsys, cwd, commands.RepoS1ClosureReportOpts{
-				RepoID: repoID,
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
-	}
-
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
-
-	return cmd
-}
-
-func newRepoS1FreezeCmd() *cobra.Command {
-	var jsonOutput bool
-	var repoID string
-
-	cmd := &cobra.Command{
-		Use:   "freeze",
-		Short: "Check S1 freeze readiness",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			return commands.RepoS1FreezeReadiness(ctx, cr, fsys, cwd, commands.RepoS1FreezeReadinessOpts{
-				RepoID: repoID,
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
-	}
-
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
 
 	return cmd
 }

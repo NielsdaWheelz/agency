@@ -1,1 +1,0 @@
-../../../valid_synced/docs/issues/gate-a-1.md

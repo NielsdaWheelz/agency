@@ -21,7 +21,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/worktrees", s.handleWorktrees)
 	mux.HandleFunc("/repos/", s.handleRepos)
 	mux.HandleFunc("/repos", s.handleRepos)
-	mux.HandleFunc("/spec/v2.1/s1/release/", s.handleS1Release)
 }
 
 func (s *Server) newHTTPHandler() http.Handler {
