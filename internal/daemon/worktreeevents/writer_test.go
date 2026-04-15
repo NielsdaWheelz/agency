@@ -51,7 +51,7 @@ func TestWriter_AppendConcurrentCrossSurfaceMonotonicSeq(t *testing.T) {
 	const perProducer = 40
 	kinds := []string{
 		"agency.pr_sync_started",
-		"agency.worktree_update_started",
+		"agency.worktree_rebase_started",
 		"agency.merge_started",
 	}
 

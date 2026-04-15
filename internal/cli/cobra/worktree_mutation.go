@@ -164,12 +164,12 @@ Example:
 	return cmd
 }
 
-func newWorktreeUpdateCmd() *cobra.Command {
+func newWorktreeRebaseCmd() *cobra.Command {
 	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "update <worktree_ref>",
+		Use:   "rebase <worktree_ref>",
 		Short: "Rebase worktree branch onto parent branch",
 		Long: `Fetch origin and rebase the worktree branch onto origin/<parent_branch>.
 
@@ -177,9 +177,9 @@ This command requires a clean worktree and returns a typed conflict error if
 the rebase cannot be applied cleanly.
 
 Example:
-  agency worktree update my-feature
-  agency worktree update --repo agency my-feature
-  agency worktree update --json my-feature`,
+  agency worktree rebase my-feature
+  agency worktree rebase --repo agency my-feature
+  agency worktree rebase --json my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -187,7 +187,7 @@ Example:
 				return err
 			}
 
-			return commands.WorktreeUpdate(ctx, cr, fsys, cwd, commands.WorktreeUpdateOpts{
+			return commands.WorktreeRebase(ctx, cr, fsys, cwd, commands.WorktreeRebaseOpts{
 				WorktreeRef: args[0],
 				RepoRef:     repoRef,
 				JSON:        jsonOut,

@@ -89,9 +89,9 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 		},
 		{
-			name:   "worktree_update_missing_repo",
+			name:   "worktree_rebase_missing_repo",
 			method: http.MethodPost,
-			path:   "/worktrees/wt-1/update",
+			path:   "/worktrees/wt-1/rebase",
 			body:   []byte(`{}`),
 		},
 		{

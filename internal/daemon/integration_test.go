@@ -1030,7 +1030,7 @@ func TestDaemonWorktreeCreateIdempotent(t *testing.T) {
 	assert.Equal(t, resp1.WorktreeID, resp2.WorktreeID, "idempotent requests returned different IDs")
 }
 
-func TestDaemonWorktreeRemoveWithActiveAgent(t *testing.T) {
+func TestDaemonWorktreeRemoveWithUnresolvedInvocation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -1039,27 +1039,34 @@ func TestDaemonWorktreeRemoveWithActiveAgent(t *testing.T) {
 	ctx := context.Background()
 
 	repoRoot := setupTestGitRepo(t)
-	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "active-rm-test")
+	wtID, treePath, repoID := createTestWorktree(t, env.Client, repoRoot, "unresolved-rm-test")
 
 	// Start an invocation targeting this worktree.
-	startResp := startTestInvocation(t, env.Client, repoRoot, "active-rm-test", "sleep")
+	startResp := startTestInvocation(t, env.Client, repoRoot, "unresolved-rm-test", "sleep")
 
 	// Remove without force should fail.
 	rmResp, err := env.Client.WorktreeRm(ctx, repoID, wtID, false)
 	require.NoError(t, err, "worktree rm")
-	require.False(t, rmResp.OK, "expected rm to fail with active invocation")
-	assert.Equal(t, "E_WORKTREE_HAS_ACTIVE_INVOCATIONS", rmResp.ErrorCode)
+	require.False(t, rmResp.OK, "expected rm to fail with unresolved invocation")
+	assert.Equal(t, "E_WORKTREE_HAS_UNRESOLVED_INVOCATIONS", rmResp.ErrorCode)
 
 	// Remove with force should succeed.
 	rmResp, err = env.Client.WorktreeRm(ctx, repoID, wtID, true)
 	require.NoError(t, err, "worktree rm force")
 	assert.True(t, rmResp.OK, "worktree rm force failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
-	// Wait for invocation to be killed.
+	// Wait for invocation to be discarded.
 	require.Eventually(t, func() bool {
 		meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
-		return err == nil && meta.Status == store.InvocationStatusFailed
-	}, 10*time.Second, 50*time.Millisecond, "invocation not killed after force worktree rm")
+		return err == nil && meta.LandingStatus == store.LandingStatusDiscarded
+	}, 10*time.Second, 50*time.Millisecond, "invocation not discarded after force worktree rm")
+
+	_, err = os.Stat(treePath)
+	assert.True(t, os.IsNotExist(err), "tree_path still exists: %s", treePath)
+
+	meta, err := env.Store.ReadIntegrationWorktreeMeta(repoID, wtID)
+	require.NoError(t, err, "read worktree meta")
+	assert.Equal(t, store.WorktreeStateArchived, meta.State)
 }
 
 func TestDaemonWorktreeNameUniqueness(t *testing.T) {

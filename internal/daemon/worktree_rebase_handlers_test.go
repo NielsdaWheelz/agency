@@ -17,21 +17,21 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestHandleWorktreeUpdate_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
+func TestHandleWorktreeRebase_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
-	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/update", []byte(`{}`))
+	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/rebase", []byte(`{}`))
 	require.Equal(t, http.StatusBadRequest, w.Code)
 
-	var resp WorktreeUpdateResponse
+	var resp WorktreeRebaseResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
 	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
 	assert.Equal(t, "repo_id query parameter is required", resp.Message)
 }
 
-func TestHandleWorktreeUpdate_DirtyWorktreeRejected(t *testing.T) {
+func TestHandleWorktreeRebase_DirtyWorktreeRejected(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -47,18 +47,18 @@ func TestHandleWorktreeUpdate_DirtyWorktreeRejected(t *testing.T) {
 		t,
 		env,
 		http.MethodPost,
-		"/worktrees/wt-1/update?repo_id="+env.RepoID,
+		"/worktrees/wt-1/rebase?repo_id="+env.RepoID,
 		[]byte(`{}`),
 	)
 	require.Equal(t, http.StatusConflict, w.Code)
 
-	var resp WorktreeUpdateResponse
+	var resp WorktreeRebaseResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
 	assert.Equal(t, string(errors.EDirtyWorktree), resp.ErrorCode)
 }
 
-func TestHandleWorktreeUpdate_RebaseConflictAbortsAndReturnsTypedError(t *testing.T) {
+func TestHandleWorktreeRebase_RebaseConflictAbortsAndReturnsTypedError(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -78,19 +78,19 @@ func TestHandleWorktreeUpdate_RebaseConflictAbortsAndReturnsTypedError(t *testin
 		t,
 		env,
 		http.MethodPost,
-		"/worktrees/wt-1/update?repo_id="+env.RepoID,
+		"/worktrees/wt-1/rebase?repo_id="+env.RepoID,
 		[]byte(`{}`),
 	)
 	require.Equal(t, http.StatusConflict, w.Code)
 
-	var resp WorktreeUpdateResponse
+	var resp WorktreeRebaseResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
 	assert.Equal(t, string(errors.ERebaseConflict), resp.ErrorCode)
 	assert.Contains(t, fakeRunner.Calls, "git rebase --abort")
 }
 
-func TestHandleWorktreeUpdate_Success(t *testing.T) {
+func TestHandleWorktreeRebase_Success(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -106,12 +106,12 @@ func TestHandleWorktreeUpdate_Success(t *testing.T) {
 		t,
 		env,
 		http.MethodPost,
-		"/worktrees/wt-1/update?repo_id="+env.RepoID,
+		"/worktrees/wt-1/rebase?repo_id="+env.RepoID,
 		[]byte(`{}`),
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	var resp WorktreeUpdateResponse
+	var resp WorktreeRebaseResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.True(t, resp.OK)
 	assert.Equal(t, env.RepoID, resp.RepoID)

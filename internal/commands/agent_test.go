@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -419,6 +420,69 @@ func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 	assert.Contains(t, out, env.InvocationID)
 	assert.Contains(t, out, "claude-code")
 	assert.Contains(t, out, "headed")
+}
+
+func TestAgentLS_DefaultRequestsUnresolvedState(t *testing.T) {
+	dataDir, err := os.MkdirTemp("", "ag")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o755))
+
+	var requestedState string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK:         true,
+				APIVersion: daemon.APIVersion,
+			})
+		case "/repos/repo-1":
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK: true,
+				Data: daemon.RepoDTO{
+					RepoID: "repo-1",
+				},
+			})
+		case "/invocations":
+			requestedState = r.URL.Query().Get("state")
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK: true,
+				Data: daemon.ListInvocationsData{
+					Invocations: []daemon.InvocationDTO{},
+				},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	srv := &http.Server{Handler: handler}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+
+	var stdout, stderr bytes.Buffer
+	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoRef: "repo-1"}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Equal(t, "unresolved", requestedState)
 }
 
 func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {

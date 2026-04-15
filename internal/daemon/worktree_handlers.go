@@ -1,16 +1,14 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/landing"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/git"
@@ -231,18 +229,39 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
-	// Check for active invocations targeting this worktree
-	activeInvocations := s.getActiveInvocationsForWorktree(record.WorktreeID)
-	if len(activeInvocations) > 0 && !req.Force {
-		s.writeWorktreeRmError(w, http.StatusConflict, string(errors.EWorktreeHasActiveInvocations),
-			fmt.Sprintf("%d active invocations exist for this worktree", len(activeInvocations)),
-			"use --force to stop invocations and remove, or wait for them to complete")
+	unresolved, err := s.unresolvedInvocationsForWorktree(repoID, record.WorktreeID)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(code), err.Error(), mergeHintFromError(err))
+		return
+	}
+	if len(unresolved) > 0 && !req.Force {
+		s.writeWorktreeRmError(w, http.StatusConflict, string(errors.EWorktreeHasUnresolvedInvocations),
+			fmt.Sprintf("%d unresolved invocations exist for this worktree", len(unresolved)),
+			"run 'agency agent ls --worktree "+worktreeRef+"' and land or discard each invocation")
 		return
 	}
 
-	// If force and active invocations, stop them first
-	if req.Force && len(activeInvocations) > 0 {
-		s.forceStopAndDiscardInvocations(ctx, repoID, repoRoot, activeInvocations)
+	if req.Force && len(unresolved) > 0 {
+		discardSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
+		for _, invocation := range unresolved {
+			if err := discardSvc.Discard(ctx, landing.DiscardOpts{
+				RepoID:       repoID,
+				InvocationID: invocation.InvocationID,
+				RepoRoot:     repoRoot,
+				StopCallback: s.stopInvocationForDiscard,
+			}); err != nil {
+				code := errors.GetCode(err)
+				if code == "" {
+					code = errors.ELandFailed
+				}
+				s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
+				return
+			}
+		}
 	}
 
 	// Check if tree is dirty (unless force)
@@ -295,72 +314,6 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	_ = err
 
 	s.writeWorktreeRmSuccess(w)
-}
-
-// getActiveInvocationsForWorktree returns invocation IDs supervised by this daemon that target the given worktree.
-func (s *Server) getActiveInvocationsForWorktree(worktreeID string) []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var active []string
-	for invID, proc := range s.processes {
-		if proc.IntegrationWorktreeID == worktreeID {
-			active = append(active, invID)
-		}
-	}
-	return active
-}
-
-// forceStopAndDiscardInvocations stops and discards invocations: SIGINT → 5s → SIGKILL → discard.
-func (s *Server) forceStopAndDiscardInvocations(ctx context.Context, repoID, repoRoot string, invocationIDs []string) {
-	for _, invID := range invocationIDs {
-		s.mu.RLock()
-		proc, exists := s.processes[invID]
-		s.mu.RUnlock()
-
-		if !exists {
-			continue
-		}
-
-		// Send SIGINT
-		_ = syscall.Kill(-proc.PGID, syscall.SIGINT)
-
-		// Wait up to 5 seconds
-		select {
-		case <-proc.done:
-			// Exited gracefully
-		case <-time.After(5 * time.Second):
-			// Force kill
-			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
-			// Wait a bit for process to die
-			select {
-			case <-proc.done:
-			case <-time.After(1 * time.Second):
-			}
-		}
-
-		// Mark as failed
-		now := s.Clock().UTC().Format(time.RFC3339)
-		_ = s.Store.UpdateInvocationMeta(repoID, invID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "killed"
-			meta.FailureReason = "worktree_removed"
-			meta.FinishedAt = now
-			meta.PID = nil
-			meta.LifecycleOwner = ""
-			meta.LandingStatus = store.LandingStatusDiscarded
-		})
-
-		// Best-effort sandbox cleanup
-		sandboxPath := s.Store.SandboxTreePath(repoID, invID)
-		args := []string{"-C", repoRoot, "worktree", "remove", "--force", sandboxPath}
-		_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
-
-		// Remove from supervised map
-		s.mu.Lock()
-		delete(s.processes, invID)
-		s.mu.Unlock()
-	}
 }
 
 // ensureRepoRecord writes/updates repo.json for the repo.

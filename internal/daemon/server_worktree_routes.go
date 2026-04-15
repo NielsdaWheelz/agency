@@ -46,13 +46,13 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 		s.handleWorktreeRm(w, r, worktreeRef)
 	case "pr":
 		s.handleWorktreePRRoute(w, r, worktreeRef, action)
-	case "update":
+	case "rebase":
 		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		s.handleWorktreeUpdate(w, r, worktreeRef)
+		s.handleWorktreeRebase(w, r, worktreeRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm, pr, update")
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm, pr, rebase")
 	}
 }
 

@@ -415,7 +415,7 @@ func TestHandleListInvocations_StateFilter(t *testing.T) {
 		expectedCount int
 		expectedIDs   []string
 	}{
-		{"active", 1, []string{"inv-1"}},
+		{"unresolved", 2, []string{"inv-3", "inv-1"}},
 		{"finished", 2, []string{"inv-3", "inv-2"}},
 		{"all", 3, []string{"inv-3", "inv-2", "inv-1"}},
 	}
@@ -852,11 +852,12 @@ func TestMatchesInvocationState(t *testing.T) {
 		filter   string
 		expected bool
 	}{
-		{"starting_active", store.InvocationStatusStarting, "", "active", true},
-		{"running_active", store.InvocationStatusRunning, "", "active", true},
-		{"finished_no_landing_active", store.InvocationStatusFinished, "", "active", true},
-		{"finished_landed_active", store.InvocationStatusFinished, store.LandingStatusLanded, "active", false},
-		{"finished_discarded_active", store.InvocationStatusFinished, store.LandingStatusDiscarded, "active", false},
+		{"starting_unresolved", store.InvocationStatusStarting, "", "unresolved", true},
+		{"running_unresolved", store.InvocationStatusRunning, "", "unresolved", true},
+		{"finished_no_landing_unresolved", store.InvocationStatusFinished, "", "unresolved", true},
+		{"finished_landed_unresolved", store.InvocationStatusFinished, store.LandingStatusLanded, "unresolved", false},
+		{"finished_discarded_unresolved", store.InvocationStatusFinished, store.LandingStatusDiscarded, "unresolved", false},
+		{"failed_no_landing_unresolved", store.InvocationStatusFailed, "", "unresolved", true},
 		{"finished_finished", store.InvocationStatusFinished, "", "finished", true},
 		{"failed_finished", store.InvocationStatusFailed, "", "finished", true},
 		{"running_finished", store.InvocationStatusRunning, "", "finished", false},
@@ -1240,10 +1241,10 @@ func TestParseListInvocationsParams(t *testing.T) {
 
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations?state=active&mode=headless&limit=25&worktree_ref=alpha", nil)
+		req := httptest.NewRequest(http.MethodGet, "/invocations?state=unresolved&mode=headless&limit=25&worktree_ref=alpha", nil)
 		params, invalid := parseListInvocationsParams(req)
 		require.Nil(t, invalid)
-		assert.Equal(t, "active", params.State)
+		assert.Equal(t, "unresolved", params.State)
 		assert.Equal(t, "headless", params.Mode)
 		assert.Equal(t, 25, params.Limit)
 		assert.Equal(t, "alpha", params.WorktreeRef)
@@ -2040,7 +2041,7 @@ func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T)
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "bogus", details.Value)
-	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+	assert.Equal(t, []string{"unresolved", "finished", "all"}, details.AllowedValues)
 }
 
 func TestHandleListInvocations_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
@@ -2092,7 +2093,7 @@ func TestHandleListInvocations_InvalidFiltersFailClosed_DeterministicPrecedence(
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "badstate", details.Value)
-	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+	assert.Equal(t, []string{"unresolved", "finished", "all"}, details.AllowedValues)
 }
 
 func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {

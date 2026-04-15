@@ -408,6 +408,8 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 		return http.StatusConflict
 	case errors.ERepoLocked:
 		return http.StatusConflict
+	case errors.EWorktreeHasUnresolvedInvocations:
+		return http.StatusConflict
 	case errors.EInvocationStillRunning:
 		return http.StatusConflict
 	case errors.EConfirmationRequired:

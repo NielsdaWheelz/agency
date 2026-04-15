@@ -99,7 +99,7 @@ const (
 	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
 	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
 	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the branch or worktree
-	ERebaseConflict        Code = "E_REBASE_CONFLICT"         // git rebase encountered conflicts during worktree update
+	ERebaseConflict        Code = "E_REBASE_CONFLICT"         // git rebase encountered conflicts during worktree rebase
 
 	// Name validation error codes
 	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run
@@ -164,9 +164,9 @@ const (
 	ERunnerArgConflict  Code = "E_RUNNER_ARG_CONFLICT" // user-supplied args include reserved flags
 
 	// Slice 8 daemon worktree error codes (PR-06)
-	EWorktreeHasActiveInvocations Code = "E_WORKTREE_HAS_ACTIVE_INVOCATIONS" // rm blocked by active agents
-	ENotAnIntegrationWorktree     Code = "E_NOT_AN_INTEGRATION_WORKTREE"     // tree missing .agency/INTEGRATION_MARKER on rm
-	EWorktreeNameExists           Code = "E_WORKTREE_NAME_EXISTS"            // name collision with existing worktree
+	EWorktreeHasUnresolvedInvocations Code = "E_WORKTREE_HAS_UNRESOLVED_INVOCATIONS" // rm/merge blocked by unlanded agent work
+	ENotAnIntegrationWorktree         Code = "E_NOT_AN_INTEGRATION_WORKTREE"         // tree missing .agency/INTEGRATION_MARKER on rm
+	EWorktreeNameExists               Code = "E_WORKTREE_NAME_EXISTS"                // name collision with existing worktree
 
 	// Slice 8 checkpoint error codes (PR-08)
 	EInvocationStillRunning Code = "E_INVOCATION_STILL_RUNNING" // checkpoint apply refused — invocation must be stopped/finished first

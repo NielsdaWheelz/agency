@@ -364,7 +364,7 @@ type ListWorktreesParams struct {
 type ListInvocationsParams struct {
 	RepoID      string // optional, filter by canonical repo_id
 	WorktreeRef string // optional, filter by worktree ref (name/id/prefix)
-	State       string // active, finished, all (default: all)
+	State       string // unresolved, finished, all (default: all)
 	Mode        string // headed, headless, all (default: all)
 	Limit       int    // default 100, max 500
 	Cursor      string // opaque pagination cursor

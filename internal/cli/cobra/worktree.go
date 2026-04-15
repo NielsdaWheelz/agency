@@ -10,7 +10,7 @@ func newWorktreeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worktree",
 		Short: "Manage integration worktrees",
-	Long: `Manage integration worktrees.
+		Long: `Manage integration worktrees.
 
 Integration worktrees are stable branches you intend to merge, push, or PR.
 They are independent of any agent invocation.
@@ -25,13 +25,13 @@ Subcommands:
   rm        Remove a worktree
   pr sync   Push branch and sync pull request
   pr merge  Verify, merge, and archive worktree pull request
-  update    Rebase worktree branch onto parent`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_ = cmd.Help()
-		return errors.New(errors.EUsage, "specify a subcommand: agency worktree <create|ls|show|path|open|shell|rm|pr|update>")
-	},
-}
+  rebase    Rebase worktree branch onto parent`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Help()
+			return errors.New(errors.EUsage, "specify a subcommand: agency worktree <create|ls|show|path|open|shell|rm|pr|rebase>")
+		},
+	}
 
 	cmd.AddCommand(
 		newWorktreeCreateCmd(),
@@ -42,7 +42,7 @@ Subcommands:
 		newWorktreeShellCmd(),
 		newWorktreeRmCmd(),
 		newWorktreePRCmd(),
-		newWorktreeUpdateCmd(),
+		newWorktreeRebaseCmd(),
 	)
 
 	return cmd

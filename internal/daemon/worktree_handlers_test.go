@@ -62,6 +62,32 @@ func setupGitRepo(t *testing.T) *testGitEnv {
 	}
 }
 
+func writeWorktreeGuardInvocation(t *testing.T, st *store.Store, repoID, worktreeID, invocationID string, status store.InvocationStatus, landingStatus store.LandingStatus) {
+	t.Helper()
+
+	_, err := st.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err, "ensure invocation dir")
+
+	meta := store.NewInvocationMeta(
+		invocationID,
+		"",
+		worktreeID,
+		filepath.Join(t.TempDir(), "sandbox", invocationID, "tree"),
+		"agency/sandbox-"+invocationID,
+		"basecommit",
+		"claude-code",
+		store.RunnerModeHeadless,
+		time.Now(),
+	)
+	meta.Status = status
+	meta.LandingStatus = landingStatus
+	if status == store.InvocationStatusFinished || status == store.InvocationStatusFailed {
+		meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta), "write invocation meta")
+}
+
 func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -412,42 +438,39 @@ func TestWorktreeIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestGetActiveInvocationsForWorktree(t *testing.T) {
+func TestUnresolvedInvocationsForWorktree(t *testing.T) {
 	t.Parallel()
+
 	tmpDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
-	// Add some supervised processes
-	s.mu.Lock()
-	s.processes["inv-1"] = &SupervisedProcess{
-		InvocationID:          "inv-1",
-		IntegrationWorktreeID: "wt-a",
-		done:                  make(chan struct{}),
-	}
-	s.processes["inv-2"] = &SupervisedProcess{
-		InvocationID:          "inv-2",
-		IntegrationWorktreeID: "wt-a",
-		done:                  make(chan struct{}),
-	}
-	s.processes["inv-3"] = &SupervisedProcess{
-		InvocationID:          "inv-3",
-		IntegrationWorktreeID: "wt-b",
-		done:                  make(chan struct{}),
-	}
-	s.mu.Unlock()
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-1", store.InvocationStatusRunning, "")
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-2", store.InvocationStatusFinished, store.LandingStatusPending)
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-3", store.InvocationStatusFailed, store.LandingStatusPending)
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-4", store.InvocationStatusFinished, store.LandingStatusLanded)
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-5", store.InvocationStatusFinished, store.LandingStatusDiscarded)
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-b", "inv-6", store.InvocationStatusRunning, "")
 
-	// Test getting active invocations for wt-a
-	active := s.getActiveInvocationsForWorktree("wt-a")
-	assert.Equal(t, 2, len(active), "expected 2 active invocations for wt-a")
+	unresolved, err := s.unresolvedInvocationsForWorktree("repo-1", "wt-a")
+	require.NoError(t, err)
+	require.Len(t, unresolved, 3)
+	assert.Equal(t, "inv-3", unresolved[0].InvocationID)
+	assert.Equal(t, "inv-2", unresolved[1].InvocationID)
+	assert.Equal(t, "inv-1", unresolved[2].InvocationID)
+}
 
-	// Test getting active invocations for wt-b
-	active = s.getActiveInvocationsForWorktree("wt-b")
-	assert.Equal(t, 1, len(active), "expected 1 active invocation for wt-b")
+func TestUnresolvedInvocationsForWorktree_UnknownLandingStatusIsCorrupt(t *testing.T) {
+	t.Parallel()
 
-	// Test getting active invocations for non-existent worktree
-	active = s.getActiveInvocationsForWorktree("wt-nonexistent")
-	assert.Equal(t, 0, len(active), "expected 0 active invocations for wt-nonexistent")
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-1", store.InvocationStatusFinished, store.LandingStatus("bogus"))
+
+	_, err := s.unresolvedInvocationsForWorktree("repo-1", "wt-a")
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
 func TestHandleWorktrees_Routing(t *testing.T) {
@@ -499,10 +522,16 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
-			name:       "update with GET should fail",
+			name:       "rebase with GET should fail",
 			method:     http.MethodGet,
-			path:       "/worktrees/test-id/update",
+			path:       "/worktrees/test-id/rebase",
 			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "old update route should 404",
+			method:     http.MethodPost,
+			path:       "/worktrees/test-id/update",
+			wantStatus: http.StatusNotFound,
 		},
 		{
 			name:       "base path with GET should list worktrees (PR-12)",
@@ -658,63 +687,59 @@ func TestHandleWorktreeRm_NotAnIntegrationWorktree(t *testing.T) {
 		"expected E_NOT_AN_INTEGRATION_WORKTREE")
 }
 
-// TestHandleWorktreeRm_HasActiveInvocations verifies that removing a worktree
-// with active invocations (and without --force) returns E_WORKTREE_HAS_ACTIVE_INVOCATIONS.
-func TestHandleWorktreeRm_HasActiveInvocations(t *testing.T) {
+func TestHandleWorktreeRm_BlocksOnUnresolvedInvocations(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// Create a real git repo
-	env := setupGitRepo(t)
-
-	tmpDir := t.TempDir()
-	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-	// Create a worktree through the handler
-	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "active-inv-test",
-		ParentBranch: "main",
+	cases := []struct {
+		name         string
+		status       store.InvocationStatus
+		landingState store.LandingStatus
+	}{
+		{name: "starting_empty", status: store.InvocationStatusStarting, landingState: ""},
+		{name: "running_empty", status: store.InvocationStatusRunning, landingState: ""},
+		{name: "finished_pending", status: store.InvocationStatusFinished, landingState: store.LandingStatusPending},
+		{name: "failed_pending", status: store.InvocationStatusFailed, landingState: store.LandingStatusPending},
 	}
-	body, _ := json.Marshal(createReq)
-	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	s.handleWorktreeCreate(w, httpReq)
 
-	var createResp WorktreeCreateResponse
-	_ = json.NewDecoder(w.Body).Decode(&createResp)
-	require.True(t, createResp.OK, "create failed: %s - %s", createResp.ErrorCode, createResp.Message)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupGitRepo(t)
+			tmpDir := t.TempDir()
+			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
-	// Simulate an active invocation targeting this worktree
-	s.mu.Lock()
-	s.processes["fake-inv-1"] = &SupervisedProcess{
-		InvocationID:          "fake-inv-1",
-		IntegrationWorktreeID: createResp.WorktreeID,
-		done:                  make(chan struct{}),
+			createReq := WorktreeCreateRequest{
+				RepoRoot:     env.RepoPath,
+				Name:         "unresolved-rm-test",
+				ParentBranch: "main",
+			}
+			body, _ := json.Marshal(createReq)
+			httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			s.handleWorktreeCreate(w, httpReq)
+
+			var createResp WorktreeCreateResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&createResp))
+			require.True(t, createResp.OK, "create failed: %s - %s", createResp.ErrorCode, createResp.Message)
+
+			writeWorktreeGuardInvocation(t, st, createResp.RepoID, createResp.WorktreeID, "inv-"+tc.name, tc.status, tc.landingState)
+
+			rmReq := WorktreeRmRequest{Force: false}
+			body, _ = json.Marshal(rmReq)
+			url := "/worktrees/" + createResp.WorktreeID + "/rm?repo_id=" + createResp.RepoID
+			httpReq = httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+			w = httptest.NewRecorder()
+			s.handleWorktreeRm(w, httpReq, createResp.WorktreeID)
+
+			var rmResp WorktreeRmResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&rmResp), "failed to decode rm response")
+
+			assert.False(t, rmResp.OK, "expected rm to fail")
+			assert.Equal(t, string(errors.EWorktreeHasUnresolvedInvocations), rmResp.ErrorCode)
+		})
 	}
-	s.mu.Unlock()
-
-	// Attempt to rm without force - should fail with E_WORKTREE_HAS_ACTIVE_INVOCATIONS
-	rmReq := WorktreeRmRequest{Force: false}
-	body, _ = json.Marshal(rmReq)
-	url := "/worktrees/" + createResp.WorktreeID + "/rm?repo_id=" + createResp.RepoID
-	httpReq = httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	w = httptest.NewRecorder()
-	s.handleWorktreeRm(w, httpReq, createResp.WorktreeID)
-
-	var rmResp WorktreeRmResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&rmResp), "failed to decode rm response")
-
-	assert.False(t, rmResp.OK, "expected rm to fail")
-	assert.Equal(t, string(errors.EWorktreeHasActiveInvocations), rmResp.ErrorCode,
-		"expected E_WORKTREE_HAS_ACTIVE_INVOCATIONS")
-
-	// Clean up: remove the fake process so it doesn't interfere
-	s.mu.Lock()
-	delete(s.processes, "fake-inv-1")
-	s.mu.Unlock()
 }
 
 // TestHandleWorktreeRm_BrokenWorktree verifies that removing a worktree whose

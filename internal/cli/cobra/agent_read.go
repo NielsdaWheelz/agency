@@ -18,7 +18,7 @@ func newAgentLSCmd() *cobra.Command {
 		Short: "List agent invocations",
 		Long: `List agent invocations for the current repository.
 
-By default, shows active invocations (not yet landed/discarded).
+By default, shows unresolved invocations (not yet landed or discarded).
 Use --repo to specify a repo ref (name, owner/repo, repo key, id, or prefix), or --all-repos to list globally.
 
 Example:
@@ -48,7 +48,7 @@ Example:
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Filter by integration worktree")
-	cmd.Flags().BoolVar(&all, "all", false, "Include finished (landed/discarded) invocations")
+	cmd.Flags().BoolVar(&all, "all", false, "Include all invocations")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd

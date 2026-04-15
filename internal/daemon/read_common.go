@@ -333,7 +333,7 @@ func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDe
 
 var (
 	validWorktreeStates   = []string{"present", "archived", "all"}
-	validInvocationStates = []string{"active", "finished", "all"}
+	validInvocationStates = []string{"unresolved", "finished", "all"}
 	validInvocationModes  = []string{"headed", "headless", "all"}
 )
 
@@ -380,12 +380,8 @@ func matchesInvocationState(status store.InvocationStatus, landing store.Landing
 	switch filter {
 	case "all":
 		return true
-	case "active":
-		return status == store.InvocationStatusStarting ||
-			status == store.InvocationStatusRunning ||
-			(status == store.InvocationStatusFinished &&
-				landing != store.LandingStatusLanded &&
-				landing != store.LandingStatusDiscarded)
+	case "unresolved":
+		return landing != store.LandingStatusLanded && landing != store.LandingStatusDiscarded
 	case "finished":
 		return status == store.InvocationStatusFinished || status == store.InvocationStatusFailed
 	}

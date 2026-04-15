@@ -27,7 +27,7 @@ type AgentLSOpts struct {
 	// AllRepos lists across all repos.
 	AllRepos bool
 
-	// All includes finished (landed/discarded) invocations.
+	// All includes all invocations.
 	All bool
 
 	// JSON outputs as JSON.
@@ -51,7 +51,7 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		return err
 	}
 
-	state := "active"
+	state := "unresolved"
 	if opts.All {
 		state = "all"
 	}

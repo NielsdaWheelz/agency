@@ -106,6 +106,27 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 	}
 	defer func() { _ = unlock() }()
 
+	unresolved, err := s.unresolvedInvocationsForWorktree(record.RepoID, record.WorktreeID)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeWorktreeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
+		return
+	}
+	if len(unresolved) > 0 {
+		s.writeWorktreeMergeError(
+			w,
+			http.StatusConflict,
+			requestID,
+			string(errors.EWorktreeHasUnresolvedInvocations),
+			fmt.Sprintf("%d unresolved invocations exist for this worktree", len(unresolved)),
+			"run 'agency agent ls --worktree "+worktreeRef+"' and land or discard each invocation",
+		)
+		return
+	}
+
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventStarted, map[string]any{
 		"strategy":          string(normalizedReq.Strategy),
 		"confirmation_mode": normalizedReq.ConfirmationMode,

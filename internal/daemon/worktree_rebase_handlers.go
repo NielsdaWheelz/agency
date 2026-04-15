@@ -14,24 +14,24 @@ import (
 )
 
 const (
-	worktreeUpdateEventStarted   = "agency.worktree_update_started"
-	worktreeUpdateEventSucceeded = "agency.worktree_update_succeeded"
-	worktreeUpdateEventFailed    = "agency.worktree_update_failed"
+	worktreeRebaseEventStarted   = "agency.worktree_rebase_started"
+	worktreeRebaseEventSucceeded = "agency.worktree_rebase_succeeded"
+	worktreeRebaseEventFailed    = "agency.worktree_rebase_failed"
 )
 
-// handleWorktreeUpdate handles POST /worktrees/{ref}/update.
-func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, worktreeRef string) {
+// handleWorktreeRebase handles POST /worktrees/{ref}/rebase.
+func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, worktreeRef string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeWorktreeUpdateError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
-	if decodeErr := decodeWorktreeUpdateRequest(r.Body); decodeErr != "" {
-		s.writeWorktreeUpdateError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), decodeErr, "")
+	if decodeErr := decodeWorktreeRebaseRequest(r.Body); decodeErr != "" {
+		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), decodeErr, "")
 		return
 	}
 
@@ -41,17 +41,17 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeWorktreeUpdateError(w, worktreeUpdateHTTPStatusForCode(code), requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
+		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Meta == nil {
-		s.writeWorktreeUpdateError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "worktree metadata missing", "")
+		s.writeWorktreeRebaseError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "worktree metadata missing", "")
 		return
 	}
 
-	unlock, err := s.repoLock.Lock(record.RepoID, "worktree_update")
+	unlock, err := s.repoLock.Lock(record.RepoID, "worktree_rebase")
 	if err != nil {
-		s.writeWorktreeUpdateError(
+		s.writeWorktreeRebaseError(
 			w,
 			http.StatusConflict,
 			requestID,
@@ -63,7 +63,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 	}
 	defer func() { _ = unlock() }()
 
-	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventStarted, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventStarted, map[string]any{
 		"branch":        record.Meta.Branch,
 		"parent_branch": record.Meta.ParentBranch,
 	}); err != nil {
@@ -71,11 +71,11 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 		if code == "" {
 			code = errors.EPersistFailed
 		}
-		s.writeWorktreeUpdateError(w, worktreeUpdateHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
+		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
 		return
 	}
 
-	if err := s.runWorktreeUpdate(r.Context(), record); err != nil {
+	if err := s.runWorktreeRebase(r.Context(), record); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.EInternal
@@ -85,7 +85,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 			hint = strings.TrimSpace(ae.Details["hint"])
 		}
 
-		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventFailed, map[string]any{
+		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventFailed, map[string]any{
 			"error_code": string(code),
 			"message":    err.Error(),
 		}); appendErr != nil {
@@ -93,15 +93,15 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 			if appendCode == "" {
 				appendCode = errors.EPersistFailed
 			}
-			s.writeWorktreeUpdateError(w, worktreeUpdateHTTPStatusForCode(appendCode), requestID, string(appendCode), appendErr.Error(), "")
+			s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(appendCode), requestID, string(appendCode), appendErr.Error(), "")
 			return
 		}
 
-		s.writeWorktreeUpdateError(w, worktreeUpdateHTTPStatusForCode(code), requestID, string(code), err.Error(), hint)
+		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), err.Error(), hint)
 		return
 	}
 
-	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeUpdateEventSucceeded, map[string]any{
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventSucceeded, map[string]any{
 		"branch":        record.Meta.Branch,
 		"parent_branch": record.Meta.ParentBranch,
 	}); err != nil {
@@ -109,11 +109,11 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 		if code == "" {
 			code = errors.EPersistFailed
 		}
-		s.writeWorktreeUpdateError(w, worktreeUpdateHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
+		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, WorktreeUpdateResponse{
+	s.writeJSON(w, http.StatusOK, WorktreeRebaseResponse{
 		OK:                    true,
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
@@ -125,7 +125,7 @@ func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request, wo
 	})
 }
 
-func (s *Server) runWorktreeUpdate(ctx context.Context, record *store.IntegrationWorktreeRecord) error {
+func (s *Server) runWorktreeRebase(ctx context.Context, record *store.IntegrationWorktreeRecord) error {
 	if record == nil || record.Meta == nil {
 		return errors.New(errors.EInternal, "worktree metadata missing")
 	}
@@ -138,10 +138,10 @@ func (s *Server) runWorktreeUpdate(ctx context.Context, record *store.Integratio
 	if !clean {
 		return errors.NewWithDetails(
 			errors.EDirtyWorktree,
-			"worktree has uncommitted changes; update requires a clean integration tree",
+			"worktree has uncommitted changes; rebase requires a clean integration tree",
 			map[string]string{
 				"dirty_status": dirtyStatus,
-				"hint":         "commit/stash/reset integration changes before update",
+				"hint":         "commit/stash/reset integration changes before rebase",
 			},
 		)
 	}
@@ -178,7 +178,7 @@ func (s *Server) runWorktreeUpdate(ctx context.Context, record *store.Integratio
 		}
 		return errors.NewWithDetails(
 			errors.ERebaseConflict,
-			"rebase conflict while updating worktree",
+			"rebase conflict while rebasing worktree",
 			details,
 		)
 	}
@@ -186,7 +186,7 @@ func (s *Server) runWorktreeUpdate(ctx context.Context, record *store.Integratio
 	return nil
 }
 
-func decodeWorktreeUpdateRequest(body io.Reader) string {
+func decodeWorktreeRebaseRequest(body io.Reader) string {
 	var req struct{}
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
@@ -205,7 +205,7 @@ func decodeWorktreeUpdateRequest(body io.Reader) string {
 	return ""
 }
 
-func worktreeUpdateHTTPStatusForCode(code errors.Code) int {
+func worktreeRebaseHTTPStatusForCode(code errors.Code) int {
 	switch code {
 	case errors.EWorktreeNotFound:
 		return http.StatusNotFound

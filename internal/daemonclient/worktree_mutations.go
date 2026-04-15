@@ -113,13 +113,13 @@ func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string
 	return &result, nil
 }
 
-// WorktreeUpdate performs worktree-scoped fetch + rebase via daemon.
-func (c *Client) WorktreeUpdate(ctx context.Context, worktreeRef, repoID string) (*daemon.WorktreeUpdateResponse, error) {
-	u := fmt.Sprintf("%s/worktrees/%s/update", daemonBaseURL, url.PathEscape(worktreeRef))
+// WorktreeRebase performs worktree-scoped fetch + rebase via daemon.
+func (c *Client) WorktreeRebase(ctx context.Context, worktreeRef, repoID string) (*daemon.WorktreeRebaseResponse, error) {
+	u := fmt.Sprintf("%s/worktrees/%s/rebase", daemonBaseURL, url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
-	var result daemon.WorktreeUpdateResponse
+	var result daemon.WorktreeRebaseResponse
 	if err := c.doJSONRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
 		return nil, err
 	}

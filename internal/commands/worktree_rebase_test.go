@@ -13,10 +13,10 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestWorktreeUpdate_JSONSuccessIncludesIdentityFields(t *testing.T) {
+func TestWorktreeRebase_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	t.Parallel()
 
-	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "update-json")
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "rebase-json")
 
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 	daemonRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
@@ -27,7 +27,7 @@ func TestWorktreeUpdate_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := WorktreeUpdate(context.Background(), cr, fsys, repoDir, WorktreeUpdateOpts{
+	err := WorktreeRebase(context.Background(), cr, fsys, repoDir, WorktreeRebaseOpts{
 		WorktreeRef:     worktreeID,
 		RepoRef:         repoID,
 		JSON:            true,
@@ -40,16 +40,16 @@ func TestWorktreeUpdate_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, repoID, payload["repo_id"])
 	assert.Equal(t, worktreeID, payload["integration_worktree_id"])
-	assert.Equal(t, "agency/update-json-abcd", payload["branch"])
+	assert.Equal(t, "agency/rebase-json-abcd", payload["branch"])
 	assert.NotEmpty(t, payload["request_id"])
 	_, hasInvocationID := payload["invocation_id"]
-	assert.False(t, hasInvocationID, "worktree update should not return invocation_id")
+	assert.False(t, hasInvocationID, "worktree rebase should not return invocation_id")
 }
 
-func TestWorktreeUpdate_JSONFailureIncludesDaemonRequestID(t *testing.T) {
+func TestWorktreeRebase_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	t.Parallel()
 
-	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "update-json-failure")
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "rebase-json-failure")
 
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
 		Stdout: " M README.md\n",
@@ -60,7 +60,7 @@ func TestWorktreeUpdate_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := WorktreeUpdate(context.Background(), cr, fsys, repoDir, WorktreeUpdateOpts{
+	err := WorktreeRebase(context.Background(), cr, fsys, repoDir, WorktreeRebaseOpts{
 		WorktreeRef:     worktreeID,
 		RepoRef:         repoID,
 		JSON:            true,

@@ -59,7 +59,7 @@ func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*d
 type ListInvocationsOpts struct {
 	RepoID      string // optional, filter by canonical repo_id
 	WorktreeRef string // optional, filter by worktree ref
-	State       string // active, finished, all (default: all)
+	State       string // unresolved, finished, all (default: all)
 	Mode        string // headed, headless, all (default: all)
 	Limit       int    // default 100, max 500
 	Cursor      string // opaque pagination cursor

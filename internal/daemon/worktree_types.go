@@ -33,7 +33,7 @@ type WorktreeCreateResponse struct {
 
 // WorktreeRmRequest is the request body for POST /worktrees/{id}/rm.
 type WorktreeRmRequest struct {
-	// Force forces removal even if the worktree is dirty or has active invocations.
+	// Force forces removal even if the worktree is dirty or has unresolved invocations.
 	Force bool `json:"force,omitempty"`
 }
 
@@ -130,8 +130,8 @@ type WorktreePRMergeResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// WorktreeUpdateResponse is the response body for POST /worktrees/{ref}/update.
-type WorktreeUpdateResponse struct {
+// WorktreeRebaseResponse is the response body for POST /worktrees/{ref}/rebase.
+type WorktreeRebaseResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
 	BuildVersion string `json:"build_version,omitempty"`

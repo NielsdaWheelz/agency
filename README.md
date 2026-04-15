@@ -76,7 +76,7 @@ agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
 agency agent land <invocation-id> --apply         # land sandbox into integration worktree
 agency worktree pr sync <worktree-ref>            # push branch + create/update PR
 agency worktree pr merge <worktree-ref> --yes     # verify, merge, and archive worktree PR
-agency worktree update <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
+agency worktree rebase <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
 agency agent checkpoint ls <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 agency agent restart <invocation-id> --checkpoint 3 --model opus --effort high
@@ -112,7 +112,7 @@ agency agent kill <invocation-id> --json
 agency agent land <invocation-id> --json
 agency worktree pr sync <worktree-ref> --json
 agency worktree pr merge <worktree-ref> --yes --json
-agency worktree update <worktree-ref> --json
+agency worktree rebase <worktree-ref> --json
 agency agent discard <invocation-id> --json
 agency agent chat <invocation-id> --prompt "continue" --json
 agency agent restart <invocation-id> --checkpoint 3 --json

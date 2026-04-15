@@ -315,16 +315,16 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	return nil
 }
 
-// WorktreeUpdateOpts holds options for the worktree update command.
-type WorktreeUpdateOpts struct {
+// WorktreeRebaseOpts holds options for the worktree rebase command.
+type WorktreeRebaseOpts struct {
 	WorktreeRef     string
 	RepoRef         string
 	JSON            bool
 	DataDirOverride string
 }
 
-// WorktreeUpdate performs worktree-scoped update via daemon.
-func WorktreeUpdate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeUpdateOpts, stdout, stderr io.Writer) error {
+// WorktreeRebase performs worktree-scoped rebase via daemon.
+func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRebaseOpts, stdout, stderr io.Writer) error {
 	fail := func(err error) error {
 		if err == nil || !opts.JSON {
 			return err
@@ -340,13 +340,13 @@ func WorktreeUpdate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "worktree update",
+		CmdName:       "worktree rebase",
 	})
 	if err != nil {
 		return fail(err)
 	}
 
-	resp, err := ns.client.WorktreeUpdate(ctx, opts.WorktreeRef, repoCtx.RepoID)
+	resp, err := ns.client.WorktreeRebase(ctx, opts.WorktreeRef, repoCtx.RepoID)
 	if err != nil {
 		return fail(err)
 	}
@@ -376,7 +376,7 @@ func WorktreeUpdate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		})
 	}
 
-	_, _ = fmt.Fprintln(stdout, "worktree update complete")
+	_, _ = fmt.Fprintln(stdout, "worktree rebase complete")
 	_, _ = fmt.Fprintf(stdout, "  worktree_id:     %s\n", resp.IntegrationWorktreeID)
 	_, _ = fmt.Fprintf(stdout, "  branch:          %s\n", resp.Branch)
 	_, _ = fmt.Fprintf(stdout, "  parent_branch:   %s\n", resp.ParentBranch)

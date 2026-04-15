@@ -107,6 +107,116 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
 }
 
+func TestHandleWorktreeMerge_BlocksOnUnresolvedInvocations(t *testing.T) {
+	cases := []struct {
+		name         string
+		status       store.InvocationStatus
+		landingState store.LandingStatus
+	}{
+		{name: "starting_empty", status: store.InvocationStatusStarting, landingState: ""},
+		{name: "running_empty", status: store.InvocationStatusRunning, landingState: ""},
+		{name: "finished_pending", status: store.InvocationStatusFinished, landingState: store.LandingStatusPending},
+		{name: "failed_pending", status: store.InvocationStatusFailed, landingState: store.LandingStatusPending},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupReadTestEnv(t)
+			fakeRunner := testutil.NewFakeCommandRunner()
+			env.Server.Runner = fakeRunner
+
+			workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+			canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+			setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+
+			writeWorktreeGuardInvocation(t, env.Store, env.RepoID, worktreeID, "inv-"+tc.name, tc.status, tc.landingState)
+
+			w := doWorktreeRequestWithBody(
+				t,
+				env,
+				http.MethodPost,
+				"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+				[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+			)
+			require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+
+			var resp WorktreePRMergeResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.False(t, resp.OK)
+			assert.Equal(t, string(errors.EWorktreeHasUnresolvedInvocations), resp.ErrorCode)
+			assert.Empty(t, fakeRunner.Calls)
+		})
+	}
+}
+
+func TestHandleWorktreeMerge_AllowsLandedOrDiscardedInvocations(t *testing.T) {
+	cases := []struct {
+		name         string
+		landingState store.LandingStatus
+	}{
+		{name: "landed", landingState: store.LandingStatusLanded},
+		{name: "discarded", landingState: store.LandingStatusDiscarded},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupReadTestEnv(t)
+			fakeRunner := testutil.NewFakeCommandRunner()
+			env.Server.Runner = fakeRunner
+
+			workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+			canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+			setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+
+			writeWorktreeGuardInvocation(t, env.Store, env.RepoID, worktreeID, "inv-"+tc.name, store.InvocationStatusFinished, tc.landingState)
+
+			w := doWorktreeRequestWithBody(
+				t,
+				env,
+				http.MethodPost,
+				"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+				[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+			)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+			var resp WorktreePRMergeResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.True(t, resp.OK)
+			assert.Contains(t, fakeRunner.Calls, "gh pr merge 77 -R test/agent-repo --squash --delete-branch")
+		})
+	}
+}
+
+func TestHandleWorktreeMerge_BlocksOnBrokenInvocationRecord(t *testing.T) {
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+	setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+
+	brokenInvocationID := "inv-broken"
+	_, err := env.Store.EnsureInvocationDir(env.RepoID, brokenInvocationID)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(env.Store.InvocationMetaPath(env.RepoID, brokenInvocationID), []byte("{not json"), 0o644))
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+
+	var resp WorktreePRMergeResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EStoreCorrupt), resp.ErrorCode)
+	assert.Empty(t, fakeRunner.Calls)
+}
+
 func TestHandleWorktreeMerge_ResumesArchiveWhenPRAlreadyMerged(t *testing.T) {
 	t.Parallel()
 
@@ -237,6 +347,9 @@ func setupWorktreeMergeReadyState(t *testing.T, env *readTestEnv, verifyScriptBo
 		meta.Branch = "agency/alpha"
 		meta.ParentBranch = "main"
 		meta.Name = "alpha"
+	}))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.LandingStatus = store.LandingStatusLanded
 	}))
 
 	return workspaceRoot, repoRoot, worktreeID

@@ -222,8 +222,8 @@ func (s *Server) writeWorktreeRmSuccess(w http.ResponseWriter) {
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) writeWorktreeUpdateError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreeUpdateResponse{
+func (s *Server) writeWorktreeRebaseError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
+	s.writeJSON(w, status, WorktreeRebaseResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: version.FullVersion(),
