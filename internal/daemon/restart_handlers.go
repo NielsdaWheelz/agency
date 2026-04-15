@@ -176,7 +176,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 				requestID,
 				string(errors.ECheckpointNotFound),
 				err.Error(),
-				"run 'agency checkpoint ls' to see available checkpoints",
+				"run 'agency agent checkpoint ls' to see available checkpoints",
 			)
 		case errors.ERollbackFailed:
 			s.writeRestartError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed), err.Error(), "")

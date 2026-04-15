@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
-// CheckpointLSOpts holds options for the checkpoint ls command.
+// CheckpointLSOpts holds options for the agent checkpoint ls command.
 type CheckpointLSOpts struct {
 	InvocationRef string
 	RepoFlag      string
@@ -30,7 +29,7 @@ type CheckpointLSOpts struct {
 // CheckpointLS lists checkpoints for an invocation.
 func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointLSOpts, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(opts.InvocationRef) == "" {
-		return errors.New(errors.EUsage, "--invocation is required")
+		return errors.New(errors.EUsage, "invocation_ref is required")
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
@@ -46,7 +45,7 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoFlag:      opts.RepoFlag,
 		AllowAllRepos: false,
-		CmdName:       "checkpoint ls",
+		CmdName:       "agent checkpoint ls",
 	})
 	if err != nil {
 		return err
@@ -120,10 +119,11 @@ func CheckpointLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	return nil
 }
 
-// CheckpointApplyOpts holds options for the checkpoint apply command.
+// CheckpointApplyOpts holds options for the agent checkpoint apply command.
 type CheckpointApplyOpts struct {
 	InvocationRef string
-	CheckpointID  string // Parsed as int
+	RepoFlag      string
+	CheckpointID  int
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
@@ -132,14 +132,9 @@ type CheckpointApplyOpts struct {
 // CheckpointApply restores a sandbox to a checkpoint state.
 func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckpointApplyOpts, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(opts.InvocationRef) == "" {
-		return errors.New(errors.EUsage, "--invocation is required")
+		return errors.New(errors.EUsage, "invocation_ref is required")
 	}
-
-	checkpointID, err := strconv.Atoi(opts.CheckpointID)
-	if err != nil {
-		return errors.New(errors.EUsage, "checkpoint_id must be a positive integer")
-	}
-	if checkpointID <= 0 {
+	if opts.CheckpointID <= 0 {
 		return errors.New(errors.EUsage, "checkpoint_id must be a positive integer")
 	}
 
@@ -149,13 +144,15 @@ func CheckpointApply(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	}
 
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		CmdName: "checkpoint apply",
+		RepoFlag:      opts.RepoFlag,
+		AllowAllRepos: false,
+		CmdName:       "agent checkpoint apply",
 	})
 	if err != nil {
 		return err
 	}
 
-	resp, err := ns.client.CheckpointApply(ctx, repoCtx.RepoID, opts.InvocationRef, checkpointID)
+	resp, err := ns.client.CheckpointApply(ctx, repoCtx.RepoID, opts.InvocationRef, opts.CheckpointID)
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "checkpoint apply request failed", err)
 	}

@@ -78,6 +78,24 @@ func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestAgentCheckpointCmd_ReturnsUsageError(t *testing.T) {
+	_, _, err := executeCmd("agent", "checkpoint")
+	require.Error(t, err, "expected error when agent checkpoint called without subcommand")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestCheckpointCmd_UnknownAtRoot(t *testing.T) {
+	_, _, err := executeCmd("checkpoint")
+	require.Error(t, err, "expected error when checkpoint called at root")
+	assert.Contains(t, err.Error(), "unknown command")
+}
+
+func TestAgentCheckpointApply_InvalidCheckpointID_ReturnsUsageError(t *testing.T) {
+	_, _, err := executeCmd("agent", "checkpoint", "apply", "inv-1", "abc")
+	require.Error(t, err, "expected error for non-numeric checkpoint id")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
 func TestWatchCmd_NonInteractiveReturnsENotInteractive(t *testing.T) {
 	_, _, err := executeCmd("watch")
 	require.Error(t, err, "expected error when watch called non-interactively")

@@ -303,6 +303,71 @@ func TestCheckpointLS_RepoFlagResolvesOutsideGitContext(t *testing.T) {
 	assert.Contains(t, stdout.String(), "cp:1")
 }
 
+func TestCheckpointApply_RepoFlagResolvesOutsideGitContext(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupCheckpointTestEnv(t, store.RunnerModeHeadless, store.InvocationStatusFinished, nil)
+
+	st := store.NewStore(env.FS, env.DataDir, time.Now)
+	headResult, err := env.Runner.Run(context.Background(), "git", []string{
+		"-C", env.RepoPath,
+		"rev-parse", "HEAD",
+	}, exec.RunOpts{})
+	require.NoError(t, err)
+	require.Equal(t, 0, headResult.ExitCode, "git rev-parse HEAD failed")
+	headSHA := strings.TrimSpace(headResult.Stdout)
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:             1,
+				SnapshotCommit: headSHA,
+				CreatedAt:      "2026-01-15T12:00:00Z",
+				Diffstat:       "+1 -0 in 1 files",
+			},
+		},
+	}
+	cpData, err := json.MarshalIndent(cpFile, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(env.RepoID, env.InvocationID), cpData, 0o644))
+
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + env.RepoID: {
+				RepoID:     env.RepoID,
+				Paths:      []string{env.RepoPath},
+				LastSeenAt: "2026-01-15T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + env.RepoID,
+		RepoID:           env.RepoID,
+		RepoRootLastSeen: env.RepoPath,
+		PreferredRoot:    env.RepoPath,
+		AgencyJSONPath:   filepath.Join(env.RepoPath, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-15T12:00:00Z",
+		UpdatedAt:        "2026-01-15T12:00:00Z",
+	}))
+	startTestDaemonForCheckpoint(t, env)
+
+	var stdout, stderr bytes.Buffer
+	err = CheckpointApply(context.Background(), testutil.NewFakeCommandRunner(), env.FS, t.TempDir(), CheckpointApplyOpts{
+		InvocationRef:   env.InvocationID,
+		RepoFlag:        env.RepoID,
+		CheckpointID:    1,
+		DataDirOverride: env.DataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err, "checkpoint apply with --repo should not depend on local git context")
+	assert.Contains(t, stdout.String(), "Restored to checkpoint 1")
+}
+
 // 3.2 TestCheckpointLS_JSONOutput
 func TestCheckpointLS_JSONOutput(t *testing.T) {
 	if testing.Short() {
@@ -402,11 +467,10 @@ func TestCheckpointLS_WrongMode(t *testing.T) {
 func TestCheckpointApply_InvalidID(t *testing.T) {
 	tests := []struct {
 		name string
-		id   string
+		id   int
 	}{
-		{name: "abc", id: "abc"},
-		{name: "zero", id: "0"},
-		{name: "negative", id: "-1"},
+		{name: "zero", id: 0},
+		{name: "negative", id: -1},
 	}
 
 	for _, tt := range tests {
@@ -438,7 +502,7 @@ func TestCheckpointApply_InvocationNotFound(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := CheckpointApply(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointApplyOpts{
 		InvocationRef:   "nonexistent-invocation",
-		CheckpointID:    "1",
+		CheckpointID:    1,
 		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.Error(t, err, "expected error, got nil")
@@ -458,7 +522,7 @@ func TestCheckpointApply_WrongMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := CheckpointApply(context.Background(), env.Runner, env.FS, env.RepoPath, CheckpointApplyOpts{
 		InvocationRef:   env.InvocationID,
-		CheckpointID:    "1",
+		CheckpointID:    1,
 		DataDirOverride: env.DataDir,
 	}, &stdout, &stderr)
 	require.Error(t, err, "expected error, got nil")

@@ -30,8 +30,9 @@ Subcommands:
   path      Print sandbox path
   shell     Open shell in sandbox
   chat      Send follow-up prompt to a headless invocation
-  restart   Restart invocation from checkpoint
   history   Show unified invocation timeline
+  checkpoint Manage invocation checkpoints
+  restart   Restart invocation from checkpoint
   logs      View invocation logs
   review    Show review/readiness surface`,
 		Args: cobra.NoArgs,
@@ -55,6 +56,7 @@ Subcommands:
 		newAgentShellCmd(),
 		newAgentEnterCmd(),
 		newAgentChatCmd(),
+		newAgentCheckpointCmd(),
 		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),

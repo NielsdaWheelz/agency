@@ -77,7 +77,7 @@ agency agent land <invocation-id> --apply         # land sandbox into integratio
 agency worktree pr sync <worktree-ref>            # push branch + create/update PR
 agency worktree merge <worktree-ref> --yes        # verify + merge worktree PR
 agency worktree update <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
-agency checkpoint ls --invocation <invocation-id>
+agency agent checkpoint ls <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 agency agent restart <invocation-id> --checkpoint 3 --model opus --effort high
 agency agent restart <invocation-id> --history     # interactive history selector (tty only)
@@ -89,7 +89,7 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
-`agent restart` replays the invocation's stored original prompt; use `agency checkpoint apply` when you want restore-only rollback without restarting prompt execution.
+`agent restart` replays the invocation's stored original prompt; use `agency agent checkpoint apply` when you want restore-only rollback without restarting prompt execution.
 `agent restart --history` shows checkpoint-aware turn summaries, completed tool calls, and authoritative changed-file previews from checkpoint-to-checkpoint git diffs.
 typed model/effort knobs are supported for `claude-code`, `codex`, and `cursor`.
 for `claude-code` and `codex`, `--model` and `--effort` apply.
