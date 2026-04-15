@@ -13,11 +13,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install golangci-lint v2.11.4
+      - name: Install tooling
         run: |
           install_bin="$(go env GOPATH)/bin"
-          curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$install_bin" v2.11.4
           echo "$install_bin" >> "$GITHUB_PATH"
+          mkdir -p "$install_bin"
+          curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$install_bin" v2.11.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.13.0
+          go install github.com/goreleaser/goreleaser/v2@v2.14.3
+          shellcheck_version="v0.11.0"
+          shellcheck_dir="$(mktemp -d)"
+          curl -sSfL "https://github.com/koalaman/shellcheck/releases/download/${shellcheck_version}/shellcheck-${shellcheck_version}.linux.x86_64.tar.xz" | tar -xJ -C "$shellcheck_dir"
+          install -m 0755 "$shellcheck_dir"/shellcheck-*/shellcheck "${install_bin}/shellcheck"
+          rm -rf "$shellcheck_dir"
       - name: make verify
         run: make verify
 
@@ -32,9 +42,9 @@ jobs:
         id: check-token
         run: |
           if [ -n "${{ secrets.AGENCY_GH_TOKEN }}" ]; then
-            echo "has_token=true" >> $GITHUB_OUTPUT
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_token=false" >> $GITHUB_OUTPUT
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Skipping GH-backed S5 happy-path e2e - AGENCY_GH_TOKEN not configured"
           fi
       - name: gh auth status

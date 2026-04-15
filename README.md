@@ -7,7 +7,7 @@ local-first AI coding agent manager for Mac and Linux. creates isolated git work
 ### macos (homebrew)
 
 ```bash
-brew install NielsdaWheelz/tap/agency
+brew install --cask NielsdaWheelz/tap/agency
 ```
 
 ### linux

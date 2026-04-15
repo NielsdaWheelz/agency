@@ -62,18 +62,19 @@ release:
   prerelease: auto
   name_template: "{{.Tag}}"
 
-brews:
+homebrew_casks:
   - name: agency
+    ids:
+      - agency
+    binaries:
+      - agency
+    completions:
+      bash: completions/agency.bash
+      zsh: completions/_agency
     repository:
       owner: NielsdaWheelz
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
     homepage: "https://github.com/NielsdaWheelz/agency"
     description: "Local-first runner manager for AI coding sessions"
-    license: "MIT"
-    install: |
-      bin.install "agency"
-      bash_completion.install "completions/agency.bash" => "agency"
-      zsh_completion.install "completions/_agency"
-    test: |
-      system "#{bin}/agency", "--version"

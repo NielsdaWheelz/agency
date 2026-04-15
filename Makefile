@@ -1,4 +1,4 @@
-.PHONY: build test test-v test-race lint vet fmt fmt-check mod-tidy-check e2e e2e-gh e2e-s5-happy e2e-s5-failure-matrix e2e-local clean install run help check verify completions
+.PHONY: actionlint build check clean completions e2e e2e-gh e2e-local e2e-s5-failure-matrix e2e-s5-happy fmt fmt-check go-mod-verify goreleaser-check govulncheck help install lint mod-tidy-check run shellcheck shfmt shfmt-check test test-race test-v verify vet
 
 -include .env
 export
@@ -6,12 +6,12 @@ export
 # Default target
 all: build
 
-# Run all checks strictly (CI-style)
-check: fmt-check lint vet test build
+# Run the fast local gate
+check: fmt-check shfmt-check lint vet actionlint shellcheck test build
 	@echo "all checks passed"
 
-# Run every possible check: fmt, lint, vet, mod tidiness, race tests, e2e, completions, build
-verify: fmt-check lint vet mod-tidy-check test-race e2e completions build
+# Run the full gate
+verify: fmt-check shfmt-check lint vet actionlint shellcheck govulncheck mod-tidy-check go-mod-verify test-race goreleaser-check e2e completions build
 	@rm -f agency
 	@rm -rf completions
 	@echo "all verify checks passed"
@@ -40,6 +40,10 @@ test-race:
 lint:
 	golangci-lint run ./...
 
+# Run the Go vulnerability scanner
+govulncheck:
+	govulncheck ./...
+
 # Format all Go files
 fmt:
 	@files="$$(gofmt -l .)"; \
@@ -53,10 +57,29 @@ fmt:
 fmt-check:
 	@[ -z "$$(gofmt -l .)" ] || (echo "gofmt needed:" && gofmt -l . && exit 1)
 
+# Format shell scripts
+shfmt:
+	shfmt -w -i 2 -ci scripts/*.sh
+
+# Check shell formatting without modifying files
+shfmt-check:
+	shfmt -d -i 2 -ci scripts/*.sh
+
+# Run shellcheck against shell scripts
+shellcheck:
+	shellcheck scripts/*.sh
+
+# Run actionlint against GitHub Actions workflows
+actionlint:
+	actionlint
+
 # Check go.mod/go.sum are tidy
 mod-tidy-check:
-	go mod tidy
-	git diff --exit-code -- go.mod go.sum
+	go mod tidy -diff
+
+# Verify downloaded modules match go.sum
+go-mod-verify:
+	go mod verify
 
 # Run e2e checks. Always runs S5 failure matrix.
 # GH happy path is opt-in via AGENCY_GH_E2E=1 and requires token.
@@ -104,6 +127,10 @@ e2e-s5-happy:
 e2e-local:
 	AGENCY_LOCAL_E2E=1 go test -tags=e2e ./internal/commands -run TestAgentStartCLIE2E -count=1
 
+# Validate GoReleaser configuration
+goreleaser-check:
+	goreleaser check
+
 # Clean build artifacts
 clean:
 	rm -f agency
@@ -129,18 +156,25 @@ completions:
 # Show help
 help:
 	@echo "available targets:"
+	@echo "  actionlint     - lint GitHub Actions workflows"
 	@echo "  build          - build the agency binary"
-	@echo "  verify         - run every check (fmt, lint, vet, mod tidy, race, e2e, completions, build)"
-	@echo "  check          - run fast checks (fmt-check, lint, vet, test, build)"
+	@echo "  check          - run the fast local gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, test, build)"
 	@echo "  completions    - generate shell completion scripts"
 	@echo "  fmt            - gofmt all Go files"
 	@echo "  fmt-check      - check formatting without modifying files"
-	@echo "  vet            - run go vet"
+	@echo "  go-mod-verify  - verify downloaded modules match go.sum"
+	@echo "  goreleaser-check - validate .goreleaser.yaml"
+	@echo "  govulncheck    - run the Go vulnerability scanner"
 	@echo "  lint           - run golangci-lint ./..."
 	@echo "  mod-tidy-check - check go.mod/go.sum are tidy"
 	@echo "  test           - run tests"
 	@echo "  test-v         - run tests with verbose output"
 	@echo "  test-race      - run tests with race detector"
+	@echo "  shellcheck     - lint shell scripts"
+	@echo "  shfmt          - format shell scripts"
+	@echo "  shfmt-check    - check shell formatting without modifying files"
+	@echo "  verify         - run the full gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, govulncheck, mod tidy, mod verify, race, goreleaser, e2e, completions, build)"
+	@echo "  vet            - run go vet"
 	@echo "  e2e            - run e2e (failure-matrix + local smoke by default; set AGENCY_GH_E2E=1 for GH happy path)"
 	@echo "  e2e-gh         - run both S5 e2e suites (requires GH_TOKEN/GITHUB_TOKEN)"
 	@echo "  e2e-s5-happy   - run GH-backed S5 happy-path e2e (requires GH_TOKEN/GITHUB_TOKEN)"

@@ -74,10 +74,18 @@ E2E tests (~5-10%) are smoke tests for critical user paths. Build the real binar
 - `gofmt` (formatting)
 - `go vet` (correctness)
 - `golangci-lint` (comprehensive linting)
+- `actionlint` (GitHub Actions workflow validation)
+- `shfmt` (shell formatting)
+- `shellcheck` (shell analysis)
+- `govulncheck` (Go vulnerability scan)
+- `go mod verify` (module checksum verification)
+- `goreleaser check` (release config validation)
 
 Rules:
 
-- Runs in the local verification gates (`make check` and `make verify`) and in CI.
+- `make check` runs the fast local subset: `gofmt`, `shfmt`, `golangci-lint`, `go vet`, `actionlint`, and `shellcheck`, plus tests and a build.
+- `make verify` runs the full gate: the fast subset plus `govulncheck`, `go mod verify`, module tidy, race tests, `goreleaser check`, E2E, completions, and a build.
+- CI runs `make verify`.
 - Treat static-analysis failures as real failures (no `|| true`).
 - Use the repo-pinned `golangci-lint v2.11.4`.
 
@@ -403,11 +411,30 @@ Use table-driven tests when you have 3+ cases testing the same code path with di
 
 ## 12. CI and Local Commands
 
+### Verification Surface
+
+The full repo verification surface is:
+
+- `gofmt`
+- `go vet`
+- `golangci-lint run ./...`
+- `actionlint`
+- `shfmt`
+- `shellcheck`
+- `govulncheck ./...`
+- `go mod verify`
+- `go test ./...`
+- `go test -race -count=1 ./...`
+- `goreleaser check`
+- `make e2e`
+- `go run ./cmd/agency completion ...`
+- `go build ./cmd/agency`
+
 ### Local Commands
 
 ```makefile
-make check       # fast checks: fmt-check + vet + lint + test + build
-make verify      # full checks: fmt-check + vet + lint + mod-tidy-check + race + e2e + completions + build
+make check       # fast checks: fmt-check + shfmt-check + lint + vet + actionlint + shellcheck + test + build
+make verify      # full checks: fmt-check + shfmt-check + vet + lint + actionlint + shellcheck + govulncheck + go mod tidy -diff + go mod verify + race + e2e + completions + goreleaser check + build
 make test        # go test ./...
 make test-race   # go test -race -count=1 ./...
 make vet         # go vet ./...
@@ -424,7 +451,7 @@ make e2e-local   # local black-box CLI E2E smoke tests
 Command semantics:
 
 - `make check`: fast local feedback loop for routine development. It runs formatting, `go vet`, lint, unit and integration tests, and a build. It does not run race tests or E2E.
-- `make verify`: full pre-merge verification. It runs formatting, `go vet`, lint, module tidy, race tests, E2E, completions, and a build.
+- `make verify`: full pre-merge verification. It runs formatting, `go vet`, lint, actionlint, shfmt, shellcheck, govulncheck, `go mod tidy -diff`, `go mod verify`, race tests, E2E, completions, `goreleaser check`, and a build.
 - `make vet`: standalone `go vet` target.
 - `make e2e`: primary E2E entrypoint. It always runs the deterministic S5 failure matrix, then runs the GH-backed S5 happy path when `AGENCY_GH_E2E=1` and a GH token are present; otherwise it runs local smoke E2E.
 - `make e2e-gh`: runs both S5 suites, requires `GH_TOKEN` or `GITHUB_TOKEN`, and sets `AGENCY_GH_E2E=1` for the happy-path run.
