@@ -169,7 +169,7 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	return nil
 }
 
-// WorktreePRMergeOpts holds options for the worktree merge command.
+// WorktreePRMergeOpts holds options for the worktree pr merge command.
 type WorktreePRMergeOpts struct {
 	WorktreeRef    string
 	RepoRef        string
@@ -251,7 +251,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "worktree merge",
+		CmdName:       "worktree pr merge",
 	})
 	if err != nil {
 		return fail(err)
@@ -288,6 +288,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 			envelope.DeleteBranch = resp.DeleteBranch
 			envelope.MergeLogPath = resp.MergeLogPath
 			envelope.VerifyLogPath = resp.VerifyLogPath
+			envelope.ArchiveLogPath = resp.ArchiveLogPath
 			envelope.ReportSource = resp.ReportSource
 			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
@@ -303,12 +304,14 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
 	}
 
-	_, _ = fmt.Fprintln(stdout, "merge complete")
+	_, _ = fmt.Fprintln(stdout, "worktree pr merge complete")
 	_, _ = fmt.Fprintf(stdout, "  worktree_id:     %s\n", resp.IntegrationWorktreeID)
 	_, _ = fmt.Fprintf(stdout, "  branch:          %s\n", resp.Branch)
 	_, _ = fmt.Fprintf(stdout, "  strategy:        %s\n", resp.Strategy)
 	_, _ = fmt.Fprintf(stdout, "  pr_url:          %s\n", resp.PRURL)
 	_, _ = fmt.Fprintf(stdout, "  merge_log:       %s\n", resp.MergeLogPath)
+	_, _ = fmt.Fprintf(stdout, "  archive_log:     %s\n", resp.ArchiveLogPath)
+	_, _ = fmt.Fprintln(stdout, "  state:           archived")
 	return nil
 }
 

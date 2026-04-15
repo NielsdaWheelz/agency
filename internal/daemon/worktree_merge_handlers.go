@@ -21,7 +21,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// handleWorktreePRMerge handles POST /worktrees/{ref}/merge.
+// handleWorktreePRMerge handles POST /worktrees/{ref}/pr/merge.
 func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, worktreeRef string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
@@ -142,13 +142,14 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventSucceeded, map[string]any{
-		"branch":          result.Branch,
-		"pr_number":       result.PRNumber,
-		"pr_url":          result.PRURL,
-		"strategy":        string(result.Strategy),
-		"delete_branch":   result.DeleteBranch,
-		"merge_log_path":  result.MergeLogPath,
-		"verify_log_path": result.VerifyLog,
+		"branch":           result.Branch,
+		"pr_number":        result.PRNumber,
+		"pr_url":           result.PRURL,
+		"strategy":         string(result.Strategy),
+		"delete_branch":    result.DeleteBranch,
+		"merge_log_path":   result.MergeLogPath,
+		"verify_log_path":  result.VerifyLog,
+		"archive_log_path": result.ArchiveLogPath,
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -172,6 +173,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		DeleteBranch:          result.DeleteBranch,
 		MergeLogPath:          result.MergeLogPath,
 		VerifyLogPath:         result.VerifyLog,
+		ArchiveLogPath:        result.ArchiveLogPath,
 		ReportSource:          result.ReportSource,
 		ReportDiagnostics:     reportDiagnostics(result.ReportDiagnostics),
 	}
@@ -187,115 +189,147 @@ func (s *Server) runWorktreeMerge(
 		return nil, errors.New(errors.EInternal, "worktree metadata missing")
 	}
 	wtMeta := record.Meta
-
-	reportResolution, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
-		MaxBytes: report.MaxPRBodyReportBytes,
-	})
-	if reportErr != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
-	}
-	if reportViolation != nil {
-		return nil, reportViolationToAgencyError(reportViolation)
-	}
-	if reportResolution == nil {
-		return nil, errors.New(errors.EInternal, "report resolution produced no result")
-	}
-	reportSource := string(reportResolution.Source)
-	reportDiagnostics := reportResolution.Diagnostics
-
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
-	if err != nil {
-		return nil, err
-	}
-	if !clean {
-		return nil, errors.NewWithDetails(
-			errors.EDirtyWorktree,
-			"worktree has uncommitted changes; merge requires a clean integration tree",
-			map[string]string{
-				"dirty_status": dirtyStatus,
-				"hint":         "commit/stash/reset integration changes before merge",
-			},
-		)
-	}
-
-	if err := prSyncCheckGHAuth(ctx, s.Runner, wtMeta.TreePath); err != nil {
-		return nil, err
-	}
-
-	ghRepo, owner, err := s.resolveMergeGitHubRepo(ctx, record.RepoID, wtMeta.TreePath)
+	repoRoot, err := s.resolveMergeRepoRoot(ctx, record.RepoID, wtMeta.TreePath)
 	if err != nil {
 		return nil, err
 	}
 
-	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner)
+	if err := prSyncCheckGHAuth(ctx, s.Runner, repoRoot); err != nil {
+		return nil, err
+	}
+
+	ghRepo, owner, err := s.resolveMergeGitHubRepo(ctx, record.RepoID, repoRoot)
 	if err != nil {
 		return nil, err
 	}
 
-	verifyLogPath, err := s.runWorktreeMergeVerify(ctx, record, pr)
+	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot)
 	if err != nil {
 		return nil, err
 	}
-
-	args := []string{
-		"pr", "merge", fmt.Sprintf("%d", pr.Number),
-		"-R", ghRepo,
-		"--" + string(req.Strategy),
-	}
-	if req.DeleteBranch {
-		args = append(args, "--delete-branch")
-	}
-	result, runErr := s.Runner.Run(ctx, "gh", args, exec.RunOpts{
-		Dir: wtMeta.TreePath,
-		Env: prSyncNonInteractiveEnv(),
-	})
 
 	mergeLogPath := filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
-	command := "gh " + strings.Join(args, " ")
-	if err := writeMergeLog(s.FS, mergeLogPath, command, result, runErr); err != nil {
-		return nil, errors.WrapWithDetails(
-			errors.EPersistFailed,
-			"failed to persist merge log",
-			err,
-			map[string]string{
-				"merge_log_path": mergeLogPath,
-				"hint":           "merge may have completed; inspect PR state and retry if needed",
-			},
-		)
+	alreadyMerged := strings.EqualFold(strings.TrimSpace(pr.State), "MERGED")
+	var verifyLogPath string
+	var reportSource string
+	var reportDiagnostics []report.Diagnostic
+
+	if alreadyMerged {
+		skippedCommand := fmt.Sprintf("gh pr merge %d -R %s --%s (skipped: already merged)", pr.Number, ghRepo, req.Strategy)
+		if req.DeleteBranch {
+			skippedCommand += " --delete-branch"
+		}
+		if err := writeMergeLog(s.FS, mergeLogPath, skippedCommand, exec.CmdResult{ExitCode: 0}, nil); err != nil {
+			return nil, errors.WrapWithDetails(
+				errors.EPersistFailed,
+				"failed to persist merge log",
+				err,
+				map[string]string{
+					"merge_log_path": mergeLogPath,
+					"hint":           "inspect PR state and retry archive cleanup if needed",
+				},
+			)
+		}
+	} else {
+		reportResolution, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
+			MaxBytes: report.MaxPRBodyReportBytes,
+		})
+		if reportErr != nil {
+			return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
+		}
+		if reportViolation != nil {
+			return nil, reportViolationToAgencyError(reportViolation)
+		}
+		if reportResolution == nil {
+			return nil, errors.New(errors.EInternal, "report resolution produced no result")
+		}
+		reportSource = string(reportResolution.Source)
+		reportDiagnostics = reportResolution.Diagnostics
+
+		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
+		if err != nil {
+			return nil, err
+		}
+		if !clean {
+			return nil, errors.NewWithDetails(
+				errors.EDirtyWorktree,
+				"worktree has uncommitted changes; merge requires a clean integration tree",
+				map[string]string{
+					"dirty_status": dirtyStatus,
+					"hint":         "commit/stash/reset integration changes before merge",
+				},
+			)
+		}
+
+		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr)
+		if err != nil {
+			return nil, err
+		}
+
+		args := []string{
+			"pr", "merge", fmt.Sprintf("%d", pr.Number),
+			"-R", ghRepo,
+			"--" + string(req.Strategy),
+		}
+		if req.DeleteBranch {
+			args = append(args, "--delete-branch")
+		}
+		result, runErr := s.Runner.Run(ctx, "gh", args, exec.RunOpts{
+			Dir: wtMeta.TreePath,
+			Env: prSyncNonInteractiveEnv(),
+		})
+
+		command := "gh " + strings.Join(args, " ")
+		if err := writeMergeLog(s.FS, mergeLogPath, command, result, runErr); err != nil {
+			return nil, errors.WrapWithDetails(
+				errors.EPersistFailed,
+				"failed to persist merge log",
+				err,
+				map[string]string{
+					"merge_log_path": mergeLogPath,
+					"hint":           "merge may have completed; inspect PR state and retry if needed",
+				},
+			)
+		}
+
+		if runErr != nil {
+			return nil, errors.WrapWithDetails(
+				errors.EGHPRMergeFailed,
+				"gh pr merge failed to start",
+				runErr,
+				map[string]string{"command": command},
+			)
+		}
+		if result.ExitCode != 0 {
+			return nil, errors.NewWithDetails(
+				errors.EGHPRMergeFailed,
+				fmt.Sprintf("gh pr merge exited %d", result.ExitCode),
+				map[string]string{
+					"command":   command,
+					"exit_code": fmt.Sprintf("%d", result.ExitCode),
+					"stderr":    strings.TrimSpace(result.Stderr),
+				},
+			)
+		}
+
+		merged, err := mergeConfirmPRMerged(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number)
+		if err != nil {
+			return nil, err
+		}
+		if !merged {
+			return nil, errors.NewWithDetails(
+				errors.EGHPRMergeFailed,
+				"gh pr merge succeeded but merged state could not be confirmed",
+				map[string]string{
+					"hint": "re-run merge command; if PR is already merged this invocation may have succeeded",
+				},
+			)
+		}
 	}
 
-	if runErr != nil {
-		return nil, errors.WrapWithDetails(
-			errors.EGHPRMergeFailed,
-			"gh pr merge failed to start",
-			runErr,
-			map[string]string{"command": command},
-		)
-	}
-	if result.ExitCode != 0 {
-		return nil, errors.NewWithDetails(
-			errors.EGHPRMergeFailed,
-			fmt.Sprintf("gh pr merge exited %d", result.ExitCode),
-			map[string]string{
-				"command":   command,
-				"exit_code": fmt.Sprintf("%d", result.ExitCode),
-				"stderr":    strings.TrimSpace(result.Stderr),
-			},
-		)
-	}
-
-	merged, err := mergeConfirmPRMerged(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number)
+	archiveLogPath, err := s.runWorktreeArchive(ctx, record, pr, repoRoot)
 	if err != nil {
 		return nil, err
-	}
-	if !merged {
-		return nil, errors.NewWithDetails(
-			errors.EGHPRMergeFailed,
-			"gh pr merge succeeded but merged state could not be confirmed",
-			map[string]string{
-				"hint": "re-run merge command; if PR is already merged this invocation may have succeeded",
-			},
-		)
 	}
 
 	return &mergeResult{
@@ -305,6 +339,7 @@ func (s *Server) runWorktreeMerge(
 		Strategy:          req.Strategy,
 		DeleteBranch:      req.DeleteBranch,
 		MergeLogPath:      mergeLogPath,
+		ArchiveLogPath:    archiveLogPath,
 		VerifyLog:         verifyLogPath,
 		ReportSource:      reportSource,
 		ReportDiagnostics: reportDiagnostics,
@@ -333,7 +368,7 @@ func (s *Server) runWorktreeMergeVerify(ctx context.Context, record *store.Integ
 		return "", err
 	}
 
-	env := buildWorktreeMergeVerifyEnv(record, repoRoot, worktreeDir, pr)
+	env := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr)
 	runCfg := verify.RunConfig{
 		RepoID:         record.RepoID,
 		RunID:          record.WorktreeID,
@@ -381,7 +416,178 @@ func (s *Server) ensureWorktreeVerifyLogPermissions(logsDir, verifyLogPath strin
 	return nil
 }
 
-func buildWorktreeMergeVerifyEnv(
+func (s *Server) runWorktreeArchive(
+	ctx context.Context,
+	record *store.IntegrationWorktreeRecord,
+	pr *mergePRView,
+	repoRoot string,
+) (string, error) {
+	if record == nil || record.Meta == nil {
+		return "", errors.New(errors.EInternal, "worktree metadata missing")
+	}
+	wtMeta := record.Meta
+
+	logsDir := s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
+	archiveLogPath := filepath.Join(logsDir, "archive.log")
+	treeExists := true
+	if _, err := s.FS.Stat(wtMeta.TreePath); err != nil {
+		if os.IsNotExist(err) {
+			treeExists = false
+		} else {
+			return "", errors.Wrap(errors.EInternal, "failed to stat integration worktree", err)
+		}
+	}
+
+	if !treeExists {
+		if err := s.Store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+			m.State = store.WorktreeStateArchived
+		}); err != nil {
+			return "", errors.Wrap(errors.EArchiveFailed, "failed to persist archived state", err)
+		}
+		if err := writeMergeLog(s.FS, archiveLogPath, "archive skipped: worktree already removed", exec.CmdResult{ExitCode: 0}, nil); err != nil {
+			return "", errors.WrapWithDetails(
+				errors.EPersistFailed,
+				"failed to persist archive log",
+				err,
+				map[string]string{
+					"archive_log_path": archiveLogPath,
+					"hint":             "inspect archive cleanup state and retry if needed",
+				},
+			)
+		}
+		return archiveLogPath, nil
+	}
+
+	agencyJSON, err := config.LoadAgencyConfig(s.FS, wtMeta.TreePath)
+	if err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to load agency.json for archive", err)
+	}
+
+	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
+	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr)
+	env := make(map[string]string, len(envList))
+	for _, entry := range envList {
+		key, val, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			env[key] = val
+		}
+	}
+
+	archiveCmd := fmt.Sprintf("sh -lc %q", agencyJSON.Scripts.Archive.Path)
+	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Scripts.Archive.Timeout)
+	defer cancel()
+	result, runErr := s.Runner.Run(runCtx, "sh", []string{"-lc", agencyJSON.Scripts.Archive.Path}, exec.RunOpts{
+		Dir: wtMeta.TreePath,
+		Env: env,
+	})
+	if err := writeMergeLog(s.FS, archiveLogPath, archiveCmd, result, runErr); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EPersistFailed,
+			"failed to persist archive log",
+			err,
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"hint":             "inspect archive cleanup state and retry if needed",
+			},
+		)
+	}
+	if runErr != nil {
+		return "", errors.WrapWithDetails(
+			errors.EArchiveFailed,
+			"archive script failed to start",
+			runErr,
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"command":          archiveCmd,
+			},
+		)
+	}
+	if result.ExitCode != 0 {
+		return "", errors.NewWithDetails(
+			errors.EArchiveFailed,
+			fmt.Sprintf("archive script exited %d", result.ExitCode),
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"command":          archiveCmd,
+				"exit_code":        fmt.Sprintf("%d", result.ExitCode),
+				"hint":             "inspect archive.log, fix the archive step, and rerun worktree pr merge",
+			},
+		)
+	}
+
+	removeArgs := []string{"-C", repoRoot, "worktree", "remove", "--force", wtMeta.TreePath}
+	removeResult, removeRunErr := s.Runner.Run(ctx, "git", removeArgs, exec.RunOpts{})
+	removeCmd := "git " + strings.Join(removeArgs, " ")
+	appendArchiveSection := func(title string, result exec.CmdResult, runErr error) {
+		logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return
+		}
+		defer func() { _ = logFile.Close() }()
+
+		_, _ = fmt.Fprintln(logFile)
+		_, _ = fmt.Fprintf(logFile, "=== %s ===\n", title)
+		_, _ = fmt.Fprintf(logFile, "Exit code: %d\n", result.ExitCode)
+		if strings.TrimSpace(result.Stdout) != "" {
+			_, _ = fmt.Fprintln(logFile)
+			_, _ = fmt.Fprintln(logFile, "=== stdout ===")
+			_, _ = fmt.Fprint(logFile, result.Stdout)
+			if !strings.HasSuffix(result.Stdout, "\n") {
+				_, _ = fmt.Fprintln(logFile)
+			}
+		}
+		if strings.TrimSpace(result.Stderr) != "" {
+			_, _ = fmt.Fprintln(logFile)
+			_, _ = fmt.Fprintln(logFile, "=== stderr ===")
+			_, _ = fmt.Fprint(logFile, result.Stderr)
+			if !strings.HasSuffix(result.Stderr, "\n") {
+				_, _ = fmt.Fprintln(logFile)
+			}
+		}
+		if runErr != nil {
+			_, _ = fmt.Fprintln(logFile)
+			_, _ = fmt.Fprintln(logFile, "=== execution_error ===")
+			_, _ = fmt.Fprintln(logFile, runErr.Error())
+		}
+		_ = s.FS.Chmod(archiveLogPath, 0o600)
+	}
+	appendArchiveSection(removeCmd, removeResult, removeRunErr)
+	if removeRunErr != nil {
+		return "", errors.WrapWithDetails(
+			errors.EArchiveFailed,
+			"git worktree remove failed to start",
+			removeRunErr,
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"command":          removeCmd,
+			},
+		)
+	}
+	if removeResult.ExitCode != 0 {
+		return "", errors.NewWithDetails(
+			errors.EArchiveFailed,
+			fmt.Sprintf("git worktree remove exited %d", removeResult.ExitCode),
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"command":          removeCmd,
+				"exit_code":        fmt.Sprintf("%d", removeResult.ExitCode),
+				"stderr":           strings.TrimSpace(removeResult.Stderr),
+			},
+		)
+	}
+
+	if err := s.Store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+		m.State = store.WorktreeStateArchived
+	}); err != nil {
+		appendArchiveSection("metadata", exec.CmdResult{
+			Stdout: fmt.Sprintf("failed to persist archived state: %v\n", err),
+		}, nil)
+	}
+
+	return archiveLogPath, nil
+}
+
+func buildWorktreeMergeScriptEnv(
 	record *store.IntegrationWorktreeRecord,
 	repoRoot string,
 	worktreeDir string,

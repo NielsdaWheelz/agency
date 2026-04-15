@@ -75,7 +75,7 @@ agency agent review <invocation-id>               # review verdict + blocking re
 agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
 agency agent land <invocation-id> --apply         # land sandbox into integration worktree
 agency worktree pr sync <worktree-ref>            # push branch + create/update PR
-agency worktree merge <worktree-ref> --yes        # verify + merge worktree PR
+agency worktree pr merge <worktree-ref> --yes     # verify, merge, and archive worktree PR
 agency worktree update <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
 agency agent checkpoint ls <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
@@ -100,7 +100,7 @@ non-interactive destructive flows require explicit confirmation via `--yes`:
 
 ```bash
 agency worktree rm <name|id|prefix> --yes
-agency worktree merge <worktree-ref> --yes
+agency worktree pr merge <worktree-ref> --yes
 ```
 
 automation-friendly mutation json:
@@ -111,7 +111,7 @@ agency agent stop <invocation-id> --json
 agency agent kill <invocation-id> --json
 agency agent land <invocation-id> --json
 agency worktree pr sync <worktree-ref> --json
-agency worktree merge <worktree-ref> --yes --json
+agency worktree pr merge <worktree-ref> --yes --json
 agency worktree update <worktree-ref> --json
 agency agent discard <invocation-id> --json
 agency agent chat <invocation-id> --prompt "continue" --json
@@ -122,7 +122,7 @@ all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
-for `worktree pr sync` and `worktree merge`, additive report fields include
+for `worktree pr sync` and `worktree pr merge`, additive report fields include
 `report_source` and `report_diagnostics`.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
@@ -140,7 +140,7 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
-reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
+reports-v2 progression is mode-aware: headless `review`/`pr sync`/`pr merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
 
 ## documentation
 

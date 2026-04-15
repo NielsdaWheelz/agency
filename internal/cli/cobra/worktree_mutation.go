@@ -56,10 +56,10 @@ func newWorktreePRCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency worktree pr <sync>")
+			return errors.New(errors.EUsage, "specify a subcommand: agency worktree pr <sync|merge>")
 		},
 	}
-	cmd.AddCommand(newWorktreePRSyncCmd())
+	cmd.AddCommand(newWorktreePRSyncCmd(), newWorktreePRMergeCmd())
 	return cmd
 }
 
@@ -108,7 +108,7 @@ Example:
 	return cmd
 }
 
-func newWorktreeMergeCmd() *cobra.Command {
+func newWorktreePRMergeCmd() *cobra.Command {
 	var repoRef string
 	var jsonOut bool
 	var squash bool
@@ -119,20 +119,20 @@ func newWorktreeMergeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "merge <worktree_ref>",
-		Short: "Verify and merge pull request",
-		Long: `Perform worktree-scoped merge.
+		Short: "Verify and merge worktree pull request",
+		Long: `Perform worktree-scoped PR merge.
 
-This command runs verify, merges the branch-scoped pull request, and persists
-merge logs under the worktree record.
+This command runs verify, merges the branch-scoped pull request, runs the
+archive script, and archives the worktree by removing its tree directory.
 
 Non-interactive executions must pass --yes.
 
 Example:
-  agency worktree merge my-feature
-  agency worktree merge --repo agency my-feature
-  agency worktree merge --yes --json my-feature
-  agency worktree merge --merge my-feature
-  agency worktree merge --rebase --no-delete-branch my-feature`,
+  agency worktree pr merge my-feature
+  agency worktree pr merge --repo agency my-feature
+  agency worktree pr merge --yes --json my-feature
+  agency worktree pr merge --merge my-feature
+  agency worktree pr merge --rebase --no-delete-branch my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)

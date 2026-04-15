@@ -19,7 +19,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestWorktreeMerge_NonInteractiveRequiresYes(t *testing.T) {
+func TestWorktreePRMerge_NonInteractiveRequiresYes(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-noninteractive")
@@ -38,7 +38,7 @@ func TestWorktreeMerge_NonInteractiveRequiresYes(t *testing.T) {
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
 }
 
-func TestWorktreeMerge_InteractiveConfirmationRejected(t *testing.T) {
+func TestWorktreePRMerge_InteractiveConfirmationRejected(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-reject")
@@ -58,7 +58,7 @@ func TestWorktreeMerge_InteractiveConfirmationRejected(t *testing.T) {
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
 
-func TestWorktreeMerge_InteractiveConfirmationTooLarge(t *testing.T) {
+func TestWorktreePRMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-too-large")
@@ -76,7 +76,7 @@ func TestWorktreeMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
-func TestWorktreeMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
+func TestWorktreePRMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json")
@@ -105,6 +105,11 @@ func TestWorktreeMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 		Stdout:   `{"state":"MERGED"}`,
 		ExitCode: 0,
 	}
+	daemonRunner.Responses["sh -lc scripts/archive.sh"] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
+	canonicalRepoDir := canonicalPathForTest(t, repoDir)
+	daemonRunner.Responses["git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree] = testutil.FakeResponse{
+		ExitCode: 0,
+	}
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -129,12 +134,19 @@ func TestWorktreeMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	assert.Equal(t, float64(77), payload["pr_number"])
 	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", payload["pr_url"])
 	assert.Equal(t, "squash", payload["strategy"])
+	assert.NotEmpty(t, payload["archive_log_path"])
 	assert.NotEmpty(t, payload["request_id"])
+	archiveLogBytes, err := os.ReadFile(payload["archive_log_path"].(string))
+	require.NoError(t, err)
+	assert.Contains(t, string(archiveLogBytes), "=== sh -lc \"scripts/archive.sh\" ===")
+	assert.Contains(t, string(archiveLogBytes), "=== git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree+" ===")
+	canonicalRepoDir = canonicalPathForTest(t, repoDir)
+	require.Contains(t, daemonRunner.Calls, "git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree)
 	_, hasInvocationID := payload["invocation_id"]
-	assert.False(t, hasInvocationID, "worktree merge should not return invocation_id")
+	assert.False(t, hasInvocationID, "worktree pr merge should not return invocation_id")
 }
 
-func TestWorktreeMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
+func TestWorktreePRMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json-failure")
@@ -236,4 +248,14 @@ func writeWorktreeMergeRepoRecord(t *testing.T, dataDir, repoID, repoRoot string
 		UpdatedAt: now,
 	}
 	require.NoError(t, st.SaveRepoRecord(record))
+}
+
+func canonicalPathForTest(t *testing.T, path string) string {
+	t.Helper()
+
+	canonical := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		canonical = resolved
+	}
+	return canonical
 }

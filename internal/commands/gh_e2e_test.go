@@ -268,7 +268,7 @@ This is an automated e2e test - no manual testing required.
 		RepoRef:         repoIdentity.RepoID,
 		Yes:             true,
 		DataDirOverride: dataDir,
-	}, &mergeStdout, &mergeStderr), "worktree merge failed\nstderr:\n%s", mergeStderr.String())
+	}, &mergeStdout, &mergeStderr), "worktree pr merge failed\nstderr:\n%s", mergeStderr.String())
 
 	merged = true
 	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)

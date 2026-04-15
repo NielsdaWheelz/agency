@@ -177,6 +177,7 @@ type agentMutationEnvelope struct {
 	DeleteBranch            bool                      `json:"delete_branch,omitempty"`
 	MergeLogPath            string                    `json:"merge_log_path,omitempty"`
 	VerifyLogPath           string                    `json:"verify_log_path,omitempty"`
+	ArchiveLogPath          string                    `json:"archive_log_path,omitempty"`
 	ReportSource            string                    `json:"report_source,omitempty"`
 	ReportDiagnostics       []daemon.ReportDiagnostic `json:"report_diagnostics,omitempty"`
 }

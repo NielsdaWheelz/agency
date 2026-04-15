@@ -72,6 +72,18 @@ func TestWorktreeCmd_ReturnsUsageError(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestWorktreeCmd_LegacyMergeRemoved(t *testing.T) {
+	_, _, err := executeCmd("worktree", "merge")
+	require.Error(t, err, "expected error when legacy top-level merge is called")
+	assert.Contains(t, err.Error(), "unknown command")
+}
+
+func TestWorktreeCmd_HelpShowsPRSubcommands(t *testing.T) {
+	stdout, _, err := executeCmd("worktree", "--help")
+	require.NoError(t, err, "expected worktree help to render")
+	assert.Contains(t, stdout, "pr merge")
+}
+
 func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 	_, _, err := executeCmd("agent")
 	require.Error(t, err, "expected error when agent called without subcommand")

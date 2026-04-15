@@ -47,6 +47,7 @@ type mergeResult struct {
 	Strategy          mergeStrategy
 	DeleteBranch      bool
 	MergeLogPath      string
+	ArchiveLogPath    string
 	VerifyLog         string
 	ReportSource      string
 	ReportDiagnostics []report.Diagnostic
@@ -105,8 +106,8 @@ func normalizeMergeRequest(req WorktreePRMergeRequest) (normalizedMergeRequest, 
 	}, nil
 }
 
-func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner string) (*mergePRView, error) {
-	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, wtMeta.TreePath, owner, wtMeta.Branch)
+func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner, workDir string) (*mergePRView, error) {
+	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, workDir, owner, wtMeta.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -131,19 +132,9 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 		)
 	}
 
-	pr, err := mergeViewPR(ctx, s.Runner, wtMeta.TreePath, ghRepo, prs[0].Number)
+	pr, err := mergeViewPR(ctx, s.Runner, workDir, ghRepo, prs[0].Number)
 	if err != nil {
 		return nil, err
-	}
-	if strings.ToUpper(pr.State) != "OPEN" {
-		return nil, errors.NewWithDetails(
-			errors.EPRNotOpen,
-			fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, pr.State),
-			map[string]string{
-				"pr_number": fmt.Sprintf("%d", pr.Number),
-				"state":     pr.State,
-			},
-		)
 	}
 	if pr.IsDraft {
 		return nil, errors.NewWithDetails(
@@ -162,8 +153,22 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 			},
 		)
 	}
-	if err := mergeEnsureMergeable(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number); err != nil {
-		return nil, err
+	switch strings.ToUpper(strings.TrimSpace(pr.State)) {
+	case "OPEN":
+		if err := mergeEnsureMergeable(ctx, s.Runner, workDir, ghRepo, pr.Number); err != nil {
+			return nil, err
+		}
+	case "MERGED":
+		return pr, nil
+	default:
+		return nil, errors.NewWithDetails(
+			errors.EPRNotOpen,
+			fmt.Sprintf("PR #%d exists but state is %s (expected OPEN or MERGED)", pr.Number, pr.State),
+			map[string]string{
+				"pr_number": fmt.Sprintf("%d", pr.Number),
+				"state":     pr.State,
+			},
+		)
 	}
 
 	return pr, nil
@@ -406,6 +411,8 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 	case errors.EInvocationStillRunning:
 		return http.StatusConflict
 	case errors.EConfirmationRequired:
+		return http.StatusConflict
+	case errors.EArchiveFailed:
 		return http.StatusConflict
 	case errors.EDirtyWorktree:
 		return http.StatusConflict

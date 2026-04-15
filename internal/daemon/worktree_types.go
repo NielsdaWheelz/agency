@@ -88,7 +88,7 @@ type WorktreePRSyncResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// WorktreePRMergeRequest is the request body for POST /worktrees/{ref}/merge.
+// WorktreePRMergeRequest is the request body for POST /worktrees/{ref}/pr/merge.
 type WorktreePRMergeRequest struct {
 	// Strategy selects merge strategy: squash|merge|rebase (default: squash).
 	Strategy string `json:"strategy,omitempty"`
@@ -103,7 +103,7 @@ type WorktreePRMergeRequest struct {
 	NoDeleteBranch bool `json:"no_delete_branch,omitempty"`
 }
 
-// WorktreePRMergeResponse is the response body for POST /worktrees/{ref}/merge.
+// WorktreePRMergeResponse is the response body for POST /worktrees/{ref}/pr/merge.
 type WorktreePRMergeResponse struct {
 	OK           bool   `json:"ok"`
 	APIVersion   int    `json:"api_version"`
@@ -120,6 +120,7 @@ type WorktreePRMergeResponse struct {
 	DeleteBranch          bool               `json:"delete_branch,omitempty"`
 	MergeLogPath          string             `json:"merge_log_path,omitempty"`
 	VerifyLogPath         string             `json:"verify_log_path,omitempty"`
+	ArchiveLogPath        string             `json:"archive_log_path,omitempty"`
 	ReportSource          string             `json:"report_source,omitempty"`
 	ReportDiagnostics     []ReportDiagnostic `json:"report_diagnostics,omitempty"`
 

@@ -46,18 +46,13 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 		s.handleWorktreeRm(w, r, worktreeRef)
 	case "pr":
 		s.handleWorktreePRRoute(w, r, worktreeRef, action)
-	case "merge":
-		if !s.requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		s.handleWorktreePRMerge(w, r, worktreeRef)
 	case "update":
 		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
 		s.handleWorktreeUpdate(w, r, worktreeRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm, pr, merge, update")
+		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm, pr, update")
 	}
 }
 
@@ -70,6 +65,11 @@ func (s *Server) handleWorktreePRRoute(w http.ResponseWriter, r *http.Request, w
 			return
 		}
 		s.handleWorktreePRSync(w, r, worktreeRef)
+	case "merge":
+		if !s.requireMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleWorktreePRMerge(w, r, worktreeRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown pr action: "+subAction, "")
 	}

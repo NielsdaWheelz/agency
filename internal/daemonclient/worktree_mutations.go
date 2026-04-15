@@ -102,7 +102,7 @@ func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string,
 
 // WorktreePRMerge performs worktree-scoped verify + merge via daemon.
 func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string, opts WorktreePRMergeOpts) (*daemon.WorktreePRMergeResponse, error) {
-	u := fmt.Sprintf("%s/worktrees/%s/merge", daemonBaseURL, url.PathEscape(worktreeRef))
+	u := fmt.Sprintf("%s/worktrees/%s/pr/merge", daemonBaseURL, url.PathEscape(worktreeRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}

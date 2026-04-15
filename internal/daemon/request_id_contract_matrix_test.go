@@ -85,7 +85,7 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 		{
 			name:   "worktree_merge_missing_repo",
 			method: http.MethodPost,
-			path:   "/worktrees/wt-1/merge",
+			path:   "/worktrees/wt-1/pr/merge",
 			body:   []byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 		},
 		{

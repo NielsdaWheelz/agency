@@ -487,9 +487,15 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
-			name:       "merge with GET should fail",
+			name:       "unsupported nested route should 404",
 			method:     http.MethodGet,
 			path:       "/worktrees/test-id/merge",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "pr merge with GET should fail",
+			method:     http.MethodGet,
+			path:       "/worktrees/test-id/pr/merge",
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
