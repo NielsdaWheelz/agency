@@ -97,7 +97,7 @@ func loadMaxStreamSeq(path string) uint64 {
 }
 
 func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest) (int, int, error) {
-	args, err := buildRunnerArgsWithSandbox(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
+	args, err := runners.BuildHeadlessArgs(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to build runner args: %w", err)
 	}
@@ -172,15 +172,26 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		logFiles.Close()
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
 	}
-	if err := sendInitialPromptIfRequired(req.Runner, req.Prompt, chatRelay); err != nil {
-		if chatRelay != nil {
+	if chatRelay != nil {
+		mode, err := runners.ResolveInitialPromptMode(req.Runner)
+		if err != nil {
 			_ = chatRelay.Close()
+			if startedProc.PGID > 0 {
+				_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
+			}
+			logFiles.Close()
+			return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
 		}
-		if startedProc.PGID > 0 {
-			_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
+		if mode == runners.InitialPromptStdin {
+			if err := chatRelay.Send(context.Background(), req.Prompt); err != nil {
+				_ = chatRelay.Close()
+				if startedProc.PGID > 0 {
+					_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
+				}
+				logFiles.Close()
+				return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
+			}
 		}
-		logFiles.Close()
-		return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
 	}
 
 	pid := startedProc.PID
@@ -323,20 +334,6 @@ func createChatRelay(runner string) (*os.File, relay.ChatRelay, error) {
 	}
 }
 
-func sendInitialPromptIfRequired(runner, prompt string, chatRelay relay.ChatRelay) error {
-	if chatRelay == nil {
-		return nil
-	}
-	mode, err := runners.ResolveInitialPromptMode(runner)
-	if err != nil {
-		return err
-	}
-	if mode != runners.InitialPromptStdin {
-		return nil
-	}
-	return chatRelay.Send(context.Background(), prompt)
-}
-
 func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string) {
 	now := s.Clock().UTC().Format(time.RFC3339)
 	_ = s.Store.UpdateInvocationMeta(repoID, result.InvocationID, func(m *store.InvocationMeta) {
@@ -385,13 +382,13 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 	}
 
 	if override, ok := proc.exitReason.Load().(string); ok && override != "" {
-		if !(completionSatisfied && override == "stopped") {
+		if !completionSatisfied || override != "stopped" {
 			exitReason = override
 			status = store.InvocationStatusFailed
 		}
 	}
 	if override, ok := proc.failureReason.Load().(string); ok && override != "" {
-		if !(completionSatisfied && override == "stopped") {
+		if !completionSatisfied || override != "stopped" {
 			failureReason = override
 		}
 	}

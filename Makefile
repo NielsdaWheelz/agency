@@ -7,11 +7,11 @@ export
 all: build
 
 # Run all checks strictly (CI-style)
-check: fmt-check lint test build
+check: fmt-check lint vet test build
 	@echo "all checks passed"
 
-# Run every possible check: fmt, lint, mod tidiness, race tests, e2e, completions, build
-verify: fmt-check lint mod-tidy-check test-race e2e completions build
+# Run every possible check: fmt, lint, vet, mod tidiness, race tests, e2e, completions, build
+verify: fmt-check lint vet mod-tidy-check test-race e2e completions build
 	@rm -f agency
 	@rm -rf completions
 	@echo "all verify checks passed"
@@ -36,9 +36,9 @@ vet:
 test-race:
 	go test -race -count=1 ./...
 
-# Run golangci-lint (requires golangci-lint on PATH)
+# Run golangci-lint against all packages
 lint:
-	golangci-lint run
+	golangci-lint run ./...
 
 # Format all Go files
 fmt:
@@ -130,13 +130,13 @@ completions:
 help:
 	@echo "available targets:"
 	@echo "  build          - build the agency binary"
-	@echo "  verify         - run every check (fmt, lint, mod tidy, race, e2e, completions, build)"
-	@echo "  check          - run fast checks (fmt-check, lint, test, build)"
+	@echo "  verify         - run every check (fmt, lint, vet, mod tidy, race, e2e, completions, build)"
+	@echo "  check          - run fast checks (fmt-check, lint, vet, test, build)"
 	@echo "  completions    - generate shell completion scripts"
 	@echo "  fmt            - gofmt all Go files"
 	@echo "  fmt-check      - check formatting without modifying files"
 	@echo "  vet            - run go vet"
-	@echo "  lint           - run golangci-lint"
+	@echo "  lint           - run golangci-lint ./..."
 	@echo "  mod-tidy-check - check go.mod/go.sum are tidy"
 	@echo "  test           - run tests"
 	@echo "  test-v         - run tests with verbose output"

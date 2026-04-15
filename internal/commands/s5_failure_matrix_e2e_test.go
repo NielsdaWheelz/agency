@@ -25,7 +25,7 @@ import (
 func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("not_ready_invocation", func(t *testing.T) {
+	t.Run("missing_report", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "s5-not-ready")
 
 		branch := "agency/s5-not-ready-abcd"
@@ -54,7 +54,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 
 		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
 		assert.Equal(t, false, payload["ok"])
-		assert.Equal(t, string(errors.ENoPR), payload["error_code"])
+		assert.Equal(t, string(errors.EReportMissing), payload["error_code"])
 		assertS5E2EHasRequestID(t, payload)
 	})
 

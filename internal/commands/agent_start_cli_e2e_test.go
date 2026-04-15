@@ -187,7 +187,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 	}
 }
 
-func TestAgentStartCLIE2E_PassthroughArgAllowedJSON(t *testing.T) {
+func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
 	}
@@ -241,13 +241,9 @@ func TestAgentStartCLIE2E_PassthroughArgAllowedJSON(t *testing.T) {
 
 	var startResp agentMutationResponse
 	require.NoError(t, json.Unmarshal([]byte(start.Stdout), &startResp), "invalid start json: %s", start.Stdout)
-	require.True(t, startResp.OK, "expected ok=true, got error_code=%s message=%s", startResp.ErrorCode, startResp.Message)
-	require.NotEmpty(t, startResp.InvocationID)
-	require.NotEmpty(t, startResp.SandboxPath)
-
-	capture := readLaunchCapture(t, capturePath)
-	assert.Equal(t, "exit-ok", capture.Mode)
-	assert.Equal(t, "-p", capture.Args[0])
+	assert.False(t, startResp.OK)
+	assert.Equal(t, "E_RUNNER_ARG_CONFLICT", startResp.ErrorCode)
+	assert.Contains(t, startResp.Message, "reserved flag '-p'")
 
 	_ = runAgencyCLI(t, agencyBin, repoDir, env, "daemon", "stop", "--force")
 }

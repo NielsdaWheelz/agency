@@ -16,13 +16,10 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	ctx := r.Context()
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
-	writeStopError := func(status int, code, message, hint string) {
-		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
-	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		writeStopError(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
 		return
 	}
 
@@ -36,17 +33,17 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		if code == errors.EInvocationIDAmbiguous {
 			status = http.StatusConflict
 		}
-		writeStopError(status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		s.writeErrorWithRequestID(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}
 
 	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			writeStopError(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
+			s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		writeStopError(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
@@ -111,7 +108,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		pgid = safeIntPtr(meta.PID)
 	}
 	if pgid <= 0 {
-		writeStopError(http.StatusBadRequest, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
 		return
 	}
 
@@ -372,14 +369,4 @@ func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
 			}
 		}
 	}
-}
-
-func (s *Server) markInvocationFailed(repoID, invocationID, exitReason string) {
-	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = exitReason
-		meta.FinishedAt = now
-		meta.Flags.NeedsAttention = true
-	})
 }

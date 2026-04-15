@@ -77,8 +77,9 @@ E2E tests (~5-10%) are smoke tests for critical user paths. Build the real binar
 
 Rules:
 
-- Runs on every PR and in local verification commands (`make check`).
+- Runs in the local verification gates (`make check` and `make verify`) and in CI.
 - Treat static-analysis failures as real failures (no `|| true`).
+- Use the repo-pinned `golangci-lint v2.11.4`.
 
 ### Tier 1: Unit Tests
 
@@ -134,8 +135,10 @@ What belongs here:
 
 Rules:
 
-- Gate with `//go:build e2e` build tag and environment variables: `AGENCY_GH_E2E=1` and `GH_TOKEN`.
-- Run with `go test -tags=e2e ./...`. Optionally require `AGENCY_GH_E2E=1` and skip otherwise.
+- Gate with `//go:build e2e` build tag.
+- GH-backed E2E requires `AGENCY_GH_E2E=1` and a token in `GH_TOKEN` or `GITHUB_TOKEN`.
+- Local black-box CLI E2E requires `AGENCY_LOCAL_E2E=1`.
+- Run GH-backed and local E2E through the documented `make e2e*` targets, not ad hoc package-wide `go test -tags=e2e ./...` invocations.
 - Keep E2E in `*_e2e_test.go` files.
 - Build the real binary before running: `go build -o <tmpdir>/agency ./cmd/agency`.
 - Invoke the binary as a subprocess with `exec.Command`.
@@ -403,11 +406,13 @@ Use table-driven tests when you have 3+ cases testing the same code path with di
 ### Local Commands
 
 ```makefile
-make check       # fast checks: fmt-check + lint + test + build
-make verify      # full checks: fmt-check + lint + mod-tidy + race + e2e + completions + build
+make check       # fast checks: fmt-check + vet + lint + test + build
+make verify      # full checks: fmt-check + vet + lint + mod-tidy-check + race + e2e + completions + build
 make test        # go test ./...
 make test-race   # go test -race -count=1 ./...
-make lint        # golangci-lint run
+make vet         # go vet ./...
+make lint        # golangci-lint run ./...
+make fmt         # rewrite unformatted Go files in place
 make fmt-check   # gofmt formatting check
 make e2e         # E2E entrypoint (always runs S5 failure matrix; GH happy path when token exists, else local smoke)
 make e2e-gh      # run both S5 E2E suites (requires GH_TOKEN or GITHUB_TOKEN)
@@ -418,20 +423,21 @@ make e2e-local   # local black-box CLI E2E smoke tests
 
 Command semantics:
 
-- `make check`: fast local feedback loop for routine development (static checks + tests + build, no race detector, no E2E).
-- `make verify`: full verification before merge (everything including race detector, E2E, and completions).
-- `make e2e`: E2E entrypoint; always runs the deterministic S5 failure matrix, then runs GH-backed S5 happy path when token is present (else local smoke E2E).
-- `make e2e-gh`: runs both S5 suites (failure matrix + GH happy path); requires `GH_TOKEN` or `GITHUB_TOKEN`.
-- `make e2e-s5-happy`: runs only the GH-backed S5 happy-path suite.
+- `make check`: fast local feedback loop for routine development. It runs formatting, `go vet`, lint, unit and integration tests, and a build. It does not run race tests or E2E.
+- `make verify`: full pre-merge verification. It runs formatting, `go vet`, lint, module tidy, race tests, E2E, completions, and a build.
+- `make vet`: standalone `go vet` target.
+- `make e2e`: primary E2E entrypoint. It always runs the deterministic S5 failure matrix, then runs the GH-backed S5 happy path when `AGENCY_GH_E2E=1` and a GH token are present; otherwise it runs local smoke E2E.
+- `make e2e-gh`: runs both S5 suites, requires `GH_TOKEN` or `GITHUB_TOKEN`, and sets `AGENCY_GH_E2E=1` for the happy-path run.
+- `make e2e-s5-happy`: runs only the GH-backed S5 happy-path suite with `AGENCY_GH_E2E=1`, `AGENCY_GH_REPO=NielsdaWheelz/agency-test`, and a GH token.
 - `make e2e-s5-failure-matrix`: runs only the deterministic S5 failure-matrix suite.
-- `make e2e-local`: local black-box CLI E2E matrix coverage without GitHub dependency.
+- `make e2e-local`: runs only the local black-box CLI E2E smoke suite with `AGENCY_LOCAL_E2E=1`.
 
 ### CI Shape
 
-1. `go test ./...` on every push and PR.
-2. E2E job always runs deterministic S5 failure-matrix coverage (`TestS5E2EWorktreePRSyncMergeFailureMatrix`) under `-tags=e2e`.
-3. GH-backed S5 happy-path E2E (`TestGHE2EWorktreePRSyncMerge`) runs conditionally when `AGENCY_GH_TOKEN` is configured.
-4. Happy-path and failure-matrix suites run in separate CI steps for attribution.
+1. Run `make verify` in CI.
+2. Let `make verify` own the deterministic non-GitHub gate, including the S5 failure matrix and local smoke E2E.
+3. Run `make e2e-s5-happy` in a separate job only when `AGENCY_GH_TOKEN` is configured.
+4. Keep the GH-backed happy-path suite separate from the main verify job for attribution.
 
 ## 13. Golden File / Snapshot Tests
 
@@ -488,6 +494,7 @@ Before considering tests complete:
 
 - [ ] All new/changed logic has test coverage for happy path AND error paths.
 - [ ] Tests pass with `go test -race ./...`.
+- [ ] Tests pass under `make vet`.
 - [ ] Tests pass under `make verify`.
 - [ ] `t.Parallel()` is used for isolated tests; no parallel tests mutate env/globals.
 - [ ] No mocks exist where a real implementation is feasible.

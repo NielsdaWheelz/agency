@@ -59,19 +59,6 @@ func AsDaemonReadError(err error) (*DaemonReadError, bool) {
 	return nil, false
 }
 
-func readAPIErrorRich(resp daemon.RawAPIResponse) *DaemonReadError {
-	var rawDetails json.RawMessage
-	rawDetails = append(json.RawMessage(nil), resp.Details...)
-	return &DaemonReadError{
-		AgencyErr: &errors.AgencyError{
-			Code: errors.Code(resp.ErrorCode),
-			Msg:  resp.Message,
-		},
-		Hint:       resp.Hint,
-		RawDetails: rawDetails,
-	}
-}
-
 func (c *Client) newJSONRequest(ctx context.Context, method, rawURL string, reqBody any) (*http.Request, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
@@ -129,21 +116,23 @@ func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBod
 	return &apiResp, nil
 }
 
-func decodeAPIResponseData(raw json.RawMessage, target any) error {
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return nil
-	}
-	return json.Unmarshal(raw, target)
-}
-
 func decodeResult[T any](apiResp *daemon.RawAPIResponse) (*daemon.Result[T], error) {
 	if !apiResp.OK {
-		return nil, readAPIErrorRich(*apiResp)
+		return nil, &DaemonReadError{
+			AgencyErr: &errors.AgencyError{
+				Code: errors.Code(apiResp.ErrorCode),
+				Msg:  apiResp.Message,
+			},
+			Hint:       apiResp.Hint,
+			RawDetails: append(json.RawMessage(nil), apiResp.Details...),
+		}
 	}
 
 	var data T
-	if err := decodeAPIResponseData(apiResp.Data, &data); err != nil {
-		return nil, err
+	if len(apiResp.Data) != 0 && !bytes.Equal(apiResp.Data, []byte("null")) {
+		if err := json.Unmarshal(apiResp.Data, &data); err != nil {
+			return nil, err
+		}
 	}
 
 	return &daemon.Result[T]{

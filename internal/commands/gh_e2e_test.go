@@ -274,6 +274,14 @@ This is an automated e2e test - no manual testing required.
 	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)
 }
 
+func nonInteractiveEnv() map[string]string {
+	return map[string]string{
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PROMPT_DISABLED":  "1",
+		"CI":                  "1",
+	}
+}
+
 func runCmd(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name string, args ...string) {
 	t.Helper()
 	result, err := cr.Run(ctx, name, args, exec.RunOpts{
