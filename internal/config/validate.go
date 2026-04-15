@@ -44,31 +44,3 @@ func LoadAndValidate(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
 	}
 	return ValidateAgencyConfig(cfg)
 }
-
-// ValidateForS1 validates the configuration for slice 1 requirements only.
-// Unlike ValidateAgencyConfig, this only requires scripts.setup (not verify/archive).
-// Returns E_INVALID_AGENCY_JSON for schema/required-field errors.
-func ValidateForS1(cfg AgencyConfig) (AgencyConfig, error) {
-	// Validate version
-	if cfg.Version != 1 {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 1")
-	}
-
-	// Validate scripts.setup only (S1 requirement)
-	if cfg.Scripts.Setup.Path == "" {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.setup.path")
-	}
-
-	return cfg, nil
-}
-
-// LoadAndValidateForS1 is a convenience function that loads and validates agency.json
-// for slice 1 requirements only. This validates only scripts.setup (not verify/archive).
-// This is the primary entry point for S1 commands (e.g., agency run).
-func LoadAndValidateForS1(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
-	cfg, err := LoadAgencyConfig(filesystem, repoRoot)
-	if err != nil {
-		return AgencyConfig{}, err
-	}
-	return ValidateForS1(cfg)
-}
