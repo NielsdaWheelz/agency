@@ -41,9 +41,11 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 		resp.PGID = *meta.PGID
 	}
 	resp.LogPaths = &LogPaths{
-		Raw:    s.readableInvocationLogPath(repoID, invocationID, "raw"),
-		Stderr: s.readableInvocationLogPath(repoID, invocationID, "stderr"),
-		Stream: s.readableInvocationLogPath(repoID, invocationID, "stream"),
+		Raw:      s.readableInvocationLogPath(repoID, invocationID, "raw"),
+		Stderr:   s.readableInvocationLogPath(repoID, invocationID, "stderr"),
+		Stream:   s.readableInvocationLogPath(repoID, invocationID, "stream"),
+		Hooks:    s.readableInvocationLogPath(repoID, invocationID, "hooks"),
+		Terminal: s.readableInvocationLogPath(repoID, invocationID, "terminal"),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -63,7 +65,7 @@ func (s *Server) writeHeadedError(w http.ResponseWriter, status int, code, messa
 }
 
 func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
-	s.writeJSON(w, http.StatusOK, ControlPlaneStartHeadedResponse{
+	resp := ControlPlaneStartHeadedResponse{
 		OK:                    true,
 		InvocationID:          invocationID,
 		SandboxPath:           meta.SandboxPath,
@@ -77,7 +79,15 @@ func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, 
 		GitSHA:                version.Commit,
 		ClientRequestID:       clientRequestID,
 		DaemonInstanceID:      s.InstanceID,
-	})
+		LogPaths: &LogPaths{
+			Raw:      s.readableInvocationLogPath(repoID, invocationID, "raw"),
+			Stderr:   s.readableInvocationLogPath(repoID, invocationID, "stderr"),
+			Stream:   s.readableInvocationLogPath(repoID, invocationID, "stream"),
+			Hooks:    s.readableInvocationLogPath(repoID, invocationID, "hooks"),
+			Terminal: s.readableInvocationLogPath(repoID, invocationID, "terminal"),
+		},
+	}
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {

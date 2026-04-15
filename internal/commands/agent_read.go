@@ -277,7 +277,7 @@ type AgentLogsOpts struct {
 	// RepoRef is the --repo flag value.
 	RepoRef string
 
-	// Kind is the log kind: raw, stderr, stream (default: raw).
+	// Kind is the log kind: raw, stderr, stream, hooks, terminal (default: raw).
 	Kind string
 
 	// Follow enables follow mode: poll for new data after reaching EOF.
@@ -314,7 +314,7 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	kind := opts.Kind
+	kind := strings.TrimSpace(opts.Kind)
 	if kind == "" {
 		kind = "raw"
 	}

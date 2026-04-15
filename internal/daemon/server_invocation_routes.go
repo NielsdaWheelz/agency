@@ -84,6 +84,11 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationLogs(w, r, invocationRef)
+	case "headed_hook":
+		if !s.requireMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleHeadedHook(w, r, invocationRef)
 	case "timeline":
 		if !s.requireMethod(w, r, http.MethodGet) {
 			return

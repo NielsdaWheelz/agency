@@ -106,6 +106,42 @@ func (c *ExecClient) SendKeys(ctx context.Context, name string, keys []Key) erro
 	return nil
 }
 
+// CaptureScrollback implements Client.CaptureScrollback.
+// Uses: tmux capture-pane -p -S - -t <target>
+func (c *ExecClient) CaptureScrollback(ctx context.Context, target string) (string, error) {
+	result, err := c.runner.Run(ctx, "tmux", []string{"capture-pane", "-p", "-S", "-", "-t", target}, exec.RunOpts{})
+	if err != nil {
+		return "", err
+	}
+	if result.ExitCode != 0 {
+		return "", c.formatError("capture-pane", result.ExitCode, result.Stderr)
+	}
+	return result.Stdout, nil
+}
+
+// PipePane implements Client.PipePane.
+// Uses: tmux pipe-pane -o -t <target> "cat >> <logPath>"
+func (c *ExecClient) PipePane(ctx context.Context, target, logPath string) error {
+	if strings.TrimSpace(target) == "" {
+		return fmt.Errorf("tmux pipe-pane: target is required")
+	}
+	if strings.TrimSpace(logPath) == "" {
+		return fmt.Errorf("tmux pipe-pane: log path is required")
+	}
+	result, err := c.runner.Run(ctx, "tmux", []string{"pipe-pane", "-o", "-t", target, "cat >> " + shellQuote(logPath)}, exec.RunOpts{})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return c.formatError("pipe-pane", result.ExitCode, result.Stderr)
+	}
+	return nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // formatError formats a tmux error with subcommand, exit code, and capped stderr.
 func (c *ExecClient) formatError(subcmd string, exitCode int, stderr string) error {
 	trimmed := strings.TrimSpace(stderr)

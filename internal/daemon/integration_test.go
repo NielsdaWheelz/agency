@@ -2624,7 +2624,11 @@ func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 
 			require.NotEmpty(t, call.Argv)
 			assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
-			assert.Equal(t, tc.runnerArgs, call.Argv[1:])
+			wantRunnerArgs := tc.runnerArgs
+			if tc.canonicalRunner == "codex" {
+				wantRunnerArgs = []string{"--model", "gpt-5", "--enable", "codex_hooks"}
+			}
+			assert.Equal(t, wantRunnerArgs, call.Argv[1:])
 			assert.Equal(t, normalizePathForAssert(t, resp.SandboxPath), normalizePathForAssert(t, call.CWD))
 
 			_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)

@@ -369,6 +369,114 @@ func TestExecClient_SendKeys(t *testing.T) {
 	}
 }
 
+func TestExecClient_CaptureScrollback(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		target    string
+		responses []fakeResponse
+		want      string
+		wantErr   bool
+		wantArgs  []string
+	}{
+		{
+			name:   "capture success",
+			target: "agency_abc123:0.0",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0, Stdout: "line 1\nline 2\n"}},
+			},
+			want:     "line 1\nline 2\n",
+			wantErr:  false,
+			wantArgs: []string{"capture-pane", "-p", "-S", "-", "-t", "agency_abc123:0.0"},
+		},
+		{
+			name:   "capture failure",
+			target: "agency_abc123:0.0",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 1, Stderr: "can't find pane"}},
+			},
+			want:     "",
+			wantErr:  true,
+			wantArgs: []string{"capture-pane", "-p", "-S", "-", "-t", "agency_abc123:0.0"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := newFakeRunner(tt.responses...)
+			client := NewExecClient(runner)
+
+			got, err := client.CaptureScrollback(context.Background(), tt.target)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, got)
+
+			require.Len(t, runner.calls, 1)
+			call := runner.calls[0]
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
+		})
+	}
+}
+
+func TestExecClient_PipePane(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		target    string
+		logPath   string
+		responses []fakeResponse
+		wantErr   bool
+		wantArgs  []string
+	}{
+		{
+			name:    "pipe success",
+			target:  "agency_abc123:0.0",
+			logPath: "/tmp/agent's log.txt",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0}},
+			},
+			wantArgs: []string{"pipe-pane", "-o", "-t", "agency_abc123:0.0", "cat >> '/tmp/agent'\\''s log.txt'"},
+		},
+		{
+			name:    "pipe failure",
+			target:  "agency_abc123:0.0",
+			logPath: "/tmp/agent.log",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 1, Stderr: "can't pipe pane"}},
+			},
+			wantErr:  true,
+			wantArgs: []string{"pipe-pane", "-o", "-t", "agency_abc123:0.0", "cat >> '/tmp/agent.log'"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := newFakeRunner(tt.responses...)
+			client := NewExecClient(runner)
+
+			err := client.PipePane(context.Background(), tt.target, tt.logPath)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.Len(t, runner.calls, 1)
+			call := runner.calls[0]
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
+		})
+	}
+}
+
 func TestExecClient_ErrorFormatting(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -153,6 +153,18 @@ func (s *Store) InvocationStreamLogPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "stream.jsonl")
 }
 
+// InvocationHooksLogPath returns the path to an invocation's hooks.jsonl file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/hooks.jsonl
+func (s *Store) InvocationHooksLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "hooks.jsonl")
+}
+
+// InvocationTerminalLogPath returns the path to an invocation's terminal.log file.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/terminal.log
+func (s *Store) InvocationTerminalLogPath(repoID, invocationID string) string {
+	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "terminal.log")
+}
+
 // ----- V2 Sandbox paths -----
 
 // SandboxesDir returns the sandboxes directory for a repo.

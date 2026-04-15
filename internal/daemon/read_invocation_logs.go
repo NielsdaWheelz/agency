@@ -45,6 +45,10 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stderr")
 	case "stream":
 		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream")
+	case "hooks":
+		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "hooks")
+	case "terminal":
+		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "terminal")
 	default:
 		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw")
 		params.Kind = "raw"

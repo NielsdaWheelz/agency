@@ -86,6 +86,10 @@ type Server struct {
 	// Used to prevent duplicate headed invocations from retried requests.
 	headedIdempotency map[string]HeadedIdempotencyEntry
 
+	// headedHookMu serializes headed hook imports so transcript offsets and parser
+	// state advance in the same order as writes to raw.jsonl and stream.jsonl.
+	headedHookMu sync.Mutex
+
 	// worktreeIdempotencyMu protects the worktree idempotency map.
 	worktreeIdempotencyMu sync.RWMutex
 

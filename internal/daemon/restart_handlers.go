@@ -265,9 +265,11 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 		PGID:             pgid,
 		DaemonInstanceID: s.InstanceID,
 		LogPaths: &LogPaths{
-			Raw:    s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw"),
-			Stderr: s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stderr"),
-			Stream: s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream"),
+			Raw:      s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw"),
+			Stderr:   s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stderr"),
+			Stream:   s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream"),
+			Hooks:    s.readableInvocationLogPath(record.RepoID, record.InvocationID, "hooks"),
+			Terminal: s.readableInvocationLogPath(record.RepoID, record.InvocationID, "terminal"),
 		},
 	}
 	s.writeJSON(w, http.StatusOK, resp)

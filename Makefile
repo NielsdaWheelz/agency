@@ -85,7 +85,7 @@ go-mod-verify:
 # GH happy path is opt-in via AGENCY_GH_E2E=1 and requires token.
 e2e:
 	@echo "running s5 failure-matrix e2e"; \
-	$(MAKE) e2e-s5-failure-matrix; \
+	$(MAKE) e2e-s5-failure-matrix && \
 	if [ "$${AGENCY_GH_E2E:-}" = "1" ]; then \
 		token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
 		if [ -z "$$token" ]; then \

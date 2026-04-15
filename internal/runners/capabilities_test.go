@@ -191,7 +191,7 @@ func TestBuildHeadedArgs(t *testing.T) {
 
 	codexArgs, err := BuildHeadedArgs("codex", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--model", "gpt-5"}, codexArgs)
+	assert.Equal(t, []string{"--model", "gpt-5", "--enable", "codex_hooks"}, codexArgs)
 
 	ampArgs, err := BuildHeadedArgs("amp", []string{"--model", "amp-fast"})
 	require.NoError(t, err)

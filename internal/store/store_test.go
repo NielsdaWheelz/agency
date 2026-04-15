@@ -33,6 +33,11 @@ func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
 	preparedPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "raw")
 	require.NoError(t, err)
 	assert.Equal(t, s.InvocationRawLogPath(repoID, invocationID), preparedPath)
+
+	terminalPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "terminal")
+	require.NoError(t, err)
+	assert.Equal(t, s.InvocationTerminalLogPath(repoID, invocationID), terminalPath)
+
 	_, err = os.Stat(s.InvocationLogsDir(repoID, invocationID))
 	require.NoError(t, err)
 	_, err = os.Stat(preparedPath)

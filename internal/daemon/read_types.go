@@ -285,7 +285,7 @@ type InvocationReviewData struct {
 
 // InvocationLogsOffsetData is the data payload for GET /invocations/{id}/logs.
 type InvocationLogsOffsetData struct {
-	Kind       string `json:"kind"` // raw, stderr, stream
+	Kind       string `json:"kind"` // raw, stderr, stream, hooks, terminal
 	DataB64    string `json:"data_b64"`
 	NextOffset int64  `json:"next_offset"`
 	TotalBytes int64  `json:"total_bytes"`
@@ -372,7 +372,7 @@ type ListInvocationsParams struct {
 
 // GetLogsParams holds query parameters for GET /invocations/{id}/logs.
 type GetLogsParams struct {
-	Kind   string // raw, stderr, stream (default: raw)
+	Kind   string // raw, stderr, stream, hooks, terminal (default: raw)
 	Offset int64  // byte offset from start of file (>= 0)
 	Limit  int    // max bytes returned; clamped to [1, MaxLogChunk]
 }

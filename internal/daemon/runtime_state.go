@@ -36,9 +36,11 @@ type IdempotencyEntry struct {
 
 // LogPaths contains paths to log files.
 type LogPaths struct {
-	Raw    string `json:"raw"`
-	Stderr string `json:"stderr"`
-	Stream string `json:"stream"`
+	Raw      string `json:"raw"`
+	Stderr   string `json:"stderr"`
+	Stream   string `json:"stream"`
+	Hooks    string `json:"hooks"`
+	Terminal string `json:"terminal"`
 }
 
 // WorktreeIdempotencyEntry tracks a recent worktree create request for idempotency.
@@ -77,8 +79,9 @@ type SupervisedProcess struct {
 	NoIncludeUntracked    bool
 
 	// Parser handles stream parsing and semantic status.
-	// May be nil for headed invocations or unsupported runners.
-	Parser *stream.Parser
+	// May be nil for unsupported runners.
+	Parser   *stream.Parser
+	ParserMu sync.Mutex
 
 	// CheckpointEngine manages checkpoint creation.
 	// May be nil if checkpointing is disabled.

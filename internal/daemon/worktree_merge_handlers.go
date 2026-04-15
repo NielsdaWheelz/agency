@@ -226,6 +226,17 @@ func (s *Server) runWorktreeMerge(
 
 	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot)
 	if err != nil {
+		if errors.GetCode(err) == errors.ENoPR {
+			_, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
+				MaxBytes: report.MaxPRBodyReportBytes,
+			})
+			if reportErr != nil {
+				return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
+			}
+			if reportViolation != nil {
+				return nil, reportViolationToAgencyError(reportViolation)
+			}
+		}
 		return nil, err
 	}
 

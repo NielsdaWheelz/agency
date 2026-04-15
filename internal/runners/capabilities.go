@@ -74,7 +74,7 @@ var capabilityByID = map[string]Capability{
 		HasSemanticAdapter:   true,
 		ChatMode:             ChatModeResume,
 		InitialPromptMode:    InitialPromptPositional,
-		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume"},
+		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume", "--settings", "--bare"},
 		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
 		headlessTemplate: []string{
 			"-p",
@@ -127,7 +127,7 @@ var capabilityByID = map[string]Capability{
 			"--disable", "unified_exec",
 			launchTokenPrompt,
 		},
-		headedTemplate: []string{launchTokenExtraArgs},
+		headedTemplate: []string{launchTokenExtraArgs, "--enable", "codex_hooks"},
 	},
 	RunnerAmp: {
 		ID:                RunnerAmp,

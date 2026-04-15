@@ -206,7 +206,7 @@ func newAgentLogsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
-	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream)")
+	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream, hooks, terminal)")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 0, "Limit follow iterations for testing")

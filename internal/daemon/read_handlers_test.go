@@ -1110,6 +1110,8 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 		{"raw", "raw.jsonl"},
 		{"stderr", "stderr.log"},
 		{"stream", "stream.jsonl"},
+		{"hooks", "hooks.jsonl"},
+		{"terminal", "terminal.log"},
 	}
 
 	for _, tt := range tests {
@@ -1325,6 +1327,22 @@ func TestParseGetLogsParams(t *testing.T) {
 		assert.Equal(t, "stderr", params.Kind)
 		assert.Equal(t, int64(128), params.Offset)
 		assert.Equal(t, 1024, params.Limit)
+	})
+
+	t.Run("terminal_kind", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=terminal", nil)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
+		assert.Equal(t, "terminal", params.Kind)
+	})
+
+	t.Run("hooks_kind", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=hooks", nil)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
+		assert.Equal(t, "hooks", params.Kind)
 	})
 
 	t.Run("invalid_offset", func(t *testing.T) {
@@ -1956,6 +1974,46 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 		var data InvocationLogsOffsetData
 		decodeData(t, resp, &data)
 		assert.Equal(t, "stream", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
+	})
+
+	t.Run("offset_terminal_kind_missing_file_returns_empty", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=terminal&offset=0&limit=65536")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "terminal", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
+	})
+
+	t.Run("offset_hooks_kind_missing_file_returns_empty", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=hooks&offset=0&limit=65536")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "hooks", data.Kind)
 		assert.Empty(t, data.DataB64)
 		assert.Zero(t, data.NextOffset)
 		assert.Zero(t, data.TotalBytes)

@@ -1,12 +1,15 @@
 package daemonclient
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/google/uuid"
 )
 
@@ -34,6 +37,31 @@ func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts ControlPlaneS
 	}
 
 	return &result, nil
+}
+
+// IngestHeadedHook sends a headed runner hook payload to the daemon.
+func (c *Client) IngestHeadedHook(ctx context.Context, repoID, invocationID, runner string, payload []byte) (*daemon.Result[daemon.HeadedHookIngestData], error) {
+	u := fmt.Sprintf("%s/invocations/%s/headed_hook?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID))
+	if runner != "" {
+		u += "&runner=" + url.QueryEscape(runner)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var apiResp daemon.RawAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+	return decodeResult[daemon.HeadedHookIngestData](&apiResp)
 }
 
 // SubmitFollowUpPrompt submits a follow-up prompt to an existing invocation.

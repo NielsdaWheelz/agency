@@ -168,7 +168,7 @@ func (c *Client) GetInvocationReview(ctx context.Context, ref string, repoID str
 
 // GetInvocationLogsOffsetOpts holds options for offset-based log reads.
 type GetInvocationLogsOffsetOpts struct {
-	Kind   string // raw, stderr, stream (default: raw)
+	Kind   string // raw, stderr, stream, hooks, terminal (default: raw)
 	Offset int64  // byte offset from start of file
 	Limit  int    // max bytes returned (default 65536)
 }

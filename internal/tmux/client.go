@@ -41,4 +41,10 @@ type Client interface {
 	// keys must have at least 1 element.
 	// Returns error if keys is empty, session does not exist, or send fails.
 	SendKeys(ctx context.Context, name string, keys []Key) error
+
+	// CaptureScrollback captures scrollback from a tmux pane target.
+	CaptureScrollback(ctx context.Context, target string) (string, error)
+
+	// PipePane appends future pane output to logPath.
+	PipePane(ctx context.Context, target, logPath string) error
 }

@@ -151,7 +151,7 @@ type InvocationMeta struct {
 	// Flags contains boolean flags for operational state.
 	Flags InvocationFlags `json:"flags,omitempty"`
 
-	// SemanticStatus is the derived semantic status from stream parsing (headless only).
+	// SemanticStatus is the derived semantic status from stream parsing.
 	// Values: working, needs_input, blocked, ready_for_review.
 	// This is set by the daemon during stream parsing and is optional.
 	SemanticStatus *runnerstatus.Status `json:"semantic_status,omitempty"`
@@ -344,6 +344,10 @@ func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (str
 		return s.InvocationStderrLogPath(repoID, invocationID), nil
 	case "stream":
 		return s.InvocationStreamLogPath(repoID, invocationID), nil
+	case "hooks":
+		return s.InvocationHooksLogPath(repoID, invocationID), nil
+	case "terminal":
+		return s.InvocationTerminalLogPath(repoID, invocationID), nil
 	default:
 		return s.InvocationRawLogPath(repoID, invocationID), nil
 	}

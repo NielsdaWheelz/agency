@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -145,6 +147,11 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", req.ClientRequestID, requestID)
 		return
 	}
+	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, createResult.SandboxPath); err != nil {
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", req.ClientRequestID, requestID)
+		return
+	}
 
 	sessionName := tmux.SessionName(createResult.InvocationID)
 	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
@@ -158,10 +165,43 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoIdentity.RepoID, createResult.InvocationID, "terminal")
+	if err != nil {
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create terminal log: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	}
+	_ = terminalFile.Close()
+
 	argv := append([]string{runnerCmd}, headedRunnerArgs...)
 	if err := s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv); err != nil {
 		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", req.ClientRequestID, requestID)
+		return
+	}
+	target := tmux.SessionTarget(createResult.InvocationID)
+	if scrollback, err := s.TmuxClient.CaptureScrollback(ctx, target); err != nil {
+		s.recordInvocationWarning(repoIdentity.RepoID, createResult.InvocationID, "start_headed_tmux_capture_failed", err.Error(), map[string]any{
+			"target": target,
+		})
+	} else if scrollback != "" {
+		if err := os.WriteFile(terminalLogPath, []byte(scrollback), 0o600); err != nil {
+			_ = s.TmuxClient.KillSession(ctx, sessionName)
+			s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to write initial terminal capture: "+err.Error(), "", req.ClientRequestID, requestID)
+			return
+		}
+	}
+	if err := s.TmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
+		_ = s.TmuxClient.KillSession(ctx, sessionName)
+		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available", req.ClientRequestID, requestID)
 		return
 	}
 
@@ -183,19 +223,86 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	streamLogPath := s.Store.InvocationStreamLogPath(repoIdentity.RepoID, createResult.InvocationID)
+	parser := stream.NewParser(createResult.InvocationID, req.Runner, s.Clock)
+	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
+	checkpointsDir := s.Store.InvocationDir(repoIdentity.RepoID, createResult.InvocationID)
+	eventsPath := s.Store.InvocationEventsPath(repoIdentity.RepoID, createResult.InvocationID)
+	cpConfig := checkpoint.DefaultConfig()
+	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
+	if s.CheckpointDebounceOverride != nil {
+		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
+		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
+	}
+	cpEngine := checkpoint.NewEngineWithWriter(
+		createResult.InvocationID,
+		repoIdentity.RepoID,
+		createResult.SandboxPath,
+		repoRoot,
+		checkpointsDir,
+		eventsPath,
+		cpConfig,
+		s.Runner,
+		s.FS,
+		s.Clock,
+		s.InvocationEvents,
+	)
+	cpEngine.SetGitIgnoredDirs(checkpoint.ReadGitIgnoredDirs(createResult.SandboxPath))
+	triggerCh := make(chan checkpoint.TriggerEvent, 32)
+	cpEngine.SetTriggerChannel(triggerCh)
+
 	proc := &SupervisedProcess{
 		InvocationID:          createResult.InvocationID,
 		RepoID:                repoIdentity.RepoID,
 		IntegrationWorktreeID: prep.wtRecord.WorktreeID,
 		Mode:                  "headed",
 		TmuxSession:           sessionName,
+		SandboxPath:           createResult.SandboxPath,
+		StreamLogFile:         streamLogPath,
 		Runner:                req.Runner,
 		RepoRoot:              repoRoot,
+		RunnerArgs:            runnerArgs,
+		NoIncludeUntracked:    req.NoIncludeUntracked,
+		Parser:                parser,
+		CheckpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
 	}
+	parser.SetCheckpointNotify(func(n stream.CheckpointNotification) {
+		trigger := checkpoint.TriggerEvent{
+			Kind:      checkpoint.TriggerToolEnd,
+			ToolName:  n.ToolName,
+			ToolNames: n.ToolNames,
+			Seq:       n.Seq,
+		}
+		select {
+		case triggerCh <- trigger:
+			return
+		default:
+		}
+
+		timer := time.NewTimer(250 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case triggerCh <- trigger:
+		case <-timer.C:
+			s.recordInvocationWarning(repoIdentity.RepoID, createResult.InvocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
+				"seq":       n.Seq,
+				"tool_name": n.ToolName,
+			})
+		}
+	})
+	parser.SetFinalNotify(func(n stream.FinalNotification) {
+		s.handleSuccessfulFinalNotification(proc, n)
+	})
+	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
+		proc.SetResumeSessionID(n.SessionID)
+	})
 	s.mu.Lock()
 	s.processes[createResult.InvocationID] = proc
 	s.mu.Unlock()
+	go s.runOutputFlushLoop(proc)
+	go s.runSemanticStatusFlushLoop(proc)
+	go s.runCheckpointLoop(proc)
 
 	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, sessionName, createResult.SandboxPath)
 

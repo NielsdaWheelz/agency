@@ -304,6 +304,13 @@ func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDe
 	}
 
 	if kind := r.URL.Query().Get("kind"); kind != "" {
+		if !isValidInvocationLogKind(kind) {
+			return params, &InvalidQueryArgumentDetails{
+				Param:         "kind",
+				Value:         kind,
+				AllowedValues: validInvocationLogKinds,
+			}
+		}
 		params.Kind = kind
 	}
 
@@ -332,10 +339,20 @@ func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDe
 }
 
 var (
-	validWorktreeStates   = []string{"present", "archived", "all"}
-	validInvocationStates = []string{"unresolved", "finished", "all"}
-	validInvocationModes  = []string{"headed", "headless", "all"}
+	validWorktreeStates     = []string{"present", "archived", "all"}
+	validInvocationStates   = []string{"unresolved", "finished", "all"}
+	validInvocationModes    = []string{"headed", "headless", "all"}
+	validInvocationLogKinds = []string{"raw", "stderr", "stream", "hooks", "terminal"}
 )
+
+func isValidInvocationLogKind(kind string) bool {
+	for _, valid := range validInvocationLogKinds {
+		if kind == valid {
+			return true
+		}
+	}
+	return false
+}
 
 func isValidWorktreeState(state string) bool {
 	for _, valid := range validWorktreeStates {

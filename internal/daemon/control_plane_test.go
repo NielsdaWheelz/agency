@@ -363,7 +363,7 @@ func TestBuildRunnerArgsForHeaded(t *testing.T) {
 			name:      "codex headed",
 			runner:    "codex",
 			extraArgs: []string{"--model", "gpt-5"},
-			wantArgs:  []string{"--model", "gpt-5"},
+			wantArgs:  []string{"--model", "gpt-5", "--enable", "codex_hooks"},
 		},
 		{
 			name:      "amp headed",

@@ -41,6 +41,7 @@ and provides commands to control the runner session.`,
 		newWatchCmd(),
 		newDaemonCmd(),
 		newRepoCmd(),
+		newInternalCmd(),
 	)
 
 	return rootCmd

@@ -39,6 +39,10 @@ func (s *Server) readableInvocationLogPath(repoID, invocationID, kind string) st
 		return s.Store.InvocationStderrLogPath(repoID, invocationID)
 	case "stream":
 		return s.Store.InvocationStreamLogPath(repoID, invocationID)
+	case "hooks":
+		return s.Store.InvocationHooksLogPath(repoID, invocationID)
+	case "terminal":
+		return s.Store.InvocationTerminalLogPath(repoID, invocationID)
 	default:
 		return s.Store.InvocationRawLogPath(repoID, invocationID)
 	}

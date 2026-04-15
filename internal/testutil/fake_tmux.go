@@ -27,6 +27,12 @@ type FakeTmuxSendKeysCall struct {
 	Keys []tmux.Key
 }
 
+// FakeTmuxPipePaneCall records the arguments of a PipePane call.
+type FakeTmuxPipePaneCall struct {
+	Target  string
+	LogPath string
+}
+
 // FakeTmuxClient is a thread-safe test double for tmux.Client.
 // All methods acquire mu for thread safety so it can be used from
 // multiple goroutines (e.g. daemon HTTP handler goroutines).
@@ -40,6 +46,9 @@ type FakeTmuxClient struct {
 	HasSessionErr  error
 	KillSessionErr error
 	SendKeysErr    error
+	CaptureErr     error
+	CaptureOutput  string
+	PipePaneErr    error
 
 	// HasSessionFunc, when non-nil, overrides the default HasSession logic.
 	// Useful for tests that need sequential/conditional results (e.g. race-condition tests).
@@ -51,6 +60,8 @@ type FakeTmuxClient struct {
 	SendKeysCalls    []FakeTmuxSendKeysCall
 	KillSessionCalls []string
 	HasSessionCalls  []string
+	CaptureCalls     []string
+	PipePaneCalls    []FakeTmuxPipePaneCall
 }
 
 // NewFakeTmuxClient creates a ready-to-use FakeTmuxClient.
@@ -106,6 +117,28 @@ func (f *FakeTmuxClient) SendKeys(_ context.Context, name string, keys []tmux.Ke
 	f.SendKeysCalls = append(f.SendKeysCalls, FakeTmuxSendKeysCall{Name: name, Keys: keys})
 	if f.SendKeysErr != nil {
 		return f.SendKeysErr
+	}
+	return nil
+}
+
+// CaptureScrollback implements tmux.Client.
+func (f *FakeTmuxClient) CaptureScrollback(_ context.Context, target string) (string, error) {
+	f.Mu.Lock()
+	defer f.Mu.Unlock()
+	f.CaptureCalls = append(f.CaptureCalls, target)
+	if f.CaptureErr != nil {
+		return "", f.CaptureErr
+	}
+	return f.CaptureOutput, nil
+}
+
+// PipePane implements tmux.Client.
+func (f *FakeTmuxClient) PipePane(_ context.Context, target, logPath string) error {
+	f.Mu.Lock()
+	defer f.Mu.Unlock()
+	f.PipePaneCalls = append(f.PipePaneCalls, FakeTmuxPipePaneCall{Target: target, LogPath: logPath})
+	if f.PipePaneErr != nil {
+		return f.PipePaneErr
 	}
 	return nil
 }
