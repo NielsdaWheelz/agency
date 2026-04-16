@@ -10,5 +10,5 @@ func TestWorktreeCreate_HasRepoRef(t *testing.T) {
 	t.Parallel()
 
 	cmd := newWorktreeCreateCmd()
-	require.NotNil(t, cmd.Flag("repo"), "worktree create must require explicit repo selection")
+	require.NotNil(t, cmd.Flag("repo"), "worktree create must expose explicit repo selection")
 }

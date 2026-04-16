@@ -279,6 +279,75 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 	_ = runAgencyCLI(t, agencyBin, repoDir, env, "daemon", "stop", "--force")
 }
 
+func TestAgentStartCLIE2E_CWDFallbacks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+	if os.Getenv("AGENCY_LOCAL_E2E") == "" {
+		t.Skip("set AGENCY_LOCAL_E2E=1 to enable local CLI e2e tests")
+	}
+
+	repoRoot := repoRootFromCaller(t)
+	agencyBin, fakeRunnerBin := buildE2EBinaries(t, repoRoot)
+	repoDir := testutil.SetupGitRepo(t)
+
+	tmpDir := mustMkdirTemp(t, "agency-e2e-*")
+	dataDir := filepath.Join(tmpDir, "data")
+	configDir := filepath.Join(tmpDir, "config")
+	cacheDir := filepath.Join(tmpDir, "cache")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.MkdirAll(cacheDir, 0o755))
+	writeE2EConfig(t, configDir, fakeRunnerBin)
+
+	capturePath := filepath.Join(tmpDir, "launch_capture.json")
+	env := map[string]string{
+		"AGENCY_DATA_DIR":          dataDir,
+		"AGENCY_CONFIG_DIR":        configDir,
+		"AGENCY_CACHE_DIR":         cacheDir,
+		"FAKE_RUNNER_MODE":         "exit-ok",
+		"FAKE_RUNNER_CAPTURE_PATH": capturePath,
+		"GIT_CONFIG_NOSYSTEM":      os.Getenv("GIT_CONFIG_NOSYSTEM"),
+		"GIT_CONFIG_GLOBAL":        os.Getenv("GIT_CONFIG_GLOBAL"),
+		"GIT_AUTHOR_NAME":          os.Getenv("GIT_AUTHOR_NAME"),
+		"GIT_AUTHOR_EMAIL":         os.Getenv("GIT_AUTHOR_EMAIL"),
+		"GIT_COMMITTER_NAME":       os.Getenv("GIT_COMMITTER_NAME"),
+		"GIT_COMMITTER_EMAIL":      os.Getenv("GIT_COMMITTER_EMAIL"),
+		"GIT_TERMINAL_PROMPT":      "0",
+		"GH_PROMPT_DISABLED":       "1",
+		"AGENCY_LOCAL_E2E":         "1",
+	}
+
+	create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "--name", "cwd-fallback")
+	require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
+
+	path := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "path", "cwd-fallback")
+	require.Equalf(t, 0, path.ExitCode, "worktree path failed\nstdout:\n%s\nstderr:\n%s", path.Stdout, path.Stderr)
+	worktreePath := strings.TrimSpace(path.Stdout)
+	require.NotEmpty(t, worktreePath)
+
+	fromRepo := runAgencyCLI(t, agencyBin, repoDir, env,
+		"agent", "start",
+		"--worktree", "cwd-fallback",
+		"--runner", "claude-code",
+		"--headless",
+		"--prompt", "start from repo cwd",
+		"--json",
+	)
+	require.Equalf(t, 0, fromRepo.ExitCode, "agent start from repo cwd failed\nstdout:\n%s\nstderr:\n%s", fromRepo.Stdout, fromRepo.Stderr)
+
+	fromWorktree := runAgencyCLI(t, agencyBin, worktreePath, env,
+		"agent", "start",
+		"--runner", "claude-code",
+		"--headless",
+		"--prompt", "start from integration worktree cwd",
+		"--json",
+	)
+	require.Equalf(t, 0, fromWorktree.ExitCode, "agent start from worktree cwd failed\nstdout:\n%s\nstderr:\n%s", fromWorktree.Stdout, fromWorktree.Stderr)
+
+	_ = runAgencyCLI(t, agencyBin, repoDir, env, "daemon", "stop", "--force")
+}
+
 func buildE2EBinaries(t *testing.T, repoRoot string) (agencyBin string, fakeRunnerBin string) {
 	t.Helper()
 

@@ -51,13 +51,17 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 
 ## quick start
 
-Register the repo once, then use explicit `--repo` selectors from any cwd for create/start flows.
+`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they fall back to the current directory.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
+`worktree create` defaults omitted `--parent` to the current branch.
+`agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
 
 ```bash
 agency repo add /path/to/myrepo              # register this repo once
 agency worktree create --repo <repo-ref> --name my-feature --parent main
+agency worktree create --name my-feature
 agency agent start --repo <repo-ref> --worktree my-feature # headed start requires an interactive terminal; use --detached to skip attach
+agency agent start --worktree my-feature
 # Ctrl+b, d to detach from tmux
 agency watch                                 # full-screen readiness workspace (interactive tty; enter/o/p actions)
 agency agent ls                              # concise invocation list

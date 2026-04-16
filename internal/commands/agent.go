@@ -12,7 +12,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
 // AgentStartOpts holds options for the agent start command.
@@ -62,19 +64,17 @@ type AgentStartOpts struct {
 }
 
 // AgentStart starts a new agent invocation.
-func AgentStart(ctx context.Context, fsys fs.FS, opts AgentStartOpts, stdout, stderr io.Writer) error {
+func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
 	fail := func(err error) error {
 		if err == nil || !opts.JSON {
 			return err
 		}
 		return writeAgentMutationJSONError(stdout, err)
 	}
-	if strings.TrimSpace(opts.WorktreeRef) == "" {
-		return fail(errors.New(errors.EUsage, "--worktree is required"))
-	}
+	worktreeRef := strings.TrimSpace(opts.WorktreeRef)
 	repoRef := strings.TrimSpace(opts.RepoRef)
-	if repoRef == "" {
-		return fail(errors.New(errors.EUsage, "--repo is required"))
+	if cr == nil {
+		cr = exec.NewRealRunner()
 	}
 	if fsys == nil {
 		fsys = fs.NewRealFS()
@@ -104,17 +104,92 @@ func AgentStart(ctx context.Context, fsys fs.FS, opts AgentStartOpts, stdout, st
 		return fail(err)
 	}
 
-	repo, err := ns.client.GetRepo(ctx, repoRef)
-	if err != nil {
-		return fail(err)
+	repoRoot := ""
+	if repoRef != "" {
+		repo, err := ns.client.GetRepo(ctx, repoRef)
+		if err != nil {
+			return fail(err)
+		}
+		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
+			return fail(errors.NewWithDetails(
+				errors.ERepoRootInaccessible,
+				"repo preferred_root is not accessible",
+				map[string]string{"repo": repoRef, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+			))
+		}
+		if worktreeRef == "" {
+			worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
+			if err != nil {
+				return fail(err)
+			}
+			if !ok {
+				return fail(errors.New(errors.EUsage, "--worktree is required unless current directory is an integration worktree"))
+			}
+			if worktree.RepoID != repo.Data.RepoID {
+				return fail(errors.NewWithDetails(
+					errors.EUsage,
+					"current integration worktree belongs to a different repo",
+					map[string]string{"hint": "pass --worktree explicitly or run from the selected repo's worktree"},
+				))
+			}
+			worktreeRef = worktree.WorktreeID
+		}
+		repoRoot = repo.Data.PreferredRoot
+	} else {
+		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
+		if err != nil {
+			return fail(err)
+		}
+		if ok {
+			if worktreeRef == "" {
+				worktreeRef = worktree.WorktreeID
+			}
+			repo, err := ns.client.GetRepo(ctx, worktree.RepoID)
+			if err != nil {
+				return fail(err)
+			}
+			if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
+				return fail(errors.NewWithDetails(
+					errors.ERepoRootInaccessible,
+					"repo preferred_root is not accessible",
+					map[string]string{"repo": worktree.RepoID, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+				))
+			}
+			repoRoot = repo.Data.PreferredRoot
+		} else {
+			if worktreeRef == "" {
+				return fail(errors.New(errors.EUsage, "--worktree is required unless current directory is an integration worktree"))
+			}
+			if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
+				return fail(errors.NewWithDetails(
+					errors.EUnsafeRepoRoot,
+					"current directory is inside an agency-managed tree but not a present integration worktree",
+					map[string]string{"hint": "re-run from the original repo or pass --repo and --worktree explicitly"},
+				))
+			}
+			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+			if err != nil {
+				return fail(errors.NewWithDetails(
+					errors.ENoRepoContext,
+					"cannot resolve agent start without a repo context",
+					map[string]string{"hint": "run from a git checkout or pass --repo <repo_ref>"},
+				))
+			}
+			reg, err := ns.client.RegisterRepo(ctx, currentRoot.Path)
+			if err != nil {
+				return fail(err)
+			}
+			if reg.Data.PreferredRoot == "" || !reg.Data.PreferredRootAccessible {
+				return fail(errors.NewWithDetails(
+					errors.ERepoRootInaccessible,
+					"repo preferred_root is not accessible",
+					map[string]string{"repo": reg.Data.RepoID, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+				))
+			}
+			repoRoot = reg.Data.PreferredRoot
+		}
 	}
-	if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-		return fail(errors.NewWithDetails(
-			errors.ERepoRootInaccessible,
-			"repo preferred_root is not accessible",
-			map[string]string{"repo": repoRef, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
-		))
-	}
+	opts.WorktreeRef = worktreeRef
 
 	// Validate runner
 	runner, err := resolveAgentRunner(opts.Runner, userCfg.Defaults.Runner)
@@ -128,10 +203,10 @@ func AgentStart(ctx context.Context, fsys fs.FS, opts AgentStartOpts, stdout, st
 	opts.RunnerArgs = effectiveRunnerArgs
 
 	if opts.Headless {
-		return fail(agentStartHeadlessControlPlane(ctx, repo.Data.PreferredRoot, ns.client, opts, runner, stdout, stderr))
+		return fail(agentStartHeadlessControlPlane(ctx, repoRoot, ns.client, opts, runner, stdout, stderr))
 	}
 
-	return fail(agentStartHeadedControlPlane(ctx, repo.Data.PreferredRoot, ns.client, opts, runner, stdout, stderr))
+	return fail(agentStartHeadedControlPlane(ctx, repoRoot, ns.client, opts, runner, stdout, stderr))
 }
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane.

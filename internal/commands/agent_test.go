@@ -183,18 +183,20 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 }
 
 type agentStartHeadedTestEnv struct {
-	RepoDir    string
-	DataDir    string
-	RepoID     string
-	Runner     exec.CommandRunner
-	FS         fs.FS
-	RecordFile string
+	RepoDir      string
+	DataDir      string
+	RepoID       string
+	WorktreeID   string
+	WorktreePath string
+	Runner       exec.CommandRunner
+	FS           fs.FS
+	RecordFile   string
 }
 
 func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCode int) agentStartHeadedTestEnv {
 	t.Helper()
 
-	repoDir, dataDir, repoID, _, fakeRunner, fsys := setupAgentTestEnvShort(t, worktreeName)
+	repoDir, dataDir, repoID, worktreeID, fakeRunner, fsys := setupAgentTestEnvShort(t, worktreeName)
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
@@ -223,12 +225,14 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	return agentStartHeadedTestEnv{
-		RepoDir:    repoDir,
-		DataDir:    dataDir,
-		RepoID:     repoID,
-		Runner:     fakeRunner,
-		FS:         fsys,
-		RecordFile: recordFile,
+		RepoDir:      repoDir,
+		DataDir:      dataDir,
+		RepoID:       repoID,
+		WorktreeID:   worktreeID,
+		WorktreePath: filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree"),
+		Runner:       fakeRunner,
+		FS:           fsys,
+		RecordFile:   recordFile,
 	}
 }
 
@@ -880,7 +884,7 @@ func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-noterm", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), env.FS, AgentStartOpts{
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-noterm",
 		Runner:        "claude-code",
@@ -898,23 +902,42 @@ func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
 	assert.True(t, os.IsNotExist(recordErr), "tmux attach shim must not be invoked")
 }
 
-func TestAgentStart_RequiresRepoRef(t *testing.T) {
+func TestAgentStart_NormalRepoRequiresWorktree(t *testing.T) {
+	repoDir, dataDir, _, _, cr, fsys := setupAgentTestEnvShort(t, "start-missing-worktree")
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
+
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), fs.NewRealFS(), AgentStartOpts{
-		WorktreeRef: "missing-repo",
-		Headless:    true,
-		Prompt:      "hello",
+	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+		Headless: true,
+		Prompt:   "hello",
 	}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-infer", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.WorktreePath, AgentStartOpts{
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "Session started in detached mode.")
+	assert.Contains(t, stdout.String(), "  worktree:       "+env.WorktreeID)
+	assert.Empty(t, stderr.String())
+}
+
 func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-detached", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), env.FS, AgentStartOpts{
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-detached",
 		Runner:        "claude-code",
@@ -940,7 +963,7 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), env.FS, AgentStartOpts{
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-attach-fail",
 		Runner:        "claude-code",

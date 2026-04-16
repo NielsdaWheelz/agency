@@ -4,7 +4,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newAgentStartCmd() *cobra.Command {
@@ -42,6 +41,8 @@ Checkpoints are automatically created during headless execution. Use
 
 Example:
   agency agent start --repo agency --worktree my-feature
+  agency agent start --worktree my-feature
+  agency agent start
   agency agent start --repo agency --worktree my-feature --runner claude-code
   agency agent start --repo agency --worktree my-feature --detached
   agency agent start --repo agency --worktree my-feature --name arch-agent
@@ -50,7 +51,12 @@ Example:
   agency agent start --repo agency --worktree my-feature --headless --no-include-untracked`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return commands.AgentStart(cmd.Context(), fs.NewRealFS(), commands.AgentStartOpts{
+			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
 				RepoRef:            repoRef,
 				WorktreeRef:        worktree,
 				Runner:             runner,
@@ -68,8 +74,8 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo name, key, id, or prefix (required)")
-	cmd.Flags().StringVar(&worktree, "worktree", "", "Integration worktree to run against (required)")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo name, key, id, or prefix (defaults to current directory)")
+	cmd.Flags().StringVar(&worktree, "worktree", "", "Integration worktree to run against (defaults to current integration worktree)")
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use (defaults to config defaults.runner)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run in headless mode (non-interactive)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional name for the invocation")

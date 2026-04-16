@@ -44,7 +44,7 @@ func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), fsys, AgentStartOpts{
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
 		RepoRef:     repoID,
 		WorktreeRef: "start-json",
 		Headless:    true,
@@ -63,7 +63,7 @@ func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testin
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), fsys, AgentStartOpts{
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
 		RepoRef:     repoID,
 		WorktreeRef: "does-not-exist",
 		Runner:      "claude-code",

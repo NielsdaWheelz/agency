@@ -585,24 +585,56 @@ func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
 
-func TestWorktreeCreate_RequiresRepoRef(t *testing.T) {
+func TestWorktreeCreate_DefaultsRepoAndParentFromCWD(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
 	var stdout, stderr bytes.Buffer
-	err := WorktreeCreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), WorktreeCreateOpts{
-		Name:         "missing-repo",
-		ParentBranch: "main",
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name: "default-context",
 	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Created integration worktree 'default-context'")
+
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{State: "present"})
+	require.NoError(t, listErr)
+	require.Len(t, listResp.Data.Worktrees, 1)
+	assert.Equal(t, "default-context", listResp.Data.Worktrees[0].Name)
+	assert.Equal(t, "main", listResp.Data.Worktrees[0].ParentBranch)
+	assert.Empty(t, stderr.String())
 }
 
-func TestWorktreeCreate_RequiresParent(t *testing.T) {
+func TestWorktreeCreate_DefaultParentRequiresCurrentBranch(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	detach, err := agencyexec.NewRealRunner().Run(context.Background(), "git", []string{"checkout", "--detach"}, agencyexec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, detach.ExitCode, "git checkout --detach failed: %s", detach.Stderr)
+
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
 	var stdout, stderr bytes.Buffer
-	err := WorktreeCreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), WorktreeCreateOpts{
-		RepoRef: "repo-1",
-		Name:    "missing-parent",
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name: "detached-default-parent",
 	}, &stdout, &stderr)
 	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Equal(t, errors.EParentBranchNotFound, errors.GetCode(err))
 }
 
 func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *testing.T) {
@@ -624,7 +656,7 @@ func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *te
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 17\n"), 0o755))
 
 	var stdout, stderr bytes.Buffer
-	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), WorktreeCreateOpts{
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
 		RepoRef:      reg.Data.RepoID,
 		Name:         "open-fail",
 		ParentBranch: "main",
@@ -663,7 +695,7 @@ func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	var stdout, stderr bytes.Buffer
-	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), WorktreeCreateOpts{
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
 		RepoRef:      reg.Data.RepoID,
 		Name:         "open-ok",
 		ParentBranch: "main",
