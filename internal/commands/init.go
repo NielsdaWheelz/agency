@@ -142,7 +142,7 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 
 	// Handle .gitignore
-	gitignoreState := scaffold.GitignoreSkipped
+	var gitignoreState scaffold.GitignoreResult
 	if !opts.RepoConfig || opts.NoGitignore {
 		gitignoreState = scaffold.GitignoreSkipped
 	} else {

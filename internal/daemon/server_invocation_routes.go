@@ -64,6 +64,11 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleRestartFromCheckpoint(w, r, invocationRef)
+	case "recreate":
+		if !s.requireMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleRecreateHeaded(w, r, invocationRef)
 	case "land":
 		if !s.requireMethod(w, r, http.MethodPost) {
 			return

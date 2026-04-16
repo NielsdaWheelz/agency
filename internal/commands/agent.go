@@ -245,6 +245,7 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
 			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
 			envelope.SandboxPath = resp.SandboxPath
+			envelope.TmuxSession = resp.TmuxSession
 			envelope.DaemonInstanceID = resp.DaemonInstanceID
 			envelope.AlreadyRunning = resp.AlreadyRunning
 			if resp.APIVersion > 0 {

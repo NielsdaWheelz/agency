@@ -30,6 +30,7 @@ Subcommands:
   path      Print sandbox path
   shell     Open shell in sandbox
   chat      Send follow-up prompt to a headless invocation
+  recreate  Recreate a headed invocation tmux session
   history   Show unified invocation timeline
   checkpoint Manage invocation checkpoints
   restart   Restart invocation from checkpoint
@@ -56,6 +57,7 @@ Subcommands:
 		newAgentShellCmd(),
 		newAgentEnterCmd(),
 		newAgentChatCmd(),
+		newAgentRecreateCmd(),
 		newAgentCheckpointCmd(),
 		newAgentRestartCmd(),
 		newAgentHistoryCmd(),

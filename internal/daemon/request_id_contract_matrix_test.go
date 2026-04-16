@@ -77,6 +77,12 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{"checkpoint_id":1}`),
 		},
 		{
+			name:   "recreate_missing_repo",
+			method: http.MethodPost,
+			path:   "/invocations/inv-1/recreate",
+			body:   nil,
+		},
+		{
 			name:   "worktree_pr_sync_missing_repo",
 			method: http.MethodPost,
 			path:   "/worktrees/wt-1/pr/sync",

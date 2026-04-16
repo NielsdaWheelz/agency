@@ -158,6 +158,7 @@ type agentMutationEnvelope struct {
 	IntegrationWorktreeID   string                    `json:"integration_worktree_id,omitempty"`
 	IntegrationWorktreeName string                    `json:"integration_worktree_name,omitempty"`
 	SandboxPath             string                    `json:"sandbox_path,omitempty"`
+	TmuxSession             string                    `json:"tmux_session,omitempty"`
 	LogPaths                *daemon.LogPaths          `json:"log_paths,omitempty"`
 	PID                     int                       `json:"pid,omitempty"`
 	PGID                    int                       `json:"pgid,omitempty"`

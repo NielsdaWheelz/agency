@@ -401,6 +401,126 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	return nil
 }
 
+// AgentRecreateOpts holds options for the agent recreate command.
+type AgentRecreateOpts struct {
+	InvocationRef   string
+	RepoRef         string
+	Detached        bool
+	JSON            bool
+	DataDirOverride string
+	IsInteractive   func() bool
+	TmuxAttachFn    func(sessionName string) error
+}
+
+// AgentRecreate starts a new tmux session for an existing headed invocation.
+func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRecreateOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeAgentMutationJSONError(stdout, err)
+	}
+	if !opts.JSON && !opts.Detached {
+		isInteractive := opts.IsInteractive
+		if isInteractive == nil {
+			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
+		}
+		if !isInteractive() {
+			return fail(errors.NewWithDetails(
+				errors.ENotInteractive,
+				"headed recreate requires an interactive terminal",
+				map[string]string{
+					"hint": "re-run in an interactive terminal or pass --detached",
+				},
+			))
+		}
+	}
+
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+	if err != nil {
+		return fail(err)
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoRef:       opts.RepoRef,
+		AllowAllRepos: false,
+		CmdName:       "agent recreate",
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if err := ns.client.CheckAPIVersion(ctx); err != nil {
+		return fail(err)
+	}
+
+	resp, err := ns.client.RecreateHeaded(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return fail(err)
+	}
+	if !resp.OK {
+		return fail(errors.NewWithDetails(
+			errors.Code(resp.ErrorCode),
+			resp.Message,
+			map[string]string{
+				"hint":       resp.Hint,
+				"request_id": resp.RequestID,
+			},
+		))
+	}
+
+	if opts.JSON {
+		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
+			envelope.InvocationID = resp.InvocationID
+			envelope.RepoID = resp.RepoID
+			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
+			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
+			envelope.SandboxPath = resp.SandboxPath
+			envelope.TmuxSession = resp.TmuxSession
+			envelope.DaemonInstanceID = resp.DaemonInstanceID
+			envelope.AlreadyRunning = resp.AlreadyRunning
+			envelope.LogPaths = resp.LogPaths
+			if resp.APIVersion > 0 {
+				envelope.APIVersion = resp.APIVersion
+			}
+			if resp.BuildVersion != "" {
+				envelope.BuildVersion = resp.BuildVersion
+			}
+			envelope.RequestID = resp.RequestID
+		})
+	}
+
+	_, _ = fmt.Fprintln(stdout, "recreated headed agent invocation")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "  mode:           headed\n")
+	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", resp.IntegrationWorktreeID)
+	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
+	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
+	if resp.AlreadyRunning {
+		_, _ = fmt.Fprintln(stdout, "\nNote: tmux session already exists; no new session was created.")
+	}
+
+	shortID := resp.InvocationID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	if !opts.Detached {
+		_, _ = fmt.Fprintln(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)")
+		attachFn := opts.TmuxAttachFn
+		if attachFn == nil {
+			attachFn = realTmuxAttach
+		}
+		if err := attachFn(resp.TmuxSession); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent enter %s' to attach later.\n", shortID)
+		}
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(stdout, "\nSession recreated in detached mode.")
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent enter %s' to attach.\n", shortID)
+	return nil
+}
+
 // AgentRestartOpts holds options for the agent restart command.
 type AgentRestartOpts struct {
 	InvocationRef       string

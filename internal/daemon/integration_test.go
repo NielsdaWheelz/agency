@@ -2535,6 +2535,68 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
 }
 
+func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-recreate")
+
+	startResp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-recreate")
+
+	fakeTmux.Mu.Lock()
+	delete(fakeTmux.Sessions, startResp.TmuxSession)
+	callsBefore := len(fakeTmux.NewSessionCalls)
+	fakeTmux.Mu.Unlock()
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(startResp.RepoID, startResp.InvocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFinished
+		meta.ExitReason = "exited"
+		meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		meta.LifecycleOwner = ""
+	}))
+
+	resp, err := env.Client.RecreateHeaded(ctx, startResp.InvocationID, startResp.RepoID)
+	require.NoError(t, err, "recreate headed")
+	require.True(t, resp.OK, "recreate headed failed: %s - %s", resp.ErrorCode, resp.Message)
+
+	assert.Equal(t, startResp.InvocationID, resp.InvocationID)
+	assert.Equal(t, startResp.SandboxPath, resp.SandboxPath)
+	assert.Equal(t, startResp.TmuxSession, resp.TmuxSession)
+	assert.False(t, resp.AlreadyRunning)
+
+	fakeTmux.Mu.Lock()
+	require.Len(t, fakeTmux.NewSessionCalls, callsBefore+1)
+	call := fakeTmux.NewSessionCalls[callsBefore]
+	fakeTmux.Mu.Unlock()
+	assert.Equal(t, startResp.TmuxSession, call.Name)
+	assert.Equal(t, startResp.SandboxPath, call.CWD)
+	assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
+
+	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusRunning, meta.Status)
+	assert.Equal(t, store.RunnerModeHeaded, meta.Mode)
+	assert.Empty(t, meta.ExitReason)
+	assert.Empty(t, meta.FinishedAt)
+	assert.Equal(t, "daemon", meta.LifecycleOwner)
+	assert.False(t, meta.Flags.NeedsAttention)
+
+	events, err := os.ReadFile(env.Store.InvocationEventsPath(startResp.RepoID, startResp.InvocationID))
+	require.NoError(t, err)
+	assert.Contains(t, string(events), `"kind":"agency.headed_recreated"`)
+	assert.Contains(t, string(events), `"tmux_session":"`+startResp.TmuxSession+`"`)
+
+	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
 func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

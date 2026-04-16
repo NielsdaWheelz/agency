@@ -13,3 +13,4 @@ This document covers daemon ownership, lifecycle, and mutation rules.
 - Mutating daemon handlers must preserve request ids and stable JSON envelopes.
 - Recovery after restart must derive from durable state, not from transport-local memory.
 - Git-mutating daemon flows must take the repo lock.
+- Headed recreate is daemon-owned: it preserves the invocation id and sandbox, and recreates only tmux/session supervision state.

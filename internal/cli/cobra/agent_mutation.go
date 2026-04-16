@@ -200,6 +200,45 @@ Example:
 	return cmd
 }
 
+func newAgentRecreateCmd() *cobra.Command {
+	var repoRef string
+	var detached bool
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "recreate <invocation_ref>",
+		Short: "Recreate a headed invocation's tmux session",
+		Long: `Recreate a missing headed invocation tmux session.
+
+This keeps the same invocation id and sandbox, starts the configured headed
+runner in that sandbox, and attaches unless --detached or --json is used.
+
+Example:
+  agency agent recreate 20260131
+  agency agent recreate --repo agency my-invocation --detached
+  agency agent recreate --json 20260131`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.AgentRecreate(ctx, cr, fsys, cwd, commands.AgentRecreateOpts{
+				InvocationRef: args[0],
+				RepoRef:       repoRef,
+				Detached:      detached,
+				JSON:          jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().BoolVar(&detached, "detached", false, "Recreate tmux session without attaching")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	return cmd
+}
+
 func newAgentRestartCmd() *cobra.Command {
 	var repoRef string
 	var checkpointID int

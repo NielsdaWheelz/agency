@@ -55,6 +55,20 @@ func (c *Client) RestartFromCheckpoint(ctx context.Context, invocationRef, repoI
 	return &result, nil
 }
 
+// RecreateHeaded starts a new tmux session for an existing headed invocation.
+func (c *Client) RecreateHeaded(ctx context.Context, invocationRef, repoID string) (*daemon.ControlPlaneStartHeadedResponse, error) {
+	u := fmt.Sprintf("%s/invocations/%s/recreate", daemonBaseURL, url.PathEscape(invocationRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	var result daemon.ControlPlaneStartHeadedResponse
+	if err := c.doJSONRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // LandOpts holds options for landing via daemon.
 type LandOpts struct {
 	RepoID       string

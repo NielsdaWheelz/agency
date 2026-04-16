@@ -78,7 +78,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if meta.Mode != store.RunnerModeHeadless {
 		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvocationInvalidMode),
 			"checkpoint apply is only supported for headless invocations",
-			"headed invocations do not have automated checkpoints")
+			"use 'agency agent recreate' to start a new headed tmux session in the same sandbox")
 		return
 	}
 
