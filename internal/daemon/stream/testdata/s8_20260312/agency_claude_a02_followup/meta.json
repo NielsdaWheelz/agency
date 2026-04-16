@@ -19,7 +19,7 @@
   "claimed_at": "2026-03-18T16:19:19Z",
   "lifecycle_owner": "daemon",
   "flags": {},
-  "semantic_status": "ready_for_review",
+  "semantic_status": "ready",
   "semantic_status_updated_at": "2026-03-18T16:19:33Z",
   "checkpoint_include_untracked": true
 }

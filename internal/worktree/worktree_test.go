@@ -333,7 +333,7 @@ func TestReportTemplate(t *testing.T) {
 		"## deviations",
 		"## problems encountered",
 		"## how to test",
-		"## review notes",
+		"## check notes",
 		"## follow-ups",
 	}
 	for _, section := range requiredSections {

@@ -18,10 +18,10 @@ type Status string
 
 // Valid runner status values.
 const (
-	StatusWorking        Status = "working"
-	StatusNeedsInput     Status = "needs_input"
-	StatusBlocked        Status = "blocked"
-	StatusReadyForReview Status = "ready_for_review"
+	StatusWorking    Status = "working"
+	StatusNeedsInput Status = "needs_input"
+	StatusBlocked    Status = "blocked"
+	StatusReady      Status = "ready"
 )
 
 // SchemaVersion is the current schema version for runner_status.json.
@@ -96,7 +96,7 @@ func (s *RunnerStatus) Validate() error {
 
 	// Validate status value
 	switch s.Status {
-	case StatusWorking, StatusNeedsInput, StatusBlocked, StatusReadyForReview:
+	case StatusWorking, StatusNeedsInput, StatusBlocked, StatusReady:
 		// valid
 	case "":
 		return fmt.Errorf("status is required")
@@ -119,9 +119,9 @@ func (s *RunnerStatus) Validate() error {
 		if len(s.Blockers) == 0 {
 			return fmt.Errorf("blockers[] is required when status is blocked")
 		}
-	case StatusReadyForReview:
+	case StatusReady:
 		if s.HowToTest == "" {
-			return fmt.Errorf("how_to_test is required when status is ready_for_review")
+			return fmt.Errorf("how_to_test is required when status is ready")
 		}
 	}
 
@@ -160,7 +160,7 @@ func NewInitial() *RunnerStatus {
 // IsValid returns true if the status is one of the known valid values.
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusWorking, StatusNeedsInput, StatusBlocked, StatusReadyForReview:
+	case StatusWorking, StatusNeedsInput, StatusBlocked, StatusReady:
 		return true
 	default:
 		return false

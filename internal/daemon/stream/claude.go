@@ -353,8 +353,8 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *r
 		event.Data["usage"] = usage
 	}
 
-	// Success -> ready_for_review
-	status := runnerstatus.StatusReadyForReview
+	// Success -> ready
+	status := runnerstatus.StatusReady
 	return []*NormalizedEvent{event}, &status
 }
 

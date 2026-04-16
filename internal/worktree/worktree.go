@@ -273,8 +273,8 @@ runner: read `+"`"+`.agency/INSTRUCTIONS.md`+"`"+` before starting.
 - exact commands
 - expected output
 
-## review notes
-- files deserving scrutiny
+## check notes
+- files to check
 - potential risks
 
 ## follow-ups
@@ -308,7 +308,7 @@ If supported, record your status in ` + "`" + `.agency/state/runner_status.json`
 - ` + "`" + `working` + "`" + ` — actively making progress (include summary)
 - ` + "`" + `needs_input` + "`" + ` — waiting for user answer (include questions[])
 - ` + "`" + `blocked` + "`" + ` — cannot proceed (include blockers[])
-- ` + "`" + `ready_for_review` + "`" + ` — work complete (include how_to_test)
+- ` + "`" + `ready` + "`" + ` — work complete (include how_to_test)
 
 ## Notes
 

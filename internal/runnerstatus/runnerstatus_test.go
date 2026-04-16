@@ -188,18 +188,18 @@ func TestRunnerStatus_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "ready_for_review without how_to_test",
+			name: "ready without how_to_test",
 			status: &RunnerStatus{
-				Status:    StatusReadyForReview,
+				Status:    StatusReady,
 				Summary:   "Work complete",
 				HowToTest: "",
 			},
 			wantErr: true,
 		},
 		{
-			name: "valid ready_for_review",
+			name: "valid ready",
 			status: &RunnerStatus{
-				Status:    StatusReadyForReview,
+				Status:    StatusReady,
 				Summary:   "Work complete",
 				HowToTest: "Run npm test",
 			},
@@ -281,7 +281,7 @@ func TestStatus_IsValid(t *testing.T) {
 		{StatusWorking, true},
 		{StatusNeedsInput, true},
 		{StatusBlocked, true},
-		{StatusReadyForReview, true},
+		{StatusReady, true},
 		{"", false},
 		{"invalid", false},
 		{"Working", false}, // case sensitive

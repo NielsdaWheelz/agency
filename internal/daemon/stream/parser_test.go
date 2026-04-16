@@ -83,7 +83,7 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 			input:    `{"type":"result","subtype":"success","duration_ms":45000,"cost_usd":0.15}`,
 			wantKind: EventKindFinal,
 			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusReadyForReview
+				s := runnerstatus.StatusReady
 				return &s
 			}(),
 		},
@@ -237,7 +237,7 @@ func TestCodexAdapter_ParseLine(t *testing.T) {
 			input:    `{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Done!"}]}}`,
 			wantKind: EventKindMessage,
 			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusReadyForReview
+				s := runnerstatus.StatusReady
 				return &s
 			}(),
 		},
@@ -409,7 +409,7 @@ func TestParser_StreamAndParse_ClaudeCodeFixture(t *testing.T) {
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()
 	require.NotNil(t, finalStatus, "Final semantic status is nil")
-	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
+	assert.Equal(t, runnerstatus.StatusReady, *finalStatus)
 }
 
 func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
@@ -451,7 +451,7 @@ func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()
 	require.NotNil(t, finalStatus, "Final semantic status is nil")
-	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
+	assert.Equal(t, runnerstatus.StatusReady, *finalStatus)
 }
 
 func TestParser_StreamAndParse_CodexCommandOutputAcrossStartAndEndPreserved(t *testing.T) {
@@ -634,7 +634,7 @@ func TestParser_StreamAndParse_NoTrailingNewline(t *testing.T) {
 	// Verify final semantic status
 	finalStatus := parser.GetSemanticStatus()
 	require.NotNil(t, finalStatus, "Final semantic status is nil")
-	assert.Equal(t, runnerstatus.StatusReadyForReview, *finalStatus)
+	assert.Equal(t, runnerstatus.StatusReady, *finalStatus)
 }
 
 func TestParser_SeqMonotonic(t *testing.T) {

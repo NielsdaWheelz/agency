@@ -286,8 +286,8 @@ func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent
 		}
 	}
 
-	// Agent message (final) -> ready_for_review
-	status := runnerstatus.StatusReadyForReview
+	// Agent message (final) -> ready
+	status := runnerstatus.StatusReady
 	return []*NormalizedEvent{event}, &status
 }
 

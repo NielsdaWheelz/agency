@@ -152,7 +152,7 @@ type InvocationMeta struct {
 	Flags InvocationFlags `json:"flags,omitempty"`
 
 	// SemanticStatus is the derived semantic status from stream parsing.
-	// Values: working, needs_input, blocked, ready_for_review.
+	// Values: working, needs_input, blocked, ready.
 	// This is set by the daemon during stream parsing and is optional.
 	SemanticStatus *runnerstatus.Status `json:"semantic_status,omitempty"`
 

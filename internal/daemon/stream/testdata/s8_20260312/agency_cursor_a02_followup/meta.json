@@ -20,7 +20,7 @@
   "daemon_instance_id": "846457ec-e476-4137-a186-1e86264a2508",
   "claimed_at": "2026-03-18T16:11:40Z",
   "flags": {},
-  "semantic_status": "ready_for_review",
+  "semantic_status": "ready",
   "semantic_status_updated_at": "2026-03-18T16:11:49Z",
   "checkpoint_include_untracked": true
 }

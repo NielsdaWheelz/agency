@@ -21,7 +21,7 @@ Update ` + "`" + `.agency/state/runner_status.json` + "`" + ` at milestones:
 | ` + "`" + `working` + "`" + ` | Actively making progress | ` + "`" + `summary` + "`" + ` |
 | ` + "`" + `needs_input` + "`" + ` | Waiting for user answer | ` + "`" + `summary` + "`" + `, ` + "`" + `questions[]` + "`" + ` |
 | ` + "`" + `blocked` + "`" + ` | Cannot proceed | ` + "`" + `summary` + "`" + `, ` + "`" + `blockers[]` + "`" + ` |
-| ` + "`" + `ready_for_review` + "`" + ` | Work complete | ` + "`" + `summary` + "`" + `, ` + "`" + `how_to_test` + "`" + ` |
+| ` + "`" + `ready` + "`" + ` | Work complete | ` + "`" + `summary` + "`" + `, ` + "`" + `how_to_test` + "`" + ` |
 
 Schema:
 
@@ -38,7 +38,7 @@ Schema:
 }
 ` + "```" + `
 
-Before ` + "`" + `ready_for_review` + "`" + `, update ` + "`" + `.agency/report.md` + "`" + ` with summary, decisions, testing instructions, and risks.
+Before ` + "`" + `ready` + "`" + `, update ` + "`" + `.agency/report.md` + "`" + ` with summary, decisions, testing instructions, and risks.
 `
 
 // WriteClaudeMD writes the CLAUDE.md file to the repo root if it doesn't exist.
