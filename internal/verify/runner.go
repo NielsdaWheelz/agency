@@ -25,7 +25,7 @@ type RunConfig struct {
 	// WorkDir is the worktree root directory (cwd for script execution).
 	WorkDir string
 
-	// Script is the exact script string to execute (from agency.json).
+	// Script is the exact script path to execute.
 	Script string
 
 	// Env is the full environment for the script. Caller provides merged env.
@@ -102,7 +102,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	// Write header to log file (matching setup.log style, best-effort diagnostic output)
 	_, _ = fmt.Fprintf(logFile, "# verify log\n")
 	_, _ = fmt.Fprintf(logFile, "# timestamp: %s\n", startTime.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(logFile, "# command: sh -lc %s\n", cfg.Script)
+	_, _ = fmt.Fprintf(logFile, "# command: %s\n", cfg.Script)
 	_, _ = fmt.Fprintf(logFile, "# cwd: %s\n", cfg.WorkDir)
 	_, _ = fmt.Fprintf(logFile, "# ---\n\n")
 
@@ -122,7 +122,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		return record, fmt.Errorf("failed to open /dev/null: %w", err)
 	}
 	// Start process in its own process group for clean signal handling.
-	proc, err := exec.StartProcess(timeoutCtx, "sh", []string{"-lc", cfg.Script}, exec.StartOpts{
+	proc, err := exec.StartProcess(timeoutCtx, cfg.Script, nil, exec.StartOpts{
 		Dir:     cfg.WorkDir,
 		EnvList: cfg.Env,
 		Stdin:   devnull,

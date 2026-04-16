@@ -105,7 +105,8 @@ func TestWorktreePRMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 		Stdout:   `{"state":"MERGED"}`,
 		ExitCode: 0,
 	}
-	daemonRunner.Responses["sh -lc scripts/archive.sh"] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
+	archiveScript := filepath.Join(integrationTree, "scripts", "archive.sh")
+	daemonRunner.Responses[archiveScript] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
 	canonicalRepoDir := canonicalPathForTest(t, repoDir)
 	daemonRunner.Responses["git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree] = testutil.FakeResponse{
 		ExitCode: 0,
@@ -138,7 +139,7 @@ func TestWorktreePRMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 	archiveLogBytes, err := os.ReadFile(payload["archive_log_path"].(string))
 	require.NoError(t, err)
-	assert.Contains(t, string(archiveLogBytes), "=== sh -lc \"scripts/archive.sh\" ===")
+	assert.Contains(t, string(archiveLogBytes), "=== "+archiveScript+" ===")
 	assert.Contains(t, string(archiveLogBytes), "=== git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree+" ===")
 	canonicalRepoDir = canonicalPathForTest(t, repoDir)
 	require.Contains(t, daemonRunner.Calls, "git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree)

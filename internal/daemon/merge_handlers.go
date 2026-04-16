@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ type normalizedMergeRequest struct {
 	Strategy         mergeStrategy
 	ConfirmationMode string
 	DeleteBranch     bool
+	AgencyConfigPath string
 }
 
 type mergeResult struct {
@@ -99,10 +101,20 @@ func normalizeMergeRequest(req WorktreePRMergeRequest) (normalizedMergeRequest, 
 		)
 	}
 
+	agencyConfigPath := strings.TrimSpace(req.AgencyConfigPath)
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		return normalizedMergeRequest{}, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"agency_config_path must be absolute",
+			map[string]string{"agency_config_path": agencyConfigPath},
+		)
+	}
+
 	return normalizedMergeRequest{
 		Strategy:         strategy,
 		ConfirmationMode: mode,
 		DeleteBranch:     !req.NoDeleteBranch,
+		AgencyConfigPath: agencyConfigPath,
 	}, nil
 }
 

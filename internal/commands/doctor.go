@@ -23,11 +23,13 @@ import (
 // DoctorReport holds all the data for doctor output.
 type DoctorReport struct {
 	// Repo and directories
-	RepoRoot        string
-	AgencyDataDir   string
-	AgencyConfigDir string
-	UserConfigPath  string
-	AgencyCacheDir  string
+	RepoRoot         string
+	AgencyDataDir    string
+	AgencyConfigDir  string
+	UserConfigPath   string
+	AgencyJSONPath   string
+	AgencyJSONSource string
+	AgencyCacheDir   string
 
 	// Identity/origin
 	RepoKey             string
@@ -70,6 +72,9 @@ type DoctorOpts struct {
 
 	// ConfigDirOverride, if set, is used instead of resolving from environment.
 	ConfigDirOverride string
+
+	// AgencyConfigPath, if set, is the exact agency config file to load.
+	AgencyConfigPath string
 }
 
 // Doctor implements the `agency doctor` command.
@@ -114,17 +119,22 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return errors.New(errors.EInvalidUserConfig, "user config not found: "+config.UserConfigPath(dirs.ConfigDir))
 	}
 
-	// 4. Load and validate agency.json
-	cfg, err := config.LoadAndValidate(fsys, repoRoot.Path)
+	// 4. Get origin info
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+
+	// 5. Derive repo identity
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	// 6. Load and validate agency config
+	agencyConfigPath := opts.AgencyConfigPath
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
+	}
+	resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot.Path, dirs.ConfigDir, repoIdentity.RepoID, agencyConfigPath)
 	if err != nil {
 		return err
 	}
-
-	// 5. Get origin info
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
-
-	// 6. Derive repo identity
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+	cfg := resolvedAgencyConfig.Config
 
 	// 7. Check tools
 	gitVersion, err := checkGit(ctx, cr)
@@ -181,6 +191,8 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		AgencyDataDir:        dirs.DataDir,
 		AgencyConfigDir:      dirs.ConfigDir,
 		UserConfigPath:       config.UserConfigPath(dirs.ConfigDir),
+		AgencyJSONPath:       resolvedAgencyConfig.Path,
+		AgencyJSONSource:     resolvedAgencyConfig.Source,
 		AgencyCacheDir:       dirs.CacheDir,
 		RepoKey:              repoIdentity.RepoKey,
 		RepoID:               repoIdentity.RepoID,
@@ -202,7 +214,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	// 10. Persist repo index and repo record (only on success)
-	if err := persistOnSuccess(fsys, dirs.DataDir, repoRoot.Path, repoIdentity, originInfo, cfg); err != nil {
+	if err := persistOnSuccess(fsys, dirs.DataDir, repoRoot.Path, repoIdentity, originInfo, resolvedAgencyConfig.Path); err != nil {
 		return err
 	}
 
@@ -299,7 +311,7 @@ func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot st
 }
 
 // persistOnSuccess writes repo_index.json and repo.json atomically.
-func persistOnSuccess(fsys fs.FS, dataDir, repoRoot string, repoIdentity identity.RepoIdentity, originInfo git.OriginInfo, cfg config.AgencyConfig) error {
+func persistOnSuccess(fsys fs.FS, dataDir, repoRoot string, repoIdentity identity.RepoIdentity, originInfo git.OriginInfo, agencyJSONPath string) error {
 	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// Load existing repo index (or empty if missing)
@@ -322,8 +334,6 @@ func persistOnSuccess(fsys fs.FS, dataDir, repoRoot string, repoIdentity identit
 		existingPtr = &existingRec
 	}
 
-	// Build repo record
-	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
 	rec := st.UpsertRepoRecord(existingPtr, store.BuildRepoRecordInput{
 		RepoKey:          repoIdentity.RepoKey,
 		RepoID:           repoIdentity.RepoID,
@@ -361,6 +371,8 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	_, _ = fmt.Fprintf(w, "agency_data_dir: %s\n", r.AgencyDataDir)
 	_, _ = fmt.Fprintf(w, "agency_config_dir: %s\n", r.AgencyConfigDir)
 	_, _ = fmt.Fprintf(w, "user_config_path: %s\n", r.UserConfigPath)
+	_, _ = fmt.Fprintf(w, "agency_json_path: %s\n", r.AgencyJSONPath)
+	_, _ = fmt.Fprintf(w, "agency_json_source: %s\n", r.AgencyJSONSource)
 	_, _ = fmt.Fprintf(w, "agency_cache_dir: %s\n", r.AgencyCacheDir)
 
 	// Identity/origin

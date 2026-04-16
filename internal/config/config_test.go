@@ -5,6 +5,7 @@ import (
 	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +80,53 @@ func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, cfg.Scripts.Verify.Timeout)
 	assert.Equal(t, "scripts/agency_archive.sh", cfg.Scripts.Archive.Path)
 	assert.Equal(t, 5*time.Minute, cfg.Scripts.Archive.Timeout)
+}
+
+func TestResolveAgencyConfig_PrefersRepoThenLocal(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/valid_min.json")
+	require.NoError(t, err, "failed to read fixture")
+
+	stub := newStubFS()
+	stub.files["/repo/agency.json"] = data
+	stub.files["/config/repos/repo-1/agency.json"] = []byte(strings.ReplaceAll(string(data), "scripts/agency_setup.sh", "local/setup.sh"))
+
+	resolved, err := ResolveAgencyConfig(stub, "/repo", "/config", "repo-1", "")
+	require.NoError(t, err)
+	assert.Equal(t, "/repo/agency.json", resolved.Path)
+	assert.Equal(t, "repo", resolved.Source)
+	assert.Equal(t, "/repo/scripts/agency_setup.sh", resolved.Config.Scripts.Setup.Path)
+}
+
+func TestResolveAgencyConfig_FallsBackToLocal(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/valid_min.json")
+	require.NoError(t, err, "failed to read fixture")
+
+	stub := newStubFS()
+	stub.files["/config/repos/repo-1/agency.json"] = data
+
+	resolved, err := ResolveAgencyConfig(stub, "/repo", "/config", "repo-1", "")
+	require.NoError(t, err)
+	assert.Equal(t, "/config/repos/repo-1/agency.json", resolved.Path)
+	assert.Equal(t, "local", resolved.Source)
+	assert.Equal(t, "/config/repos/repo-1/scripts/agency_verify.sh", resolved.Config.Scripts.Verify.Path)
+}
+
+func TestResolveAgencyConfig_ExplicitOverridesRepo(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/valid_min.json")
+	require.NoError(t, err, "failed to read fixture")
+
+	stub := newStubFS()
+	stub.files["/repo/agency.json"] = data
+	stub.files["/custom/agency.json"] = []byte(strings.ReplaceAll(string(data), "scripts/agency_archive.sh", "custom/archive.sh"))
+
+	resolved, err := ResolveAgencyConfig(stub, "/repo", "/config", "repo-1", "/custom/agency.json")
+	require.NoError(t, err)
+	assert.Equal(t, "/custom/agency.json", resolved.Path)
+	assert.Equal(t, "explicit", resolved.Source)
+	assert.Equal(t, "/custom/custom/archive.sh", resolved.Config.Scripts.Archive.Path)
 }
 
 func TestLoadAgencyConfig_WrongTypes(t *testing.T) {

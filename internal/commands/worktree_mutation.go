@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -171,14 +172,15 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 // WorktreePRMergeOpts holds options for the worktree pr merge command.
 type WorktreePRMergeOpts struct {
-	WorktreeRef    string
-	RepoRef        string
-	Squash         bool
-	Merge          bool
-	Rebase         bool
-	NoDeleteBranch bool
-	Yes            bool
-	JSON           bool
+	WorktreeRef      string
+	RepoRef          string
+	Squash           bool
+	Merge            bool
+	Rebase           bool
+	NoDeleteBranch   bool
+	Yes              bool
+	JSON             bool
+	AgencyConfigPath string
 
 	DataDirOverride string
 	IsInteractive   func() bool
@@ -257,11 +259,17 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		return fail(err)
 	}
 
+	agencyConfigPath := opts.AgencyConfigPath
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
+	}
+
 	resp, err := ns.client.WorktreePRMerge(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRMergeOpts{
 		Strategy:         strategy,
 		ConfirmationMode: confirmationMode,
 		Confirmed:        confirmed,
 		NoDeleteBranch:   opts.NoDeleteBranch,
+		AgencyConfigPath: agencyConfigPath,
 	})
 	if err != nil {
 		return fail(err)

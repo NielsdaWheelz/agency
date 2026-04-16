@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,31 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
+
+func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
+	t.Parallel()
+
+	fakeRunner := testutil.NewFakeCommandRunner()
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout:   "?? .agency/report.md\n?? .agency/state/runner_status.json\n M README.md\n",
+		ExitCode: 0,
+	}
+
+	clean, status, err := prSyncDirtyStatus(context.Background(), fakeRunner, "/repo")
+	require.NoError(t, err)
+	assert.False(t, clean)
+	assert.Equal(t, " M README.md", status)
+
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout:   "?? .agency/report.md\n?? .agency/state/runner_status.json\n",
+		ExitCode: 0,
+	}
+
+	clean, status, err = prSyncDirtyStatus(context.Background(), fakeRunner, "/repo")
+	require.NoError(t, err)
+	assert.True(t, clean)
+	assert.Empty(t, status)
+}
 
 func TestHandleWorktreePRSync_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	t.Parallel()

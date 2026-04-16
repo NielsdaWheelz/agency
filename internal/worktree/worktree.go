@@ -235,7 +235,7 @@ func checkIgnored(ctx context.Context, cr exec.CommandRunner, worktreePath strin
 		// Not ignored - return warning
 		return &Warning{
 			Code:    "W_AGENCY_NOT_IGNORED",
-			Message: ".agency/ is not ignored; run 'agency init' to add it to .gitignore",
+			Message: ".agency/ is not ignored by git; add it to .gitignore or git info/exclude for manual git commands",
 		}
 	default:
 		// 128 or other - unknown/error, no warning
@@ -313,7 +313,7 @@ If supported, record your status in ` + "`" + `.agency/state/runner_status.json`
 ## Notes
 
 - This file is advisory only; no correctness depends on it
-- Do not commit this file (it is in .gitignore via .agency/)
+- Do not commit this file
 - This file is regenerated on every ` + "`" + `agency run` + "`" + `
 `
 }

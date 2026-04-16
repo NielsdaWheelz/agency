@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/scaffold"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,8 +67,10 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
-	// Check agency.json exists and matches template
-	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
+	repoID := identity.DeriveRepoIdentity(repoRoot, "").RepoID
+	agencyJSONPath := config.LocalAgencyConfigPath(configDir, repoID)
+
+	// Check local agency.json exists and matches template
 	content, err := os.ReadFile(agencyJSONPath)
 	require.NoError(t, err, "failed to read agency.json")
 	assert.Equal(t, scaffold.AgencyJSONTemplate, string(content), "agency.json content mismatch")
@@ -78,7 +82,7 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 		"scripts/agency_archive.sh",
 	}
 	for _, script := range scripts {
-		path := filepath.Join(repoRoot, script)
+		path := filepath.Join(filepath.Dir(agencyJSONPath), script)
 		info, err := os.Stat(path)
 		if assert.NoError(t, err, "script %s not found", script) {
 			// Check owner executable bit
@@ -86,22 +90,19 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 		}
 	}
 
-	// Check .gitignore exists and contains .agency/
-	gitignorePath := filepath.Join(repoRoot, ".gitignore")
-	gitignoreContent, err := os.ReadFile(gitignorePath)
-	require.NoError(t, err, "failed to read .gitignore")
-	assert.Contains(t, string(gitignoreContent), ".agency/", ".gitignore does not contain .agency/")
-	// Check ends with newline
-	if len(gitignoreContent) > 0 {
-		assert.Equal(t, byte('\n'), gitignoreContent[len(gitignoreContent)-1], ".gitignore does not end with newline")
-	}
+	assert.NoFileExists(t, filepath.Join(repoRoot, "agency.json"), "default init should not write agency.json into repo")
+	assert.NoFileExists(t, filepath.Join(repoRoot, ".gitignore"), "default init should not write .gitignore")
+	assert.NoFileExists(t, filepath.Join(repoRoot, "CLAUDE.md"), "default init should not write CLAUDE.md")
 
 	// Check output
 	output := stdout.String()
 	assert.Contains(t, output, "repo_root:", "output missing repo_root")
+	assert.Contains(t, output, "agency_json_path: "+agencyJSONPath, "output missing agency_json_path")
+	assert.Contains(t, output, "agency_json_source: local", "output missing agency_json_source")
 	assert.Contains(t, output, "agency_json: created", "output missing agency_json: created")
 	assert.Contains(t, output, "scripts_created:", "output missing scripts_created")
-	assert.Contains(t, output, "gitignore: updated", "output missing gitignore: updated")
+	assert.Contains(t, output, "gitignore: skipped", "output missing gitignore: skipped")
+	assert.Contains(t, output, "claude_md: skipped", "output missing claude_md: skipped")
 	assert.Contains(t, output, "user_config_path:", "output missing user_config_path")
 	assert.Contains(t, output, "user_config: created", "output missing user_config: created")
 
@@ -123,7 +124,7 @@ func TestInit_RefusesOverwrite(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 
 	// Should error
@@ -157,7 +158,7 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: true, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init with --force failed")
 
@@ -190,7 +191,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -217,7 +218,7 @@ func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -237,7 +238,7 @@ func TestInit_NoGitignore(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: true, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: true, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -282,7 +283,7 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -304,7 +305,7 @@ func TestInit_VerifyStubContent(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -350,7 +351,7 @@ func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 

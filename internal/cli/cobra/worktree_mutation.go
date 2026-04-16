@@ -116,6 +116,7 @@ func newWorktreePRMergeCmd() *cobra.Command {
 	var rebase bool
 	var noDeleteBranch bool
 	var yes bool
+	var agencyConfigPath string
 
 	cmd := &cobra.Command{
 		Use:   "merge <worktree_ref>",
@@ -132,7 +133,8 @@ Example:
   agency worktree pr merge --repo agency my-feature
   agency worktree pr merge --yes --json my-feature
   agency worktree pr merge --merge my-feature
-  agency worktree pr merge --rebase --no-delete-branch my-feature`,
+  agency worktree pr merge --rebase --no-delete-branch my-feature
+  agency worktree pr merge --agency-config /path/to/agency.json --yes my-feature`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -141,14 +143,15 @@ Example:
 			}
 
 			return commands.WorktreePRMerge(ctx, cr, fsys, cwd, commands.WorktreePRMergeOpts{
-				WorktreeRef:    args[0],
-				RepoRef:        repoRef,
-				Squash:         squash,
-				Merge:          merge,
-				Rebase:         rebase,
-				NoDeleteBranch: noDeleteBranch,
-				Yes:            yes,
-				JSON:           jsonOut,
+				WorktreeRef:      args[0],
+				RepoRef:          repoRef,
+				Squash:           squash,
+				Merge:            merge,
+				Rebase:           rebase,
+				NoDeleteBranch:   noDeleteBranch,
+				Yes:              yes,
+				JSON:             jsonOut,
+				AgencyConfigPath: agencyConfigPath,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -160,6 +163,7 @@ Example:
 	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase merge strategy")
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm merge in non-interactive mode")
+	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "load agency config from this file")
 
 	return cmd
 }

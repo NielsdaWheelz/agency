@@ -33,7 +33,10 @@ func NewFakeCommandRunner() *FakeCommandRunner {
 
 // Run implements exec.CommandRunner.
 func (f *FakeCommandRunner) Run(_ context.Context, name string, args []string, _ exec.RunOpts) (exec.CmdResult, error) {
-	key := name + " " + strings.Join(args, " ")
+	key := name
+	if len(args) > 0 {
+		key += " " + strings.Join(args, " ")
+	}
 
 	f.mu.Lock()
 	f.Calls = append(f.Calls, key)

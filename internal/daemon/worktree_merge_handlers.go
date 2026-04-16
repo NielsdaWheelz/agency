@@ -293,7 +293,7 @@ func (s *Server) runWorktreeMerge(
 			)
 		}
 
-		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr)
+		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr, req.AgencyConfigPath)
 		if err != nil {
 			return nil, err
 		}
@@ -359,7 +359,7 @@ func (s *Server) runWorktreeMerge(
 		}
 	}
 
-	archiveLogPath, err := s.runWorktreeArchive(ctx, record, pr, repoRoot)
+	archiveLogPath, err := s.runWorktreeArchive(ctx, record, pr, repoRoot, req.AgencyConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -378,15 +378,15 @@ func (s *Server) runWorktreeMerge(
 	}, nil
 }
 
-func (s *Server) runWorktreeMergeVerify(ctx context.Context, record *store.IntegrationWorktreeRecord, pr *mergePRView) (string, error) {
+func (s *Server) runWorktreeMergeVerify(ctx context.Context, record *store.IntegrationWorktreeRecord, pr *mergePRView, agencyConfigPath string) (string, error) {
 	if record == nil || record.Meta == nil {
 		return "", errors.New(errors.EInternal, "worktree metadata missing")
 	}
 	wtMeta := record.Meta
 
-	agencyJSON, err := config.LoadAgencyConfig(s.FS, wtMeta.TreePath)
+	agencyJSON, err := config.ResolveAgencyConfig(s.FS, wtMeta.TreePath, s.ConfigDir, record.RepoID, agencyConfigPath)
 	if err != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to load agency.json for verify", err)
+		return "", err
 	}
 
 	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
@@ -405,9 +405,9 @@ func (s *Server) runWorktreeMergeVerify(ctx context.Context, record *store.Integ
 		RepoID:         record.RepoID,
 		RunID:          record.WorktreeID,
 		WorkDir:        wtMeta.TreePath,
-		Script:         agencyJSON.Scripts.Verify.Path,
+		Script:         agencyJSON.Config.Scripts.Verify.Path,
 		Env:            env,
-		Timeout:        agencyJSON.Scripts.Verify.Timeout,
+		Timeout:        agencyJSON.Config.Scripts.Verify.Timeout,
 		LogPath:        verifyLogPath,
 		VerifyJSONPath: verifyJSONPath,
 		RecordPath:     verifyRecordPath,
@@ -453,6 +453,7 @@ func (s *Server) runWorktreeArchive(
 	record *store.IntegrationWorktreeRecord,
 	pr *mergePRView,
 	repoRoot string,
+	agencyConfigPath string,
 ) (string, error) {
 	if record == nil || record.Meta == nil {
 		return "", errors.New(errors.EInternal, "worktree metadata missing")
@@ -490,9 +491,9 @@ func (s *Server) runWorktreeArchive(
 		return archiveLogPath, nil
 	}
 
-	agencyJSON, err := config.LoadAgencyConfig(s.FS, wtMeta.TreePath)
+	agencyJSON, err := config.ResolveAgencyConfig(s.FS, wtMeta.TreePath, s.ConfigDir, record.RepoID, agencyConfigPath)
 	if err != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to load agency.json for archive", err)
+		return "", err
 	}
 
 	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
@@ -505,10 +506,10 @@ func (s *Server) runWorktreeArchive(
 		}
 	}
 
-	archiveCmd := fmt.Sprintf("sh -lc %q", agencyJSON.Scripts.Archive.Path)
-	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Scripts.Archive.Timeout)
+	archiveCmd := agencyJSON.Config.Scripts.Archive.Path
+	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Config.Scripts.Archive.Timeout)
 	defer cancel()
-	result, runErr := s.Runner.Run(runCtx, "sh", []string{"-lc", agencyJSON.Scripts.Archive.Path}, exec.RunOpts{
+	result, runErr := s.Runner.Run(runCtx, archiveCmd, nil, exec.RunOpts{
 		Dir: wtMeta.TreePath,
 		Env: env,
 	})

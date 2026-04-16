@@ -16,14 +16,22 @@ func newInitCmd() *cobra.Command {
 	var repoPath string
 	var noGitignore bool
 	var force bool
+	var local bool
+	var repoConfig bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create agency.json template and stub scripts",
-		Long: `Create agency.json template and stub scripts in a repo.
+		Short: "Create agency config and stub scripts",
+		Long: `Create agency config and stub scripts.
+By default, config is local under AGENCY_CONFIG_DIR and nothing is written to the repo.
+Use --repo-config to write shareable agency.json, scripts, .gitignore, and CLAUDE.md in the repo.
 Defaults to current directory; use --repo to target a different repo.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if local && repoConfig {
+				return errors.New(errors.EUsage, "--local and --repo-config cannot both be set")
+			}
+
 			stdout := cmd.OutOrStdout()
 			stderr := cmd.ErrOrStderr()
 
@@ -40,6 +48,7 @@ Defaults to current directory; use --repo to target a different repo.`,
 				RepoPath:    repoPath,
 				NoGitignore: noGitignore,
 				Force:       force,
+				RepoConfig:  repoConfig,
 			}
 
 			return commands.Init(ctx, cr, fsys, cwd, opts, stdout, stderr)
@@ -49,6 +58,8 @@ Defaults to current directory; use --repo to target a different repo.`,
 	cmd.Flags().StringVar(&repoPath, "repo", "", "target a specific repo (default: current directory)")
 	cmd.Flags().BoolVar(&noGitignore, "no-gitignore", false, "do not modify .gitignore")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing agency.json")
+	cmd.Flags().BoolVar(&local, "local", false, "write local per-repo config under AGENCY_CONFIG_DIR (default)")
+	cmd.Flags().BoolVar(&repoConfig, "repo-config", false, "write shareable agency.json and scripts in the repo")
 
 	return cmd
 }

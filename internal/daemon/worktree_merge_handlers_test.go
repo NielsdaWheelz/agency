@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
@@ -103,7 +104,40 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
 	require.NoError(t, err)
 	assert.Equal(t, store.WorktreeStateArchived, meta.State)
-	require.Contains(t, fakeRunner.Calls, "sh -lc scripts/archive.sh")
+	require.Contains(t, fakeRunner.Calls, filepath.Join(workspaceRoot, "scripts", "archive.sh"))
+	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
+}
+
+func TestHandleWorktreeMerge_UsesLocalAgencyConfigWhenWorktreeHasNone(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+	require.NoError(t, os.Remove(filepath.Join(workspaceRoot, "agency.json")))
+	localConfigRoot := filepath.Dir(config.LocalAgencyConfigPath(env.Server.ConfigDir, env.RepoID))
+	writeWorktreeMergeScriptsAndConfig(t, localConfigRoot, "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+
+	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+	setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+	localArchiveScript := filepath.Join(localConfigRoot, "scripts", "archive.sh")
+	fakeRunner.Responses[localArchiveScript] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp WorktreePRMergeResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.True(t, resp.OK)
+	require.Contains(t, fakeRunner.Calls, localArchiveScript)
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
 }
 
@@ -249,7 +283,7 @@ func TestHandleWorktreeMerge_ResumesArchiveWhenPRAlreadyMerged(t *testing.T) {
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
 	require.NoError(t, err)
 	assert.Equal(t, store.WorktreeStateArchived, meta.State)
-	require.Contains(t, fakeRunner.Calls, "sh -lc scripts/archive.sh")
+	require.Contains(t, fakeRunner.Calls, filepath.Join(workspaceRoot, "scripts", "archive.sh"))
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
 	assert.False(t, strings.Contains(strings.Join(fakeRunner.Calls, "\n"), "gh pr merge 77 -R test/agent-repo --squash --delete-branch"))
 }
@@ -435,7 +469,7 @@ func setWorktreeMergeHappyRunnerResponses(fakeRunner *testutil.FakeCommandRunner
 	}
 	if repoRoot != "" && treePath != "" {
 		repoRoot = canonicalTestPathForHelper(repoRoot)
-		fakeRunner.Responses["sh -lc scripts/archive.sh"] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
+		fakeRunner.Responses[filepath.Join(treePath, "scripts", "archive.sh")] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
 		fakeRunner.Responses["git -C "+repoRoot+" worktree remove --force "+treePath] = testutil.FakeResponse{ExitCode: 0}
 	}
 }

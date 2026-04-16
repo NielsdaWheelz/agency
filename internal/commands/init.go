@@ -15,6 +15,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
+	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/scaffold"
 )
@@ -25,6 +26,7 @@ type InitOpts struct {
 	RepoPath    string
 	NoGitignore bool
 	Force       bool
+	RepoConfig  bool
 
 	// ConfigDirOverride, if set, is used instead of resolving from environment.
 	ConfigDirOverride string
@@ -32,17 +34,19 @@ type InitOpts struct {
 
 // InitResult holds the result of the init command for output formatting.
 type InitResult struct {
-	RepoRoot        string
-	AgencyJSONState string // "created" or "overwritten"
-	ScriptsCreated  []string
-	GitignoreState  scaffold.GitignoreResult
-	UserConfigPath  string
-	UserConfigState string // "created" or "exists"
-	ClaudeMDState   string // "created" or "exists"
+	RepoRoot         string
+	AgencyJSONPath   string
+	AgencyJSONSource string
+	AgencyJSONState  string // "created" or "overwritten"
+	ScriptsCreated   []string
+	GitignoreState   scaffold.GitignoreResult
+	UserConfigPath   string
+	UserConfigState  string // "created" or "exists"
+	ClaudeMDState    string // "created", "exists", or "skipped"
 }
 
 // Init implements the `agency init` command.
-// Creates agency.json, stub scripts (if missing), and updates .gitignore (by default).
+// Creates local agency config by default. --repo-config writes shareable repo files.
 func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts InitOpts, stdout, stderr io.Writer) error {
 	// Discover repo root (use --repo if provided, otherwise CWD)
 	targetPath := cwd
@@ -93,7 +97,15 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		}
 	}
 
-	agencyJSONPath := filepath.Join(repoRoot.Path, "agency.json")
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+
+	agencyJSONSource := "local"
+	agencyJSONPath := config.LocalAgencyConfigPath(dirs.ConfigDir, repoIdentity.RepoID)
+	if opts.RepoConfig {
+		agencyJSONSource = "repo"
+		agencyJSONPath = filepath.Join(repoRoot.Path, "agency.json")
+	}
 
 	// Check if agency.json exists
 	_, err = fsys.Stat(agencyJSONPath)
@@ -113,20 +125,25 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		agencyJSONState = "overwritten"
 	}
 
+	configRoot := filepath.Dir(agencyJSONPath)
+	if err := fsys.MkdirAll(configRoot, 0o755); err != nil {
+		return errors.Wrap(errors.ENoRepo, "failed to create agency config directory", err)
+	}
+
 	// Write agency.json atomically
 	if err := fs.WriteFileAtomic(fsys, agencyJSONPath, []byte(scaffold.AgencyJSONTemplate), 0644); err != nil {
 		return errors.Wrap(errors.ENoRepo, "failed to write agency.json", err)
 	}
 
 	// Create stub scripts (never overwrite existing)
-	stubsResult, err := scaffold.CreateStubs(fsys, repoRoot.Path)
+	stubsResult, err := scaffold.CreateStubs(fsys, configRoot)
 	if err != nil {
 		return errors.Wrap(errors.ENoRepo, "failed to create stub scripts", err)
 	}
 
 	// Handle .gitignore
-	var gitignoreState scaffold.GitignoreResult
-	if opts.NoGitignore {
+	gitignoreState := scaffold.GitignoreSkipped
+	if !opts.RepoConfig || opts.NoGitignore {
 		gitignoreState = scaffold.GitignoreSkipped
 	} else {
 		gitignorePath := filepath.Join(repoRoot.Path, ".gitignore")
@@ -137,31 +154,36 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 
 	// Create CLAUDE.md (runner protocol file)
-	claudeMDCreated, err := scaffold.WriteClaudeMD(fsys, repoRoot.Path)
-	if err != nil {
-		return errors.Wrap(errors.ENoRepo, "failed to create CLAUDE.md", err)
-	}
-	claudeMDState := "exists"
-	if claudeMDCreated {
-		claudeMDState = "created"
+	claudeMDState := "skipped"
+	if opts.RepoConfig {
+		claudeMDCreated, err := scaffold.WriteClaudeMD(fsys, repoRoot.Path)
+		if err != nil {
+			return errors.Wrap(errors.ENoRepo, "failed to create CLAUDE.md", err)
+		}
+		claudeMDState = "exists"
+		if claudeMDCreated {
+			claudeMDState = "created"
+		}
 	}
 
 	// Build result
 	result := InitResult{
-		RepoRoot:        repoRoot.Path,
-		AgencyJSONState: agencyJSONState,
-		ScriptsCreated:  stubsResult.Created,
-		GitignoreState:  gitignoreState,
-		UserConfigPath:  userConfigPath,
-		UserConfigState: userConfigState,
-		ClaudeMDState:   claudeMDState,
+		RepoRoot:         repoRoot.Path,
+		AgencyJSONPath:   agencyJSONPath,
+		AgencyJSONSource: agencyJSONSource,
+		AgencyJSONState:  agencyJSONState,
+		ScriptsCreated:   stubsResult.Created,
+		GitignoreState:   gitignoreState,
+		UserConfigPath:   userConfigPath,
+		UserConfigState:  userConfigState,
+		ClaudeMDState:    claudeMDState,
 	}
 
 	// Output result
 	writeInitOutput(stdout, result)
 
 	// Warning if gitignore skipped (informational output to user)
-	if opts.NoGitignore {
+	if opts.RepoConfig && opts.NoGitignore {
 		_, _ = fmt.Fprintln(stdout, "warning: gitignore_skipped")
 	}
 
@@ -173,6 +195,8 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 // where write failures cannot be meaningfully handled.
 func writeInitOutput(w io.Writer, r InitResult) {
 	_, _ = fmt.Fprintf(w, "repo_root: %s\n", r.RepoRoot)
+	_, _ = fmt.Fprintf(w, "agency_json_path: %s\n", r.AgencyJSONPath)
+	_, _ = fmt.Fprintf(w, "agency_json_source: %s\n", r.AgencyJSONSource)
 	_, _ = fmt.Fprintf(w, "agency_json: %s\n", r.AgencyJSONState)
 	_, _ = fmt.Fprintf(w, "user_config_path: %s\n", r.UserConfigPath)
 	_, _ = fmt.Fprintf(w, "user_config: %s\n", r.UserConfigState)

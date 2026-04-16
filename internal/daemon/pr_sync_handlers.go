@@ -277,7 +277,21 @@ func prSyncDirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir s
 		)
 	}
 
-	status := strings.TrimRight(result.Stdout, "\n")
+	statusLines := strings.Split(strings.TrimRight(result.Stdout, "\n"), "\n")
+	kept := statusLines[:0]
+	for _, line := range statusLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if len(line) >= 4 {
+			path := strings.TrimSpace(line[3:])
+			if path == ".agency" || strings.HasPrefix(path, ".agency/") {
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	status := strings.Join(kept, "\n")
 	return strings.TrimSpace(status) == "", status, nil
 }
 

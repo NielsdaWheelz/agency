@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -78,6 +80,39 @@ func writeUserConfig(t *testing.T, configDir string) {
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "failed to write config.json")
 }
 
+func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
+	t.Helper()
+
+	root := filepath.Dir(agencyJSONPath)
+	scriptsDir := filepath.Join(root, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "failed to create local scripts dir")
+	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create local config dir")
+
+	agencyJSON := `{
+  "version": 1,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
+  }
+}`
+	require.NoError(t, os.WriteFile(agencyJSONPath, []byte(agencyJSON), 0o644), "failed to write local agency.json")
+
+	stubScript := "#!/usr/bin/env bash\nexit 0\n"
+	for _, script := range []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script), []byte(stubScript), 0o755), "failed to write script %s", script)
+	}
+}
+
 func newDoctorRunner(repoRoot string) *testutil.FakeCommandRunner {
 	runner := testutil.NewFakeCommandRunner()
 	runner.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{
@@ -137,6 +172,8 @@ func TestDoctor_Success(t *testing.T) {
 		"agency_data_dir: " + dataDir,
 		"agency_config_dir: " + configDir,
 		"user_config_path: " + filepath.Join(configDir, "config.json"),
+		"agency_json_path: " + filepath.Join(repoRoot, "agency.json"),
+		"agency_json_source: repo",
 		"repo_key: github:testowner/testrepo",
 		"origin_present: true",
 		"origin_url: git@github.com:testowner/testrepo.git",
@@ -160,6 +197,34 @@ func TestDoctor_Success(t *testing.T) {
 	// Check persistence files were created
 	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
 	assert.FileExists(t, repoIndexPath, "repo_index.json was not created")
+}
+
+func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
+	t.Parallel()
+	repoRoot := setupTestRepo(t)
+	require.NoError(t, os.Remove(filepath.Join(repoRoot, "agency.json")))
+
+	dataDir := t.TempDir()
+	configDir := t.TempDir()
+	writeUserConfig(t, configDir)
+
+	repoID := identity.DeriveRepoIdentity(repoRoot, "git@github.com:testowner/testrepo.git").RepoID
+	agencyJSONPath := config.LocalAgencyConfigPath(configDir, repoID)
+	writeLocalAgencyConfig(t, agencyJSONPath)
+
+	m := newDoctorRunner(repoRoot)
+	fsys := fs.NewRealFS()
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "agency_json_path: "+agencyJSONPath)
+	assert.Contains(t, output, "agency_json_source: local")
+	assert.Contains(t, output, "script_setup: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_setup.sh"))
+	assert.Contains(t, output, "script_verify: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_verify.sh"))
+	assert.Contains(t, output, "script_archive: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh"))
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {
@@ -346,6 +411,8 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"agency_data_dir:",
 		"agency_config_dir:",
 		"user_config_path:",
+		"agency_json_path:",
+		"agency_json_source:",
 		"agency_cache_dir:",
 		"repo_key:",
 		"repo_id:",

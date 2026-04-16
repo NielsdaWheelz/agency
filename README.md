@@ -53,16 +53,20 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 
 `worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they fall back to the current directory.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
+`agency init` writes per-repo agency config and scripts under `$AGENCY_CONFIG_DIR` by default, so setup/verify/archive scripts do not need to be committed to the repo.
+Use `agency init --repo-config` only when you want shareable `agency.json` and scripts in the repo.
 `worktree create` defaults omitted `--parent` to the current branch.
 `agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
 
 ```bash
+agency init --repo /path/to/myrepo             # creates local per-repo agency config/scripts
 agency repo add /path/to/myrepo              # register this repo once
 agency worktree create --repo <repo-ref> --name my-feature --parent main
 agency worktree create --name my-feature
 agency agent start --repo <repo-ref> --worktree my-feature # headed start requires an interactive terminal; use --detached to skip attach
 agency agent start --worktree my-feature
 # Ctrl+b, d to detach from tmux
+agency agent recreate <invocation-id> --detached # restore a missing headed tmux session in the same sandbox
 agency watch                                 # full-screen readiness workspace (interactive tty; enter/o/p actions)
 agency agent ls                              # concise invocation list
 agency agent land <invocation-id> --apply    # land changes back to worktree
@@ -124,6 +128,7 @@ agency worktree pr merge <worktree-ref> --yes --json
 agency worktree rebase <worktree-ref> --json
 agency agent discard <invocation-id> --json
 agency agent chat <invocation-id> --prompt "continue" --json
+agency agent recreate <invocation-id> --json
 agency agent restart <invocation-id> --checkpoint 3 --json
 agency repo add --json
 agency repo rm <repo-ref> --yes --json
@@ -149,7 +154,7 @@ Repo ──► Worktree ──► Agent Invocation ──► Sandbox
 
 you register a repo, create worktrees (isolated branches), start agents inside sandboxed copies of those branches, then land the agent's changes back. a background daemon supervises everything — auto-starts on first use.
 
-invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
+invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, headed recreate, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
 reports-v2 progression is mode-aware: headless `review`/`pr sync`/`pr merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
 

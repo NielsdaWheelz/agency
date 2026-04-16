@@ -45,13 +45,28 @@ type ScriptConfig struct {
 // Does NOT perform semantic validation; call ValidateAgencyConfig for that.
 func LoadAgencyConfig(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
 	path := filepath.Join(repoRoot, "agency.json")
+	return LoadAgencyConfigFile(filesystem, path)
+}
 
-	data, err := filesystem.ReadFile(path)
+// LoadAgencyConfigFile reads and parses an agency config from an exact path.
+func LoadAgencyConfigFile(filesystem fs.FS, path string) (AgencyConfig, error) {
+	cfg, err := loadAgencyConfigPath(filesystem, path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return AgencyConfig{}, errors.New(errors.ENoAgencyJSON, "agency.json not found; run 'agency init' to create it")
 		}
+		if errors.GetCode(err) != "" {
+			return AgencyConfig{}, err
+		}
 		return AgencyConfig{}, errors.Wrap(errors.ENoAgencyJSON, "failed to read agency.json", err)
+	}
+	return cfg, nil
+}
+
+func loadAgencyConfigPath(filesystem fs.FS, path string) (AgencyConfig, error) {
+	data, err := filesystem.ReadFile(path)
+	if err != nil {
+		return AgencyConfig{}, err
 	}
 
 	// First, unmarshal into raw map for type checking
