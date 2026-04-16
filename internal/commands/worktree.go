@@ -90,7 +90,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				return errors.NewWithDetails(
 					errors.EUnsafeRepoRoot,
 					"current directory is inside an agency-managed tree but not a present integration worktree",
-					map[string]string{"hint": "re-run from the original repo or pass --repo and --parent explicitly"},
+					map[string]string{"hint": "re-run from the original repo or pass --repo and --parent/--base explicitly"},
 				)
 			}
 			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -120,25 +120,44 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	if parentBranch == "" {
 		result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: parentRoot})
 		if err != nil {
-			return errors.Wrap(errors.EParentBranchNotFound, "failed to determine current branch; pass --parent", err)
+			return errors.Wrap(errors.EParentBranchNotFound, "failed to determine current branch; pass --parent or --base", err)
 		}
 		parentBranch = strings.TrimSpace(result.Stdout)
 		if result.ExitCode != 0 || parentBranch == "" {
 			return errors.NewWithDetails(
 				errors.EParentBranchNotFound,
-				"failed to determine current branch; pass --parent",
+				"failed to determine current branch; pass --parent or --base",
 				map[string]string{"repo_root": parentRoot},
 			)
 		}
 	}
 
-	// Check parent tree is clean (daemon doesn't check this)
+	hasCommits, err := git.HasCommits(ctx, cr, parentRoot)
+	if err != nil {
+		return err
+	}
+	if !hasCommits {
+		return errors.New(errors.EEmptyRepo, "repository has no commits; create an initial commit first")
+	}
+
 	clean, err := git.IsClean(ctx, cr, parentRoot)
 	if err != nil {
 		return err
 	}
 	if !clean {
-		return errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash before creating a worktree")
+		return errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash them first")
+	}
+
+	branchExists, err := git.BranchExists(ctx, cr, parentRoot, parentBranch)
+	if err != nil {
+		return err
+	}
+	if !branchExists {
+		return errors.NewWithDetails(
+			errors.EParentBranchNotFound,
+			"local branch '"+parentBranch+"' not found; checkout or fetch parent locally (no auto-fetch in v1)",
+			map[string]string{"branch": parentBranch},
+		)
 	}
 
 	// Generate idempotency key

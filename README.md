@@ -55,13 +55,13 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency init` writes per-repo agency config and scripts under `$AGENCY_CONFIG_DIR` by default, so setup/verify/archive scripts do not need to be committed to the repo.
 Use `agency init --repo-config` only when you want shareable `agency.json` and scripts in the repo.
-`worktree create` defaults omitted `--parent` to the current branch.
+`worktree create` defaults omitted `--parent`/`--base` to the current branch.
 `agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
 
 ```bash
 agency init --repo /path/to/myrepo             # creates local per-repo agency config/scripts
 agency repo add /path/to/myrepo              # register this repo once
-agency worktree create --repo <repo-ref> --name my-feature --parent main
+agency worktree create --repo <repo-ref> --name my-feature --base main
 agency worktree create --name my-feature
 agency agent start --repo <repo-ref> --worktree my-feature # headed start requires an interactive terminal; use --detached to skip attach
 agency agent start --worktree my-feature

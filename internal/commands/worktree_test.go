@@ -637,6 +637,54 @@ func TestWorktreeCreate_DefaultParentRequiresCurrentBranch(t *testing.T) {
 	assert.Equal(t, errors.EParentBranchNotFound, errors.GetCode(err))
 }
 
+func TestWorktreeCreate_ExplicitMissingParentBranchFailsBeforeCreate(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name:         "missing-parent",
+		ParentBranch: "does-not-exist",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EParentBranchNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "local branch 'does-not-exist' not found")
+}
+
+func TestWorktreeCreate_EmptyRepoFailsBeforeCreate(t *testing.T) {
+	testutil.HermeticGitEnv(t)
+	repoDir := t.TempDir()
+	initResult, err := agencyexec.NewRealRunner().Run(context.Background(), "git", []string{"init", "-b", "main"}, agencyexec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, initResult.ExitCode, "git init failed: %s", initResult.Stderr)
+
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name:         "empty-repo",
+		ParentBranch: "main",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EEmptyRepo, errors.GetCode(err))
+}
+
 func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
 	dataDir, err := os.MkdirTemp("", "wd")
