@@ -83,6 +83,7 @@ func TestRepoCmd_HelpShowsRmSubcommand(t *testing.T) {
 	require.NoError(t, err, "expected repo help to render")
 	assert.Contains(t, stdout, "rm")
 	assert.Contains(t, stdout, "Remove a registered repository")
+	assert.NotContains(t, stdout, "Subcommands:")
 }
 
 func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {
@@ -92,10 +93,27 @@ func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {
 	assert.Contains(t, stdout, "--json")
 }
 
-func TestWorktreeCmd_HelpShowsPRSubcommands(t *testing.T) {
+func TestDaemonCmd_HelpShowsCommandsWithoutDuplicateCatalog(t *testing.T) {
+	stdout, _, err := executeCmd("daemon", "--help")
+	require.NoError(t, err, "expected daemon help to render")
+	assert.Contains(t, stdout, "start")
+	assert.Contains(t, stdout, "status")
+	assert.NotContains(t, stdout, "Subcommands:")
+}
+
+func TestWorktreeCmd_HelpPointsToPRCommand(t *testing.T) {
 	stdout, _, err := executeCmd("worktree", "--help")
 	require.NoError(t, err, "expected worktree help to render")
-	assert.Contains(t, stdout, "pr merge")
+	assert.Contains(t, stdout, "pr          Manage a worktree pull request")
+	assert.NotContains(t, stdout, "pr merge")
+	assert.NotContains(t, stdout, "Subcommands:")
+}
+
+func TestWorktreePRCmd_HelpShowsSyncAndMerge(t *testing.T) {
+	stdout, _, err := executeCmd("worktree", "pr", "--help")
+	require.NoError(t, err, "expected worktree pr help to render")
+	assert.Contains(t, stdout, "sync")
+	assert.Contains(t, stdout, "merge")
 }
 
 func TestAgentCmd_ReturnsUsageError(t *testing.T) {
@@ -104,10 +122,29 @@ func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestAgentCmd_HelpShowsGroupsWithoutDuplicateCatalog(t *testing.T) {
+	stdout, _, err := executeCmd("agent", "--help")
+	require.NoError(t, err, "expected agent help to render")
+	assert.Contains(t, stdout, "Run\n  chat")
+	assert.Contains(t, stdout, "Inspect\n  diff")
+	assert.Contains(t, stdout, "Navigate\n  enter")
+	assert.Contains(t, stdout, "Recover\n  checkpoint")
+	assert.Contains(t, stdout, "Finish\n  discard")
+	assert.NotContains(t, stdout, "Subcommands:")
+}
+
 func TestAgentCheckpointCmd_ReturnsUsageError(t *testing.T) {
 	_, _, err := executeCmd("agent", "checkpoint")
 	require.Error(t, err, "expected error when agent checkpoint called without subcommand")
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentCheckpointCmd_HelpShowsCommandsWithoutDuplicateCatalog(t *testing.T) {
+	stdout, _, err := executeCmd("agent", "checkpoint", "--help")
+	require.NoError(t, err, "expected agent checkpoint help to render")
+	assert.Contains(t, stdout, "apply")
+	assert.Contains(t, stdout, "ls")
+	assert.NotContains(t, stdout, "Subcommands:")
 }
 
 func TestCheckpointCmd_UnknownAtRoot(t *testing.T) {

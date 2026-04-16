@@ -16,16 +16,11 @@ func newAgentCheckpointCmd() *cobra.Command {
 		Long: `Manage checkpoints for agent invocations.
 
 Checkpoints are automatic snapshots of sandbox state created during headless
-agent execution. They allow rolling back to previous states if something
-goes wrong.
-
-Subcommands:
-  ls        List checkpoints for an invocation
-  apply     Restore sandbox to a checkpoint state`,
+agent execution. They let you roll back to earlier states when needed.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency agent checkpoint <ls|apply>")
+			return errors.New(errors.EUsage, "specify a subcommand")
 		},
 	}
 

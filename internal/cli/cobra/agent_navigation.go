@@ -30,6 +30,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
@@ -62,6 +63,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
@@ -93,6 +95,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd
@@ -125,6 +128,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	return cmd

@@ -44,6 +44,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
@@ -83,6 +84,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -131,6 +133,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -167,6 +170,7 @@ func newAgentHistoryCmd() *cobra.Command {
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
@@ -204,6 +208,7 @@ func newAgentLogsCmd() *cobra.Command {
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream, hooks, terminal)")
@@ -235,6 +240,7 @@ func newAgentReviewCmd() *cobra.Command {
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")

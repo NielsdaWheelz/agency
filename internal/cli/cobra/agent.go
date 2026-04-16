@@ -12,36 +12,27 @@ func newAgentCmd() *cobra.Command {
 		Short: "Manage agent invocations",
 		Long: `Manage agent invocations.
 
-Agent invocations are executions of runners (Claude, Codex, etc.) inside
-sandbox worktrees. Each invocation is isolated and produces logs,
-checkpoints, and outcomes.
+Agent invocations run a runner inside an isolated sandbox worktree and
+produce logs, checkpoints, and lifecycle outcomes.
 
-Subcommands:
-  start     Start a new agent invocation
-  ls        List agent invocations
-  show      Show details of an invocation
-  enter     Attach to a running headed invocation (canonical)
-  stop      Stop an invocation gracefully (Ctrl-C)
-  kill      Kill an invocation forcefully
-  diff      Show sandbox changes vs integration
-  land      Apply sandbox changes to integration
-  discard   Discard sandbox changes
-  open      Open sandbox in editor
-  path      Print sandbox path
-  shell     Open shell in sandbox
-  chat      Send follow-up prompt to a headless invocation
-  recreate  Recreate a headed invocation tmux session
-  history   Show unified invocation timeline
-  checkpoint Manage invocation checkpoints
-  restart   Restart invocation from checkpoint
-  logs      View invocation logs
-  review    Show review/readiness surface`,
+Use subcommands to run, inspect, navigate, recover, and finish invocations.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency agent <start|ls|show|...>")
+			return errors.New(errors.EUsage, "specify a subcommand: agency agent <command>")
 		},
 	}
+
+	cmd.AddGroup(
+		&cobra.Group{ID: "run", Title: "Run"},
+		&cobra.Group{ID: "inspect", Title: "Inspect"},
+		&cobra.Group{ID: "navigate", Title: "Navigate"},
+		&cobra.Group{ID: "recover", Title: "Recover"},
+		&cobra.Group{ID: "finish", Title: "Finish"},
+	)
+
+	checkpointCmd := newAgentCheckpointCmd()
+	checkpointCmd.GroupID = "recover"
 
 	cmd.AddCommand(
 		newAgentStartCmd(),
@@ -58,7 +49,7 @@ Subcommands:
 		newAgentEnterCmd(),
 		newAgentChatCmd(),
 		newAgentRecreateCmd(),
-		newAgentCheckpointCmd(),
+		checkpointCmd,
 		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),

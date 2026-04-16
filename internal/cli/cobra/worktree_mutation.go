@@ -52,11 +52,15 @@ Example:
 func newWorktreePRCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr",
-		Short: "Worktree-scoped pull request operations",
-		Args:  cobra.NoArgs,
+		Short: "Manage a worktree pull request",
+		Long: `Manage the pull request attached to an integration worktree.
+
+Use sync to push the branch and create or update the pull request.
+Use merge to verify, merge, and archive the worktree.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency worktree pr <sync|merge>")
+			return errors.New(errors.EUsage, "specify a subcommand")
 		},
 	}
 	cmd.AddCommand(newWorktreePRSyncCmd(), newWorktreePRMergeCmd())

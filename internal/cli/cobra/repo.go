@@ -13,19 +13,12 @@ func newRepoCmd() *cobra.Command {
 		Short: "Manage registered repositories",
 		Long: `Manage the daemon's repository registry.
 
-The daemon maintains a registry of known repositories. Registering a repo
-allows CWD-less operation: you can run agency commands from any directory
-by specifying --repo.
-
-Subcommands:
-  add     Register a repository path
-  ls      List registered repositories
-  rm      Remove a registered repository
-  show    Show details of a registered repository`,
+Registering a repo lets you run agency commands from any directory by
+specifying --repo.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency repo <add|ls|rm|show>")
+			return errors.New(errors.EUsage, "specify a subcommand")
 		},
 	}
 

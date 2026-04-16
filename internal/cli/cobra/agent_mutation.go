@@ -39,6 +39,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "finish"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -75,6 +76,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "finish"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -115,6 +117,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "finish"
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Apply uncommitted changes (when no commits exist)")
@@ -152,6 +155,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "finish"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
@@ -192,6 +196,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "run"
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Follow-up prompt text")
@@ -232,6 +237,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "recover"
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Recreate tmux session without attaching")
@@ -301,6 +307,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "recover"
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")

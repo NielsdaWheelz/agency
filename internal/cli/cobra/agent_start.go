@@ -73,6 +73,7 @@ Example:
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "run"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo name, key, id, or prefix (defaults to current directory)")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Integration worktree to run against (defaults to current integration worktree)")
