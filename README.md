@@ -67,7 +67,7 @@ agency agent start --repo <repo-ref> --worktree my-feature # headed start requir
 agency agent start --worktree my-feature
 # Ctrl+b, d to detach from tmux
 agency agent recreate <invocation-id> --detached # restore a missing headed tmux session in the same sandbox
-agency watch                                 # full-screen readiness workspace (interactive tty; enter/o/p actions)
+agency watch                                 # full-screen readiness workspace (interactive tty; Enter=attach, o=open, p=pr sync)
 agency agent ls                              # concise invocation list
 agency agent land <invocation-id> --apply    # land changes back to worktree
 ```
@@ -78,11 +78,12 @@ headless (fire-and-forget):
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
 agency agent logs <invocation-id> --follow
-agency agent chat <invocation-id> --prompt "continue with edge-case tests"
+agency agent followup <invocation-id> --prompt "continue with edge-case tests"
 agency agent history <invocation-id> --limit 50   # limit must be 1..500
 agency agent history <invocation-id> --last        # show latest meaningful turn/activity
-agency agent review <invocation-id>               # review verdict + blocking reasons
-agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
+agency agent check <invocation-id>               # readiness verdict + blocking reasons
+agency agent diff <invocation-id> --turn <entry> # changes for a turn or range
+agency agent diff <invocation-id> --turn-range <start>..<end>
 agency agent land <invocation-id> --apply         # land sandbox into integration worktree
 agency worktree pr sync <worktree-ref>            # push branch + create/update PR
 agency worktree pr merge <worktree-ref> --yes     # verify, merge, and archive worktree PR
@@ -96,8 +97,8 @@ agency agent restart <invocation-id> --history     # interactive history selecto
 short alias parity for high-traffic s6 navigation/progression surfaces:
 - `worktree create`: `-r/--repo`
 - `agent start`: `-r/--repo`
-- `agent review`: `-r/--repo`, `-j/--json`
-- `agent path|open|enter`: `-r/--repo`
+- `agent check`: `-r/--repo`, `-j/--json`
+- `agent path|open|attach`: `-r/--repo`
 
 if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
 for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
@@ -127,7 +128,7 @@ agency worktree pr sync <worktree-ref> --json
 agency worktree pr merge <worktree-ref> --yes --json
 agency worktree rebase <worktree-ref> --json
 agency agent discard <invocation-id> --json
-agency agent chat <invocation-id> --prompt "continue" --json
+agency agent followup <invocation-id> --prompt "continue" --json
 agency agent recreate <invocation-id> --json
 agency agent restart <invocation-id> --checkpoint 3 --json
 agency repo add --json
@@ -136,7 +137,7 @@ agency repo rm <repo-ref> --yes --json
 
 all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
-success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
+success payloads include additive command-specific fields (for example `timeline_entry_id` for `followup`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
 for `worktree pr sync` and `worktree pr merge`, additive report fields include
 `report_source` and `report_diagnostics`.

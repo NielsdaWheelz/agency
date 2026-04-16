@@ -314,8 +314,8 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	return nil
 }
 
-// AgentChatOpts holds options for the agent chat command.
-type AgentChatOpts struct {
+// AgentFollowupOpts holds options for the agent followup command.
+type AgentFollowupOpts struct {
 	InvocationRef   string
 	RepoRef         string
 	Prompt          string
@@ -324,8 +324,8 @@ type AgentChatOpts struct {
 	DataDirOverride string
 }
 
-// AgentChat submits a follow-up prompt to an existing headless invocation.
-func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentChatOpts, stdout, stderr io.Writer) error {
+// AgentFollowup submits a follow-up prompt to an existing headless invocation.
+func AgentFollowup(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentFollowupOpts, stdout, stderr io.Writer) error {
 	fail := func(err error) error {
 		if err == nil || !opts.JSON {
 			return err
@@ -352,13 +352,13 @@ func AgentChat(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "agent chat",
+		CmdName:       "agent followup",
 	})
 	if err != nil {
 		return fail(err)
 	}
 
-	resp, err := ns.client.SubmitFollowUpPrompt(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpPromptOpts{
+	resp, err := ns.client.SubmitFollowUp(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpOpts{
 		Prompt: prompt,
 	})
 	if err != nil {
@@ -511,13 +511,13 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		}
 		if err := attachFn(resp.TmuxSession); err != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent enter %s' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent attach %s' to attach later.\n", shortID)
 		}
 		return nil
 	}
 
 	_, _ = fmt.Fprintln(stdout, "\nSession recreated in detached mode.")
-	_, _ = fmt.Fprintf(stdout, "Use 'agency agent enter %s' to attach.\n", shortID)
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent attach %s' to attach.\n", shortID)
 	return nil
 }
 

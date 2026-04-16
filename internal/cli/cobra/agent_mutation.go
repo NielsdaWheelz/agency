@@ -162,14 +162,14 @@ Example:
 	return cmd
 }
 
-func newAgentChatCmd() *cobra.Command {
+func newAgentFollowupCmd() *cobra.Command {
 	var repoRef string
 	var prompt string
 	var promptFile string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "chat <invocation_ref>",
+		Use:   "followup <invocation_ref>",
 		Short: "Send follow-up prompt to a headless invocation",
 		Long: `Send a follow-up prompt to an existing headless invocation.
 
@@ -177,9 +177,9 @@ Use either --prompt or --prompt-file. The request is idempotent at the
 daemon control plane using client_request_id semantics.
 
 Example:
-  agency agent chat 20260131 --prompt "continue with test fixes"
-  agency agent chat --repo agency my-invocation --prompt-file followup.md
-  agency agent chat --json 20260131 --prompt "next step"`,
+  agency agent followup 20260131 --prompt "continue with test fixes"
+  agency agent followup --repo agency my-invocation --prompt-file followup.md
+  agency agent followup --json 20260131 --prompt "next step"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -187,7 +187,7 @@ Example:
 				return err
 			}
 
-			return commands.AgentChat(ctx, cr, fsys, cwd, commands.AgentChatOpts{
+			return commands.AgentFollowup(ctx, cr, fsys, cwd, commands.AgentFollowupOpts{
 				InvocationRef: args[0],
 				RepoRef:       repoRef,
 				Prompt:        prompt,

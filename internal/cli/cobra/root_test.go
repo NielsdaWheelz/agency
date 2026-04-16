@@ -125,9 +125,10 @@ func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 func TestAgentCmd_HelpShowsGroupsWithoutDuplicateCatalog(t *testing.T) {
 	stdout, _, err := executeCmd("agent", "--help")
 	require.NoError(t, err, "expected agent help to render")
-	assert.Contains(t, stdout, "Run\n  chat")
-	assert.Contains(t, stdout, "Inspect\n  diff")
-	assert.Contains(t, stdout, "Navigate\n  enter")
+	assert.Contains(t, stdout, "Run\n  followup")
+	assert.Contains(t, stdout, "Inspect\n  check")
+	assert.Contains(t, stdout, "  diff")
+	assert.Contains(t, stdout, "Navigate\n  attach")
 	assert.Contains(t, stdout, "Recover\n  checkpoint")
 	assert.Contains(t, stdout, "Finish\n  discard")
 	assert.NotContains(t, stdout, "Subcommands:")

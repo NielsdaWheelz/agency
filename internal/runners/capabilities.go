@@ -19,15 +19,15 @@ const (
 	launchTokenSandboxPath = "{sandbox_path}"
 )
 
-// ChatMode describes how a runner accepts follow-up messages in headless mode.
-type ChatMode string
+// FollowUpMode describes how a runner accepts follow-up messages in headless mode.
+type FollowUpMode string
 
 const (
-	// ChatModeStdin delivers messages via the runner's stdin pipe in real time (JSONL).
-	ChatModeStdin ChatMode = "stdin"
+	// FollowUpModeStdin delivers messages via the runner's stdin pipe in real time (JSONL).
+	FollowUpModeStdin FollowUpMode = "stdin"
 
-	// ChatModeResume queues messages and delivers them by resuming the session.
-	ChatModeResume ChatMode = "resume"
+	// FollowUpModeResume queues messages and delivers them by resuming the session.
+	FollowUpModeResume FollowUpMode = "resume"
 )
 
 // InitialPromptMode describes how a runner expects the first prompt in headless mode.
@@ -47,7 +47,7 @@ type Capability struct {
 	SupportsHeadless   bool
 	SupportsHeaded     bool
 	HasSemanticAdapter bool
-	ChatMode           ChatMode // how follow-up messages are delivered in headless mode
+	FollowUpMode       FollowUpMode // how follow-up messages are delivered in headless mode
 	InitialPromptMode  InitialPromptMode
 
 	reservedArgs         []string // flags reserved in both headless and headed modes
@@ -72,7 +72,7 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume", "--settings", "--bare"},
 		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
@@ -102,7 +102,7 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"exec", "resume", "--json", "-C", "--cd", "--last"},
 		reservedHeadlessArgs: []string{"--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
@@ -133,7 +133,7 @@ var capabilityByID = map[string]Capability{
 		ID:                RunnerAmp,
 		SupportsHeadless:  true,
 		SupportsHeaded:    true,
-		ChatMode:          ChatModeStdin,
+		FollowUpMode:      FollowUpModeStdin,
 		InitialPromptMode: InitialPromptStdin,
 		reservedArgs:      []string{"-x", "--execute", "--stream-json", "--stream-json-input"},
 		headlessTemplate:  []string{"-x", "--stream-json", "--stream-json-input", launchTokenExtraArgs},
@@ -144,7 +144,7 @@ var capabilityByID = map[string]Capability{
 		ID:                   RunnerOpenCode,
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"run"},
 		reservedHeadlessArgs: []string{"--mode"},
@@ -156,7 +156,7 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"-p", "--print", "--output-format", "--resume", "--continue", "--workspace"},
 		reservedHeadlessArgs: []string{"--force", "-f", "--yolo", "--trust"},
@@ -183,7 +183,7 @@ var capabilityByID = map[string]Capability{
 		ID:                RunnerDroid,
 		SupportsHeadless:  true,
 		SupportsHeaded:    true,
-		ChatMode:          ChatModeStdin,
+		FollowUpMode:      FollowUpModeStdin,
 		InitialPromptMode: InitialPromptStdin,
 		reservedArgs:      []string{"exec", "--output-format", "--input-format"},
 		headlessTemplate:  []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs},
@@ -339,7 +339,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 	if len(capability.resumeTemplate) == 0 {
 		return nil, errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
-			"runner '"+capability.ID+"' does not support session-resume chat mode",
+			"runner '"+capability.ID+"' does not support session-resume follow-up mode",
 			map[string]string{
 				"runner": capability.ID,
 				"mode":   "resume",
@@ -404,13 +404,13 @@ func BuildHeadedArgs(runner string, extraArgs []string) ([]string, error) {
 	return renderLaunchTemplate(capability.headedTemplate, "", "", extraArgs)
 }
 
-// ResolveChatMode returns the ChatMode for a runner.
-func ResolveChatMode(runner string) (ChatMode, error) {
+// ResolveFollowUpMode returns the FollowUpMode for a runner.
+func ResolveFollowUpMode(runner string) (FollowUpMode, error) {
 	capability, err := Resolve(runner)
 	if err != nil {
 		return "", err
 	}
-	return capability.ChatMode, nil
+	return capability.FollowUpMode, nil
 }
 
 // ResolveInitialPromptMode returns how the runner expects the first headless prompt.

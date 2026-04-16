@@ -64,16 +64,16 @@ func (c *Client) IngestHeadedHook(ctx context.Context, repoID, invocationID, run
 	return decodeResult[daemon.HeadedHookIngestData](&apiResp)
 }
 
-// SubmitFollowUpPrompt submits a follow-up prompt to an existing invocation.
-func (c *Client) SubmitFollowUpPrompt(ctx context.Context, invocationRef, repoID string, opts SubmitFollowUpPromptOpts) (*daemon.ControlPlaneFollowUpPromptResponse, error) {
+// SubmitFollowUp submits a follow-up prompt to an existing invocation.
+func (c *Client) SubmitFollowUp(ctx context.Context, invocationRef, repoID string, opts SubmitFollowUpOpts) (*daemon.ControlPlaneFollowUpResponse, error) {
 	opts.ClientRequestID = uuid.New().String()
 
-	u := fmt.Sprintf("http://daemon/invocations/%s/chat", url.PathEscape(invocationRef))
+	u := fmt.Sprintf("http://daemon/invocations/%s/followup", url.PathEscape(invocationRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 
-	var result daemon.ControlPlaneFollowUpPromptResponse
+	var result daemon.ControlPlaneFollowUpResponse
 	if err := c.doJSONRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
 		return nil, err
 	}

@@ -490,7 +490,7 @@ func TestHandleGetInvocation_HappyPath(t *testing.T) {
 	assert.Equal(t, "working", dto.DisplayStatus)
 }
 
-func TestInvocationActivityProjection_ConvergesAcrossListShowAndReview(t *testing.T) {
+func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -556,18 +556,18 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndReview(t *testin
 	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
 	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
 
-	reviewResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID))
-	require.True(t, reviewResp.OK)
-	var review InvocationReviewData
-	decodeData(t, reviewResp, &review)
-	require.NotNil(t, review.LatestActivity)
-	assert.Equal(t, shown.DisplayStatus, review.DisplayStatus)
-	assert.Equal(t, shown.StatusSummary, review.StatusSummary)
-	assert.Equal(t, shown.LatestActivity.TurnID, review.LatestActivity.TurnID)
-	assert.Equal(t, shown.LatestActivity.Summary, review.LatestActivity.Summary)
-	assert.Equal(t, shown.Navigation.HistoryCommand, review.Navigation.HistoryCommand)
-	assert.Equal(t, shown.Navigation.DiffCommand, review.Navigation.DiffCommand)
-	assert.Equal(t, shown.Navigation.LatestTurnID, review.Navigation.LatestTurnID)
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	require.NotNil(t, check.LatestActivity)
+	assert.Equal(t, shown.DisplayStatus, check.DisplayStatus)
+	assert.Equal(t, shown.StatusSummary, check.StatusSummary)
+	assert.Equal(t, shown.LatestActivity.TurnID, check.LatestActivity.TurnID)
+	assert.Equal(t, shown.LatestActivity.Summary, check.LatestActivity.Summary)
+	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
+	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
+	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)
 }
 
 func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup(t *testing.T) {
@@ -2896,7 +2896,7 @@ func TestHandleGetInvocationTimeline_OrderDescWithCursorReturnsEInvalidArgument(
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 }
 
-func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocation(t *testing.T) {
+func TestHandleControlPlaneFollowUp_WritesTimelineEntryWithoutNewInvocation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -2911,7 +2911,7 @@ func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocatio
 	require.NoError(t, err)
 
 	w := env.doInvocationRequestWithBody(t, http.MethodPost,
-		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var writeResp map[string]any
@@ -2945,7 +2945,7 @@ func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocatio
 	assert.True(t, found, "accepted follow-up prompt must appear in unified timeline")
 }
 
-func TestHandleControlPlaneFollowUpPrompt_IdempotentRetryNoDuplicateTimelineWrites(t *testing.T) {
+func TestHandleControlPlaneFollowUp_IdempotentRetryNoDuplicateTimelineWrites(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -2956,11 +2956,11 @@ func TestHandleControlPlaneFollowUpPrompt_IdempotentRetryNoDuplicateTimelineWrit
 	require.NoError(t, err)
 
 	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
-		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w1.Code)
 
 	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
-		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w2.Code)
 
 	wTimeline := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=500")

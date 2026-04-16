@@ -99,16 +99,16 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationTimeline(w, r, invocationRef)
-	case "review":
+	case "check":
 		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}
-		s.handleGetInvocationReview(w, r, invocationRef)
-	case "chat":
+		s.handleGetInvocationCheck(w, r, invocationRef)
+	case "followup":
 		if !s.requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		s.handleControlPlaneFollowUpPrompt(w, r, invocationRef)
+		s.handleControlPlaneFollowUp(w, r, invocationRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
 	}

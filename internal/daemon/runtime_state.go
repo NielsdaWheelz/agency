@@ -90,7 +90,7 @@ type SupervisedProcess struct {
 	// Relay delivers follow-up messages to the runner.
 	// StdinRelay for stdin-capable runners, ResumeRelay for session-resume runners.
 	// May be nil for headed invocations.
-	Relay relay.ChatRelay
+	Relay relay.FollowUpRelay
 
 	// lastOutputAt is updated in-memory on every chunk; persisted with throttling.
 	lastOutputAt atomic.Int64

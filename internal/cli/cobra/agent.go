@@ -46,14 +46,14 @@ Use subcommands to run, inspect, navigate, recover, and finish invocations.`,
 		newAgentOpenCmd(),
 		newAgentPathCmd(),
 		newAgentShellCmd(),
-		newAgentEnterCmd(),
-		newAgentChatCmd(),
+		newAgentAttachCmd(),
+		newAgentFollowupCmd(),
 		newAgentRecreateCmd(),
 		checkpointCmd,
 		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
 		newAgentLogsCmd(),
-		newAgentReviewCmd(),
+		newAgentCheckCmd(),
 	)
 
 	return cmd

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing.T) {
+func TestRequestIDContractMatrix_InvocationMutationAndCheckEndpoints(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -65,9 +65,9 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{}`),
 		},
 		{
-			name:   "chat_missing_repo",
+			name:   "followup_missing_repo",
 			method: http.MethodPost,
-			path:   "/invocations/inv-1/chat",
+			path:   "/invocations/inv-1/followup",
 			body:   []byte(`{"client_request_id":"req-1","prompt":"continue"}`),
 		},
 		{
@@ -101,9 +101,9 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{}`),
 		},
 		{
-			name:   "review",
+			name:   "check",
 			method: http.MethodGet,
-			path:   "/invocations/inv-1/review?repo_id=" + env.RepoID,
+			path:   "/invocations/inv-1/check?repo_id=" + env.RepoID,
 			body:   nil,
 		},
 	}

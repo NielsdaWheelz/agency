@@ -75,7 +75,7 @@ func TestInvocationMutations_RequestIDOnStopKillSuccessAndFailure(t *testing.T) 
 	})
 }
 
-func TestInvocationMutations_RequestIDOnRestartAndChatErrors(t *testing.T) {
+func TestInvocationMutations_RequestIDOnRestartAndFollowUpErrors(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -93,16 +93,16 @@ func TestInvocationMutations_RequestIDOnRestartAndChatErrors(t *testing.T) {
 	assert.NotEmpty(t, restartRequestID)
 	assert.Equal(t, restartRequestID, wRestart.Header().Get("X-Request-ID"))
 
-	wChat := env.doInvocationRequestWithBody(
+	wFollowUp := env.doInvocationRequestWithBody(
 		t,
 		http.MethodPost,
-		"/invocations/inv-1/chat",
+		"/invocations/inv-1/followup",
 		[]byte(`{"client_request_id":"req-1","prompt":"continue"}`),
 	)
-	var chatPayload map[string]any
-	require.NoError(t, json.NewDecoder(wChat.Body).Decode(&chatPayload))
-	chatRequestID, ok := chatPayload["request_id"].(string)
-	require.True(t, ok, "chat request_id must be present")
-	assert.NotEmpty(t, chatRequestID)
-	assert.Equal(t, chatRequestID, wChat.Header().Get("X-Request-ID"))
+	var followUpPayload map[string]any
+	require.NoError(t, json.NewDecoder(wFollowUp.Body).Decode(&followUpPayload))
+	followUpRequestID, ok := followUpPayload["request_id"].(string)
+	require.True(t, ok, "followup request_id must be present")
+	assert.NotEmpty(t, followUpRequestID)
+	assert.Equal(t, followUpRequestID, wFollowUp.Header().Get("X-Request-ID"))
 }

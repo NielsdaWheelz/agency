@@ -210,24 +210,24 @@ func TestBuildHeadedArgs(t *testing.T) {
 	assert.Equal(t, []string{"--model", "droid-1"}, droidArgs)
 }
 
-func TestChatMode(t *testing.T) {
+func TestFollowUpMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		runner string
-		want   ChatMode
+		want   FollowUpMode
 	}{
-		{"claude-code", ChatModeResume},
-		{"codex", ChatModeResume},
-		{"amp", ChatModeStdin},
-		{"opencode", ChatModeResume},
-		{"cursor", ChatModeResume},
-		{"droid", ChatModeStdin},
+		{"claude-code", FollowUpModeResume},
+		{"codex", FollowUpModeResume},
+		{"amp", FollowUpModeStdin},
+		{"opencode", FollowUpModeResume},
+		{"cursor", FollowUpModeResume},
+		{"droid", FollowUpModeStdin},
 	}
 	for _, tt := range tests {
 		t.Run(tt.runner, func(t *testing.T) {
 			t.Parallel()
-			mode, err := ResolveChatMode(tt.runner)
+			mode, err := ResolveFollowUpMode(tt.runner)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, mode)
 		})
@@ -258,9 +258,9 @@ func TestInitialPromptMode(t *testing.T) {
 	}
 }
 
-func TestChatMode_UnknownRunner(t *testing.T) {
+func TestFollowUpMode_UnknownRunner(t *testing.T) {
 	t.Parallel()
-	_, err := ResolveChatMode("unknown")
+	_, err := ResolveFollowUpMode("unknown")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
 }

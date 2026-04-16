@@ -240,14 +240,14 @@ func TestResumeRelay_ConcurrentSendAndDrain(t *testing.T) {
 
 // --- Interface compliance ---
 
-func TestStdinRelay_ImplementsChatRelay(t *testing.T) {
+func TestStdinRelay_ImplementsFollowUpRelay(t *testing.T) {
 	t.Parallel()
-	var _ ChatRelay = (*StdinRelay)(nil)
+	var _ FollowUpRelay = (*StdinRelay)(nil)
 }
 
-func TestResumeRelay_ImplementsChatRelay(t *testing.T) {
+func TestResumeRelay_ImplementsFollowUpRelay(t *testing.T) {
 	t.Parallel()
-	var _ ChatRelay = (*ResumeRelay)(nil)
+	var _ FollowUpRelay = (*ResumeRelay)(nil)
 }
 
 // --- Test helpers ---

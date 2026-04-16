@@ -91,7 +91,7 @@ func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, 
 }
 
 func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
-	resp := ControlPlaneFollowUpPromptResponse{
+	resp := ControlPlaneFollowUpResponse{
 		OK:              false,
 		ErrorCode:       code,
 		Message:         message,
@@ -105,7 +105,7 @@ func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID
 }
 
 func (s *Server) writeFollowUpSuccessWithDelivery(w http.ResponseWriter, invocationID, timelineEntryID, clientRequestID, requestID string, alreadyApplied bool, deliveryMode string) {
-	resp := ControlPlaneFollowUpPromptResponse{
+	resp := ControlPlaneFollowUpResponse{
 		OK:              true,
 		InvocationID:    invocationID,
 		TimelineEntry:   timelineEntryID,

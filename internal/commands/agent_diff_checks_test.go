@@ -285,7 +285,7 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnSingleCheckpointUsesBaseBoundary
 	assert.Equal(t, "1111111", payload.CommittedRange.To)
 }
 
-func TestAgentReview_Blocked_HumanAndJSONAligned(t *testing.T) {
+func TestAgentCheck_Blocked_HumanAndJSONAligned(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "checks-blocked")
 	invocationID := "20260201102020-chkb"
@@ -323,14 +323,14 @@ func TestAgentReview_Blocked_HumanAndJSONAligned(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var humanOut, jsonOut, errOut bytes.Buffer
-	err = AgentReview(context.Background(), cr2, fsys, repoDir, AgentReviewOpts{
+	err = AgentCheck(context.Background(), cr2, fsys, repoDir, AgentCheckOpts{
 		InvocationRef:   invocationID,
 		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 	}, &humanOut, &errOut)
 	require.NoError(t, err)
 
-	err = AgentReview(context.Background(), cr2, fsys, repoDir, AgentReviewOpts{
+	err = AgentCheck(context.Background(), cr2, fsys, repoDir, AgentCheckOpts{
 		InvocationRef:   invocationID,
 		RepoRef:         repoID,
 		JSON:            true,
@@ -338,14 +338,14 @@ func TestAgentReview_Blocked_HumanAndJSONAligned(t *testing.T) {
 	}, &jsonOut, &errOut)
 	require.NoError(t, err)
 
-	assert.Contains(t, humanOut.String(), "Review verdict:       BLOCKED")
+	assert.Regexp(t, `Readiness:\s+BLOCKED`, humanOut.String())
 	assert.Contains(t, humanOut.String(), "pr_sync_eligible:     no")
 	assert.Contains(t, humanOut.String(), "[invocation_active]")
 	assert.Contains(t, humanOut.String(), "[runner_blocked]")
 	assert.Contains(t, humanOut.String(), "history:")
 	assert.Contains(t, humanOut.String(), "diff:")
 
-	var payload daemon.InvocationReviewData
+	var payload daemon.InvocationCheckData
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
 	assert.False(t, payload.Ready)
 	assert.Equal(t, "blocked", payload.Readiness)

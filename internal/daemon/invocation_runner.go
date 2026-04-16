@@ -150,9 +150,9 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		envOverlay[k] = v
 	}
 
-	stdinReader, chatRelay, relayWarning := createChatRelay(req.Runner)
+	stdinReader, followUpRelay, relayWarning := createFollowUpRelay(req.Runner)
 	if relayWarning != nil {
-		s.recordInvocationWarning(repoID, result.InvocationID, "chat_relay_setup_failed", relayWarning.Error(), nil)
+		s.recordInvocationWarning(repoID, result.InvocationID, "followup_relay_setup_failed", relayWarning.Error(), nil)
 	}
 	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
 		Dir:        result.SandboxPath,
@@ -166,16 +166,16 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		_ = stdinReader.Close()
 	}
 	if err != nil {
-		if chatRelay != nil {
-			_ = chatRelay.Close()
+		if followUpRelay != nil {
+			_ = followUpRelay.Close()
 		}
 		logFiles.Close()
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
 	}
-	if chatRelay != nil {
+	if followUpRelay != nil {
 		mode, err := runners.ResolveInitialPromptMode(req.Runner)
 		if err != nil {
-			_ = chatRelay.Close()
+			_ = followUpRelay.Close()
 			if startedProc.PGID > 0 {
 				_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
 			}
@@ -183,8 +183,8 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 			return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
 		}
 		if mode == runners.InitialPromptStdin {
-			if err := chatRelay.Send(context.Background(), req.Prompt); err != nil {
-				_ = chatRelay.Close()
+			if err := followUpRelay.Send(context.Background(), req.Prompt); err != nil {
+				_ = followUpRelay.Close()
 				if startedProc.PGID > 0 {
 					_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
 				}
@@ -267,7 +267,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		NoIncludeUntracked:    req.NoIncludeUntracked,
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,
-		Relay:                 chatRelay,
+		Relay:                 followUpRelay,
 		done:                  make(chan struct{}),
 	}
 	if proc.Relay != nil {
@@ -315,19 +315,19 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-func createChatRelay(runner string) (*os.File, relay.ChatRelay, error) {
-	mode, err := runners.ResolveChatMode(runner)
+func createFollowUpRelay(runner string) (*os.File, relay.FollowUpRelay, error) {
+	mode, err := runners.ResolveFollowUpMode(runner)
 	if err != nil {
 		return nil, nil, nil
 	}
 	switch mode {
-	case runners.ChatModeStdin:
+	case runners.FollowUpModeStdin:
 		pr, pw, err := os.Pipe()
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create stdin pipe for chat relay: %w", err)
+			return nil, nil, fmt.Errorf("failed to create stdin pipe for follow-up relay: %w", err)
 		}
 		return pr, relay.NewStdinRelay(pw, runner), nil
-	case runners.ChatModeResume:
+	case runners.FollowUpModeResume:
 		return nil, relay.NewResumeRelay(runner), nil
 	default:
 		return nil, nil, nil

@@ -57,8 +57,8 @@ type ControlPlaneStartResponse struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-// ControlPlaneFollowUpPromptRequest is the request body for POST /invocations/{ref}/chat.
-type ControlPlaneFollowUpPromptRequest struct {
+// ControlPlaneFollowUpRequest is the request body for POST /invocations/{ref}/followup.
+type ControlPlaneFollowUpRequest struct {
 	// Prompt is the follow-up prompt text (max 256KB).
 	Prompt string `json:"prompt"`
 
@@ -66,8 +66,8 @@ type ControlPlaneFollowUpPromptRequest struct {
 	ClientRequestID string `json:"client_request_id"`
 }
 
-// ControlPlaneFollowUpPromptResponse is the response body for POST /invocations/{ref}/chat.
-type ControlPlaneFollowUpPromptResponse struct {
+// ControlPlaneFollowUpResponse is the response body for POST /invocations/{ref}/followup.
+type ControlPlaneFollowUpResponse struct {
 	OK             bool   `json:"ok"`
 	InvocationID   string `json:"invocation_id,omitempty"`
 	TimelineEntry  string `json:"timeline_entry_id,omitempty"`

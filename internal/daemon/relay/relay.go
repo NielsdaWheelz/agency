@@ -1,4 +1,4 @@
-// Package relay provides runner-specific chat delivery for follow-up messages.
+// Package relay provides runner-specific delivery for follow-up messages.
 //
 // Each runner has a different mechanism for multi-turn headless conversations:
 //   - StdinRelay: writes JSONL user messages to the runner's stdin pipe (claude-code, amp, droid)
@@ -22,8 +22,8 @@ const (
 	ModeResume Mode = "resume"
 )
 
-// ChatRelay delivers user prompts to a running or recently-stopped agent.
-type ChatRelay interface {
+// FollowUpRelay delivers user prompts to a running or recently-stopped agent.
+type FollowUpRelay interface {
 	// Send delivers a user prompt.
 	// For stdin relays, the message is written immediately.
 	// For resume relays, the message is queued for delivery on next turn boundary.

@@ -416,7 +416,7 @@ func TestDaemonControlPlaneStart_InitialPromptDeliveredViaStdinForStdinRunners(t
 	}
 }
 
-func TestDaemonControlPlaneFollowUpPrompt_CodexQueuedPromptResumesNextTurn(t *testing.T) {
+func TestDaemonControlPlaneFollowUp_CodexQueuedPromptResumesNextTurn(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -443,7 +443,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CodexQueuedPromptResumesNextTurn(t *te
 	require.NoError(t, err, "start")
 	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
 
-	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+	followResp, err := env.Client.SubmitFollowUp(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpOpts{
 		Prompt: "second codex turn",
 	})
 	require.NoError(t, err, "follow-up transport error")
@@ -464,7 +464,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CodexQueuedPromptResumesNextTurn(t *te
 	assert.Equal(t, []string{"exec", "resume", "thread_resume_test", "--json", "--full-auto", "--model", "gpt-5-codex", "--disable", "unified_exec", "second codex turn"}, capture.Args)
 }
 
-func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *testing.T) {
+func TestDaemonControlPlaneFollowUp_CursorQueuedPromptResumesNextTurn(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -491,7 +491,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *t
 	require.NoError(t, err, "start")
 	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
 
-	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+	followResp, err := env.Client.SubmitFollowUp(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpOpts{
 		Prompt: "second cursor turn",
 	})
 	require.NoError(t, err, "follow-up transport error")
@@ -512,7 +512,7 @@ func TestDaemonControlPlaneFollowUpPrompt_CursorQueuedPromptResumesNextTurn(t *t
 	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"}, capture.Args)
 }
 
-func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDiffTurnMatchesCheckpoint(t *testing.T) {
+func TestDaemonControlPlaneFollowUp_ClaudeQueuedPromptResumesNextTurnAndDiffTurnMatchesCheckpoint(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -543,7 +543,7 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 		_, _ = env.Client.Kill(context.Background(), repoID, startResp.InvocationID)
 	})
 
-	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+	followResp, err := env.Client.SubmitFollowUp(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpOpts{
 		Prompt: "second claude turn",
 	})
 	require.NoError(t, err, "follow-up transport error")
@@ -554,7 +554,7 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 	assert.Empty(t, meta.FailureReason)
 	if meta.SemanticStatus != nil {
-		assert.Equal(t, runnerstatus.StatusReadyForReview, *meta.SemanticStatus)
+		assert.Equal(t, runnerstatus.StatusReady, *meta.SemanticStatus)
 	}
 
 	invResp, err := env.Client.GetInvocation(ctx, startResp.InvocationID, repoID)
@@ -563,12 +563,12 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 	assert.NotEqual(t, "running", invResp.Data.DisplayStatus)
 	assert.NotEqual(t, "working", invResp.Data.DisplayStatus)
 
-	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
-	require.NoError(t, err, "get review")
-	assert.Equal(t, "finished", reviewResp.Data.Status)
-	assert.NotEqual(t, "running", reviewResp.Data.DisplayStatus)
-	assert.NotEqual(t, "working", reviewResp.Data.DisplayStatus)
-	require.NotEmpty(t, strings.TrimSpace(reviewResp.Data.Navigation.LatestTurnID))
+	checkResp, err := env.Client.GetInvocationCheck(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "get check")
+	assert.Equal(t, "finished", checkResp.Data.Status)
+	assert.NotEqual(t, "running", checkResp.Data.DisplayStatus)
+	assert.NotEqual(t, "working", checkResp.Data.DisplayStatus)
+	require.NotEmpty(t, strings.TrimSpace(checkResp.Data.Navigation.LatestTurnID))
 
 	listResp, err := env.Client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
 		RepoID: repoID,
@@ -618,7 +618,7 @@ func TestDaemonControlPlaneFollowUpPrompt_ClaudeQueuedPromptResumesNextTurnAndDi
 	assert.NotEmpty(t, strings.TrimSpace(latestCheckpoint.Diffstat))
 
 	diffResp, err := env.Client.GetInvocationDiff(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationDiffOpts{
-		TurnID:             strings.TrimSpace(reviewResp.Data.Navigation.LatestTurnID),
+		TurnID:             strings.TrimSpace(checkResp.Data.Navigation.LatestTurnID),
 		IncludePatch:       true,
 		IncludeUncommitted: true,
 	})
@@ -1713,7 +1713,7 @@ func TestDaemonRestartFromCheckpoint_OneFlowMaintainsInvocationContinuity(t *tes
 		return readErr == nil && meta.Status == store.InvocationStatusRunning
 	}, 5*time.Second, 50*time.Millisecond, "invocation did not return to running state after restart")
 
-	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+	followResp, err := env.Client.SubmitFollowUp(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpOpts{
 		Prompt: "continue after restart",
 	})
 	require.NoError(t, err, "follow-up transport error after restart")
@@ -1892,7 +1892,7 @@ func TestDaemonControlPlaneStart_CursorQueuedPromptResumesNextTurn(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
 
-	followResp, err := env.Client.SubmitFollowUpPrompt(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpPromptOpts{
+	followResp, err := env.Client.SubmitFollowUp(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpOpts{
 		Prompt: "second cursor turn",
 	})
 	require.NoError(t, err, "follow-up transport error")
@@ -1960,7 +1960,7 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	// Seed invocation-owned runner_status.json to validate post-cleanup durability.
 	landStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Summary:       "landed invocation runner status",
 		HowToTest:     "go test ./...",
@@ -2028,14 +2028,14 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	require.Len(t, checkpointsResp.Data.Checkpoints, 1)
 	assert.Equal(t, 1, checkpointsResp.Data.Checkpoints[0].ID)
 
-	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
-	require.NoError(t, err, "review API should still work after landing cleanup")
-	reviewCodes := make([]string, 0, len(reviewResp.Data.BlockingReasons))
-	for _, reason := range reviewResp.Data.BlockingReasons {
-		reviewCodes = append(reviewCodes, reason.Code)
+	checkResp, err := env.Client.GetInvocationCheck(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "check API should still work after landing cleanup")
+	checkCodes := make([]string, 0, len(checkResp.Data.BlockingReasons))
+	for _, reason := range checkResp.Data.BlockingReasons {
+		checkCodes = append(checkCodes, reason.Code)
 	}
-	assert.NotContains(t, reviewCodes, "runner_status_unreadable")
-	assert.Equal(t, "ready_for_review", reviewResp.Data.RunnerStatus)
+	assert.NotContains(t, checkCodes, "runner_status_unreadable")
+	assert.Equal(t, "ready", checkResp.Data.RunnerStatus)
 }
 
 func TestDaemonLandApply(t *testing.T) {
@@ -2320,7 +2320,7 @@ func TestDaemonDiscard(t *testing.T) {
 
 	landStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Summary:       "discard invocation runner status",
 		HowToTest:     "go test ./...",
@@ -2372,14 +2372,14 @@ func TestDaemonDiscard(t *testing.T) {
 	require.Len(t, checkpointsResp.Data.Checkpoints, 1)
 	assert.Equal(t, 1, checkpointsResp.Data.Checkpoints[0].ID)
 
-	reviewResp, err := env.Client.GetInvocationReview(ctx, startResp.InvocationID, repoID)
-	require.NoError(t, err, "review API should still work after discard cleanup")
-	reviewCodes := make([]string, 0, len(reviewResp.Data.BlockingReasons))
-	for _, reason := range reviewResp.Data.BlockingReasons {
-		reviewCodes = append(reviewCodes, reason.Code)
+	checkResp, err := env.Client.GetInvocationCheck(ctx, startResp.InvocationID, repoID)
+	require.NoError(t, err, "check API should still work after discard cleanup")
+	checkCodes := make([]string, 0, len(checkResp.Data.BlockingReasons))
+	for _, reason := range checkResp.Data.BlockingReasons {
+		checkCodes = append(checkCodes, reason.Code)
 	}
-	assert.NotContains(t, reviewCodes, "runner_status_unreadable")
-	assert.Equal(t, "ready_for_review", reviewResp.Data.RunnerStatus)
+	assert.NotContains(t, checkCodes, "runner_status_unreadable")
+	assert.Equal(t, "ready", checkResp.Data.RunnerStatus)
 }
 
 func TestDaemonDiscardRunning(t *testing.T) {

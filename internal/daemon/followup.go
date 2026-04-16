@@ -15,8 +15,8 @@ import (
 
 const followUpPromptEventKind = "agency.followup_prompt"
 
-// handleControlPlaneFollowUpPrompt handles POST /invocations/{ref}/chat.
-func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http.Request, invocationRef string) {
+// handleControlPlaneFollowUp handles POST /invocations/{ref}/followup.
+func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
 	setRequestIDHeader(w, requestID)
 
@@ -27,7 +27,7 @@ func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http
 		return
 	}
 
-	var req ControlPlaneFollowUpPromptRequest
+	var req ControlPlaneFollowUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeFollowUpError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
 		return
@@ -81,13 +81,13 @@ func (s *Server) handleControlPlaneFollowUpPrompt(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Deliver via chat relay (audit event is already persisted above).
+	// Deliver via follow-up relay (audit event is already persisted above).
 	deliveryMode := s.deliverFollowUp(record.InvocationID, req.Prompt)
 
 	s.writeFollowUpSuccessWithDelivery(w, record.InvocationID, timelineEntryID, req.ClientRequestID, requestID, alreadyApplied, deliveryMode)
 }
 
-// deliverFollowUp sends the prompt to the runner via its chat relay.
+// deliverFollowUp sends the prompt to the runner via its follow-up relay.
 // Returns the delivery mode string for the API response.
 // Delivery failure is non-fatal — the audit event is already persisted.
 func (s *Server) deliverFollowUp(invocationID, prompt string) string {

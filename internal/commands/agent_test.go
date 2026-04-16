@@ -566,7 +566,7 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
 	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
 
-	var lsJSON, showJSON, reviewJSON, stderr bytes.Buffer
+	var lsJSON, showJSON, checkJSON, stderr bytes.Buffer
 
 	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &lsJSON, &stderr)
@@ -587,33 +587,33 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	require.NotNil(t, shown.LatestActivity)
 	require.NotNil(t, shown.Navigation)
 
-	err = AgentReview(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentReviewOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &reviewJSON, &stderr)
+	err = AgentCheck(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentCheckOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &checkJSON, &stderr)
 	require.NoError(t, err)
-	var review daemon.InvocationReviewData
-	require.NoError(t, json.Unmarshal(reviewJSON.Bytes(), &review))
-	require.NotNil(t, review.LatestActivity)
+	var check daemon.InvocationCheckData
+	require.NoError(t, json.Unmarshal(checkJSON.Bytes(), &check))
+	require.NotNil(t, check.LatestActivity)
 
 	assert.Equal(t, listed.DisplayStatus, shown.DisplayStatus)
-	assert.Equal(t, shown.DisplayStatus, review.DisplayStatus)
+	assert.Equal(t, shown.DisplayStatus, check.DisplayStatus)
 
 	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
-	assert.Equal(t, shown.StatusSummary, review.StatusSummary)
-	assert.Equal(t, "latest activity summary", review.StatusSummary)
+	assert.Equal(t, shown.StatusSummary, check.StatusSummary)
+	assert.Equal(t, "latest activity summary", check.StatusSummary)
 
 	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
-	assert.Equal(t, shown.LatestActivity.TurnID, review.LatestActivity.TurnID)
+	assert.Equal(t, shown.LatestActivity.TurnID, check.LatestActivity.TurnID)
 	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
-	assert.Equal(t, shown.LatestActivity.Summary, review.LatestActivity.Summary)
-	assert.Equal(t, "stream:1", review.LatestActivity.TurnID)
-	assert.Equal(t, "latest activity summary", review.LatestActivity.Summary)
+	assert.Equal(t, shown.LatestActivity.Summary, check.LatestActivity.Summary)
+	assert.Equal(t, "stream:1", check.LatestActivity.TurnID)
+	assert.Equal(t, "latest activity summary", check.LatestActivity.Summary)
 
 	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
-	assert.Equal(t, shown.Navigation.HistoryCommand, review.Navigation.HistoryCommand)
+	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
 	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
-	assert.Equal(t, shown.Navigation.DiffCommand, review.Navigation.DiffCommand)
+	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
 	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
-	assert.Equal(t, shown.Navigation.LatestTurnID, review.Navigation.LatestTurnID)
+	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)
 }
 
 func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
@@ -678,16 +678,16 @@ func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T)
 	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
 }
 
-func TestWriteAgentReviewHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+func TestWriteAgentCheckHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	review := &daemon.InvocationReviewData{
+	check := &daemon.InvocationCheckData{
 		InvocationID:  "inv-1",
 		RepoID:        "repo-1",
 		Status:        "running",
 		DisplayStatus: "working",
-		Navigation: daemon.InvocationReviewNavigation{
+		Navigation: daemon.InvocationCheckNavigation{
 			HistoryCommand: "agency agent history inv-1 --repo repo-1",
 		},
 		LatestActivity: &daemon.InvocationLatestActivity{
@@ -704,7 +704,7 @@ func TestWriteAgentReviewHumanFromDTO_IncludesLatestActivityMetadata(t *testing.
 			CheckpointChangedCount: 2,
 		},
 	}
-	err := writeAgentReviewHumanFromDTO(&out, review)
+	err := writeAgentCheckHumanFromDTO(&out, check)
 	require.NoError(t, err)
 	output := out.String()
 	assert.Contains(t, output, "latest_activity:      [assistant] applied migration (tools=1, checkpoint=4)")
@@ -715,30 +715,30 @@ func TestWriteAgentReviewHumanFromDTO_IncludesLatestActivityMetadata(t *testing.
 	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
 }
 
-func TestWriteAgentReviewHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *testing.T) {
+func TestWriteAgentCheckHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	review := &daemon.InvocationReviewData{
+	check := &daemon.InvocationCheckData{
 		InvocationID: "inv-1",
 		RepoID:       "repo-1",
 		Status:       "finished",
 		Readiness:    "ready",
-		Navigation: daemon.InvocationReviewNavigation{
+		Navigation: daemon.InvocationCheckNavigation{
 			HistoryCommand: "agency agent history inv-1 --repo repo-1",
 		},
 	}
 
-	err := writeAgentReviewHumanFromDTO(&out, review)
+	err := writeAgentCheckHumanFromDTO(&out, check)
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "Review verdict:       READY")
+	assert.Contains(t, out.String(), "Readiness:            READY")
 }
 
-func TestWriteAgentReviewHumanFromDTO_NilReviewReturnsInternalError(t *testing.T) {
+func TestWriteAgentCheckHumanFromDTO_NilCheckReturnsInternalError(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	err := writeAgentReviewHumanFromDTO(&out, nil)
+	err := writeAgentCheckHumanFromDTO(&out, nil)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInternal, errors.GetCode(err))
 }
@@ -827,7 +827,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 2: canonical agent path/open/shell/enter daemon-first navigation
+// S2-PR04 Acceptance 2: canonical agent path/open/shell/attach daemon-first navigation
 // ---------------------------------------------------------------------------
 
 func TestAgentPath_UsesDaemonResolution(t *testing.T) {
@@ -948,7 +948,7 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, stdout.String(), "Session started in detached mode.")
-	assert.Contains(t, stdout.String(), "Use 'agency agent enter ")
+	assert.Contains(t, stdout.String(), "Use 'agency agent attach ")
 	assert.Empty(t, stderr.String())
 
 	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
@@ -987,14 +987,14 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	assert.NotEmpty(t, cwd)
 	assert.Equal(t, "attach -t "+session, args)
 	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
-	assert.Contains(t, stderr.String(), "Use 'agency agent enter ")
+	assert.Contains(t, stderr.String(), "Use 'agency agent attach ")
 }
 
-func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
+func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 	t.Run("stored session wins", func(t *testing.T) {
-		env := setupAgentNavEnv(t, "enter-stored", store.RunnerModeHeaded)
+		env := setupAgentNavEnv(t, "attach-stored", store.RunnerModeHeaded)
 		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
-		storedSession := "agency_explicit_enter"
+		storedSession := "agency_explicit_attach"
 		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
 			meta.TmuxSession = storedSession
 		}))
@@ -1006,8 +1006,8 @@ func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 		var attachedSession string
 
 		var stdout, stderr bytes.Buffer
-		err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			AgentEnterOpts{
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
 				InvocationRef:   env.InvocationID,
 				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
@@ -1026,7 +1026,7 @@ func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 	})
 
 	t.Run("fallback to derived session", func(t *testing.T) {
-		env := setupAgentNavEnv(t, "enter-fallback", store.RunnerModeHeaded)
+		env := setupAgentNavEnv(t, "attach-fallback", store.RunnerModeHeaded)
 		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
 		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
 			meta.TmuxSession = ""
@@ -1040,8 +1040,8 @@ func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 		var attachedSession string
 
 		var stdout, stderr bytes.Buffer
-		err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			AgentEnterOpts{
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
 				InvocationRef:   env.InvocationID,
 				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
@@ -1056,7 +1056,7 @@ func TestAgentEnter_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.True(t, attachCalled, "tmux attach must be called")
-		assert.Equal(t, fallbackSession, attachedSession, "agent enter must fall back to tmux.SessionName(invocation_id)")
+		assert.Equal(t, fallbackSession, attachedSession, "agent attach must fall back to tmux.SessionName(invocation_id)")
 	})
 }
 
@@ -1222,7 +1222,7 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		"editor shim must NOT be executed on ambiguous target")
 }
 
-func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
+func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	dataTmp, err := os.MkdirTemp("", "an")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
@@ -1290,8 +1290,8 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	fakeTmux := testutil.NewFakeTmuxClient()
 
 	var stdout, stderr bytes.Buffer
-	enterErr := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	attachErr := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
 			InvocationRef:   "20260201000000",
 			RepoRef:         repoID,
 			IsInteractive:   func() bool { return true },
@@ -1303,8 +1303,8 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 			},
 		}, &stdout, &stderr)
 
-	require.Error(t, enterErr)
-	assert.Equal(t, errors.EAmbiguous, errors.GetCode(enterErr),
+	require.Error(t, attachErr)
+	assert.Equal(t, errors.EAmbiguous, errors.GetCode(attachErr),
 		"navigation ambiguity must return E_AMBIGUOUS")
 	assert.False(t, attachCalled, "tmux attach must NOT be invoked on ambiguous target")
 }
@@ -1451,15 +1451,15 @@ func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.
 // S2-PR04 Acceptance 4: invocation-mode validity + E_INVOCATION_INVALID_MODE
 // ---------------------------------------------------------------------------
 
-func TestAgentEnter_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
-	env := setupAgentNavEnv(t, "headless-enter", store.RunnerModeHeadless)
+func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
+	env := setupAgentNavEnv(t, "headless-attach", store.RunnerModeHeadless)
 
 	fakeTmux := testutil.NewFakeTmuxClient()
 	var attachCalled bool
 
 	var stdout, stderr bytes.Buffer
-	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
 			InvocationRef:   env.InvocationID,
 			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return true },
@@ -1481,12 +1481,12 @@ func TestAgentEnter_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 		"error hint should suggest alternative for headless")
 }
 
-func TestAgentEnter_NotInteractive_ReturnsENotInteractive(t *testing.T) {
-	env := setupAgentNavEnv(t, "noterm-enter", store.RunnerModeHeaded)
+func TestAgentAttach_NotInteractive_ReturnsENotInteractive(t *testing.T) {
+	env := setupAgentNavEnv(t, "noterm-attach", store.RunnerModeHeaded)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
 			InvocationRef:   env.InvocationID,
 			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return false },
@@ -1508,7 +1508,7 @@ func TestAgentEnter_NotInteractive_ReturnsENotInteractive(t *testing.T) {
 func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *testing.T) {
 	env := setupAgentNavEnv(t, "brk-nav", store.RunnerModeHeaded)
 
-	for _, verb := range []string{"path", "open", "shell", "enter"} {
+	for _, verb := range []string{"path", "open", "shell", "attach"} {
 		t.Run(verb, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			var navErr error
@@ -1527,9 +1527,9 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 				t.Setenv("SHELL", shimPath)
 				navErr = AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 					AgentShellOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
-			case "enter":
-				navErr = AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentEnterOpts{
+			case "attach":
+				navErr = AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+					AgentAttachOpts{
 						InvocationRef:   ref,
 						RepoRef:         env.RepoID,
 						IsInteractive:   func() bool { return true },
@@ -2260,10 +2260,10 @@ func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *tes
 	assert.Contains(t, human, "unknown runner event")
 }
 
-func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
+func TestAgentFollowup_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
 	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-file-limit")
-	invocationID := "20260131181000-chat"
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "followup-file-limit")
+	invocationID := "20260131181000-followup"
 
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
@@ -2275,7 +2275,7 @@ func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+	err := AgentFollowup(context.Background(), cr2, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   invocationID,
 		PromptFile:      oversizedPromptPath,
 		DataDirOverride: dataDir,
@@ -2284,9 +2284,9 @@ func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
 	assert.Equal(t, errors.EPromptTooLarge, errors.GetCode(err))
 }
 
-func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
+func TestAgentFollowup_HumanAndJSONAligned(t *testing.T) {
 	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-output")
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "followup-output")
 	invocationID := "20260131182000-cout"
 
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
@@ -2296,14 +2296,14 @@ func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var humanOut, jsonOut, stderr bytes.Buffer
-	err := AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+	err := AgentFollowup(context.Background(), cr2, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   invocationID,
 		Prompt:          "continue with regression analysis",
 		DataDirOverride: dataDir,
 	}, &humanOut, &stderr)
 	require.NoError(t, err)
 
-	err = AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+	err = AgentFollowup(context.Background(), cr2, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   invocationID,
 		Prompt:          "second follow-up",
 		JSON:            true,

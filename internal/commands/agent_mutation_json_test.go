@@ -177,9 +177,9 @@ func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentChat_JSONFailurePromptRequiredEnvelope(t *testing.T) {
+func TestAgentFollowup_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentChatOpts{
+	err := AgentFollowup(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentFollowupOpts{
 		InvocationRef: "missing",
 		JSON:          true,
 	}, &stdout, &stderr)
@@ -191,15 +191,15 @@ func TestAgentChat_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EPromptRequired), payload["error_code"])
 }
 
-func TestAgentChat_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "chat-json-daemon-fail")
+func TestAgentFollowup_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "followup-json-daemon-fail")
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), cr, fsys, repoDir, AgentChatOpts{
+	err := AgentFollowup(context.Background(), cr, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   "does-not-exist",
 		Prompt:          "continue",
 		JSON:            true,
@@ -214,11 +214,11 @@ func TestAgentChat_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentChat_JSONFailureTransportEnvelope(t *testing.T) {
+func TestAgentFollowup_JSONFailureTransportEnvelope(t *testing.T) {
 	missingDataDir := filepath.Join(t.TempDir(), "missing")
 
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentChatOpts{
+	err := AgentFollowup(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentFollowupOpts{
 		InvocationRef:   "any",
 		Prompt:          "continue",
 		JSON:            true,
