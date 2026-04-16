@@ -22,11 +22,11 @@ func newWatchCmd() *cobra.Command {
 		Long: `Open the full-screen watch workspace for live monitoring.
 
 The watch workspace composes repositories, worktrees, invocations, and
-invocation review/readiness data from daemon-owned read APIs.
+invocation check/readiness data from daemon-owned read APIs.
 
 Keyboard shortcuts:
   - up/down (or k/j): move selection
-  - enter: enter selected headed invocation
+  - enter: attach to selected headed invocation
   - o: open selected invocation sandbox
   - p: sync PR for selected invocation's worktree
   - r: refresh now

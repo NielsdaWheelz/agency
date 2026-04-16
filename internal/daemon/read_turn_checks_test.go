@@ -359,7 +359,7 @@ func TestHandleGetInvocationDiff_TurnSelectorUnknownTurnReturnsInvalidArgument(t
 	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
 }
 
-func TestHandleGetInvocationReview_BlockedIncludesReasonsAndNavigation(t *testing.T) {
+func TestHandleGetInvocationCheck_BlockedIncludesReasonsAndNavigation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -387,7 +387,7 @@ func TestHandleGetInvocationReview_BlockedIncludesReasonsAndNavigation(t *testin
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"continue"}}`+"\n",
 	), 0o644))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -409,7 +409,7 @@ func TestHandleGetInvocationReview_BlockedIncludesReasonsAndNavigation(t *testin
 	assert.NotEmpty(t, nav["latest_turn_id"])
 }
 
-func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjection(t *testing.T) {
+func TestHandleGetInvocationCheck_NavigationLatestTurnIDUsesCanonicalTurnProjection(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -443,7 +443,7 @@ func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjec
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpBytes, 0o644))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -457,7 +457,7 @@ func TestHandleGetInvocationReview_NavigationLatestTurnIDUsesCanonicalTurnProjec
 	assert.Contains(t, nav["diff_command"], "--turn stream:1")
 }
 
-func TestHandleGetInvocationReview_NavigationDiffCommandOmitsTurnWhenLatestTurnNotRestorable(t *testing.T) {
+func TestHandleGetInvocationCheck_NavigationDiffCommandOmitsTurnWhenLatestTurnNotRestorable(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -468,7 +468,7 @@ func TestHandleGetInvocationReview_NavigationDiffCommandOmitsTurnWhenLatestTurnN
 		meta.Runner = "cursor"
 	}))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -485,7 +485,7 @@ func TestHandleGetInvocationReview_NavigationDiffCommandOmitsTurnWhenLatestTurnN
 	assert.NotContains(t, diffCommand, "--turn")
 }
 
-func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) {
+func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -493,9 +493,9 @@ func TestHandleGetInvocationReview_ReadyWhenFinishedAndReviewable(t *testing.T) 
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
-		Summary:       "ready for review",
+		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
 		Blockers:      []string{},
@@ -516,7 +516,7 @@ go test ./...
 		meta.TreePath = integrationTree
 	}))
 
-	ready := runnerstatus.StatusReadyForReview
+	ready := runnerstatus.StatusReady
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
@@ -529,7 +529,7 @@ go test ./...
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:58:20Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`+"\n",
 	), 0o644))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -547,7 +547,7 @@ go test ./...
 	assert.NotEmpty(t, nav["history_command"])
 }
 
-func TestHandleGetInvocationReview_UsesInvocationOwnedRunnerStatusAfterSandboxCleanup(t *testing.T) {
+func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCleanup(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -555,7 +555,7 @@ func TestHandleGetInvocationReview_UsesInvocationOwnedRunnerStatusAfterSandboxCl
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "invocation-owned runner status",
 		HowToTest:     "go test ./...",
@@ -575,7 +575,7 @@ func TestHandleGetInvocationReview_UsesInvocationOwnedRunnerStatusAfterSandboxCl
 	}))
 	require.NoError(t, os.RemoveAll(sandboxPath))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -586,11 +586,11 @@ func TestHandleGetInvocationReview_UsesInvocationOwnedRunnerStatusAfterSandboxCl
 	codes := blockingReasonCodes(data)
 	assert.NotContains(t, codes, "runner_status_unreadable")
 	assert.NotContains(t, codes, "runner_status_missing")
-	assert.Equal(t, "ready_for_review", data["runner_status"])
+	assert.Equal(t, "ready", data["runner_status"])
 	assert.Equal(t, "invocation-owned runner status", data["runner_summary"])
 }
 
-func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(t *testing.T) {
+func TestHandleGetInvocationCheck_HeadlessStrictReportViolationBlocksReadiness(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -598,9 +598,9 @@ func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
-		Summary:       "ready for review",
+		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
 		Blockers:      []string{},
@@ -614,7 +614,7 @@ func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(
 		meta.TreePath = integrationTree
 	}))
 
-	ready := runnerstatus.StatusReadyForReview
+	ready := runnerstatus.StatusReady
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
@@ -624,7 +624,7 @@ func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(
 		meta.Mode = store.RunnerModeHeadless
 	}))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -636,7 +636,7 @@ func TestHandleGetInvocationReview_HeadlessStrictReportViolationBlocksReadiness(
 	assert.Contains(t, blockingReasonCodes(data), "report_missing")
 }
 
-func TestHandleGetInvocationReview_HeadlessIncludesReportSourceAndDiagnostics(t *testing.T) {
+func TestHandleGetInvocationCheck_HeadlessIncludesReportSourceAndDiagnostics(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -644,9 +644,9 @@ func TestHandleGetInvocationReview_HeadlessIncludesReportSourceAndDiagnostics(t 
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
-		Summary:       "ready for review",
+		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
 		Blockers:      []string{},
@@ -672,7 +672,7 @@ go test ./internal/...
 		meta.TreePath = integrationTree
 	}))
 
-	ready := runnerstatus.StatusReadyForReview
+	ready := runnerstatus.StatusReady
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
@@ -682,7 +682,7 @@ go test ./internal/...
 		meta.Mode = store.RunnerModeHeadless
 	}))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)
@@ -701,11 +701,11 @@ go test ./internal/...
 	assert.Equal(t, "report_conflict_json_precedence", firstDiagnostic["code"])
 }
 
-func TestHandleGetInvocationReview_AmbiguousInvocationRefReturnsConflict(t *testing.T) {
+func TestHandleGetInvocationCheck_AmbiguousInvocationRefReturnsConflict(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusConflict, w.Code)
 
 	resp := decodeAPIResponse(t, w)
@@ -720,7 +720,7 @@ func TestHandleGetInvocationReview_AmbiguousInvocationRefReturnsConflict(t *test
 	assert.Len(t, details.Candidates, 3)
 }
 
-func TestHandleGetInvocationReview_InvalidRunnerSchemaBlocksReadiness(t *testing.T) {
+func TestHandleGetInvocationCheck_InvalidRunnerSchemaBlocksReadiness(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -729,9 +729,9 @@ func TestHandleGetInvocationReview_InvalidRunnerSchemaBlocksReadiness(t *testing
 
 	invalidSchema := runnerstatus.RunnerStatus{
 		SchemaVersion: "9.9",
-		Status:        runnerstatus.StatusReadyForReview,
+		Status:        runnerstatus.StatusReady,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
-		Summary:       "ready for review",
+		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
 		Blockers:      []string{},
@@ -747,7 +747,7 @@ func TestHandleGetInvocationReview_InvalidRunnerSchemaBlocksReadiness(t *testing
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 	}))
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/review?repo_id="+env.RepoID)
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
 	resp := decodeAPIResponse(t, w)
 	require.True(t, resp.OK)

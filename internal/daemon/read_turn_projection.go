@@ -13,7 +13,7 @@ func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, ent
 	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil && !os.IsNotExist(err) {
-		// Best-effort only: review/read surfaces should still work when
+		// Best-effort only: check/read surfaces should still work when
 		// checkpoint metadata is unavailable or malformed.
 		return ProjectTimelineTurns(timelineEntriesFromSortable(entries), nil)
 	}

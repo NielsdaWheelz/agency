@@ -27,7 +27,7 @@ const StallThreshold = 5 * time.Minute
 //  4. needs_attention flag → "needs attention"
 //  5. semantic == needs_input → "needs input"
 //  6. semantic == blocked → "blocked"
-//  7. semantic == ready_for_review → "ready for review"
+//  7. semantic == ready → "ready"
 //  8. running + semantic working → "working"
 //  9. running → "running"
 //  10. finished → "finished"
@@ -120,12 +120,12 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 7. Semantic: ready_for_review
-	if semanticStatus == string(runnerstatus.StatusReadyForReview) {
+	// 7. Semantic: ready
+	if semanticStatus == string(runnerstatus.StatusReady) {
 		return DerivedStatus{
-			DisplayStatus:  DisplayStatusReadyForReview,
+			DisplayStatus:  DisplayStatusReady,
 			AttentionFlags: flags,
-			SortKey:        SortKeyReadyForReview,
+			SortKey:        SortKeyReady,
 		}
 	}
 

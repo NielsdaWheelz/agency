@@ -22,22 +22,22 @@ func (noopLoader) Load(_ context.Context) (Snapshot, error) {
 }
 
 type fakeActionDispatcher struct {
-	enterErr  error
+	attachErr error
 	openErr   error
 	prSyncErr error
 
-	enterOutput  string
+	attachOutput string
 	openOutput   string
 	prSyncOutput string
 
-	enterCalls  []string
+	attachCalls []string
 	openCalls   []string
 	prSyncCalls []string
 }
 
-func (f *fakeActionDispatcher) Enter(_ context.Context, invocationID, repoID string) (string, error) {
-	f.enterCalls = append(f.enterCalls, invocationID+"@"+repoID)
-	return f.enterOutput, f.enterErr
+func (f *fakeActionDispatcher) Attach(_ context.Context, invocationID, repoID string) (string, error) {
+	f.attachCalls = append(f.attachCalls, invocationID+"@"+repoID)
+	return f.attachOutput, f.attachErr
 }
 
 func (f *fakeActionDispatcher) Open(_ context.Context, invocationID, repoID string) (string, error) {
@@ -152,7 +152,7 @@ func TestModel_View_NarrowTerminalRendersWithoutBreakingPanels(t *testing.T) {
 				Name:       "feature-auth",
 			},
 		},
-		Reviews: map[string]daemon.InvocationReviewData{
+		Checks: map[string]daemon.InvocationCheckData{
 			"inv-1": {
 				InvocationID:   "inv-1",
 				Readiness:      "ready",
@@ -178,7 +178,7 @@ func TestModel_View_ShowsWatchActionSet(t *testing.T) {
 	m.height = 22
 
 	view := m.View()
-	assert.Contains(t, view.Content, "enter")
+	assert.Contains(t, view.Content, "attach")
 	assert.Contains(t, view.Content, "open")
 	assert.Contains(t, view.Content, "pr sync")
 }
@@ -225,13 +225,13 @@ func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
 		Worktrees: []daemon.WorktreeDTO{
 			{WorktreeID: "wt-1", Name: "feature-auth"},
 		},
-		Reviews: map[string]daemon.InvocationReviewData{
+		Checks: map[string]daemon.InvocationCheckData{
 			"inv-1": {
 				InvocationID:   "inv-1",
 				Readiness:      "blocked",
 				Ready:          false,
 				PRSyncEligible: false,
-				Navigation: daemon.InvocationReviewNavigation{
+				Navigation: daemon.InvocationCheckNavigation{
 					HistoryCommand: "agency agent history inv-1 --repo repo-1",
 					DiffCommand:    "agency agent diff inv-1 --repo repo-1 --turn stream:1",
 					LatestTurnID:   "stream:1",
@@ -254,11 +254,11 @@ func TestModel_View_IncludesSharedActivityProjectionFields(t *testing.T) {
 	assert.Contains(t, view.Content, "turn:    stream:1")
 }
 
-func TestModel_ActionEnter_SessionEndedIsRecoverable(t *testing.T) {
+func TestModel_ActionAttach_SessionEndedIsRecoverable(t *testing.T) {
 	t.Parallel()
 
 	dispatcher := &fakeActionDispatcher{
-		enterErr: errors.NewWithDetails(
+		attachErr: errors.NewWithDetails(
 			errors.ESessionEnded,
 			"tmux session not found",
 			map[string]string{
@@ -287,8 +287,8 @@ func TestModel_ActionEnter_SessionEndedIsRecoverable(t *testing.T) {
 	assert.Equal(t, 0, nextModel.selectedIndex)
 	assert.Contains(t, nextModel.lastActionMessage, string(errors.ESessionEnded))
 	assert.Contains(t, nextModel.lastActionMessage, "session ended")
-	require.Len(t, dispatcher.enterCalls, 1)
-	assert.Equal(t, "inv-1@repo-1", dispatcher.enterCalls[0])
+	require.Len(t, dispatcher.attachCalls, 1)
+	assert.Equal(t, "inv-1@repo-1", dispatcher.attachCalls[0])
 }
 
 func TestModel_ActionFailure_RemainsInteractive(t *testing.T) {
@@ -360,7 +360,7 @@ func TestModel_ActionSuccessUsesDispatcherOutput(t *testing.T) {
 	t.Parallel()
 
 	dispatcher := &fakeActionDispatcher{
-		enterOutput: "attached to tmux session",
+		attachOutput: "attached to tmux session",
 	}
 
 	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
@@ -379,7 +379,7 @@ func TestModel_ActionSuccessUsesDispatcherOutput(t *testing.T) {
 	nextModel := next.(model)
 
 	assert.Equal(t, "attached to tmux session", nextModel.lastActionMessage)
-	require.Len(t, dispatcher.enterCalls, 1)
+	require.Len(t, dispatcher.attachCalls, 1)
 }
 
 func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {

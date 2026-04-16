@@ -221,9 +221,9 @@ func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 			},
 		},
 		{
-			name: "GetInvocationReview",
+			name: "GetInvocationCheck",
 			call: func() error {
-				_, err := client.GetInvocationReview(context.Background(), "inv-1", "repo-1")
+				_, err := client.GetInvocationCheck(context.Background(), "inv-1", "repo-1")
 				return err
 			},
 		},

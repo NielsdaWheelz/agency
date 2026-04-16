@@ -116,8 +116,8 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	return writeAgentShowHumanFromDTO(stdout, &result.Data)
 }
 
-// AgentReviewOpts holds options for the agent review command.
-type AgentReviewOpts struct {
+// AgentCheckOpts holds options for the agent check command.
+type AgentCheckOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
@@ -131,8 +131,8 @@ type AgentReviewOpts struct {
 	DataDirOverride string
 }
 
-// AgentReview reports canonical review/readiness state for invocation progression.
-func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentReviewOpts, stdout, stderr io.Writer) error {
+// AgentCheck reports canonical readiness state for invocation progression.
+func AgentCheck(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentCheckOpts, stdout, stderr io.Writer) error {
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
@@ -141,13 +141,13 @@ func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "agent review",
+		CmdName:       "agent check",
 	})
 	if err != nil {
 		return err
 	}
 
-	result, err := ns.client.GetInvocationReview(ctx, opts.InvocationRef, repoCtx.RepoID)
+	result, err := ns.client.GetInvocationCheck(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func AgentReview(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		enc.SetIndent("", "  ")
 		return enc.Encode(result.Data)
 	}
-	return writeAgentReviewHumanFromDTO(stdout, &result.Data)
+	return writeAgentCheckHumanFromDTO(stdout, &result.Data)
 }
 
 // AgentHistoryOpts holds options for the agent history command.

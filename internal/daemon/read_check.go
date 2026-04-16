@@ -22,11 +22,11 @@ const (
 	checkReasonRunnerStatusMissing    = "runner_status_missing"
 	checkReasonRunnerStatusUnreadable = "runner_status_unreadable"
 	checkReasonRunnerStatusInvalid    = "runner_status_invalid"
-	checkReasonRunnerNotReady         = "runner_not_ready_for_review"
+	checkReasonRunnerNotReady         = "runner_not_ready"
 )
 
-// handleGetInvocationReview handles GET /invocations/{ref}/review.
-func (s *Server) handleGetInvocationReview(w http.ResponseWriter, r *http.Request, invocationRef string) {
+// handleGetInvocationCheck handles GET /invocations/{ref}/check.
+func (s *Server) handleGetInvocationCheck(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
 	if r.Method != http.MethodGet {
 		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
@@ -40,22 +40,22 @@ func (s *Server) handleGetInvocationReview(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	reviewData := s.buildInvocationReview(record)
-	s.writeAPIResponse(w, requestID, reviewData)
+	checkData := s.buildInvocationCheck(record)
+	s.writeAPIResponse(w, requestID, checkData)
 }
 
-func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationReviewData {
+func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationCheckData {
 	meta := record.Meta
 	derived := DeriveDisplayStatus(meta, s.Clock())
 
-	data := InvocationReviewData{
+	data := InvocationCheckData{
 		InvocationID:    record.InvocationID,
 		RepoID:          record.RepoID,
 		Status:          string(meta.Status),
 		DisplayStatus:   derived.DisplayStatus,
 		LandingStatus:   string(meta.LandingStatus),
-		BlockingReasons: make([]InvocationReviewReason, 0, 8),
-		Navigation: InvocationReviewNavigation{
+		BlockingReasons: make([]InvocationCheckReason, 0, 8),
+		Navigation: InvocationCheckNavigation{
 			InvocationRef:  record.InvocationID,
 			RepoID:         record.RepoID,
 			HistoryCommand: fmt.Sprintf("agency agent history %s --repo %s", record.InvocationID, record.RepoID),
@@ -70,20 +70,20 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 	timelineEntries := s.collectTimelineEntries(record)
 
 	if runnerMeta, err := s.loadRunnerStatusForInvocation(record); err != nil {
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonRunnerStatusUnreadable,
 			Message: "runner status file could not be read",
 			Hint:    err.Error(),
 		})
 	} else if runnerMeta != nil {
 		if runnerMeta.SchemaVersion != runnerstatus.SchemaVersion {
-			data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 				Code:    checkReasonRunnerStatusInvalid,
 				Message: "runner status file schema_version is unsupported",
 				Hint:    fmt.Sprintf("expected %s, got %s", runnerstatus.SchemaVersion, firstNonEmpty(runnerMeta.SchemaVersion, "<empty>")),
 			})
 		} else if err := runnerMeta.Validate(); err != nil {
-			data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 				Code:    checkReasonRunnerStatusInvalid,
 				Message: "runner status file is present but invalid",
 				Hint:    err.Error(),
@@ -114,17 +114,17 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 
 	switch meta.Status {
 	case store.InvocationStatusStarting, store.InvocationStatusRunning:
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonInvocationActive,
 			Message: "invocation is still active",
-			Hint:    "wait for completion before review/merge progression",
+			Hint:    "wait for completion before check/merge progression",
 		})
 	case store.InvocationStatusFailed:
-		message := "invocation failed before reaching review-ready state"
+		message := "invocation failed before reaching ready state"
 		if meta.FailureReason != "" {
 			message = fmt.Sprintf("invocation failed (%s)", meta.FailureReason)
 		}
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonInvocationFailed,
 			Message: message,
 			Hint:    "inspect logs and restart from checkpoint if needed",
@@ -133,13 +133,13 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 
 	switch meta.LandingStatus {
 	case store.LandingStatusPending:
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonLandingPending,
 			Message: "invocation changes are not landed into integration yet",
 			Hint:    "run 'agency agent land <invocation_ref>' before 'agency worktree pr sync <worktree_ref>'",
 		})
 	case store.LandingStatusDiscarded:
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonAlreadyDiscarded,
 			Message: "invocation is already discarded",
 			Hint:    "diff and readiness progression are no longer applicable",
@@ -153,22 +153,22 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 
 	switch effectiveSemantic {
 	case string(runnerstatus.StatusNeedsInput):
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonRunnerNeedsInput,
 			Message: "runner status requires human input",
 			Hint:    "resolve questions and continue the invocation",
 		})
 	case string(runnerstatus.StatusBlocked):
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonRunnerBlocked,
 			Message: "runner reported blocked status",
 			Hint:    firstNonEmpty(data.RunnerSummary, "address blockers and continue the invocation"),
 		})
 	case string(runnerstatus.StatusWorking):
-		data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonRunnerWorking,
 			Message: "runner is still working",
-			Hint:    "wait until status becomes ready_for_review",
+			Hint:    "wait until status becomes ready",
 		})
 	}
 
@@ -177,19 +177,19 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 		if effectiveSemantic == "" {
 			if !hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusUnreadable) &&
 				!hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusInvalid) {
-				data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+				data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 					Code:    checkReasonRunnerStatusMissing,
 					Message: "no runner readiness status is available",
 					Hint:    "ensure .agency/state/runner_status.json is updated",
 				})
 			}
-		} else if effectiveSemantic != string(runnerstatus.StatusReadyForReview) &&
+		} else if effectiveSemantic != string(runnerstatus.StatusReady) &&
 			effectiveSemantic != string(runnerstatus.StatusNeedsInput) &&
 			effectiveSemantic != string(runnerstatus.StatusBlocked) &&
 			effectiveSemantic != string(runnerstatus.StatusWorking) {
-			data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 				Code:    checkReasonRunnerNotReady,
-				Message: "runner status is not review-ready",
+				Message: "runner status is not ready",
 				Hint:    fmt.Sprintf("current status: %s", effectiveSemantic),
 			})
 		}
@@ -200,7 +200,7 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 		meta.LandingStatus == store.LandingStatusLanded {
 		wtMeta, wtErr := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, meta.IntegrationWorktreeID)
 		if wtErr != nil {
-			data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 				Code:    string(report.ViolationMalformed),
 				Message: "report contract could not be evaluated",
 				Hint:    "integration worktree metadata is missing or unreadable",
@@ -210,13 +210,13 @@ func (s *Server) buildInvocationReview(record *resolvedInvocation) InvocationRev
 				MaxBytes: report.MaxPRBodyReportBytes,
 			})
 			if resolveErr != nil {
-				data.BlockingReasons = append(data.BlockingReasons, InvocationReviewReason{
+				data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 					Code:    string(report.ViolationMalformed),
 					Message: "report contract could not be evaluated",
 					Hint:    "failed to read report artifacts",
 				})
 			} else if violation != nil {
-				data.BlockingReasons = append(data.BlockingReasons, reportViolationToReviewReason(violation))
+				data.BlockingReasons = append(data.BlockingReasons, reportViolationToCheckReason(violation))
 			} else if resolution != nil {
 				data.ReportSource = string(resolution.Source)
 				data.ReportDiagnostics = reportDiagnostics(resolution.Diagnostics)
@@ -244,7 +244,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func hasCheckReason(reasons []InvocationReviewReason, code string) bool {
+func hasCheckReason(reasons []InvocationCheckReason, code string) bool {
 	for _, reason := range reasons {
 		if reason.Code == code {
 			return true

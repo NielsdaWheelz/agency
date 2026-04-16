@@ -152,9 +152,9 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 	return decodeResult[daemon.InvocationDiffData](apiResp)
 }
 
-// GetInvocationReview gets review/readiness data for an invocation via the daemon.
-func (c *Client) GetInvocationReview(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationReviewData], error) {
-	u := fmt.Sprintf("%s/invocations/%s/review", daemonBaseURL, url.PathEscape(ref))
+// GetInvocationCheck gets check/readiness data for an invocation via the daemon.
+func (c *Client) GetInvocationCheck(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationCheckData], error) {
+	u := fmt.Sprintf("%s/invocations/%s/check", daemonBaseURL, url.PathEscape(ref))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
@@ -163,7 +163,7 @@ func (c *Client) GetInvocationReview(ctx context.Context, ref string, repoID str
 	if err != nil {
 		return nil, err
 	}
-	return decodeResult[daemon.InvocationReviewData](apiResp)
+	return decodeResult[daemon.InvocationCheckData](apiResp)
 }
 
 // GetInvocationLogsOffsetOpts holds options for offset-based log reads.

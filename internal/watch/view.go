@@ -21,7 +21,7 @@ func (m model) renderWorkspace() string {
 		height = 36
 	}
 
-	readyCount, blockedCount, unknownCount := readinessCounts(m.snapshot.Invocations, m.snapshot.Reviews)
+	readyCount, blockedCount, unknownCount := readinessCounts(m.snapshot.Invocations, m.snapshot.Checks)
 	headerParts := []string{
 		"agency watch",
 		fmt.Sprintf("repos:%d", len(m.snapshot.Repos)),
@@ -124,8 +124,8 @@ func (m model) renderInvocationsPanel(width int) string {
 		}
 
 		readiness := "UNKNOWN"
-		if review, ok := m.snapshot.Reviews[inv.InvocationID]; ok {
-			if review.Ready || review.Readiness == "ready" {
+		if check, ok := m.snapshot.Checks[inv.InvocationID]; ok {
+			if check.Ready || check.Readiness == "ready" {
 				readiness = "READY"
 			} else {
 				readiness = "BLOCKED"
@@ -194,7 +194,7 @@ func (m model) renderDetailsPanel(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	review, hasReview := m.snapshot.Reviews[selected.InvocationID]
+	check, hasCheck := m.snapshot.Checks[selected.InvocationID]
 
 	lines = append(lines, fmt.Sprintf("invocation_id: %s", selected.InvocationID))
 	lines = append(lines, fmt.Sprintf("repo_id:       %s", selected.RepoID))
@@ -247,26 +247,26 @@ func (m model) renderDetailsPanel(width int) string {
 	}
 	lines = append(lines, "")
 
-	if !hasReview {
-		lines = append(lines, warningStyle.Render("review data unavailable (retrying)"))
+	if !hasCheck {
+		lines = append(lines, warningStyle.Render("check data unavailable (retrying)"))
 		return truncateLines(lines, width)
 	}
 
-	verdict := blockedStyle.Render("BLOCKED")
-	if review.Ready || review.Readiness == "ready" {
-		verdict = readyStyle.Render("READY")
+	readiness := blockedStyle.Render("BLOCKED")
+	if check.Ready || check.Readiness == "ready" {
+		readiness = readyStyle.Render("READY")
 	}
-	lines = append(lines, "verdict:       "+verdict)
-	lines = append(lines, fmt.Sprintf("pr_sync_eligible: %t", review.PRSyncEligible))
-	if review.ReportSource != "" {
-		lines = append(lines, fmt.Sprintf("report_source: %s", review.ReportSource))
+	lines = append(lines, "readiness:     "+readiness)
+	lines = append(lines, fmt.Sprintf("pr_sync_eligible: %t", check.PRSyncEligible))
+	if check.ReportSource != "" {
+		lines = append(lines, fmt.Sprintf("report_source: %s", check.ReportSource))
 	}
 	lines = append(lines, "")
 	lines = append(lines, "blocking reasons:")
-	if len(review.BlockingReasons) == 0 {
+	if len(check.BlockingReasons) == 0 {
 		lines = append(lines, "  (none)")
 	} else {
-		for _, reason := range review.BlockingReasons {
+		for _, reason := range check.BlockingReasons {
 			lines = append(lines, fmt.Sprintf("  - [%s] %s", reason.Code, reason.Message))
 			if strings.TrimSpace(reason.Hint) != "" {
 				lines = append(lines, fmt.Sprintf("      hint: %s", reason.Hint))
@@ -274,25 +274,25 @@ func (m model) renderDetailsPanel(width int) string {
 		}
 	}
 
-	if len(review.ReportDiagnostics) > 0 {
+	if len(check.ReportDiagnostics) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "report diagnostics:")
-		for _, diagnostic := range review.ReportDiagnostics {
+		for _, diagnostic := range check.ReportDiagnostics {
 			lines = append(lines, fmt.Sprintf("  - [%s] %s", diagnostic.Code, diagnostic.Message))
 		}
 	}
 
 	lines = append(lines, "")
 	lines = append(lines, "navigation:")
-	lines = append(lines, "  history: "+review.Navigation.HistoryCommand)
-	if review.Navigation.DiffCommand != "" {
-		lines = append(lines, "  diff:    "+review.Navigation.DiffCommand)
+	lines = append(lines, "  history: "+check.Navigation.HistoryCommand)
+	if check.Navigation.DiffCommand != "" {
+		lines = append(lines, "  diff:    "+check.Navigation.DiffCommand)
 	}
-	if review.Navigation.PRSyncCommand != "" {
-		lines = append(lines, "  pr_sync: "+review.Navigation.PRSyncCommand)
+	if check.Navigation.PRSyncCommand != "" {
+		lines = append(lines, "  pr_sync: "+check.Navigation.PRSyncCommand)
 	}
-	if review.Navigation.LatestTurnID != "" {
-		lines = append(lines, "  turn:    "+review.Navigation.LatestTurnID)
+	if check.Navigation.LatestTurnID != "" {
+		lines = append(lines, "  turn:    "+check.Navigation.LatestTurnID)
 	}
 
 	return truncateLines(lines, width)
@@ -337,14 +337,14 @@ func (m *model) reconcileSelection() {
 	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 }
 
-func readinessCounts(invocations []daemon.InvocationDTO, reviews map[string]daemon.InvocationReviewData) (ready int, blocked int, unknown int) {
+func readinessCounts(invocations []daemon.InvocationDTO, checks map[string]daemon.InvocationCheckData) (ready int, blocked int, unknown int) {
 	for _, inv := range invocations {
-		review, ok := reviews[inv.InvocationID]
+		check, ok := checks[inv.InvocationID]
 		if !ok {
 			unknown++
 			continue
 		}
-		if review.Ready || review.Readiness == "ready" {
+		if check.Ready || check.Readiness == "ready" {
 			ready++
 			continue
 		}

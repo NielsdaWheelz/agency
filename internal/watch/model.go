@@ -27,7 +27,7 @@ type loader interface {
 // Implementations should call canonical command contracts rather than
 // reimplementing policy in the watch runtime.
 type ActionDispatcher interface {
-	Enter(ctx context.Context, invocationID, repoID string) (string, error)
+	Attach(ctx context.Context, invocationID, repoID string) (string, error)
 	Open(ctx context.Context, invocationID, repoID string) (string, error)
 	PRSync(ctx context.Context, worktreeID, repoID string) (string, error)
 }
@@ -37,7 +37,7 @@ type keyMap struct {
 	Down    key.Binding
 	Top     key.Binding
 	Bottom  key.Binding
-	Enter   key.Binding
+	Attach  key.Binding
 	Open    key.Binding
 	PRSync  key.Binding
 	Refresh key.Binding
@@ -45,13 +45,13 @@ type keyMap struct {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Open, k.PRSync, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Attach, k.Open, k.PRSync, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom},
-		{k.Enter, k.Open, k.PRSync},
+		{k.Attach, k.Open, k.PRSync},
 		{k.Refresh, k.Quit},
 	}
 }
@@ -73,9 +73,9 @@ var defaultKeyMap = keyMap{
 		key.WithKeys("end", "G"),
 		key.WithHelp("end/G", "jump to bottom"),
 	),
-	Enter: key.NewBinding(
+	Attach: key.NewBinding(
 		key.WithKeys("enter"),
-		key.WithHelp("enter", "enter invocation"),
+		key.WithHelp("enter", "attach invocation"),
 	),
 	Open: key.NewBinding(
 		key.WithKeys("o"),
@@ -123,7 +123,7 @@ type snapshotLoadedMsg struct {
 type actionKind string
 
 const (
-	actionEnter  actionKind = "enter"
+	actionAttach actionKind = "attach"
 	actionOpen   actionKind = "open"
 	actionPRSync actionKind = "pr sync"
 )
@@ -257,8 +257,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.Enter):
-			return m.triggerAction(actionEnter)
+		case key.Matches(msg, m.keys.Attach):
+			return m.triggerAction(actionAttach)
 		case key.Matches(msg, m.keys.Open):
 			return m.triggerAction(actionOpen)
 		case key.Matches(msg, m.keys.PRSync):
@@ -346,8 +346,8 @@ func (m model) runActionCmd(kind actionKind, selected daemon.InvocationDTO) tea.
 		var output string
 		var err error
 		switch kind {
-		case actionEnter:
-			output, err = dispatcher.Enter(ctx, selected.InvocationID, selected.RepoID)
+		case actionAttach:
+			output, err = dispatcher.Attach(ctx, selected.InvocationID, selected.RepoID)
 		case actionOpen:
 			output, err = dispatcher.Open(ctx, selected.InvocationID, selected.RepoID)
 		case actionPRSync:

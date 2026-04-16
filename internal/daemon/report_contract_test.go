@@ -92,10 +92,10 @@ func TestReportViolationToAgencyError_NilViolation(t *testing.T) {
 	assert.Nil(t, reportViolationToAgencyError(nil))
 }
 
-func TestReportViolationToReviewReason_MapsCodes(t *testing.T) {
+func TestReportViolationToCheckReason_MapsCodes(t *testing.T) {
 	t.Parallel()
 
-	reason := reportViolationToReviewReason(&report.Violation{
+	reason := reportViolationToCheckReason(&report.Violation{
 		Code:    report.ViolationMissing,
 		Message: "missing report",
 	})

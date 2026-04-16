@@ -176,8 +176,8 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	return nil
 }
 
-// AgentEnterOpts holds options for the agent enter command.
-type AgentEnterOpts struct {
+// AgentAttachOpts holds options for the agent attach command.
+type AgentAttachOpts struct {
 	InvocationRef string
 	RepoRef       string
 
@@ -187,9 +187,9 @@ type AgentEnterOpts struct {
 	DataDirOverride string
 }
 
-// AgentEnter attaches to a running headed invocation via daemon-first resolution.
+// AgentAttach attaches to a running headed invocation via daemon-first resolution.
 // Headed-only: headless invocations return E_INVOCATION_INVALID_MODE.
-func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentEnterOpts, stdout, stderr io.Writer) error {
+func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentAttachOpts, stdout, stderr io.Writer) error {
 	isInteractive := opts.IsInteractive
 	if isInteractive == nil {
 		isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
@@ -212,7 +212,7 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "agent enter",
+		CmdName:       "agent attach",
 	})
 	if err != nil {
 		return err
@@ -225,7 +225,7 @@ func AgentEnter(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if invocation.Data.Mode != "headed" {
 		return errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
-			"invocation is headless; enter is only supported for headed invocations",
+			"invocation is headless; attach is only supported for headed invocations",
 			map[string]string{
 				"invocation_id": invocation.Data.InvocationID,
 				"mode":          invocation.Data.Mode,

@@ -35,9 +35,9 @@ type watchActionDispatcher struct {
 	dataDirOverride string
 }
 
-func (d *watchActionDispatcher) Enter(ctx context.Context, invocationID, repoID string) (string, error) {
+func (d *watchActionDispatcher) Attach(ctx context.Context, invocationID, repoID string) (string, error) {
 	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentEnter(ctx, d.cr, d.fsys, d.cwd, AgentEnterOpts{
+		return AgentAttach(ctx, d.cr, d.fsys, d.cwd, AgentAttachOpts{
 			InvocationRef:   invocationID,
 			RepoRef:         repoID,
 			DataDirOverride: d.dataDirOverride,

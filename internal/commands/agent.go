@@ -290,11 +290,11 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		if err := attachFn(resp.TmuxSession); err != nil {
 			// Attach failed but session exists - not a fatal error
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent enter %s' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent attach %s' to attach later.\n", shortID)
 		}
 	} else {
 		_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
-		_, _ = fmt.Fprintf(stdout, "Use 'agency agent enter %s' to attach.\n", shortID)
+		_, _ = fmt.Fprintf(stdout, "Use 'agency agent attach %s' to attach.\n", shortID)
 	}
 
 	return nil

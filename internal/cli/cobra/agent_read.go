@@ -100,8 +100,8 @@ func newAgentDiffCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "diff <invocation_ref>",
-		Short: "Show sandbox changes vs integration",
-		Long: `Show the diff between sandbox and the integration branch.
+		Short: "Show invocation changes",
+		Long: `Show invocation changes from base_commit to the sandbox tip.
 
 Displays:
 - Commits in the sandbox (since base_commit)
@@ -219,13 +219,13 @@ func newAgentLogsCmd() *cobra.Command {
 	return cmd
 }
 
-func newAgentReviewCmd() *cobra.Command {
+func newAgentCheckCmd() *cobra.Command {
 	var repoRef string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "review <invocation_id|prefix>",
-		Short: "Show review/readiness surface",
+		Use:   "check <invocation_id|prefix>",
+		Short: "Check invocation readiness",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -233,7 +233,7 @@ func newAgentReviewCmd() *cobra.Command {
 				return err
 			}
 
-			return commands.AgentReview(ctx, cr, fsys, cwd, commands.AgentReviewOpts{
+			return commands.AgentCheck(ctx, cr, fsys, cwd, commands.AgentCheckOpts{
 				InvocationRef: args[0],
 				RepoRef:       repoRef,
 				JSON:          jsonOut,
@@ -243,7 +243,7 @@ func newAgentReviewCmd() *cobra.Command {
 	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 
 	return cmd
 }

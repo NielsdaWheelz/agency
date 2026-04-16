@@ -101,11 +101,11 @@ Example:
 	return cmd
 }
 
-func newAgentEnterCmd() *cobra.Command {
+func newAgentAttachCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "enter <invocation_ref>",
+		Use:   "attach <invocation_ref>",
 		Short: "Attach to a running headed invocation",
 		Long: `Attach to a running headed invocation's tmux session.
 
@@ -113,8 +113,8 @@ This is the canonical interactive navigation command for headed invocations.
 Headless invocations are rejected. Detach from the session with Ctrl+b, d.
 
 Example:
-  agency agent enter 20260131
-  agency agent enter --repo agency 20260131`,
+  agency agent attach 20260131
+  agency agent attach --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -122,7 +122,7 @@ Example:
 				return err
 			}
 
-			return commands.AgentEnter(ctx, cr, fsys, cwd, commands.AgentEnterOpts{
+			return commands.AgentAttach(ctx, cr, fsys, cwd, commands.AgentAttachOpts{
 				InvocationRef: args[0],
 				RepoRef:       repoRef,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())

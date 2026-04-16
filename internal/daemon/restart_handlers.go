@@ -64,7 +64,7 @@ func (s *Server) handleRestartFromCheckpoint(w http.ResponseWriter, r *http.Requ
 			requestID,
 			string(errors.EInvocationInvalidMode),
 			"restart is only supported for headless invocations",
-			"headed invocations should use 'agency agent enter' instead",
+			"headed invocations should use 'agency agent attach' instead",
 		)
 		return
 	}

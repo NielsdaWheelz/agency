@@ -20,8 +20,8 @@ type fakeSnapshotClient struct {
 	worktreeErrByCursor map[string]error
 	invocationPages     map[string]*daemon.Result[daemon.ListInvocationsData]
 	invocationErrByPage map[string]error
-	reviewsByInvocation map[string]*daemon.Result[daemon.InvocationReviewData]
-	reviewErrByRef      map[string]error
+	checksByInvocation  map[string]*daemon.Result[daemon.InvocationCheckData]
+	checkErrByRef       map[string]error
 }
 
 func (f *fakeSnapshotClient) ListRepos(_ context.Context) (*daemon.Result[daemon.ListReposData], error) {
@@ -60,17 +60,17 @@ func (f *fakeSnapshotClient) ListInvocations(_ context.Context, opts daemonclien
 	return &daemon.Result[daemon.ListInvocationsData]{}, nil
 }
 
-func (f *fakeSnapshotClient) GetInvocationReview(_ context.Context, ref string, _ string) (*daemon.Result[daemon.InvocationReviewData], error) {
-	if err := f.reviewErrByRef[ref]; err != nil {
+func (f *fakeSnapshotClient) GetInvocationCheck(_ context.Context, ref string, _ string) (*daemon.Result[daemon.InvocationCheckData], error) {
+	if err := f.checkErrByRef[ref]; err != nil {
 		return nil, err
 	}
-	if result := f.reviewsByInvocation[ref]; result != nil {
+	if result := f.checksByInvocation[ref]; result != nil {
 		return result, nil
 	}
-	return nil, fmt.Errorf("missing review fixture for %s", ref)
+	return nil, fmt.Errorf("missing check fixture for %s", ref)
 }
 
-func TestSnapshotLoader_Load_DrainsPaginationAndCollectsReviews(t *testing.T) {
+func TestSnapshotLoader_Load_DrainsPaginationAndCollectsChecks(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeSnapshotClient{
@@ -114,9 +114,9 @@ func TestSnapshotLoader_Load_DrainsPaginationAndCollectsReviews(t *testing.T) {
 				},
 			},
 		},
-		reviewsByInvocation: map[string]*daemon.Result[daemon.InvocationReviewData]{
-			"inv-1": {Data: daemon.InvocationReviewData{InvocationID: "inv-1", Readiness: "ready", Ready: true}},
-			"inv-2": {Data: daemon.InvocationReviewData{InvocationID: "inv-2", Readiness: "blocked", Ready: false}},
+		checksByInvocation: map[string]*daemon.Result[daemon.InvocationCheckData]{
+			"inv-1": {Data: daemon.InvocationCheckData{InvocationID: "inv-1", Readiness: "ready", Ready: true}},
+			"inv-2": {Data: daemon.InvocationCheckData{InvocationID: "inv-2", Readiness: "blocked", Ready: false}},
 		},
 	}
 
@@ -127,9 +127,9 @@ func TestSnapshotLoader_Load_DrainsPaginationAndCollectsReviews(t *testing.T) {
 	require.Len(t, snapshot.Repos, 1)
 	require.Len(t, snapshot.Worktrees, 3)
 	require.Len(t, snapshot.Invocations, 2)
-	require.Len(t, snapshot.Reviews, 2)
-	assert.Equal(t, "ready", snapshot.Reviews["inv-1"].Readiness)
-	assert.Equal(t, "blocked", snapshot.Reviews["inv-2"].Readiness)
+	require.Len(t, snapshot.Checks, 2)
+	assert.Equal(t, "ready", snapshot.Checks["inv-1"].Readiness)
+	assert.Equal(t, "blocked", snapshot.Checks["inv-2"].Readiness)
 	assert.Empty(t, snapshot.Warnings)
 }
 
@@ -159,7 +159,7 @@ func TestSnapshotLoader_Load_CursorMustAdvance(t *testing.T) {
 		invocationPages: map[string]*daemon.Result[daemon.ListInvocationsData]{
 			"": {},
 		},
-		reviewsByInvocation: map[string]*daemon.Result[daemon.InvocationReviewData]{},
+		checksByInvocation: map[string]*daemon.Result[daemon.InvocationCheckData]{},
 	}
 
 	loader := NewSnapshotLoader(client)
@@ -172,7 +172,7 @@ func TestSnapshotLoader_Load_CursorMustAdvance(t *testing.T) {
 	assert.Contains(t, ae.Msg, "worktree pagination cursor did not advance")
 }
 
-func TestSnapshotLoader_Load_ReviewReadFailuresAreRecoverable(t *testing.T) {
+func TestSnapshotLoader_Load_CheckReadFailuresAreRecoverable(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeSnapshotClient{
@@ -200,10 +200,10 @@ func TestSnapshotLoader_Load_ReviewReadFailuresAreRecoverable(t *testing.T) {
 				},
 			},
 		},
-		reviewsByInvocation: map[string]*daemon.Result[daemon.InvocationReviewData]{
-			"inv-good": {Data: daemon.InvocationReviewData{InvocationID: "inv-good", Readiness: "ready", Ready: true}},
+		checksByInvocation: map[string]*daemon.Result[daemon.InvocationCheckData]{
+			"inv-good": {Data: daemon.InvocationCheckData{InvocationID: "inv-good", Readiness: "ready", Ready: true}},
 		},
-		reviewErrByRef: map[string]error{
+		checkErrByRef: map[string]error{
 			"inv-bad": fmt.Errorf("temporary daemon timeout"),
 		},
 	}
@@ -212,8 +212,8 @@ func TestSnapshotLoader_Load_ReviewReadFailuresAreRecoverable(t *testing.T) {
 	snapshot, err := loader.Load(context.Background())
 	require.NoError(t, err)
 
-	assert.Contains(t, snapshot.Reviews, "inv-good")
-	assert.NotContains(t, snapshot.Reviews, "inv-bad")
+	assert.Contains(t, snapshot.Checks, "inv-good")
+	assert.NotContains(t, snapshot.Checks, "inv-bad")
 	require.Len(t, snapshot.Warnings, 1)
 	assert.Contains(t, snapshot.Warnings[0], "inv-bad")
 	assert.Contains(t, snapshot.Warnings[0], "temporary daemon timeout")

@@ -46,9 +46,9 @@ func reportViolationToAgencyError(violation *report.Violation) error {
 	return errors.NewWithDetails(code, violation.Message, details)
 }
 
-func reportViolationToReviewReason(violation *report.Violation) InvocationReviewReason {
+func reportViolationToCheckReason(violation *report.Violation) InvocationCheckReason {
 	if violation == nil {
-		return InvocationReviewReason{}
+		return InvocationCheckReason{}
 	}
 
 	hint := "update report artifacts before running pr sync/merge"
@@ -64,7 +64,7 @@ func reportViolationToReviewReason(violation *report.Violation) InvocationReview
 	case report.ViolationIncomplete:
 		hint = "fill summary and how to test sections"
 	}
-	return InvocationReviewReason{
+	return InvocationCheckReason{
 		Code:    string(violation.Code),
 		Message: violation.Message,
 		Hint:    hint,

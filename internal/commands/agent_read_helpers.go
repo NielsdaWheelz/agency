@@ -155,82 +155,82 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	return nil
 }
 
-func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewData) error {
-	if review == nil {
-		return errors.New(errors.EInternal, "review payload is missing")
+func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData) error {
+	if check == nil {
+		return errors.New(errors.EInternal, "check payload is missing")
 	}
 
 	verdict := "BLOCKED"
-	if review.Ready || strings.EqualFold(strings.TrimSpace(review.Readiness), "ready") {
+	if check.Ready || strings.EqualFold(strings.TrimSpace(check.Readiness), "ready") {
 		verdict = "READY"
 	}
 	prSyncEligible := "no"
-	if review.PRSyncEligible {
+	if check.PRSyncEligible {
 		prSyncEligible = "yes"
 	}
 
-	_, _ = fmt.Fprintf(w, "Review verdict:       %s\n", verdict)
+	_, _ = fmt.Fprintf(w, "Readiness:            %s\n", verdict)
 	_, _ = fmt.Fprintf(w, "pr_sync_eligible:     %s\n", prSyncEligible)
-	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", review.InvocationID)
-	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", review.RepoID)
-	_, _ = fmt.Fprintf(w, "status:               %s\n", review.Status)
-	_, _ = fmt.Fprintf(w, "display_status:       %s\n", review.DisplayStatus)
-	if review.StatusSummary != "" {
-		_, _ = fmt.Fprintf(w, "status_summary:       %s\n", review.StatusSummary)
+	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", check.InvocationID)
+	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", check.RepoID)
+	_, _ = fmt.Fprintf(w, "status:               %s\n", check.Status)
+	_, _ = fmt.Fprintf(w, "display_status:       %s\n", check.DisplayStatus)
+	if check.StatusSummary != "" {
+		_, _ = fmt.Fprintf(w, "status_summary:       %s\n", check.StatusSummary)
 	}
-	if review.LandingStatus != "" {
-		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", review.LandingStatus)
+	if check.LandingStatus != "" {
+		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", check.LandingStatus)
 	}
-	if review.SemanticStatus != "" {
-		_, _ = fmt.Fprintf(w, "semantic_status:      %s\n", review.SemanticStatus)
+	if check.SemanticStatus != "" {
+		_, _ = fmt.Fprintf(w, "semantic_status:      %s\n", check.SemanticStatus)
 	}
-	if review.RunnerStatus != "" {
-		_, _ = fmt.Fprintf(w, "runner_status:        %s\n", review.RunnerStatus)
+	if check.RunnerStatus != "" {
+		_, _ = fmt.Fprintf(w, "runner_status:        %s\n", check.RunnerStatus)
 	}
-	if review.RunnerUpdatedAt != "" {
-		_, _ = fmt.Fprintf(w, "runner_updated_at:    %s\n", review.RunnerUpdatedAt)
+	if check.RunnerUpdatedAt != "" {
+		_, _ = fmt.Fprintf(w, "runner_updated_at:    %s\n", check.RunnerUpdatedAt)
 	}
-	if review.RunnerSummary != "" {
-		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", review.RunnerSummary)
+	if check.RunnerSummary != "" {
+		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", check.RunnerSummary)
 	}
-	if review.LatestActivity != nil {
-		if strings.TrimSpace(review.LatestActivity.TurnID) != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_turn: %s\n", review.LatestActivity.TurnID)
+	if check.LatestActivity != nil {
+		if strings.TrimSpace(check.LatestActivity.TurnID) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_turn: %s\n", check.LatestActivity.TurnID)
 		}
-		if strings.TrimSpace(review.LatestActivity.Kind) != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_kind: %s\n", review.LatestActivity.Kind)
+		if strings.TrimSpace(check.LatestActivity.Kind) != "" {
+			_, _ = fmt.Fprintf(w, "latest_activity_kind: %s\n", check.LatestActivity.Kind)
 		}
-		if latestLabel := formatLatestActivityLabel(review.LatestActivity); latestLabel != "" {
+		if latestLabel := formatLatestActivityLabel(check.LatestActivity); latestLabel != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", latestLabel)
 		}
-		for _, toolLine := range latestActivityToolSummaries(review.LatestActivity) {
+		for _, toolLine := range latestActivityToolSummaries(check.LatestActivity) {
 			_, _ = fmt.Fprintf(w, "latest_activity_tool: %s\n", toolLine)
 		}
-		if review.LatestActivity.CheckpointID > 0 {
-			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint: %d\n", review.LatestActivity.CheckpointID)
+		if check.LatestActivity.CheckpointID > 0 {
+			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint: %d\n", check.LatestActivity.CheckpointID)
 		}
-		if description := strings.TrimSpace(review.LatestActivity.CheckpointDescription); description != "" {
+		if description := strings.TrimSpace(check.LatestActivity.CheckpointDescription); description != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_description: %s\n", description)
 		}
-		if diffstat := strings.TrimSpace(review.LatestActivity.CheckpointDiffstat); diffstat != "" {
+		if diffstat := strings.TrimSpace(check.LatestActivity.CheckpointDiffstat); diffstat != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_diffstat: %s\n", diffstat)
 		}
-		if pathsSummary := latestActivityCheckpointPathSummary(review.LatestActivity); pathsSummary != "" {
+		if pathsSummary := latestActivityCheckpointPathSummary(check.LatestActivity); pathsSummary != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_paths: %s\n", pathsSummary)
 		}
 	}
-	if review.HowToTest != "" {
-		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", review.HowToTest)
+	if check.HowToTest != "" {
+		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", check.HowToTest)
 	}
-	if review.ReportSource != "" {
-		_, _ = fmt.Fprintf(w, "report_source:        %s\n", review.ReportSource)
+	if check.ReportSource != "" {
+		_, _ = fmt.Fprintf(w, "report_source:        %s\n", check.ReportSource)
 	}
 
 	_, _ = fmt.Fprintf(w, "\nBlocking reasons:\n")
-	if len(review.BlockingReasons) == 0 {
+	if len(check.BlockingReasons) == 0 {
 		_, _ = fmt.Fprintf(w, "  (none)\n")
 	} else {
-		for _, reason := range review.BlockingReasons {
+		for _, reason := range check.BlockingReasons {
 			_, _ = fmt.Fprintf(w, "  - [%s] %s\n", reason.Code, reason.Message)
 			if strings.TrimSpace(reason.Hint) != "" {
 				_, _ = fmt.Fprintf(w, "      hint: %s\n", reason.Hint)
@@ -238,23 +238,23 @@ func writeAgentReviewHumanFromDTO(w io.Writer, review *daemon.InvocationReviewDa
 		}
 	}
 
-	if len(review.ReportDiagnostics) > 0 {
+	if len(check.ReportDiagnostics) > 0 {
 		_, _ = fmt.Fprintf(w, "\nReport diagnostics:\n")
-		for _, diagnostic := range review.ReportDiagnostics {
+		for _, diagnostic := range check.ReportDiagnostics {
 			_, _ = fmt.Fprintf(w, "  - [%s] %s\n", diagnostic.Code, diagnostic.Message)
 		}
 	}
 
 	_, _ = fmt.Fprintf(w, "\nNavigation:\n")
-	_, _ = fmt.Fprintf(w, "  history: %s\n", review.Navigation.HistoryCommand)
-	if review.Navigation.DiffCommand != "" {
-		_, _ = fmt.Fprintf(w, "  diff:    %s\n", review.Navigation.DiffCommand)
+	_, _ = fmt.Fprintf(w, "  history: %s\n", check.Navigation.HistoryCommand)
+	if check.Navigation.DiffCommand != "" {
+		_, _ = fmt.Fprintf(w, "  diff:    %s\n", check.Navigation.DiffCommand)
 	}
-	if review.Navigation.PRSyncCommand != "" {
-		_, _ = fmt.Fprintf(w, "  pr_sync: %s\n", review.Navigation.PRSyncCommand)
+	if check.Navigation.PRSyncCommand != "" {
+		_, _ = fmt.Fprintf(w, "  pr_sync: %s\n", check.Navigation.PRSyncCommand)
 	}
-	if review.Navigation.LatestTurnID != "" {
-		_, _ = fmt.Fprintf(w, "  turn:    %s\n", review.Navigation.LatestTurnID)
+	if check.Navigation.LatestTurnID != "" {
+		_, _ = fmt.Fprintf(w, "  turn:    %s\n", check.Navigation.LatestTurnID)
 	}
 	return nil
 }

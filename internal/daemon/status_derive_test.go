@@ -98,13 +98,13 @@ func TestDeriveDisplayStatus_Precedence(t *testing.T) {
 			wantSortKey:       daemon.SortKeyBlocked,
 		},
 		{
-			name: "ready_for_review",
+			name: "ready",
 			meta: &store.InvocationMeta{
 				Status:         store.InvocationStatusFinished,
-				SemanticStatus: ptr(runnerstatus.StatusReadyForReview),
+				SemanticStatus: ptr(runnerstatus.StatusReady),
 			},
-			wantDisplayStatus: "ready for review",
-			wantSortKey:       daemon.SortKeyReadyForReview,
+			wantDisplayStatus: "ready",
+			wantSortKey:       daemon.SortKeyReady,
 		},
 		{
 			name: "working",

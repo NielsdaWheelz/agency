@@ -17,7 +17,7 @@ type Snapshot struct {
 	Repos       []daemon.RepoDTO
 	Worktrees   []daemon.WorktreeDTO
 	Invocations []daemon.InvocationDTO
-	Reviews     map[string]daemon.InvocationReviewData
+	Checks      map[string]daemon.InvocationCheckData
 	Warnings    []string
 	UpdatedAt   time.Time
 }
@@ -26,7 +26,7 @@ type snapshotClient interface {
 	ListRepos(ctx context.Context) (*daemon.Result[daemon.ListReposData], error)
 	ListWorktrees(ctx context.Context, opts daemonclient.ListWorktreesOpts) (*daemon.Result[daemon.ListWorktreesData], error)
 	ListInvocations(ctx context.Context, opts daemonclient.ListInvocationsOpts) (*daemon.Result[daemon.ListInvocationsData], error)
-	GetInvocationReview(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationReviewData], error)
+	GetInvocationCheck(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationCheckData], error)
 }
 
 // SnapshotLoader composes watch workspace state from canonical daemon reads.
@@ -43,7 +43,7 @@ func NewSnapshotLoader(client snapshotClient) *SnapshotLoader {
 	}
 }
 
-// Load composes one snapshot of repos/worktrees/invocations/reviews.
+// Load composes one snapshot of repos/worktrees/invocations/checks.
 func (l *SnapshotLoader) Load(ctx context.Context) (Snapshot, error) {
 	if l == nil || l.client == nil {
 		return Snapshot{}, errors.New(errors.EInternal, "watch snapshot loader is not configured")
@@ -64,13 +64,13 @@ func (l *SnapshotLoader) Load(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
-	reviews, warnings := l.fetchReviews(ctx, invocations)
+	checks, warnings := l.fetchChecks(ctx, invocations)
 
 	return Snapshot{
 		Repos:       reposResult.Data.Repos,
 		Worktrees:   worktrees,
 		Invocations: invocations,
-		Reviews:     reviews,
+		Checks:      checks,
 		Warnings:    warnings,
 		UpdatedAt:   time.Now().UTC(),
 	}, nil
@@ -126,18 +126,18 @@ func (l *SnapshotLoader) fetchAllInvocations(ctx context.Context) ([]daemon.Invo
 	}
 }
 
-func (l *SnapshotLoader) fetchReviews(ctx context.Context, invocations []daemon.InvocationDTO) (map[string]daemon.InvocationReviewData, []string) {
-	reviews := make(map[string]daemon.InvocationReviewData, len(invocations))
+func (l *SnapshotLoader) fetchChecks(ctx context.Context, invocations []daemon.InvocationDTO) (map[string]daemon.InvocationCheckData, []string) {
+	checks := make(map[string]daemon.InvocationCheckData, len(invocations))
 	warnings := make([]string, 0)
 
 	for _, inv := range invocations {
-		result, err := l.client.GetInvocationReview(ctx, inv.InvocationID, inv.RepoID)
+		result, err := l.client.GetInvocationCheck(ctx, inv.InvocationID, inv.RepoID)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("review refresh failed for %s: %v", inv.InvocationID, err))
+			warnings = append(warnings, fmt.Sprintf("check refresh failed for %s: %v", inv.InvocationID, err))
 			continue
 		}
-		reviews[inv.InvocationID] = result.Data
+		checks[inv.InvocationID] = result.Data
 	}
 
-	return reviews, warnings
+	return checks, warnings
 }

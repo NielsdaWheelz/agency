@@ -75,7 +75,7 @@ func TestHandleHeadedHook_CodexStopSynthesizesFinalMessage(t *testing.T) {
 		meta.Runner = "codex"
 	}))
 
-	payload := []byte(`{"hook_event_name":"Stop","session_id":"thread-1","last_assistant_message":"Ready for review from headed Codex."}`)
+	payload := []byte(`{"hook_event_name":"Stop","session_id":"thread-1","last_assistant_message":"Ready for check from headed Codex."}`)
 	w := env.doInvocationRequestWithBody(t, http.MethodPost,
 		"/invocations/inv-2/headed_hook?repo_id="+env.RepoID+"&runner=codex", payload)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -88,14 +88,14 @@ func TestHandleHeadedHook_CodexStopSynthesizesFinalMessage(t *testing.T) {
 
 	rawData, err := os.ReadFile(env.Store.InvocationRawLogPath(env.RepoID, "inv-2"))
 	require.NoError(t, err)
-	assert.Contains(t, string(rawData), "Ready for review from headed Codex.")
+	assert.Contains(t, string(rawData), "Ready for check from headed Codex.")
 
 	streamData, err := os.ReadFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-2"))
 	require.NoError(t, err)
-	assert.Contains(t, string(streamData), "Ready for review from headed Codex.")
+	assert.Contains(t, string(streamData), "Ready for check from headed Codex.")
 
 	meta, err := env.Store.ReadInvocationMeta(env.RepoID, "inv-2")
 	require.NoError(t, err)
 	require.NotNil(t, meta.SemanticStatus)
-	assert.Equal(t, runnerstatus.StatusReadyForReview, *meta.SemanticStatus)
+	assert.Equal(t, runnerstatus.StatusReady, *meta.SemanticStatus)
 }
