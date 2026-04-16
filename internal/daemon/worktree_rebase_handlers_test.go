@@ -117,7 +117,7 @@ func TestHandleWorktreeRebase_Success(t *testing.T) {
 	assert.Equal(t, env.RepoID, resp.RepoID)
 	assert.Equal(t, "wt-1", resp.IntegrationWorktreeID)
 	assert.Equal(t, "agency/alpha", resp.Branch)
-	assert.Equal(t, "main", resp.ParentBranch)
+	assert.Equal(t, "main", resp.BaseBranch)
 }
 
 func doWorktreeRequestWithBody(t *testing.T, env *readTestEnv, method, path string, body []byte) *httptest.ResponseRecorder {
@@ -142,7 +142,7 @@ func setupWorktreeMutationReadyState(t *testing.T, env *readTestEnv) string {
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
 		meta.TreePath = treePath
 		meta.Branch = "agency/alpha"
-		meta.ParentBranch = "main"
+		meta.BaseBranch = "main"
 		meta.Name = "alpha"
 	}))
 

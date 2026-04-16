@@ -42,6 +42,7 @@ func assertMutationEnvelopeShape(t *testing.T, payload map[string]any) {
 func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "start-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
@@ -61,6 +62,7 @@ func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testing.T) {
 	_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "start-json-daemon-fail")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
@@ -247,6 +249,7 @@ func TestAgentRestart_JSONFailureValidationEnvelope(t *testing.T) {
 
 func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "restart-json-daemon-fail")
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}

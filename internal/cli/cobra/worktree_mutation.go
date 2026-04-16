@@ -174,8 +174,8 @@ func newWorktreeRebaseCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "rebase <worktree_ref>",
-		Short: "Rebase worktree branch onto parent branch",
-		Long: `Fetch origin and rebase the worktree branch onto origin/<parent_branch>.
+		Short: "Rebase worktree branch onto base branch",
+		Long: `Fetch origin and rebase the worktree branch onto origin/<base_branch>.
 
 This command requires a clean worktree and returns a typed conflict error if
 the rebase cannot be applied cleanly.

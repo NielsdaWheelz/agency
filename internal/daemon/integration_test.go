@@ -1010,7 +1010,7 @@ func TestDaemonWorktreeCreateIdempotent(t *testing.T) {
 	resp1, err := env.Client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
 		RepoRoot:       repoRoot,
 		Name:           "idem-test",
-		ParentBranch:   "main",
+		BaseBranch:     "main",
 		IdempotencyKey: idempotencyKey,
 	})
 	require.NoError(t, err, "first create")
@@ -1020,7 +1020,7 @@ func TestDaemonWorktreeCreateIdempotent(t *testing.T) {
 	resp2, err := env.Client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
 		RepoRoot:       repoRoot,
 		Name:           "idem-test",
-		ParentBranch:   "main",
+		BaseBranch:     "main",
 		IdempotencyKey: idempotencyKey,
 	})
 	require.NoError(t, err, "second create")
@@ -1084,7 +1084,7 @@ func TestDaemonWorktreeNameUniqueness(t *testing.T) {
 	resp2, err := env.Client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
 		RepoRoot:       repoRoot,
 		Name:           "unique-name",
-		ParentBranch:   "main",
+		BaseBranch:     "main",
 		IdempotencyKey: "different-key",
 	})
 	require.NoError(t, err, "second create")

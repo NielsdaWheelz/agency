@@ -72,10 +72,10 @@ func TestCreateAndRemove(t *testing.T) {
 	// Test Create
 	t.Run("Create", func(t *testing.T) {
 		result, err := svc.Create(ctx, CreateOpts{
-			Name:         "test-feature",
-			RepoRoot:     repoDir,
-			RepoID:       repoID,
-			ParentBranch: "main",
+			Name:       "test-feature",
+			RepoRoot:   repoDir,
+			RepoID:     repoID,
+			BaseBranch: "main",
 		})
 
 		require.NoError(t, err)
@@ -122,10 +122,10 @@ func TestCreateAndRemove(t *testing.T) {
 			t.Skip("Create test failed, skipping")
 		}
 		_, err := svc.Create(ctx, CreateOpts{
-			Name:         "test-feature",
-			RepoRoot:     repoDir,
-			RepoID:       repoID,
-			ParentBranch: "main",
+			Name:       "test-feature",
+			RepoRoot:   repoDir,
+			RepoID:     repoID,
+			BaseBranch: "main",
 		})
 		require.Error(t, err, "expected error for duplicate name")
 	})
@@ -178,10 +178,10 @@ func TestCreateInvalidName(t *testing.T) {
 			t.Parallel()
 
 			result, err := svc.Create(context.Background(), CreateOpts{
-				Name:         tc.worktree,
-				RepoRoot:     filepath.Join(tmpDir, "repo"),
-				RepoID:       "repo-1",
-				ParentBranch: "main",
+				Name:       tc.worktree,
+				RepoRoot:   filepath.Join(tmpDir, "repo"),
+				RepoID:     "repo-1",
+				BaseBranch: "main",
 			})
 
 			require.Error(t, err)

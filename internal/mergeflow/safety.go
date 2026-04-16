@@ -26,7 +26,7 @@ type VerifyEnvInput struct {
 	RepoRoot      string
 	WorkspaceRoot string
 	Branch        string
-	ParentBranch  string
+	BaseBranch    string
 	Runner        string
 	PRURL         string
 	PRNumber      int
@@ -46,7 +46,7 @@ func BuildVerifyEnv(baseEnv []string, input VerifyEnvInput) []string {
 		"AGENCY_REPO_ROOT":      input.RepoRoot,
 		"AGENCY_WORKSPACE_ROOT": input.WorkspaceRoot,
 		"AGENCY_BRANCH":         input.Branch,
-		"AGENCY_PARENT_BRANCH":  input.ParentBranch,
+		"AGENCY_BASE_BRANCH":    input.BaseBranch,
 		"AGENCY_ORIGIN_NAME":    "origin",
 		"AGENCY_ORIGIN_URL":     "",
 		"AGENCY_RUNNER":         input.Runner,

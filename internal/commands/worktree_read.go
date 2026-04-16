@@ -113,7 +113,7 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	_, _ = fmt.Fprintf(stdout, "name:          %s\n", wt.Name)
 	_, _ = fmt.Fprintf(stdout, "repo_id:       %s\n", wt.RepoID)
 	_, _ = fmt.Fprintf(stdout, "branch:        %s\n", wt.Branch)
-	_, _ = fmt.Fprintf(stdout, "parent_branch: %s\n", wt.ParentBranch)
+	_, _ = fmt.Fprintf(stdout, "base_branch: %s\n", wt.BaseBranch)
 	_, _ = fmt.Fprintf(stdout, "state:         %s\n", wt.State)
 	_, _ = fmt.Fprintf(stdout, "created_at:    %s\n", wt.CreatedAt)
 	_, _ = fmt.Fprintf(stdout, "tree_path:     %s\n", wt.TreePath)

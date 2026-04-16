@@ -415,9 +415,9 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 
 	// First create a worktree so the control plane can find it.
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "runner-test",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "runner-test",
+		BaseBranch: "main",
 	}
 	createBody, _ := json.Marshal(createReq)
 	createHTTPReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(createBody))
@@ -461,9 +461,9 @@ func TestControlPlaneStart_RespectsRepoLock(t *testing.T) {
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "lock-test",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "lock-test",
+		BaseBranch: "main",
 	}
 	createBody, _ := json.Marshal(createReq)
 	createHTTPReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(createBody))
@@ -511,9 +511,9 @@ func TestControlPlaneStartHeaded_RespectsRepoLock(t *testing.T) {
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "lock-headed-test",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "lock-headed-test",
+		BaseBranch: "main",
 	}
 	createBody, _ := json.Marshal(createReq)
 	createHTTPReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(createBody))

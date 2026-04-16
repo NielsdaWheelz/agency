@@ -1,7 +1,7 @@
 {
   "version": 1,
   "defaults": {
-    "parent_branch": "main",
+    "base_branch": "main",
     "runner": "custom"
   },
   "scripts": {

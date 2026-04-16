@@ -8,8 +8,8 @@ type WorktreeCreateRequest struct {
 	// Name is the human-readable name (required, validated).
 	Name string `json:"name"`
 
-	// ParentBranch is the branch to branch from (optional, defaults to current branch).
-	ParentBranch string `json:"parent_branch,omitempty"`
+	// BaseBranch is the branch to branch from (optional, defaults to current branch).
+	BaseBranch string `json:"base_branch,omitempty"`
 
 	// IdempotencyKey is an optional UUID for idempotent create (scoped to repo_id).
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
@@ -144,7 +144,7 @@ type WorktreeRebaseResponse struct {
 	RepoID                string `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
 	Branch                string `json:"branch,omitempty"`
-	ParentBranch          string `json:"parent_branch,omitempty"`
+	BaseBranch            string `json:"base_branch,omitempty"`
 
 	// Error fields (only set when OK is false)
 	ErrorCode string `json:"error_code,omitempty"`

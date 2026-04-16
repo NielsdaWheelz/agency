@@ -77,10 +77,10 @@ func setupIntegrationWorktree(t *testing.T, dataDir, repoRoot, repoID string) *s
 	svc := integrationworktree.NewService(st, cr, fsys, testNow)
 
 	result, err := svc.Create(ctx, integrationworktree.CreateOpts{
-		Name:         "test-feature",
-		RepoRoot:     repoRoot,
-		RepoID:       repoID,
-		ParentBranch: "main",
+		Name:       "test-feature",
+		RepoRoot:   repoRoot,
+		RepoID:     repoID,
+		BaseBranch: "main",
 	})
 	require.NoError(t, err, "failed to create integration worktree")
 

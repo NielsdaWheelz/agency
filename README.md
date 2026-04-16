@@ -55,7 +55,7 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency init` writes per-repo agency config and scripts under `$AGENCY_CONFIG_DIR` by default, so setup/verify/archive scripts do not need to be committed to the repo.
 Use `agency init --repo-config` only when you want shareable `agency.json` and scripts in the repo.
-`worktree create` defaults omitted `--parent`/`--base` to the current branch.
+`worktree create` defaults omitted `--base` to the current branch.
 `agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
 
 ```bash
@@ -86,7 +86,7 @@ agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
 agency agent land <invocation-id> --apply         # land sandbox into integration worktree
 agency worktree pr sync <worktree-ref>            # push branch + create/update PR
 agency worktree pr merge <worktree-ref> --yes     # verify, merge, and archive worktree PR
-agency worktree rebase <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
+agency worktree rebase <worktree-ref>             # rebase worktree branch onto origin/<base_branch>
 agency agent checkpoint ls <invocation-id>
 agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
 agency agent restart <invocation-id> --checkpoint 3 --model opus --effort high

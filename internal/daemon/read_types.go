@@ -62,15 +62,15 @@ type InvalidQueryArgumentDetails struct {
 
 // WorktreeDTO is the canonical DTO for integration worktree responses.
 type WorktreeDTO struct {
-	WorktreeID   string `json:"worktree_id"`
-	Name         string `json:"name"`
-	RepoID       string `json:"repo_id"`
-	Branch       string `json:"branch"`
-	ParentBranch string `json:"parent_branch"`
-	TreePath     string `json:"tree_path"`
-	State        string `json:"state"` // "present" or "archived"
-	CreatedAt    string `json:"created_at"`
-	LastUsedAt   string `json:"last_used_at,omitempty"`
+	WorktreeID string `json:"worktree_id"`
+	Name       string `json:"name"`
+	RepoID     string `json:"repo_id"`
+	Branch     string `json:"branch"`
+	BaseBranch string `json:"base_branch"`
+	TreePath   string `json:"tree_path"`
+	State      string `json:"state"` // "present" or "archived"
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
 }
 
 // ----- InvocationDTO -----

@@ -152,9 +152,9 @@ func TestHandleWorktreeCreate_Success(t *testing.T) {
 
 	// Create request
 	req := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "test-feature",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "test-feature",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -201,7 +201,7 @@ func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
 	req := WorktreeCreateRequest{
 		RepoRoot:       env.RepoPath,
 		Name:           "idempotent-feature",
-		ParentBranch:   "main",
+		BaseBranch:     "main",
 		IdempotencyKey: idempotencyKey,
 	}
 	body, _ := json.Marshal(req)
@@ -243,9 +243,9 @@ func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 
 	// First request - should succeed
 	req := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "unique-feature",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "unique-feature",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -260,7 +260,7 @@ func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 	req2 := WorktreeCreateRequest{
 		RepoRoot:       env.RepoPath,
 		Name:           "unique-feature",
-		ParentBranch:   "main",
+		BaseBranch:     "main",
 		IdempotencyKey: "different-key",
 	}
 	body, _ = json.Marshal(req2)
@@ -335,9 +335,9 @@ func TestHandleWorktreeRm_Success(t *testing.T) {
 
 	// First create a worktree
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "to-be-removed",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "to-be-removed",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(createReq)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -384,9 +384,9 @@ func TestHandleWorktreeRm_Idempotent(t *testing.T) {
 
 	// First create a worktree
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "idempotent-rm",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "idempotent-rm",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(createReq)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -579,9 +579,9 @@ func TestWorktreeCreateAndRemove_Integration(t *testing.T) {
 
 	// Create worktree
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "integration-test",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "integration-test",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(createReq)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -654,9 +654,9 @@ func TestHandleWorktreeRm_NotAnIntegrationWorktree(t *testing.T) {
 
 	// Create a worktree through the handler
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "no-marker-test",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "no-marker-test",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(createReq)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -711,9 +711,9 @@ func TestHandleWorktreeRm_BlocksOnUnresolvedInvocations(t *testing.T) {
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
 			createReq := WorktreeCreateRequest{
-				RepoRoot:     env.RepoPath,
-				Name:         "unresolved-rm-test",
-				ParentBranch: "main",
+				RepoRoot:   env.RepoPath,
+				Name:       "unresolved-rm-test",
+				BaseBranch: "main",
 			}
 			body, _ := json.Marshal(createReq)
 			httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
@@ -758,9 +758,9 @@ func TestHandleWorktreeRm_BrokenWorktree(t *testing.T) {
 
 	// Create a worktree through the handler
 	createReq := WorktreeCreateRequest{
-		RepoRoot:     env.RepoPath,
-		Name:         "broken-meta-test",
-		ParentBranch: "main",
+		RepoRoot:   env.RepoPath,
+		Name:       "broken-meta-test",
+		BaseBranch: "main",
 	}
 	body, _ := json.Marshal(createReq)
 	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))

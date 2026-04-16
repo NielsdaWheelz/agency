@@ -19,7 +19,7 @@ type ConflictCardInputs struct {
 	// PRNumber is the PR number. If 0, omitted from error message.
 	PRNumber int
 
-	// Base is the parent branch (e.g., "main"). Required.
+	// Base is the base branch (e.g., "main"). Required.
 	Base string
 
 	// Branch is the run branch (e.g., "agency/feature-x-a3f2"). Required.

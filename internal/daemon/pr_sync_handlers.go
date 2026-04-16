@@ -70,16 +70,16 @@ func (s *Server) runPRSync(
 		return nil, err
 	}
 
-	parentRef, err := prSyncResolveParentRef(ctx, s.Runner, wtMeta.TreePath, wtMeta.ParentBranch)
+	baseRef, err := prSyncResolveBaseRef(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch)
 	if err != nil {
 		return nil, err
 	}
-	ahead, err := prSyncComputeAhead(ctx, s.Runner, wtMeta.TreePath, parentRef, wtMeta.Branch)
+	ahead, err := prSyncComputeAhead(ctx, s.Runner, wtMeta.TreePath, baseRef, wtMeta.Branch)
 	if err != nil {
 		return nil, err
 	}
 	if ahead == 0 {
-		return nil, errors.New(errors.EEmptyDiff, "no commits ahead of parent; make at least one commit")
+		return nil, errors.New(errors.EEmptyDiff, "no commits ahead of base branch; make at least one commit")
 	}
 
 	bodyPath, reportSource, reportDiagnostics, err := prSyncPrepareBody(s.FS, wtMeta.TreePath)
@@ -115,7 +115,7 @@ func (s *Server) runPRSync(
 	}
 
 	if len(prs) == 0 {
-		createErr := prSyncCreatePR(ctx, s.Runner, wtMeta.TreePath, wtMeta.ParentBranch, wtMeta.Branch, title, bodyPath)
+		createErr := prSyncCreatePR(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath)
 		createdNow := createErr == nil
 		if createErr != nil && !prSyncIsAlreadyExistsError(createErr) {
 			return nil, createErr
@@ -333,28 +333,28 @@ func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDi
 	return nil
 }
 
-func prSyncResolveParentRef(ctx context.Context, runner exec.CommandRunner, workDir, parentBranch string) (string, error) {
-	localExists, err := prSyncRefExists(ctx, runner, workDir, "refs/heads/"+parentBranch)
+func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDir, baseBranch string) (string, error) {
+	localExists, err := prSyncRefExists(ctx, runner, workDir, "refs/heads/"+baseBranch)
 	if err != nil {
 		return "", err
 	}
 	if localExists {
-		return parentBranch, nil
+		return baseBranch, nil
 	}
 
-	remoteRef := "refs/remotes/origin/" + parentBranch
+	remoteRef := "refs/remotes/origin/" + baseBranch
 	remoteExists, err := prSyncRefExists(ctx, runner, workDir, remoteRef)
 	if err != nil {
 		return "", err
 	}
 	if remoteExists {
-		return "origin/" + parentBranch, nil
+		return "origin/" + baseBranch, nil
 	}
 
 	return "", errors.NewWithDetails(
-		errors.EParentNotFound,
-		fmt.Sprintf("parent branch %q not found locally or on origin after fetch", parentBranch),
-		map[string]string{"parent_branch": parentBranch},
+		errors.EBaseNotFound,
+		fmt.Sprintf("base branch %q not found locally or on origin after fetch", baseBranch),
+		map[string]string{"base_branch": baseBranch},
 	)
 }
 
@@ -369,8 +369,8 @@ func prSyncRefExists(ctx context.Context, runner exec.CommandRunner, workDir, re
 	return result.ExitCode == 0, nil
 }
 
-func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir, parentRef, branch string) (int, error) {
-	revRange := parentRef + ".." + branch
+func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir, baseRef, branch string) (int, error) {
+	revRange := baseRef + ".." + branch
 	result, err := runner.Run(ctx, "git", []string{"rev-list", "--count", revRange}, exec.RunOpts{
 		Dir: workDir,
 		Env: prSyncNonInteractiveEnv(),
@@ -655,7 +655,7 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 		return http.StatusConflict
 	case errors.EGitPushFailed:
 		return http.StatusConflict
-	case errors.EParentNotFound:
+	case errors.EBaseNotFound:
 		return http.StatusBadRequest
 	case errors.EEmptyDiff:
 		return http.StatusBadRequest

@@ -379,7 +379,7 @@ func setupWorktreeMergeReadyState(t *testing.T, env *readTestEnv, verifyScriptBo
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, worktreeID, func(meta *store.IntegrationWorktreeMeta) {
 		meta.TreePath = workspaceRoot
 		meta.Branch = "agency/alpha"
-		meta.ParentBranch = "main"
+		meta.BaseBranch = "main"
 		meta.Name = "alpha"
 	}))
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {

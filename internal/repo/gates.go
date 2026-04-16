@@ -18,8 +18,8 @@ import (
 
 // CheckRepoSafeOpts holds options for CheckRepoSafe.
 type CheckRepoSafeOpts struct {
-	// ParentBranch is the local branch name to branch from, e.g. "main".
-	ParentBranch string
+	// BaseBranch is the local branch name to branch from, e.g. "main".
+	BaseBranch string
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	// This enables tests to use t.TempDir() without t.Setenv("AGENCY_DATA_DIR", ...).
@@ -59,13 +59,13 @@ func (osEnv) Get(key string) string {
 //  2. Compute repo_id using S0 rules
 //  3. Read origin URL (best-effort)
 //  4. Write/update repo.json (last_seen_at, origin_url)
-//  5. Run gates (empty repo, dirty, parent branch)
+//  5. Run gates (empty repo, dirty, base branch)
 //
 // Error codes:
 //   - E_NO_REPO: not inside a git repository
 //   - E_EMPTY_REPO: repo has no commits (fresh git init)
-//   - E_PARENT_DIRTY: working tree has uncommitted changes
-//   - E_PARENT_BRANCH_NOT_FOUND: local parent branch does not exist
+//   - E_BASE_DIRTY: working tree has uncommitted changes
+//   - E_BASE_BRANCH_NOT_FOUND: local base branch does not exist
 func CheckRepoSafe(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts CheckRepoSafeOpts) (*RepoContext, error) {
 	// 1. Resolve repo root from cwd
 	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -115,19 +115,19 @@ func CheckRepoSafe(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		return nil, err
 	}
 	if !isClean {
-		return nil, errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash them first")
+		return nil, errors.New(errors.EBaseDirty, "working tree has uncommitted changes; commit or stash them first")
 	}
 
-	// 6c. Local parent branch existence check
-	branchExists, err := git.BranchExists(ctx, cr, repoRoot.Path, opts.ParentBranch)
+	// 6c. Local base branch existence check
+	branchExists, err := git.BranchExists(ctx, cr, repoRoot.Path, opts.BaseBranch)
 	if err != nil {
 		return nil, err
 	}
 	if !branchExists {
 		return nil, errors.NewWithDetails(
-			errors.EParentBranchNotFound,
-			"local branch '"+opts.ParentBranch+"' not found; checkout or fetch parent locally (no auto-fetch in v1)",
-			map[string]string{"branch": opts.ParentBranch},
+			errors.EBaseBranchNotFound,
+			"local branch '"+opts.BaseBranch+"' not found; checkout or fetch base locally (no auto-fetch in v1)",
+			map[string]string{"branch": opts.BaseBranch},
 		)
 	}
 

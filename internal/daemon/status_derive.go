@@ -200,14 +200,14 @@ func InvocationMetaToDTO(meta *store.InvocationMeta, repoID string, logsDir stri
 // WorktreeMetaToDTO converts an IntegrationWorktreeMeta to a WorktreeDTO.
 func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta) WorktreeDTO {
 	return WorktreeDTO{
-		WorktreeID:   meta.WorktreeID,
-		Name:         meta.Name,
-		RepoID:       meta.RepoID,
-		Branch:       meta.Branch,
-		ParentBranch: meta.ParentBranch,
-		TreePath:     meta.TreePath,
-		State:        string(meta.State),
-		CreatedAt:    meta.CreatedAt,
-		LastUsedAt:   meta.LastUsedAt,
+		WorktreeID: meta.WorktreeID,
+		Name:       meta.Name,
+		RepoID:     meta.RepoID,
+		Branch:     meta.Branch,
+		BaseBranch: meta.BaseBranch,
+		TreePath:   meta.TreePath,
+		State:      string(meta.State),
+		CreatedAt:  meta.CreatedAt,
+		LastUsedAt: meta.LastUsedAt,
 	}
 }

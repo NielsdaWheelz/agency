@@ -158,7 +158,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 				"worktree", "create",
 				"--repo", repo.RepoID,
 				"--name", worktreeName,
-				"--parent", "main",
+				"--base", "main",
 			)
 			require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
 
@@ -254,7 +254,7 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 		"worktree", "create",
 		"--repo", repo.RepoID,
 		"--name", "e2e-conflict",
-		"--parent", "main",
+		"--base", "main",
 	)
 	require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
 

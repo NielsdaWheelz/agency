@@ -279,7 +279,7 @@ func TestRepoRm_BlocksWhenRepoHasChildren(t *testing.T) {
 					Name:          "keep-me",
 					RepoID:        repoID,
 					Branch:        "agency/keep-me",
-					ParentBranch:  "main",
+					BaseBranch:    "main",
 					TreePath:      filepath.Join(t.TempDir(), "tree"),
 					CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 					LastUsedAt:    time.Now().UTC().Format(time.RFC3339),

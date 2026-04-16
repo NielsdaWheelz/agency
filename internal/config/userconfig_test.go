@@ -37,7 +37,7 @@ func TestLoadUserConfig_MissingFile(t *testing.T) {
 	assert.False(t, found, "expected found=false for missing config")
 	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
 	assert.Equal(t, "code", cfg.Defaults.Editor)
-	assert.Equal(t, "main", cfg.Defaults.ParentBranch)
+	assert.Equal(t, "main", cfg.Defaults.BaseBranch)
 }
 
 func TestLoadUserConfig_InvalidJSON(t *testing.T) {

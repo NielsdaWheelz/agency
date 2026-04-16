@@ -82,7 +82,7 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 		}
 
 		// Validate minimal required fields for non-broken status
-		if meta.SchemaVersion == "" || meta.CreatedAt == "" {
+		if meta.SchemaVersion == "" || meta.CreatedAt == "" || meta.BaseBranch == "" {
 			record.Broken = true
 			records = append(records, record)
 			continue

@@ -50,8 +50,8 @@ type CreateOpts struct {
 	// RepoID is the repo identifier.
 	RepoID string
 
-	// ParentBranch is the branch to branch from.
-	ParentBranch string
+	// BaseBranch is the branch to branch from.
+	BaseBranch string
 }
 
 // CreateResult holds the result of a successful worktree creation.
@@ -73,7 +73,7 @@ type CreateResult struct {
 //  2. Compute branch name
 //  3. Check name uniqueness among non-archived worktrees
 //  4. Create record directory (exclusive)
-//  5. Run git worktree add -b <branch> <tree_path> <parent>
+//  5. Run git worktree add -b <branch> <tree_path> <base_branch>
 //  6. Write INTEGRATION_MARKER to .agency/
 //  7. Write meta.json
 //
@@ -156,7 +156,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		"worktree", "add",
 		"-b", branch,
 		treePath,
-		opts.ParentBranch,
+		opts.BaseBranch,
 	}
 
 	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{})
@@ -220,7 +220,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		opts.Name,
 		opts.RepoID,
 		branch,
-		opts.ParentBranch,
+		opts.BaseBranch,
 		treePath,
 		s.Now(),
 	)

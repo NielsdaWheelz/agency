@@ -210,7 +210,7 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 	codes := []Code{
 		EUnsupportedOriginHost,
 		ENoOrigin,
-		EParentNotFound,
+		EBaseNotFound,
 		EGitPushFailed,
 		EGHPRCreateFailed,
 		EGHPREditFailed,
@@ -228,7 +228,7 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 	expectedStrings := map[Code]string{
 		EUnsupportedOriginHost:    "E_UNSUPPORTED_ORIGIN_HOST",
 		ENoOrigin:                 "E_NO_ORIGIN",
-		EParentNotFound:           "E_PARENT_NOT_FOUND",
+		EBaseNotFound:             "E_BASE_NOT_FOUND",
 		EGitPushFailed:            "E_GIT_PUSH_FAILED",
 		EGHPRCreateFailed:         "E_GH_PR_CREATE_FAILED",
 		EGHPREditFailed:           "E_GH_PR_EDIT_FAILED",
@@ -325,7 +325,7 @@ func TestSlice3ErrorFormat(t *testing.T) {
 	}{
 		{EUnsupportedOriginHost, "origin is not github.com", "E_UNSUPPORTED_ORIGIN_HOST: origin is not github.com"},
 		{ENoOrigin, "no origin remote", "E_NO_ORIGIN: no origin remote"},
-		{EParentNotFound, "branch main not found", "E_PARENT_NOT_FOUND: branch main not found"},
+		{EBaseNotFound, "branch main not found", "E_BASE_NOT_FOUND: branch main not found"},
 		{EGitPushFailed, "push rejected", "E_GIT_PUSH_FAILED: push rejected"},
 		{EGHPRCreateFailed, "gh pr create failed", "E_GH_PR_CREATE_FAILED: gh pr create failed"},
 		{EGHPREditFailed, "gh pr edit failed", "E_GH_PR_EDIT_FAILED: gh pr edit failed"},

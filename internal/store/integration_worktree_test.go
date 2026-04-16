@@ -29,6 +29,7 @@ func TestNewIntegrationWorktreeMeta(t *testing.T) {
 	assert.Equal(t, "1.0", meta.SchemaVersion)
 	assert.Equal(t, "20260131120000-a1b2", meta.WorktreeID)
 	assert.Equal(t, "my-feature", meta.Name)
+	assert.Equal(t, "main", meta.BaseBranch)
 	assert.Equal(t, WorktreeStatePresent, meta.State)
 	assert.Equal(t, "2026-01-31T12:00:00Z", meta.CreatedAt)
 }
@@ -106,6 +107,7 @@ func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
 
 	assert.Equal(t, meta.WorktreeID, read.WorktreeID)
 	assert.Equal(t, meta.Name, read.Name)
+	assert.Equal(t, meta.BaseBranch, read.BaseBranch)
 }
 
 func TestReadIntegrationWorktreeMeta_NotFound(t *testing.T) {
@@ -173,6 +175,7 @@ func TestScanIntegrationWorktreesForRepo(t *testing.T) {
 		WorktreeID:    "20260131100000-a1b2",
 		Name:          "feature-a",
 		RepoID:        repoID,
+		BaseBranch:    "main",
 		State:         WorktreeStatePresent,
 		CreatedAt:     "2026-01-31T10:00:00Z",
 	}
@@ -185,6 +188,7 @@ func TestScanIntegrationWorktreesForRepo(t *testing.T) {
 		WorktreeID:    "20260131110000-c3d4",
 		Name:          "feature-b",
 		RepoID:        repoID,
+		BaseBranch:    "main",
 		State:         WorktreeStateArchived,
 		CreatedAt:     "2026-01-31T11:00:00Z",
 	}
@@ -324,6 +328,7 @@ func TestScanIntegrationWorktrees_CorruptMetaMarkedBroken(t *testing.T) {
 		WorktreeID:    "20260131110000-good",
 		Name:          "good-feature",
 		RepoID:        repoID,
+		BaseBranch:    "main",
 		State:         WorktreeStatePresent,
 		CreatedAt:     "2026-01-31T11:00:00Z",
 	}

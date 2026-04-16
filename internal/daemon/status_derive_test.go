@@ -313,7 +313,7 @@ func TestWorktreeMetaToDTO(t *testing.T) {
 		Name:          "my-feature",
 		RepoID:        "repo-xyz",
 		Branch:        "agency/my-feature",
-		ParentBranch:  "main",
+		BaseBranch:    "main",
 		TreePath:      "/tmp/worktrees/my-feature",
 		CreatedAt:     "2026-02-05T10:00:00Z",
 		LastUsedAt:    "2026-02-05T11:00:00Z",
@@ -326,7 +326,7 @@ func TestWorktreeMetaToDTO(t *testing.T) {
 	assert.Equal(t, "my-feature", dto.Name)
 	assert.Equal(t, "repo-xyz", dto.RepoID)
 	assert.Equal(t, "agency/my-feature", dto.Branch)
-	assert.Equal(t, "main", dto.ParentBranch)
+	assert.Equal(t, "main", dto.BaseBranch)
 	assert.Equal(t, "/tmp/worktrees/my-feature", dto.TreePath)
 	assert.Equal(t, "present", dto.State)
 	assert.Equal(t, "2026-02-05T10:00:00Z", dto.CreatedAt)

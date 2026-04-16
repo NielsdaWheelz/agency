@@ -37,8 +37,8 @@ const (
 
 	// Slice 1 error codes
 	EEmptyRepo            Code = "E_EMPTY_REPO"
-	EParentDirty          Code = "E_PARENT_DIRTY"
-	EParentBranchNotFound Code = "E_PARENT_BRANCH_NOT_FOUND"
+	EBaseDirty            Code = "E_BASE_DIRTY"
+	EBaseBranchNotFound   Code = "E_BASE_BRANCH_NOT_FOUND"
 	EWorktreeCreateFailed Code = "E_WORKTREE_CREATE_FAILED"
 	ETmuxSessionExists    Code = "E_TMUX_SESSION_EXISTS"
 	ETmuxFailed           Code = "E_TMUX_FAILED"
@@ -64,7 +64,7 @@ const (
 	// Slice 3 push/PR error codes
 	EUnsupportedOriginHost    Code = "E_UNSUPPORTED_ORIGIN_HOST"    // origin is not github.com
 	ENoOrigin                 Code = "E_NO_ORIGIN"                  // no origin remote configured
-	EParentNotFound           Code = "E_PARENT_NOT_FOUND"           // parent branch ref not found locally or on origin
+	EBaseNotFound             Code = "E_BASE_NOT_FOUND"             // base branch ref not found locally or on origin
 	EGitPushFailed            Code = "E_GIT_PUSH_FAILED"            // git push non-zero exit
 	EGHPRCreateFailed         Code = "E_GH_PR_CREATE_FAILED"        // gh pr create non-zero exit
 	EGHPREditFailed           Code = "E_GH_PR_EDIT_FAILED"          // gh pr edit non-zero exit
@@ -75,7 +75,7 @@ const (
 	EReportMalformed          Code = "E_REPORT_MALFORMED"           // report artifact is malformed/unreadable
 	EReportOversized          Code = "E_REPORT_OVERSIZED"           // report artifact exceeds bounded contract size
 	EReportSchemaIncompatible Code = "E_REPORT_SCHEMA_INCOMPATIBLE" // report schema_version is unsupported
-	EEmptyDiff                Code = "E_EMPTY_DIFF"                 // no commits ahead of parent branch
+	EEmptyDiff                Code = "E_EMPTY_DIFF"                 // no commits ahead of base branch
 	EWorktreeMissing          Code = "E_WORKTREE_MISSING"           // run worktree path is missing on disk
 	EDirtyWorktree            Code = "E_DIRTY_WORKTREE"             // run worktree has uncommitted changes
 

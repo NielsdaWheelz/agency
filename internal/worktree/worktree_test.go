@@ -71,9 +71,9 @@ func TestCreate_Success(t *testing.T) {
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
 	require.NoError(t, err, "failed to resolve symlinks")
 
-	parentBranch := getCurrentBranch(t, repoRoot)
-	if parentBranch == "" {
-		parentBranch = "master"
+	baseBranch := getCurrentBranch(t, repoRoot)
+	if baseBranch == "" {
+		baseBranch = "master"
 	}
 
 	ctx := context.Background()
@@ -84,12 +84,12 @@ func TestCreate_Success(t *testing.T) {
 	repoID := "abcd1234ef567890"
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
-		RunID:        runID,
-		Name:         "test-run",
-		RepoRoot:     resolvedRepoRoot,
-		RepoID:       repoID,
-		ParentBranch: parentBranch,
-		DataDir:      dataDir,
+		RunID:      runID,
+		Name:       "test-run",
+		RepoRoot:   resolvedRepoRoot,
+		RepoID:     repoID,
+		BaseBranch: baseBranch,
+		DataDir:    dataDir,
 	})
 
 	require.NoError(t, err, "Create failed")
@@ -149,9 +149,9 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
 	require.NoError(t, err, "failed to resolve symlinks")
 
-	parentBranch := getCurrentBranch(t, repoRoot)
-	if parentBranch == "" {
-		parentBranch = "master"
+	baseBranch := getCurrentBranch(t, repoRoot)
+	if baseBranch == "" {
+		baseBranch = "master"
 	}
 
 	ctx := context.Background()
@@ -162,12 +162,12 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 	repoID := "abcd1234ef567890"
 
 	opts := CreateOpts{
-		RunID:        runID,
-		Name:         "collision-test",
-		RepoRoot:     resolvedRepoRoot,
-		RepoID:       repoID,
-		ParentBranch: parentBranch,
-		DataDir:      dataDir,
+		RunID:      runID,
+		Name:       "collision-test",
+		RepoRoot:   resolvedRepoRoot,
+		RepoID:     repoID,
+		BaseBranch: baseBranch,
+		DataDir:    dataDir,
 	}
 
 	// First creation should succeed
@@ -191,7 +191,7 @@ func TestCreate_Collision_ReturnsError(t *testing.T) {
 	assert.NotEmpty(t, ae.Details["stderr"], "expected stderr in details")
 }
 
-func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
+func TestCreate_MissingBaseBranch_ReturnsError(t *testing.T) {
 	repoRoot, dataDir := setupTempRepo(t)
 
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
@@ -205,15 +205,15 @@ func TestCreate_MissingParentBranch_ReturnsError(t *testing.T) {
 	repoID := "abcd1234ef567890"
 
 	_, err = Create(ctx, cr, fsys, CreateOpts{
-		RunID:        runID,
-		Name:         "Test",
-		RepoRoot:     resolvedRepoRoot,
-		RepoID:       repoID,
-		ParentBranch: "nonexistent-branch",
-		DataDir:      dataDir,
+		RunID:      runID,
+		Name:       "Test",
+		RepoRoot:   resolvedRepoRoot,
+		RepoID:     repoID,
+		BaseBranch: "nonexistent-branch",
+		DataDir:    dataDir,
 	})
 
-	require.Error(t, err, "expected error for nonexistent parent branch")
+	require.Error(t, err, "expected error for nonexistent base branch")
 
 	// Verify error code
 	code := errors.GetCode(err)
@@ -369,9 +369,9 @@ func TestCreate_IgnoreWarning(t *testing.T) {
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
 	require.NoError(t, err, "failed to resolve symlinks")
 
-	parentBranch := getCurrentBranch(t, repoRoot)
-	if parentBranch == "" {
-		parentBranch = "master"
+	baseBranch := getCurrentBranch(t, repoRoot)
+	if baseBranch == "" {
+		baseBranch = "master"
 	}
 
 	// Note: We don't add .agency/ to .gitignore, so we should get a warning
@@ -384,12 +384,12 @@ func TestCreate_IgnoreWarning(t *testing.T) {
 	repoID := "abcd1234ef567890"
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
-		RunID:        runID,
-		Name:         "Test",
-		RepoRoot:     resolvedRepoRoot,
-		RepoID:       repoID,
-		ParentBranch: parentBranch,
-		DataDir:      dataDir,
+		RunID:      runID,
+		Name:       "Test",
+		RepoRoot:   resolvedRepoRoot,
+		RepoID:     repoID,
+		BaseBranch: baseBranch,
+		DataDir:    dataDir,
 	})
 
 	require.NoError(t, err, "Create failed")
@@ -405,9 +405,9 @@ func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
 	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot)
 	require.NoError(t, err, "failed to resolve symlinks")
 
-	parentBranch := getCurrentBranch(t, repoRoot)
-	if parentBranch == "" {
-		parentBranch = "master"
+	baseBranch := getCurrentBranch(t, repoRoot)
+	if baseBranch == "" {
+		baseBranch = "master"
 	}
 
 	// Add .agency/ to .gitignore BEFORE creating worktree
@@ -424,12 +424,12 @@ func TestCreate_IgnoreWarning_NotPresentWhenIgnored(t *testing.T) {
 	repoID := "abcd1234ef567890"
 
 	result, err := Create(ctx, cr, fsys, CreateOpts{
-		RunID:        runID,
-		Name:         "Test",
-		RepoRoot:     resolvedRepoRoot,
-		RepoID:       repoID,
-		ParentBranch: parentBranch,
-		DataDir:      dataDir,
+		RunID:      runID,
+		Name:       "Test",
+		RepoRoot:   resolvedRepoRoot,
+		RepoID:     repoID,
+		BaseBranch: baseBranch,
+		DataDir:    dataDir,
 	})
 
 	require.NoError(t, err, "Create failed")

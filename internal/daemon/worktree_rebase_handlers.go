@@ -64,8 +64,8 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 	defer func() { _ = unlock() }()
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventStarted, map[string]any{
-		"branch":        record.Meta.Branch,
-		"parent_branch": record.Meta.ParentBranch,
+		"branch":      record.Meta.Branch,
+		"base_branch": record.Meta.BaseBranch,
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -102,8 +102,8 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventSucceeded, map[string]any{
-		"branch":        record.Meta.Branch,
-		"parent_branch": record.Meta.ParentBranch,
+		"branch":      record.Meta.Branch,
+		"base_branch": record.Meta.BaseBranch,
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -121,7 +121,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		RepoID:                record.RepoID,
 		IntegrationWorktreeID: record.WorktreeID,
 		Branch:                record.Meta.Branch,
-		ParentBranch:          record.Meta.ParentBranch,
+		BaseBranch:            record.Meta.BaseBranch,
 	})
 }
 
@@ -150,11 +150,11 @@ func (s *Server) runWorktreeRebase(ctx context.Context, record *store.Integratio
 		return err
 	}
 
-	parentBranch := strings.TrimSpace(wtMeta.ParentBranch)
-	if parentBranch == "" {
-		return errors.New(errors.EInternal, "worktree parent branch is missing")
+	baseBranch := strings.TrimSpace(wtMeta.BaseBranch)
+	if baseBranch == "" {
+		return errors.New(errors.EInternal, "worktree base branch is missing")
 	}
-	rebaseTarget := "origin/" + parentBranch
+	rebaseTarget := "origin/" + baseBranch
 	rebaseResult, runErr := s.Runner.Run(ctx, "git", []string{"rebase", rebaseTarget}, exec.RunOpts{
 		Dir: wtMeta.TreePath,
 		Env: prSyncNonInteractiveEnv(),

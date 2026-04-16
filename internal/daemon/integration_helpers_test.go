@@ -182,9 +182,9 @@ func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, nam
 	ctx := context.Background()
 
 	resp, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
-		RepoRoot:     repoRoot,
-		Name:         name,
-		ParentBranch: "main",
+		RepoRoot:   repoRoot,
+		Name:       name,
+		BaseBranch: "main",
 	})
 	require.NoError(t, err, "worktree create")
 	require.True(t, resp.OK, "worktree create failed: %s - %s", resp.ErrorCode, resp.Message)

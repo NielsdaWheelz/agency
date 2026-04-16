@@ -122,7 +122,7 @@ func seedRepoIndexForWorktreeAmbiguityTests(t *testing.T, dataDir, repoID string
 	}))
 }
 
-func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, parentBranch string) string {
+func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, baseBranch string) string {
 	t.Helper()
 
 	wtDir := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", wtID)
@@ -141,7 +141,7 @@ func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, pa
 		Name:          name,
 		RepoID:        repoID,
 		Branch:        branch,
-		ParentBranch:  parentBranch,
+		BaseBranch:    baseBranch,
 		TreePath:      treePath,
 		CreatedAt:     "2026-01-31T12:00:00Z",
 		State:         store.WorktreeStatePresent,
@@ -239,7 +239,7 @@ func TestWorktreeShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 	assert.Contains(t, out, "name:          alpha")
 	assert.Contains(t, out, "repo_id:       "+env.RepoID)
 	assert.Contains(t, out, "branch:        agency/alpha-abcd")
-	assert.Contains(t, out, "parent_branch: main")
+	assert.Contains(t, out, "base_branch: main")
 	assert.Contains(t, out, "state:         present")
 	assert.Contains(t, out, "tree_path:     "+env.TreePath)
 }
@@ -260,7 +260,7 @@ func TestWorktreeLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 	assert.Equal(t, "alpha", dtos[0].Name)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
 	assert.Equal(t, "agency/alpha-abcd", dtos[0].Branch)
-	assert.Equal(t, "main", dtos[0].ParentBranch)
+	assert.Equal(t, "main", dtos[0].BaseBranch)
 	assert.Equal(t, env.TreePath, dtos[0].TreePath)
 	assert.Equal(t, "present", dtos[0].State)
 }
@@ -609,7 +609,7 @@ func TestWorktreeCreate_DefaultsRepoAndParentFromCWD(t *testing.T) {
 	require.NoError(t, listErr)
 	require.Len(t, listResp.Data.Worktrees, 1)
 	assert.Equal(t, "default-context", listResp.Data.Worktrees[0].Name)
-	assert.Equal(t, "main", listResp.Data.Worktrees[0].ParentBranch)
+	assert.Equal(t, "main", listResp.Data.Worktrees[0].BaseBranch)
 	assert.Empty(t, stderr.String())
 }
 
@@ -631,13 +631,13 @@ func TestWorktreeCreate_DefaultParentRequiresCurrentBranch(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name: "detached-default-parent",
+		Name: "detached-default-base",
 	}, &stdout, &stderr)
 	require.Error(t, err)
-	assert.Equal(t, errors.EParentBranchNotFound, errors.GetCode(err))
+	assert.Equal(t, errors.EBaseBranchNotFound, errors.GetCode(err))
 }
 
-func TestWorktreeCreate_ExplicitMissingParentBranchFailsBeforeCreate(t *testing.T) {
+func TestWorktreeCreate_ExplicitMissingBaseBranchFailsBeforeCreate(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
@@ -651,11 +651,11 @@ func TestWorktreeCreate_ExplicitMissingParentBranchFailsBeforeCreate(t *testing.
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name:         "missing-parent",
-		ParentBranch: "does-not-exist",
+		Name:       "missing-base",
+		BaseBranch: "does-not-exist",
 	}, &stdout, &stderr)
 	require.Error(t, err)
-	assert.Equal(t, errors.EParentBranchNotFound, errors.GetCode(err))
+	assert.Equal(t, errors.EBaseBranchNotFound, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "local branch 'does-not-exist' not found")
 }
 
@@ -678,8 +678,8 @@ func TestWorktreeCreate_EmptyRepoFailsBeforeCreate(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name:         "empty-repo",
-		ParentBranch: "main",
+		Name:       "empty-repo",
+		BaseBranch: "main",
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EEmptyRepo, errors.GetCode(err))
@@ -705,11 +705,11 @@ func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *te
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		RepoRef:      reg.Data.RepoID,
-		Name:         "open-fail",
-		ParentBranch: "main",
-		Open:         true,
-		Editor:       editorPath,
+		RepoRef:    reg.Data.RepoID,
+		Name:       "open-fail",
+		BaseBranch: "main",
+		Open:       true,
+		Editor:     editorPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "open_status: failed")
@@ -744,11 +744,11 @@ func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		RepoRef:      reg.Data.RepoID,
-		Name:         "open-ok",
-		ParentBranch: "main",
-		Open:         true,
-		Editor:       editorPath,
+		RepoRef:    reg.Data.RepoID,
+		Name:       "open-ok",
+		BaseBranch: "main",
+		Open:       true,
+		Editor:     editorPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "open_status: opened")

@@ -40,8 +40,8 @@ type IntegrationWorktreeMeta struct {
 	// Branch is the git branch name (format: agency/<name>-<shortid>).
 	Branch string `json:"branch"`
 
-	// ParentBranch is the branch this worktree was created from.
-	ParentBranch string `json:"parent_branch"`
+	// BaseBranch is the branch this worktree was created from.
+	BaseBranch string `json:"base_branch"`
 
 	// TreePath is the absolute path to the tree/ directory (the actual worktree).
 	TreePath string `json:"tree_path"`
@@ -57,14 +57,14 @@ type IntegrationWorktreeMeta struct {
 }
 
 // NewIntegrationWorktreeMeta creates a new IntegrationWorktreeMeta with required fields set.
-func NewIntegrationWorktreeMeta(worktreeID, name, repoID, branch, parentBranch, treePath string, createdAt time.Time) *IntegrationWorktreeMeta {
+func NewIntegrationWorktreeMeta(worktreeID, name, repoID, branch, baseBranch, treePath string, createdAt time.Time) *IntegrationWorktreeMeta {
 	return &IntegrationWorktreeMeta{
 		SchemaVersion: "1.0",
 		WorktreeID:    worktreeID,
 		Name:          name,
 		RepoID:        repoID,
 		Branch:        branch,
-		ParentBranch:  parentBranch,
+		BaseBranch:    baseBranch,
 		TreePath:      treePath,
 		CreatedAt:     createdAt.UTC().Format(time.RFC3339),
 		State:         WorktreeStatePresent,
@@ -198,6 +198,13 @@ func (s *Store) ReadIntegrationWorktreeMeta(repoID, worktreeID string) (*Integra
 				"schema_version":  meta.SchemaVersion,
 				"expected_schema": SchemaVersion,
 			},
+		)
+	}
+	if meta.BaseBranch == "" {
+		return nil, errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json missing base_branch",
+			map[string]string{"meta_path": metaPath},
 		)
 	}
 

@@ -46,13 +46,13 @@ type DoctorReport struct {
 	GhAuthenticated bool
 
 	// Config resolution
-	DefaultsParentBranch string
-	DefaultsRunner       string
-	DefaultsEditor       string
-	RunnerCmd            string
-	ScriptSetup          string
-	ScriptVerify         string
-	ScriptArchive        string
+	DefaultsBaseBranch string
+	DefaultsRunner     string
+	DefaultsEditor     string
+	RunnerCmd          string
+	ScriptSetup        string
+	ScriptVerify       string
+	ScriptArchive      string
 }
 
 // osEnv implements paths.Env using os.Getenv.
@@ -187,30 +187,30 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 
 	// Build report
 	report := DoctorReport{
-		RepoRoot:             repoRoot.Path,
-		AgencyDataDir:        dirs.DataDir,
-		AgencyConfigDir:      dirs.ConfigDir,
-		UserConfigPath:       config.UserConfigPath(dirs.ConfigDir),
-		AgencyJSONPath:       resolvedAgencyConfig.Path,
-		AgencyJSONSource:     resolvedAgencyConfig.Source,
-		AgencyCacheDir:       dirs.CacheDir,
-		RepoKey:              repoIdentity.RepoKey,
-		RepoID:               repoIdentity.RepoID,
-		OriginPresent:        originInfo.Present,
-		OriginURL:            originInfo.URL,
-		OriginHost:           originInfo.Host,
-		GitHubFlowAvailable:  repoIdentity.GitHubFlowAvailable,
-		GitVersion:           gitVersion,
-		TmuxVersion:          tmuxVersion,
-		GhVersion:            ghVersion,
-		GhAuthenticated:      true,
-		DefaultsParentBranch: currentBranch,
-		DefaultsRunner:       userCfg.Defaults.Runner,
-		DefaultsEditor:       userCfg.Defaults.Editor,
-		RunnerCmd:            resolvedRunnerCmd,
-		ScriptSetup:          scriptSetup,
-		ScriptVerify:         scriptVerify,
-		ScriptArchive:        scriptArchive,
+		RepoRoot:            repoRoot.Path,
+		AgencyDataDir:       dirs.DataDir,
+		AgencyConfigDir:     dirs.ConfigDir,
+		UserConfigPath:      config.UserConfigPath(dirs.ConfigDir),
+		AgencyJSONPath:      resolvedAgencyConfig.Path,
+		AgencyJSONSource:    resolvedAgencyConfig.Source,
+		AgencyCacheDir:      dirs.CacheDir,
+		RepoKey:             repoIdentity.RepoKey,
+		RepoID:              repoIdentity.RepoID,
+		OriginPresent:       originInfo.Present,
+		OriginURL:           originInfo.URL,
+		OriginHost:          originInfo.Host,
+		GitHubFlowAvailable: repoIdentity.GitHubFlowAvailable,
+		GitVersion:          gitVersion,
+		TmuxVersion:         tmuxVersion,
+		GhVersion:           ghVersion,
+		GhAuthenticated:     true,
+		DefaultsBaseBranch:  currentBranch,
+		DefaultsRunner:      userCfg.Defaults.Runner,
+		DefaultsEditor:      userCfg.Defaults.Editor,
+		RunnerCmd:           resolvedRunnerCmd,
+		ScriptSetup:         scriptSetup,
+		ScriptVerify:        scriptVerify,
+		ScriptArchive:       scriptArchive,
 	}
 
 	// 10. Persist repo index and repo record (only on success)
@@ -390,7 +390,7 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	_, _ = fmt.Fprintf(w, "gh_authenticated: %s\n", boolStr(r.GhAuthenticated))
 
 	// Config resolution
-	_, _ = fmt.Fprintf(w, "defaults_parent_branch: %s\n", r.DefaultsParentBranch)
+	_, _ = fmt.Fprintf(w, "defaults_base_branch: %s\n", r.DefaultsBaseBranch)
 	_, _ = fmt.Fprintf(w, "defaults_runner: %s\n", r.DefaultsRunner)
 	_, _ = fmt.Fprintf(w, "defaults_editor: %s\n", r.DefaultsEditor)
 	_, _ = fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)

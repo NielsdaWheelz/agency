@@ -630,12 +630,12 @@ func buildWorktreeMergeScriptEnv(
 	runner := "worktree"
 	workspaceRoot := ""
 	branch := ""
-	parentBranch := ""
+	baseBranch := ""
 	if record != nil && record.Meta != nil {
 		name = strings.TrimSpace(record.Meta.Name)
 		workspaceRoot = record.Meta.TreePath
 		branch = record.Meta.Branch
-		parentBranch = record.Meta.ParentBranch
+		baseBranch = record.Meta.BaseBranch
 	}
 	if name == "" && record != nil {
 		name = record.WorktreeID
@@ -647,7 +647,7 @@ func buildWorktreeMergeScriptEnv(
 		RepoRoot:      repoRoot,
 		WorkspaceRoot: workspaceRoot,
 		Branch:        branch,
-		ParentBranch:  parentBranch,
+		BaseBranch:    baseBranch,
 		Runner:        runner,
 		PRURL:         pr.URL,
 		PRNumber:      pr.Number,

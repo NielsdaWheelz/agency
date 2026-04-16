@@ -387,6 +387,6 @@ func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	_, _ = fmt.Fprintln(stdout, "worktree rebase complete")
 	_, _ = fmt.Fprintf(stdout, "  worktree_id:     %s\n", resp.IntegrationWorktreeID)
 	_, _ = fmt.Fprintf(stdout, "  branch:          %s\n", resp.Branch)
-	_, _ = fmt.Fprintf(stdout, "  parent_branch:   %s\n", resp.ParentBranch)
+	_, _ = fmt.Fprintf(stdout, "  base_branch:   %s\n", resp.BaseBranch)
 	return nil
 }

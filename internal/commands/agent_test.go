@@ -120,7 +120,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 		Name:          worktreeName,
 		RepoID:        repoID,
 		Branch:        "agency/" + worktreeName + "-abcd",
-		ParentBranch:  "main",
+		BaseBranch:    "main",
 		TreePath:      worktreeTreeDir,
 		CreatedAt:     "2026-01-31T12:00:00Z",
 		State:         store.WorktreeStatePresent,
@@ -213,6 +213,7 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 	cfgBytes, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -279,7 +280,7 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		Name:          name,
 		RepoID:        repoID,
 		Branch:        "agency/" + name + "-abcd",
-		ParentBranch:  "main",
+		BaseBranch:    "main",
 		TreePath:      treePath,
 		CreatedAt:     "2026-01-31T12:00:00Z",
 		State:         store.WorktreeStatePresent,
@@ -761,7 +762,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
 		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
 		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
@@ -1077,7 +1078,7 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
 		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
 		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
@@ -1158,7 +1159,7 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
 		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
 		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
@@ -1238,7 +1239,7 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
 		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
 		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
@@ -1333,7 +1334,7 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 			[]byte("# Integration worktree\n"), 0644))
 		wm := &store.IntegrationWorktreeMeta{
 			SchemaVersion: "1.0", WorktreeID: r.wtID, Name: "wt-" + r.repoID,
-			RepoID: r.repoID, Branch: "agency/b", ParentBranch: "main",
+			RepoID: r.repoID, Branch: "agency/b", BaseBranch: "main",
 			TreePath: tp, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 		}
 		wmb, _ := json.MarshalIndent(wm, "", "  ")
@@ -2008,8 +2009,10 @@ func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
 }
 
 func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) {
-	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-turn-converge")
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	invocationID := "20260131200000-hturn"
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
 
@@ -2344,8 +2347,6 @@ func TestAgentRestart_NegativeCheckpointIDReturnsUsage(t *testing.T) {
 }
 
 func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
-	t.Parallel()
-
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-output")
 	invocationID := "20260131183000-rout"
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
@@ -2387,6 +2388,7 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	cfg := map[string]any{
 		"version": 1,
 		"defaults": map[string]string{
@@ -2400,6 +2402,7 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 	cfgBytes, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -2435,9 +2438,10 @@ func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
 }
 
 func TestAgentRestart_RequiresExplicitEnvReplayWhenProfilePresent(t *testing.T) {
-	t.Parallel()
-
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-env-required")
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	invocationID := "20260131184000-renv"
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
 
@@ -2511,8 +2515,6 @@ func TestAgentRestart_InteractiveHistory_NonInteractiveFailsFast(t *testing.T) {
 }
 
 func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestartFlow(t *testing.T) {
-	t.Parallel()
-
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-history")
 	invocationID := "20260131185000-rhist"
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
@@ -2566,6 +2568,7 @@ func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestart
 
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	cfg := map[string]any{
 		"version": 1,
 		"defaults": map[string]string{

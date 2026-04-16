@@ -25,7 +25,7 @@ Subcommands:
   rm        Remove a worktree
   pr sync   Push branch and sync pull request
   pr merge  Verify, merge, and archive worktree pull request
-  rebase    Rebase worktree branch onto parent`,
+  rebase    Rebase worktree branch onto base`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()

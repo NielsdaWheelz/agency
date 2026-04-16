@@ -73,16 +73,16 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine parent branch.
-	parentBranch := req.ParentBranch
-	if parentBranch == "" {
+	// Determine base branch.
+	baseBranch := req.BaseBranch
+	if baseBranch == "" {
 		result, err := s.Runner.Run(ctx, "git", []string{"-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"}, exec.RunOpts{})
 		if err != nil || result.ExitCode != 0 {
-			s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EParentBranchNotFound),
-				"failed to determine current branch; use parent_branch to specify", "")
+			s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EBaseBranchNotFound),
+				"failed to determine current branch; use base_branch to specify", "")
 			return
 		}
-		parentBranch = strings.TrimSpace(result.Stdout)
+		baseBranch = strings.TrimSpace(result.Stdout)
 	}
 
 	// Acquire repo lock before mutation.
@@ -116,10 +116,10 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 
 	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	createResult, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
-		Name:         req.Name,
-		RepoRoot:     repoRoot,
-		RepoID:       repoIdentity.RepoID,
-		ParentBranch: parentBranch,
+		Name:       req.Name,
+		RepoRoot:   repoRoot,
+		RepoID:     repoIdentity.RepoID,
+		BaseBranch: baseBranch,
 	})
 	if err != nil {
 		code := errors.GetCode(err)

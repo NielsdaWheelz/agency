@@ -20,11 +20,11 @@ import (
 
 // WorktreeCreateOpts holds options for the worktree create command.
 type WorktreeCreateOpts struct {
-	RepoRef      string
-	Name         string
-	ParentBranch string
-	Open         bool
-	Editor       string
+	RepoRef    string
+	Name       string
+	BaseBranch string
+	Open       bool
+	Editor     string
 }
 
 // WorktreeCreate creates a new integration worktree.
@@ -33,7 +33,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	if strings.TrimSpace(opts.Name) == "" {
 		return errors.New(errors.EUsage, "--name is required")
 	}
-	parentBranch := strings.TrimSpace(opts.ParentBranch)
+	baseBranch := strings.TrimSpace(opts.BaseBranch)
 	if cr == nil {
 		cr = exec.NewRealRunner()
 	}
@@ -47,7 +47,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	}
 
 	repoRoot := ""
-	parentRoot := ""
+	baseRoot := ""
 	if repoRef != "" {
 		repo, err := ns.client.GetRepo(ctx, repoRef)
 		if err != nil {
@@ -61,7 +61,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			)
 		}
 		repoRoot = repo.Data.PreferredRoot
-		parentRoot = repoRoot
+		baseRoot = repoRoot
 	} else {
 		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
 		if err != nil {
@@ -84,13 +84,13 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				return err
 			}
 			repoRoot = repo.Data.PreferredRoot
-			parentRoot = currentRoot.Path
+			baseRoot = currentRoot.Path
 		} else {
 			if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
 				return errors.NewWithDetails(
 					errors.EUnsafeRepoRoot,
 					"current directory is inside an agency-managed tree but not a present integration worktree",
-					map[string]string{"hint": "re-run from the original repo or pass --repo and --parent/--base explicitly"},
+					map[string]string{"hint": "re-run from the original repo or pass --repo and --base explicitly"},
 				)
 			}
 			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -113,26 +113,26 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				)
 			}
 			repoRoot = reg.Data.PreferredRoot
-			parentRoot = currentRoot.Path
+			baseRoot = currentRoot.Path
 		}
 	}
 
-	if parentBranch == "" {
-		result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: parentRoot})
+	if baseBranch == "" {
+		result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: baseRoot})
 		if err != nil {
-			return errors.Wrap(errors.EParentBranchNotFound, "failed to determine current branch; pass --parent or --base", err)
+			return errors.Wrap(errors.EBaseBranchNotFound, "failed to determine current branch; pass --base", err)
 		}
-		parentBranch = strings.TrimSpace(result.Stdout)
-		if result.ExitCode != 0 || parentBranch == "" {
+		baseBranch = strings.TrimSpace(result.Stdout)
+		if result.ExitCode != 0 || baseBranch == "" {
 			return errors.NewWithDetails(
-				errors.EParentBranchNotFound,
-				"failed to determine current branch; pass --parent or --base",
-				map[string]string{"repo_root": parentRoot},
+				errors.EBaseBranchNotFound,
+				"failed to determine current branch; pass --base",
+				map[string]string{"repo_root": baseRoot},
 			)
 		}
 	}
 
-	hasCommits, err := git.HasCommits(ctx, cr, parentRoot)
+	hasCommits, err := git.HasCommits(ctx, cr, baseRoot)
 	if err != nil {
 		return err
 	}
@@ -140,23 +140,23 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return errors.New(errors.EEmptyRepo, "repository has no commits; create an initial commit first")
 	}
 
-	clean, err := git.IsClean(ctx, cr, parentRoot)
+	clean, err := git.IsClean(ctx, cr, baseRoot)
 	if err != nil {
 		return err
 	}
 	if !clean {
-		return errors.New(errors.EParentDirty, "working tree has uncommitted changes; commit or stash them first")
+		return errors.New(errors.EBaseDirty, "working tree has uncommitted changes; commit or stash them first")
 	}
 
-	branchExists, err := git.BranchExists(ctx, cr, parentRoot, parentBranch)
+	branchExists, err := git.BranchExists(ctx, cr, baseRoot, baseBranch)
 	if err != nil {
 		return err
 	}
 	if !branchExists {
 		return errors.NewWithDetails(
-			errors.EParentBranchNotFound,
-			"local branch '"+parentBranch+"' not found; checkout or fetch parent locally (no auto-fetch in v1)",
-			map[string]string{"branch": parentBranch},
+			errors.EBaseBranchNotFound,
+			"local branch '"+baseBranch+"' not found; checkout or fetch base locally (no auto-fetch in v1)",
+			map[string]string{"branch": baseBranch},
 		)
 	}
 
@@ -167,7 +167,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	result, err := ns.client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
 		RepoRoot:       repoRoot,
 		Name:           opts.Name,
-		ParentBranch:   parentBranch,
+		BaseBranch:     baseBranch,
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {

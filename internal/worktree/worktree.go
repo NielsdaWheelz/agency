@@ -49,8 +49,8 @@ type CreateOpts struct {
 	// RepoID is the repo identifier (16 hex chars).
 	RepoID string
 
-	// ParentBranch is the local branch to branch from (must already exist).
-	ParentBranch string
+	// BaseBranch is the local branch to branch from (must already exist).
+	BaseBranch string
 
 	// DataDir is the resolved AGENCY_DATA_DIR.
 	DataDir string
@@ -61,7 +61,7 @@ type CreateOpts struct {
 // Operations (in order):
 //  1. Compute branch name from name + run_id
 //  2. Compute worktree path from data_dir + repo_id + run_id
-//  3. Create branch + worktree via: git worktree add -b <branch> <path> <parent>
+//  3. Create branch + worktree via: git worktree add -b <branch> <path> <base_branch>
 //  4. Create .agency/, .agency/out/, .agency/tmp/ directories
 //  5. Create .agency/report.md if missing (with template)
 //  6. Check if .agency/ is ignored (best-effort warning)
@@ -76,13 +76,13 @@ func Create(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts CreateO
 	worktreePath := WorktreePath(opts.DataDir, opts.RepoID, opts.RunID)
 
 	// 4. Create worktree + branch in one command
-	// Command: git -C <repo_root> worktree add -b <branch> <worktree_path> <parent_branch>
+	// Command: git -C <repo_root> worktree add -b <branch> <worktree_path> <base_branch>
 	args := []string{
 		"-C", opts.RepoRoot,
 		"worktree", "add",
 		"-b", branch,
 		worktreePath,
-		opts.ParentBranch,
+		opts.BaseBranch,
 	}
 
 	result, err := cr.Run(ctx, "git", args, exec.RunOpts{})

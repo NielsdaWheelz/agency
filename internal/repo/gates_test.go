@@ -98,7 +98,7 @@ func TestCheckRepoSafe_CleanRepoSuccess(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	result, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    branch,
+		BaseBranch:      branch,
 		DataDirOverride: dataDir,
 	})
 
@@ -160,14 +160,14 @@ func TestCheckRepoSafe_DirtyRepoFails(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    branch,
+		BaseBranch:      branch,
 		DataDirOverride: dataDir,
 	})
 
 	require.Error(t, err, "expected error for dirty repo")
 
 	code := errors.GetCode(err)
-	assert.Equal(t, errors.EParentDirty, code)
+	assert.Equal(t, errors.EBaseDirty, code)
 }
 
 func TestCheckRepoSafe_EmptyRepoFails(t *testing.T) {
@@ -181,7 +181,7 @@ func TestCheckRepoSafe_EmptyRepoFails(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    "main",
+		BaseBranch:      "main",
 		DataDirOverride: dataDir,
 	})
 
@@ -191,7 +191,7 @@ func TestCheckRepoSafe_EmptyRepoFails(t *testing.T) {
 	assert.Equal(t, errors.EEmptyRepo, code)
 }
 
-func TestCheckRepoSafe_MissingParentBranchFails(t *testing.T) {
+func TestCheckRepoSafe_MissingBaseBranchFails(t *testing.T) {
 	repoRoot := setupTempRepo(t)
 
 	dataDir := t.TempDir()
@@ -201,14 +201,14 @@ func TestCheckRepoSafe_MissingParentBranchFails(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    "nonexistent-branch",
+		BaseBranch:      "nonexistent-branch",
 		DataDirOverride: dataDir,
 	})
 
-	require.Error(t, err, "expected error for missing parent branch")
+	require.Error(t, err, "expected error for missing base branch")
 
 	code := errors.GetCode(err)
-	assert.Equal(t, errors.EParentBranchNotFound, code)
+	assert.Equal(t, errors.EBaseBranchNotFound, code)
 }
 
 func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
@@ -229,7 +229,7 @@ func TestCheckRepoSafe_OriginURLPersisted(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	result, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    branch,
+		BaseBranch:      branch,
 		DataDirOverride: dataDir,
 	})
 
@@ -268,7 +268,7 @@ func TestCheckRepoSafe_NoOriginURL(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	result, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    branch,
+		BaseBranch:      branch,
 		DataDirOverride: dataDir,
 	})
 
@@ -299,7 +299,7 @@ func TestCheckRepoSafe_NotInsideRepo(t *testing.T) {
 	fsys := fs.NewRealFS()
 
 	_, err := CheckRepoSafe(ctx, cr, fsys, dir, CheckRepoSafeOpts{
-		ParentBranch: "main",
+		BaseBranch: "main",
 	})
 
 	require.Error(t, err, "expected error for non-repo directory")
@@ -324,7 +324,7 @@ func TestCheckRepoSafe_RepoJSONUpdatedOnSecondCall(t *testing.T) {
 
 	// First call
 	result1, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    branch,
+		BaseBranch:      branch,
 		DataDirOverride: dataDir,
 	})
 	require.NoError(t, err, "first call failed")
@@ -339,7 +339,7 @@ func TestCheckRepoSafe_RepoJSONUpdatedOnSecondCall(t *testing.T) {
 
 	// Second call
 	result2, err := CheckRepoSafe(ctx, cr, fsys, repoRoot, CheckRepoSafeOpts{
-		ParentBranch:    branch,
+		BaseBranch:      branch,
 		DataDirOverride: dataDir,
 	})
 	require.NoError(t, err, "second call failed")

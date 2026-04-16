@@ -192,7 +192,7 @@ This is an automated e2e test - no manual testing required.
 		Name:          "e2e-" + runID,
 		RepoID:        repoIdentity.RepoID,
 		Branch:        branch,
-		ParentBranch:  defaultBranch,
+		BaseBranch:    defaultBranch,
 		TreePath:      worktreePath,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 		State:         store.WorktreeStatePresent,
