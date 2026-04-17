@@ -27,6 +27,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
+	"github.com/NielsdaWheelz/agency/internal/watch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1736,6 +1737,43 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 		cursor = next
 	}
 	assert.Equal(t, allIDs, pagedIDs)
+}
+
+func TestAgentHistory_InteractiveUsesSharedWatchRuntime(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-watch")
+	invocationID := "20260131190500-watch"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var captured watch.RunOptions
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           50,
+		DataDirOverride: dataDir,
+		IsInteractive: func() bool {
+			return true
+		},
+		RunWatch: func(_ context.Context, client *daemonclient.Client, opts watch.RunOptions) error {
+			require.NotNil(t, client)
+			captured = opts
+			return nil
+		},
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Equal(t, watch.InitialPageHistory, captured.InitialPage)
+	assert.Equal(t, invocationID, captured.InvocationID)
+	assert.Equal(t, repoID, captured.RepoID)
+	assert.NotNil(t, captured.Attach)
+	assert.NotNil(t, captured.Open)
+	assert.NotNil(t, captured.PRSync)
+	assert.NotNil(t, captured.Restore)
 }
 
 // ---------------------------------------------------------------------------

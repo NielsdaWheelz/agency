@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -10,7 +11,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-const defaultPageLimit = 500
+const workspacePageLimit = 500
 
 // Snapshot is one full workspace state refresh composed from daemon read APIs.
 type Snapshot struct {
@@ -22,49 +23,27 @@ type Snapshot struct {
 	UpdatedAt   time.Time
 }
 
-type snapshotClient interface {
-	ListRepos(ctx context.Context) (*daemon.Result[daemon.ListReposData], error)
-	ListWorktrees(ctx context.Context, opts daemonclient.ListWorktreesOpts) (*daemon.Result[daemon.ListWorktreesData], error)
-	ListInvocations(ctx context.Context, opts daemonclient.ListInvocationsOpts) (*daemon.Result[daemon.ListInvocationsData], error)
-	GetInvocationCheck(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationCheckData], error)
-}
-
-// SnapshotLoader composes watch workspace state from canonical daemon reads.
-type SnapshotLoader struct {
-	client    snapshotClient
-	pageLimit int
-}
-
-// NewSnapshotLoader creates a loader for watch snapshot composition.
-func NewSnapshotLoader(client snapshotClient) *SnapshotLoader {
-	return &SnapshotLoader{
-		client:    client,
-		pageLimit: defaultPageLimit,
-	}
-}
-
-// Load composes one snapshot of repos/worktrees/invocations/checks.
-func (l *SnapshotLoader) Load(ctx context.Context) (Snapshot, error) {
-	if l == nil || l.client == nil {
-		return Snapshot{}, errors.New(errors.EInternal, "watch snapshot loader is not configured")
+func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client) (Snapshot, error) {
+	if client == nil {
+		return Snapshot{}, errors.New(errors.EInternal, "watch runtime requires a daemon client")
 	}
 
-	reposResult, err := l.client.ListRepos(ctx)
+	reposResult, err := client.ListRepos(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	worktrees, err := l.fetchAllWorktrees(ctx)
+	worktrees, err := loadAllWorkspaceWorktrees(ctx, client)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	invocations, err := l.fetchAllInvocations(ctx)
+	invocations, err := loadAllWorkspaceInvocations(ctx, client)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	checks, warnings := l.fetchChecks(ctx, invocations)
+	checks, warnings := loadWorkspaceChecks(ctx, client, invocations)
 
 	return Snapshot{
 		Repos:       reposResult.Data.Repos,
@@ -76,14 +55,14 @@ func (l *SnapshotLoader) Load(ctx context.Context) (Snapshot, error) {
 	}, nil
 }
 
-func (l *SnapshotLoader) fetchAllWorktrees(ctx context.Context) ([]daemon.WorktreeDTO, error) {
+func loadAllWorkspaceWorktrees(ctx context.Context, client *daemonclient.Client) ([]daemon.WorktreeDTO, error) {
 	worktrees := make([]daemon.WorktreeDTO, 0, 128)
 	cursor := ""
 
 	for {
-		result, err := l.client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+		result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
 			State:  "all",
-			Limit:  l.pageLimit,
+			Limit:  workspacePageLimit,
 			Cursor: cursor,
 		})
 		if err != nil {
@@ -101,14 +80,14 @@ func (l *SnapshotLoader) fetchAllWorktrees(ctx context.Context) ([]daemon.Worktr
 	}
 }
 
-func (l *SnapshotLoader) fetchAllInvocations(ctx context.Context) ([]daemon.InvocationDTO, error) {
+func loadAllWorkspaceInvocations(ctx context.Context, client *daemonclient.Client) ([]daemon.InvocationDTO, error) {
 	invocations := make([]daemon.InvocationDTO, 0, 128)
 	cursor := ""
 
 	for {
-		result, err := l.client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+		result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
 			State:  "all",
-			Limit:  l.pageLimit,
+			Limit:  workspacePageLimit,
 			Cursor: cursor,
 		})
 		if err != nil {
@@ -117,21 +96,33 @@ func (l *SnapshotLoader) fetchAllInvocations(ctx context.Context) ([]daemon.Invo
 
 		invocations = append(invocations, result.Data.Invocations...)
 		if result.Data.NextCursor == "" {
-			return invocations, nil
+			break
 		}
 		if result.Data.NextCursor == cursor {
 			return nil, errors.New(errors.EInternal, "invocation pagination cursor did not advance")
 		}
 		cursor = result.Data.NextCursor
 	}
+
+	sort.Slice(invocations, func(i, j int) bool {
+		if invocations[i].SortKey != invocations[j].SortKey {
+			return invocations[i].SortKey < invocations[j].SortKey
+		}
+		if invocations[i].StartedAt != invocations[j].StartedAt {
+			return invocations[i].StartedAt > invocations[j].StartedAt
+		}
+		return invocations[i].InvocationID < invocations[j].InvocationID
+	})
+
+	return invocations, nil
 }
 
-func (l *SnapshotLoader) fetchChecks(ctx context.Context, invocations []daemon.InvocationDTO) (map[string]daemon.InvocationCheckData, []string) {
+func loadWorkspaceChecks(ctx context.Context, client *daemonclient.Client, invocations []daemon.InvocationDTO) (map[string]daemon.InvocationCheckData, []string) {
 	checks := make(map[string]daemon.InvocationCheckData, len(invocations))
 	warnings := make([]string, 0)
 
 	for _, inv := range invocations {
-		result, err := l.client.GetInvocationCheck(ctx, inv.InvocationID, inv.RepoID)
+		result, err := client.GetInvocationCheck(ctx, inv.InvocationID, inv.RepoID)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("check refresh failed for %s: %v", inv.InvocationID, err))
 			continue

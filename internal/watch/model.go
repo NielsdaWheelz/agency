@@ -6,12 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
-	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 )
 
@@ -19,87 +18,32 @@ const defaultRefreshInterval = 2 * time.Second
 
 const minPanelWidth = 40
 
-type watchMode string
+type InitialPage string
 
 const (
-	modeWorkspace watchMode = "workspace"
-	modeHistory   watchMode = "history"
+	InitialPageWorkspace InitialPage = "workspace"
+	InitialPageHistory   InitialPage = "history"
 )
 
-type loader interface {
-	Load(ctx context.Context) (Snapshot, error)
-}
+type watchPage string
 
-// ActionDispatcher executes delegated watch actions for a selected invocation.
-// Implementations should call canonical command contracts rather than
-// reimplementing policy in the watch runtime.
-type ActionDispatcher interface {
-	Attach(ctx context.Context, invocationID, repoID string) (string, error)
-	Open(ctx context.Context, invocationID, repoID string) (string, error)
-	PRSync(ctx context.Context, worktreeID, repoID string) (string, error)
-}
+const (
+	pageWorkspace watchPage = "workspace"
+	pageHistory   watchPage = "history"
+	pageLogs      watchPage = "logs"
+)
 
-type keyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	Attach  key.Binding
-	Open    key.Binding
-	PRSync  key.Binding
-	Refresh key.Binding
-	Quit    key.Binding
-}
+type actionKind string
 
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Attach, k.Open, k.PRSync, k.Refresh, k.Quit}
-}
+const (
+	actionAttach  actionKind = "attach"
+	actionOpen    actionKind = "open"
+	actionPRSync  actionKind = "pr sync"
+	actionRestore actionKind = "restore"
+)
 
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down, k.Top, k.Bottom},
-		{k.Attach, k.Open, k.PRSync},
-		{k.Refresh, k.Quit},
-	}
-}
-
-var defaultKeyMap = keyMap{
-	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("up/k", "move selection up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("down/j", "move selection down"),
-	),
-	Top: key.NewBinding(
-		key.WithKeys("home", "g"),
-		key.WithHelp("home/g", "jump to top"),
-	),
-	Bottom: key.NewBinding(
-		key.WithKeys("end", "G"),
-		key.WithHelp("end/G", "jump to bottom"),
-	),
-	Attach: key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "attach invocation"),
-	),
-	Open: key.NewBinding(
-		key.WithKeys("o"),
-		key.WithHelp("o", "open sandbox"),
-	),
-	PRSync: key.NewBinding(
-		key.WithKeys("p"),
-		key.WithHelp("p", "pr sync (worktree)"),
-	),
-	Refresh: key.NewBinding(
-		key.WithKeys("r"),
-		key.WithHelp("r", "refresh now"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q", "esc", "ctrl+c"),
-		key.WithHelp("q/esc", "quit"),
-	),
+func (k actionKind) String() string {
+	return string(k)
 }
 
 var (
@@ -120,41 +64,36 @@ var (
 
 type refreshTickMsg time.Time
 
-type refreshRequestMsg struct{}
-
 type snapshotLoadedMsg struct {
 	snapshot Snapshot
 	err      error
 }
 
-type actionKind string
+type historyLoadedMsg struct {
+	turns []daemon.Turn
+	err   error
+}
 
-const (
-	actionAttach actionKind = "attach"
-	actionOpen   actionKind = "open"
-	actionPRSync actionKind = "pr sync"
-)
-
-func (k actionKind) String() string {
-	return string(k)
+type logsLoadedMsg struct {
+	content string
+	err     error
 }
 
 type actionResultMsg struct {
 	kind         actionKind
 	invocationID string
 	worktreeID   string
+	turnID       string
 	output       string
 	err          error
 }
 
 type model struct {
-	mode     watchMode
 	ctx      context.Context
-	loader   loader
-	actions  ActionDispatcher
+	client   *daemonclient.Client
 	interval time.Duration
-	keys     keyMap
-	help     help.Model
+	page     watchPage
+	backPage watchPage
 
 	width  int
 	height int
@@ -162,44 +101,84 @@ type model struct {
 	snapshot             Snapshot
 	selectedIndex        int
 	selectedInvocationID string
-	refreshing           bool
-	lastError            string
-	actionRunning        bool
-	lastActionMessage    string
-	lastActionError      bool
-	historyTurns         []daemon.Turn
-	historySelectedIndex int
-	historyNoColor       bool
-	historyKeys          historyKeyMap
+	selectedRepoID       string
+
+	workspaceLoading bool
+	workspaceError   string
+
+	historyTurns           []daemon.Turn
+	historySelectedIndex   int
+	historySelectedEntryID string
+	historyLoading         bool
+	historyError           string
+
+	logsContent string
+	logsScroll  int
+	logsLoading bool
+	logsError   string
+
+	actionRunning     bool
+	lastActionMessage string
+	lastActionError   bool
+
+	attach  func(context.Context, string, string) (string, error)
+	open    func(context.Context, string, string) (string, error)
+	prSync  func(context.Context, string, string) (string, error)
+	restore func(context.Context, string, string, string) (string, error)
 }
 
-func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration, actions ActionDispatcher) model {
+func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions) model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	interval := opts.Interval
 	if interval <= 0 {
 		interval = defaultRefreshInterval
 	}
 
-	h := help.New()
-	h.ShortSeparator = " • "
+	var page watchPage
+	switch opts.InitialPage {
+	case "", InitialPageWorkspace:
+		page = pageWorkspace
+	case InitialPageHistory:
+		page = pageHistory
+	default:
+		page = watchPage(opts.InitialPage)
+	}
 
 	return model{
-		mode:     modeWorkspace,
-		ctx:      ctx,
-		loader:   snapshotLoader,
-		actions:  actions,
-		interval: interval,
-		keys:     defaultKeyMap,
-		help:     h,
+		ctx:                  ctx,
+		client:               client,
+		interval:             interval,
+		page:                 page,
+		backPage:             pageWorkspace,
+		selectedInvocationID: strings.TrimSpace(opts.InvocationID),
+		selectedRepoID:       strings.TrimSpace(opts.RepoID),
+		attach:               opts.Attach,
+		open:                 opts.Open,
+		prSync:               opts.PRSync,
+		restore:              opts.Restore,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	if m.mode == modeHistory {
+	switch m.page {
+	case pageWorkspace:
+		m.workspaceLoading = true
+		return tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
+	case pageHistory:
+		if len(m.historyTurns) > 0 {
+			return nil
+		}
+		m.historyLoading = true
+		return m.loadHistoryCmd()
+	case pageLogs:
+		m.logsLoading = true
+		return m.loadLogsCmd()
+	default:
 		return nil
 	}
-	return tea.Batch(scheduleRefreshCmd(), tickCmd(m.interval))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -207,95 +186,87 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		if m.mode == modeWorkspace {
-			m.help.SetWidth(msg.Width)
-		}
 		return m, nil
 
 	case refreshTickMsg:
-		if m.mode == modeHistory {
+		if m.page != pageWorkspace {
 			return m, nil
 		}
-		return m, tea.Batch(tickCmd(m.interval), scheduleRefreshCmd())
-
-	case refreshRequestMsg:
-		if m.mode == modeHistory {
-			return m, nil
+		if m.workspaceLoading {
+			return m, tickCmd(m.interval)
 		}
-		if m.refreshing {
-			return m, nil
-		}
-		m.refreshing = true
-		return m, m.loadSnapshotCmd()
+		m.workspaceLoading = true
+		return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
 
 	case snapshotLoadedMsg:
-		if m.mode == modeHistory {
-			return m, nil
-		}
-		m.refreshing = false
+		m.workspaceLoading = false
 		if msg.err != nil {
-			m.lastError = msg.err.Error()
+			m.workspaceError = msg.err.Error()
 			return m, nil
 		}
 		m.snapshot = msg.snapshot
-		m.lastError = ""
+		m.workspaceError = ""
 		m.reconcileSelection()
 		return m, nil
 
-	case actionResultMsg:
-		if m.mode == modeHistory {
+	case historyLoadedMsg:
+		m.historyLoading = false
+		if msg.err != nil {
+			m.historyError = msg.err.Error()
 			return m, nil
 		}
+		m.historyTurns = msg.turns
+		m.historyError = ""
+		m.reconcileHistorySelection()
+		return m, nil
+
+	case logsLoadedMsg:
+		m.logsLoading = false
+		if msg.err != nil {
+			m.logsError = msg.err.Error()
+			return m, nil
+		}
+		m.logsContent = msg.content
+		m.logsError = ""
+		m.logsScroll = clamp(m.logsScroll, 0, m.maxLogsScroll())
+		return m, nil
+
+	case actionResultMsg:
 		m.actionRunning = false
 		m.lastActionError = msg.err != nil
 		if msg.err != nil {
-			m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID)
+			m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID, msg.turnID)
 			if output := strings.TrimSpace(msg.output); output != "" {
 				m.lastActionMessage += " | " + output
 			}
+		} else if output := strings.TrimSpace(msg.output); output != "" {
+			m.lastActionMessage = output
 		} else {
-			if output := strings.TrimSpace(msg.output); output != "" {
-				m.lastActionMessage = output
-			} else {
-				m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID))
+			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID, msg.turnID))
+		}
+
+		switch msg.kind {
+		case actionAttach, actionOpen, actionPRSync:
+			if m.page == pageWorkspace && !m.workspaceLoading {
+				m.workspaceLoading = true
+				return m, m.loadWorkspaceSnapshotCmd()
+			}
+		case actionRestore:
+			if m.page == pageHistory && !m.historyLoading {
+				m.historyLoading = true
+				return m, m.loadHistoryCmd()
 			}
 		}
-		// Refresh after each action outcome so readiness/details remain actionable.
-		return m, scheduleRefreshCmd()
+		return m, nil
 
 	case tea.KeyPressMsg:
-		if m.mode == modeHistory {
-			return m.updateHistory(msg)
-		}
-		switch {
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, m.keys.Refresh):
-			return m, scheduleRefreshCmd()
-		case key.Matches(msg, m.keys.Up):
-			m.moveSelection(-1)
-			return m, nil
-		case key.Matches(msg, m.keys.Down):
-			m.moveSelection(1)
-			return m, nil
-		case key.Matches(msg, m.keys.Top):
-			if len(m.snapshot.Invocations) > 0 {
-				m.selectedIndex = 0
-				m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
-			}
-			return m, nil
-		case key.Matches(msg, m.keys.Bottom):
-			if len(m.snapshot.Invocations) > 0 {
-				m.selectedIndex = len(m.snapshot.Invocations) - 1
-				m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
-			}
-			return m, nil
-		case key.Matches(msg, m.keys.Attach):
-			return m.triggerAction(actionAttach)
-		case key.Matches(msg, m.keys.Open):
-			return m.triggerAction(actionOpen)
-		case key.Matches(msg, m.keys.PRSync):
-			return m.triggerAction(actionPRSync)
+		switch m.page {
+		case pageWorkspace:
+			return m.updateWorkspaceKey(msg)
+		case pageHistory:
+			return m.updateHistoryKey(msg)
+		case pageLogs:
+			return m.updateLogsKey(msg)
 		default:
 			return m, nil
 		}
@@ -305,26 +276,209 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	content := m.renderWorkspace()
-	if m.mode == modeHistory {
+	var content string
+	switch m.page {
+	case pageHistory:
 		content = m.renderHistory()
+	case pageLogs:
+		content = m.renderLogs()
+	default:
+		content = m.renderWorkspace()
 	}
+
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.Cursor = nil
 	return v
 }
 
-func (m *model) loadSnapshotCmd() tea.Cmd {
+func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isQuitKey(msg):
+		return m, tea.Quit
+	case isRefreshKey(msg):
+		if m.workspaceLoading {
+			return m, nil
+		}
+		m.workspaceLoading = true
+		return m, m.loadWorkspaceSnapshotCmd()
+	case isUpKey(msg):
+		m.moveSelection(-1)
+		return m, nil
+	case isDownKey(msg):
+		m.moveSelection(1)
+		return m, nil
+	case isTopKey(msg):
+		if len(m.snapshot.Invocations) > 0 {
+			m.selectedIndex = 0
+			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
+			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
+		}
+		return m, nil
+	case isBottomKey(msg):
+		if len(m.snapshot.Invocations) > 0 {
+			m.selectedIndex = len(m.snapshot.Invocations) - 1
+			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
+			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+		}
+		return m, nil
+	case msg.Text == "h":
+		if strings.TrimSpace(m.selectedInvocationID) == "" {
+			m.lastActionError = true
+			m.lastActionMessage = "history unavailable: no invocation selected"
+			return m, nil
+		}
+		m.page = pageHistory
+		m.backPage = pageWorkspace
+		m.historyLoading = true
+		m.historyError = ""
+		return m, m.loadHistoryCmd()
+	case msg.Text == "l":
+		if strings.TrimSpace(m.selectedInvocationID) == "" {
+			m.lastActionError = true
+			m.lastActionMessage = "logs unavailable: no invocation selected"
+			return m, nil
+		}
+		m.page = pageLogs
+		m.backPage = pageWorkspace
+		m.logsLoading = true
+		m.logsError = ""
+		m.logsScroll = 0
+		return m, m.loadLogsCmd()
+	case isEnterKey(msg):
+		return m.startWorkspaceAction(actionAttach)
+	case msg.Text == "o":
+		return m.startWorkspaceAction(actionOpen)
+	case msg.Text == "p":
+		return m.startWorkspaceAction(actionPRSync)
+	default:
+		return m, nil
+	}
+}
+
+func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isQuitKey(msg):
+		return m, tea.Quit
+	case isBackKey(msg):
+		if m.backPage == pageWorkspace {
+			m.page = pageWorkspace
+			if !m.workspaceLoading {
+				m.workspaceLoading = true
+			}
+			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
+		}
+		m.page = m.backPage
+		return m, nil
+	case isRefreshKey(msg):
+		if m.historyLoading {
+			return m, nil
+		}
+		m.historyLoading = true
+		return m, m.loadHistoryCmd()
+	case isUpKey(msg):
+		if m.historySelectedIndex > 0 {
+			m.historySelectedIndex--
+			m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
+		}
+		return m, nil
+	case isDownKey(msg):
+		if m.historySelectedIndex < len(m.historyTurns)-1 {
+			m.historySelectedIndex++
+			m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
+		}
+		return m, nil
+	case isTopKey(msg):
+		if len(m.historyTurns) > 0 {
+			m.historySelectedIndex = 0
+			m.historySelectedEntryID = m.historyTurns[0].EntryID
+		}
+		return m, nil
+	case isBottomKey(msg):
+		if len(m.historyTurns) > 0 {
+			m.historySelectedIndex = len(m.historyTurns) - 1
+			m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
+		}
+		return m, nil
+	case msg.Text == "l":
+		m.page = pageLogs
+		m.backPage = pageHistory
+		m.logsLoading = true
+		m.logsError = ""
+		m.logsScroll = 0
+		return m, m.loadLogsCmd()
+	case isEnterKey(msg):
+		return m.startRestoreAction()
+	default:
+		return m, nil
+	}
+}
+
+func (m model) updateLogsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isQuitKey(msg):
+		return m, tea.Quit
+	case isBackKey(msg):
+		if m.backPage == pageWorkspace {
+			m.page = pageWorkspace
+			if !m.workspaceLoading {
+				m.workspaceLoading = true
+			}
+			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
+		}
+		m.page = m.backPage
+		return m, nil
+	case isRefreshKey(msg):
+		if m.logsLoading {
+			return m, nil
+		}
+		m.logsLoading = true
+		return m, m.loadLogsCmd()
+	case isUpKey(msg):
+		m.logsScroll = clamp(m.logsScroll-1, 0, m.maxLogsScroll())
+		return m, nil
+	case isDownKey(msg):
+		m.logsScroll = clamp(m.logsScroll+1, 0, m.maxLogsScroll())
+		return m, nil
+	case isTopKey(msg):
+		m.logsScroll = 0
+		return m, nil
+	case isBottomKey(msg):
+		m.logsScroll = m.maxLogsScroll()
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m *model) loadWorkspaceSnapshotCmd() tea.Cmd {
+	ctx := m.ctx
+	client := m.client
 	return func() tea.Msg {
-		snapshot, err := m.loader.Load(m.ctx)
+		snapshot, err := loadWorkspaceSnapshot(ctx, client)
 		return snapshotLoadedMsg{snapshot: snapshot, err: err}
 	}
 }
 
-func scheduleRefreshCmd() tea.Cmd {
+func (m *model) loadHistoryCmd() tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	invocationID := m.selectedInvocationID
+	repoID := m.selectedRepoID
 	return func() tea.Msg {
-		return refreshRequestMsg{}
+		turns, err := loadHistoryTurns(ctx, client, invocationID, repoID)
+		return historyLoadedMsg{turns: turns, err: err}
+	}
+}
+
+func (m *model) loadLogsCmd() tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	invocationID := m.selectedInvocationID
+	repoID := m.selectedRepoID
+	return func() tea.Msg {
+		content, err := loadInvocationLogs(ctx, client, invocationID, repoID)
+		return logsLoadedMsg{content: content, err: err}
 	}
 }
 
@@ -334,13 +488,8 @@ func tickCmd(interval time.Duration) tea.Cmd {
 	})
 }
 
-func (m model) triggerAction(kind actionKind) (tea.Model, tea.Cmd) {
+func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 	if m.actionRunning {
-		return m, nil
-	}
-	if m.actions == nil {
-		m.lastActionError = true
-		m.lastActionMessage = fmt.Sprintf("%s unavailable: watch actions are not configured", kind)
 		return m, nil
 	}
 
@@ -348,6 +497,41 @@ func (m model) triggerAction(kind actionKind) (tea.Model, tea.Cmd) {
 	if !ok {
 		m.lastActionError = true
 		m.lastActionMessage = fmt.Sprintf("%s unavailable: no invocation selected", kind)
+		return m, nil
+	}
+
+	var run func() (string, error)
+	switch kind {
+	case actionAttach:
+		if m.attach == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.attach(m.ctx, selected.InvocationID, selected.RepoID)
+		}
+	case actionOpen:
+		if m.open == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.open(m.ctx, selected.InvocationID, selected.RepoID)
+		}
+	case actionPRSync:
+		if m.prSync == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.prSync(m.ctx, selected.WorktreeID, selected.RepoID)
+		}
+	default:
+		m.lastActionError = true
+		m.lastActionMessage = fmt.Sprintf("%s unavailable: unsupported workspace action", kind)
 		return m, nil
 	}
 	if kind == actionPRSync && strings.TrimSpace(selected.WorktreeID) == "" {
@@ -364,45 +548,165 @@ func (m model) triggerAction(kind actionKind) (tea.Model, tea.Cmd) {
 			),
 			selected.InvocationID,
 			selected.WorktreeID,
+			"",
 		)
 		return m, nil
 	}
 
 	m.actionRunning = true
 	m.lastActionError = false
-	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID))
-	return m, m.runActionCmd(kind, selected)
-}
+	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID, ""))
 
-func (m model) runActionCmd(kind actionKind, selected daemon.InvocationDTO) tea.Cmd {
-	dispatcher := m.actions
-	ctx := m.ctx
-
-	return func() tea.Msg {
-		var output string
-		var err error
-		switch kind {
-		case actionAttach:
-			output, err = dispatcher.Attach(ctx, selected.InvocationID, selected.RepoID)
-		case actionOpen:
-			output, err = dispatcher.Open(ctx, selected.InvocationID, selected.RepoID)
-		case actionPRSync:
-			output, err = dispatcher.PRSync(ctx, selected.WorktreeID, selected.RepoID)
-		default:
-			err = agencyerrors.New(agencyerrors.EInternal, "unknown watch action")
-		}
+	invocationID := selected.InvocationID
+	worktreeID := selected.WorktreeID
+	return m, func() tea.Msg {
+		output, err := run()
 		return actionResultMsg{
 			kind:         kind,
-			invocationID: selected.InvocationID,
-			worktreeID:   selected.WorktreeID,
+			invocationID: invocationID,
+			worktreeID:   worktreeID,
 			output:       output,
 			err:          err,
 		}
 	}
 }
 
-func formatActionError(kind actionKind, err error, invocationID, worktreeID string) string {
-	target := actionTarget(kind, invocationID, worktreeID)
+func (m model) startRestoreAction() (tea.Model, tea.Cmd) {
+	if m.actionRunning {
+		return m, nil
+	}
+	if m.restore == nil {
+		m.lastActionError = true
+		m.lastActionMessage = "restore unavailable: action is not configured"
+		return m, nil
+	}
+	turn, ok := m.selectedTurn()
+	if !ok {
+		m.lastActionError = true
+		m.lastActionMessage = "restore unavailable: no turn selected"
+		return m, nil
+	}
+	if !turn.Restorable || turn.CheckpointID <= 0 {
+		m.lastActionError = true
+		m.lastActionMessage = "restore unavailable: selected turn does not have a restorable checkpoint"
+		return m, nil
+	}
+
+	m.actionRunning = true
+	m.lastActionError = false
+	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", actionRestore, actionTarget(actionRestore, m.selectedInvocationID, "", turn.EntryID))
+
+	ctx := m.ctx
+	invocationID := m.selectedInvocationID
+	repoID := m.selectedRepoID
+	turnID := turn.EntryID
+	return m, func() tea.Msg {
+		output, err := m.restore(ctx, invocationID, repoID, turnID)
+		return actionResultMsg{
+			kind:         actionRestore,
+			invocationID: invocationID,
+			turnID:       turnID,
+			output:       output,
+			err:          err,
+		}
+	}
+}
+
+func (m model) selectedInvocation() (daemon.InvocationDTO, bool) {
+	if len(m.snapshot.Invocations) == 0 {
+		return daemon.InvocationDTO{}, false
+	}
+	idx := clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
+	return m.snapshot.Invocations[idx], true
+}
+
+func (m model) selectedTurn() (daemon.Turn, bool) {
+	if len(m.historyTurns) == 0 {
+		return daemon.Turn{}, false
+	}
+	idx := clamp(m.historySelectedIndex, 0, len(m.historyTurns)-1)
+	return m.historyTurns[idx], true
+}
+
+func (m *model) moveSelection(delta int) {
+	if len(m.snapshot.Invocations) == 0 {
+		m.selectedIndex = 0
+		m.selectedInvocationID = ""
+		m.selectedRepoID = ""
+		return
+	}
+	next := clamp(m.selectedIndex+delta, 0, len(m.snapshot.Invocations)-1)
+	m.selectedIndex = next
+	m.selectedInvocationID = m.snapshot.Invocations[next].InvocationID
+	m.selectedRepoID = m.snapshot.Invocations[next].RepoID
+}
+
+func (m *model) reconcileSelection() {
+	if len(m.snapshot.Invocations) == 0 {
+		m.selectedIndex = 0
+		m.selectedInvocationID = ""
+		m.selectedRepoID = ""
+		return
+	}
+
+	if m.selectedInvocationID != "" {
+		for idx, inv := range m.snapshot.Invocations {
+			if inv.InvocationID == m.selectedInvocationID {
+				m.selectedIndex = idx
+				m.selectedRepoID = inv.RepoID
+				return
+			}
+		}
+	}
+
+	m.selectedIndex = clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
+	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
+	m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+}
+
+func (m *model) reconcileHistorySelection() {
+	if len(m.historyTurns) == 0 {
+		m.historySelectedIndex = 0
+		m.historySelectedEntryID = ""
+		return
+	}
+
+	if m.historySelectedEntryID != "" {
+		for idx, turn := range m.historyTurns {
+			if turn.EntryID == m.historySelectedEntryID {
+				m.historySelectedIndex = idx
+				return
+			}
+		}
+	}
+
+	m.historySelectedIndex = len(m.historyTurns) - 1
+	m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
+}
+
+func (m model) maxLogsScroll() int {
+	lines := logLines(m.logsContent)
+	visible := m.logVisibleLines()
+	if len(lines) <= visible {
+		return 0
+	}
+	return len(lines) - visible
+}
+
+func (m model) logVisibleLines() int {
+	height := m.height
+	if height <= 0 {
+		height = 36
+	}
+	visible := height - 5
+	if visible < 5 {
+		visible = 5
+	}
+	return visible
+}
+
+func formatActionError(kind actionKind, err error, invocationID, worktreeID, turnID string) string {
+	target := actionTarget(kind, invocationID, worktreeID, turnID)
 	code := agencyerrors.GetCode(err)
 	if code == agencyerrors.ESessionEnded {
 		hint := "session ended; use 'agency agent history logs' or 'agency agent open' to view"
@@ -419,20 +723,17 @@ func formatActionError(kind actionKind, err error, invocationID, worktreeID stri
 	return fmt.Sprintf("%s failed for %s: %s", kind, target, err.Error())
 }
 
-func actionTarget(kind actionKind, invocationID, worktreeID string) string {
-	if kind == actionPRSync {
-		trimmedWorktreeID := strings.TrimSpace(worktreeID)
-		shortInvocationID := shortID(invocationID, 10)
-		if trimmedWorktreeID == "" {
-			if shortInvocationID != "" {
-				return fmt.Sprintf("invocation %s (worktree missing)", shortInvocationID)
-			}
-			return "selected invocation (worktree missing)"
+func actionTarget(kind actionKind, invocationID, worktreeID, turnID string) string {
+	switch kind {
+	case actionPRSync:
+		if strings.TrimSpace(worktreeID) == "" {
+			return fmt.Sprintf("invocation %s (worktree missing)", shortID(invocationID, 10))
 		}
-		if shortInvocationID != "" {
-			return fmt.Sprintf("worktree %s (invocation %s)", trimmedWorktreeID, shortInvocationID)
+		return fmt.Sprintf("worktree %s (invocation %s)", worktreeID, shortID(invocationID, 10))
+	case actionRestore:
+		if strings.TrimSpace(turnID) != "" {
+			return fmt.Sprintf("%s @ %s", shortID(invocationID, 10), turnID)
 		}
-		return fmt.Sprintf("worktree %s", trimmedWorktreeID)
 	}
 
 	shortInvocationID := shortID(invocationID, 10)
@@ -440,4 +741,127 @@ func actionTarget(kind actionKind, invocationID, worktreeID string) string {
 		return "selected invocation"
 	}
 	return shortInvocationID
+}
+
+func isQuitKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" || msg.Text == "q"
+}
+
+func isBackKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyEsc || msg.Text == "b"
+}
+
+func isRefreshKey(msg tea.KeyPressMsg) bool {
+	return msg.Text == "r"
+}
+
+func isEnterKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyEnter
+}
+
+func isUpKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyUp || msg.Text == "k"
+}
+
+func isDownKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyDown || msg.Text == "j"
+}
+
+func isTopKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyHome || msg.Text == "g"
+}
+
+func isBottomKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyEnd || msg.Text == "G"
+}
+
+func readinessCounts(invocations []daemon.InvocationDTO, checks map[string]daemon.InvocationCheckData) (ready int, blocked int, unknown int) {
+	for _, inv := range invocations {
+		check, ok := checks[inv.InvocationID]
+		if !ok {
+			unknown++
+			continue
+		}
+		if check.Ready || check.Readiness == "ready" {
+			ready++
+			continue
+		}
+		blocked++
+	}
+	return ready, blocked, unknown
+}
+
+func windowForSelection(total, selected, size int) (start, end int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if size <= 0 || size >= total {
+		return 0, total
+	}
+
+	selected = clamp(selected, 0, total-1)
+	half := size / 2
+	start = selected - half
+	if start < 0 {
+		start = 0
+	}
+	end = start + size
+	if end > total {
+		end = total
+		start = end - size
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start, end
+}
+
+func truncateLines(lines []string, width int) string {
+	if width <= 0 {
+		return strings.Join(lines, "\n")
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, truncateWithEllipsis(line, width))
+	}
+	return strings.Join(out, "\n")
+}
+
+func truncateWithEllipsis(value string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxWidth {
+		return value
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-3]) + "..."
+}
+
+func shortID(value string, maxLen int) string {
+	runes := []rune(value)
+	if maxLen <= 0 || len(runes) <= maxLen {
+		return value
+	}
+	return string(runes[:maxLen])
+}
+
+func clamp(value, low, high int) int {
+	if value < low {
+		return low
+	}
+	if value > high {
+		return high
+	}
+	return value
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

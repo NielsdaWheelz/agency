@@ -188,12 +188,12 @@ type AgentHistoryOpts struct {
 	// IsInteractive, when set, decides whether bare history opens the full-screen view.
 	IsInteractive func() bool
 
-	// HistoryInput and HistoryOutput override the watch history IO during tests.
-	HistoryInput  io.Reader
-	HistoryOutput io.Writer
+	// WatchInput and WatchOutput override the shared watch runtime IO during tests.
+	WatchInput  io.Reader
+	WatchOutput io.Writer
 
-	// RunHistory overrides the shared watch history runtime during tests.
-	RunHistory func([]daemon.Turn, watch.HistoryRunOptions) error
+	// RunWatch overrides the shared watch runtime during tests.
+	RunWatch func(context.Context, *daemonclient.Client, watch.RunOptions) error
 }
 
 // AgentHistory reads the unified invocation timeline via daemon read API.
@@ -226,6 +226,50 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	})
 	if err != nil {
 		return err
+	}
+
+	isInteractive := opts.IsInteractive
+	if isInteractive == nil {
+		isInteractive = func() bool {
+			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
+		}
+	}
+	if isInteractive() && !opts.JSON && !opts.Last && opts.Cursor == "" && opts.Limit == 50 {
+		watchOutput := opts.WatchOutput
+		if watchOutput == nil {
+			watchOutput = stdout
+		}
+		runWatch := opts.RunWatch
+		if runWatch == nil {
+			runWatch = watch.Run
+		}
+
+		actionDelegates := &watchActionDispatcher{
+			cr:              cr,
+			fsys:            fsys,
+			cwd:             cwd,
+			dataDirOverride: opts.DataDirOverride,
+		}
+		return runWatch(ctx, ns.client, watch.RunOptions{
+			InitialPage:  watch.InitialPageHistory,
+			InvocationID: opts.InvocationRef,
+			RepoID:       repoCtx.RepoID,
+			Input:        opts.WatchInput,
+			Output:       watchOutput,
+			Attach:       actionDelegates.Attach,
+			Open:         actionDelegates.Open,
+			PRSync:       actionDelegates.PRSync,
+			Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
+				return actionDelegates.capture(func(stdout, stderr io.Writer) error {
+					return AgentRestore(ctx, actionDelegates.cr, actionDelegates.fsys, actionDelegates.cwd, AgentRestoreOpts{
+						InvocationRef:   invocationID,
+						RepoRef:         repoID,
+						TurnID:          turnID,
+						DataDirOverride: actionDelegates.dataDirOverride,
+					}, stdout, stderr)
+				})
+			},
+		})
 	}
 
 	// JSON remains the machine-fidelity escape hatch for raw timeline entries.
@@ -274,27 +318,6 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 				"cursor": cursor,
 			},
 		)
-	}
-
-	isInteractive := opts.IsInteractive
-	if isInteractive == nil {
-		isInteractive = func() bool {
-			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
-		}
-	}
-	if isInteractive() && opts.Cursor == "" && opts.Limit == 50 {
-		historyOutput := opts.HistoryOutput
-		if historyOutput == nil {
-			historyOutput = stdout
-		}
-		runHistory := opts.RunHistory
-		if runHistory == nil {
-			runHistory = watch.RunHistory
-		}
-		return runHistory(turns, watch.HistoryRunOptions{
-			Input:  opts.HistoryInput,
-			Output: historyOutput,
-		})
 	}
 
 	page, nextCursor := daemon.PaginateHistoryTurns(turns, opts.Cursor, opts.Limit)

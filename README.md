@@ -67,7 +67,7 @@ agency agent start --repo <repo-ref> --worktree my-feature # headed start requir
 agency agent start --worktree my-feature
 # Ctrl+b, d to detach from tmux
 agency agent recreate <invocation-id> --detached # restore a missing headed tmux session in the same sandbox
-agency watch                                 # full-screen readiness workspace (interactive tty; Enter=attach, o=open, p=pr sync)
+agency watch                                 # unified workspace/history/logs TUI (interactive tty; Enter=attach, h=history, l=logs, b/Esc=back, q=exit)
 agency agent ls                              # concise invocation list
 agency agent land <invocation-id> --apply    # land changes back to worktree
 ```
@@ -77,7 +77,7 @@ headless (fire-and-forget):
 ```bash
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
-agency agent history <invocation-id>                 # interactive invocation history UI (tty only)
+agency agent history <invocation-id>                 # interactive invocation history/logs UI (same runtime; tty only)
 agency agent history <invocation-id> --json          # machine-readable timeline output
 agency agent history logs <invocation-id> --follow   # raw invocation logs
 agency agent followup <invocation-id> --prompt "continue with edge-case tests"
@@ -98,7 +98,8 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 - `agent check`: `-r/--repo`, `-j/--json`
 - `agent path|open|attach`: `-r/--repo`
 
-`agency watch` and `agency agent history` open different pages of the same terminal runtime.
+`agency watch` and `agency agent history` open different pages of the same Bubble Tea runtime.
+That runtime exposes workspace, history, and logs pages over the same daemon-backed read model.
 `agency agent history` is the canonical inspection surface for invocation turns, checkpoints, and logs.
 `agency agent restore` restores sandbox state only; it does not rerun the original prompt.
 use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.

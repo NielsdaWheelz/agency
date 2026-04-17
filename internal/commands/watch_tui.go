@@ -141,17 +141,29 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		output = stdout
 	}
 
-	loader := watch.NewSnapshotLoader(client)
 	actionDelegates := &watchActionDispatcher{
 		cr:              cr,
 		fsys:            fsys,
 		cwd:             cwd,
 		dataDirOverride: opts.DataDirOverride,
 	}
-	return watch.Run(ctx, loader, watch.RunOptions{
-		Interval: interval,
-		Input:    input,
-		Output:   output,
-		Actions:  actionDelegates,
+	return watch.Run(ctx, client, watch.RunOptions{
+		InitialPage: watch.InitialPageWorkspace,
+		Interval:    interval,
+		Input:       input,
+		Output:      output,
+		Attach:      actionDelegates.Attach,
+		Open:        actionDelegates.Open,
+		PRSync:      actionDelegates.PRSync,
+		Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
+			return actionDelegates.capture(func(stdout, stderr io.Writer) error {
+				return AgentRestore(ctx, actionDelegates.cr, actionDelegates.fsys, actionDelegates.cwd, AgentRestoreOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					TurnID:          turnID,
+					DataDirOverride: actionDelegates.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
 	})
 }

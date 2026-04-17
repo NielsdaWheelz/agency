@@ -1,54 +1,19 @@
 package watch
 
 import (
-	stderrors "errors"
-	"io"
-	"strconv"
+	"context"
+	"fmt"
 	"strings"
 
-	"charm.land/bubbles/v2/key"
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
-type historyKeyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Top    key.Binding
-	Bottom key.Binding
-	Quit   key.Binding
-}
-
-func (k historyKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Quit}
-}
-
-var defaultHistoryKeys = historyKeyMap{
-	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("up/k", "move up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("down/j", "move down"),
-	),
-	Top: key.NewBinding(
-		key.WithKeys("home", "g"),
-		key.WithHelp("home/g", "jump to top"),
-	),
-	Bottom: key.NewBinding(
-		key.WithKeys("end", "G"),
-		key.WithHelp("end/G", "jump to bottom"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q", "esc", "ctrl+c"),
-		key.WithHelp("q/esc", "quit"),
-	),
-}
+const maxHistoryEntries = 2000
 
 var (
 	historyHeaderStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
@@ -61,77 +26,77 @@ var (
 	historyHelpStyle       = lipgloss.NewStyle().Faint(true)
 )
 
-type HistoryRunOptions struct {
-	Input   io.Reader
-	Output  io.Writer
-	NoColor bool
-}
+func loadHistoryTurns(ctx context.Context, client *daemonclient.Client, invocationID, repoID string) ([]daemon.Turn, error) {
+	if client == nil {
+		return nil, errors.New(errors.EInternal, "watch runtime requires a daemon client")
+	}
+	if strings.TrimSpace(invocationID) == "" || strings.TrimSpace(repoID) == "" {
+		return nil, errors.New(errors.EInvalidArgument, "history page requires an invocation and repo")
+	}
 
-func RunHistory(turns []daemon.Turn, opts HistoryRunOptions) error {
+	entries := make([]daemon.TimelineEntryDTO, 0, 128)
+	cursor := ""
+	for {
+		result, err := client.GetInvocationTimeline(ctx, invocationID, repoID, daemonclient.GetInvocationTimelineOpts{
+			Limit:  500,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, result.Data.Entries...)
+		if len(entries) > maxHistoryEntries {
+			return nil, errors.NewWithDetails(
+				errors.EInvalidArgument,
+				fmt.Sprintf("interactive history view supports at most %d timeline entries", maxHistoryEntries),
+				map[string]string{
+					"hint": "narrow invocation scope or use explicit --checkpoint <id>",
+				},
+			)
+		}
+		if result.Data.NextCursor == "" {
+			break
+		}
+		if result.Data.NextCursor == cursor {
+			return nil, errors.New(errors.EInternal, "timeline pagination cursor did not advance")
+		}
+		cursor = result.Data.NextCursor
+	}
+
+	checkpoints := make([]daemon.CheckpointDTO, 0, 32)
+	cursor = ""
+	for {
+		result, err := client.ListCheckpoints(ctx, invocationID, repoID, daemonclient.ListCheckpointsOpts{
+			Limit:  500,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		checkpoints = append(checkpoints, result.Data.Checkpoints...)
+		if len(checkpoints) > maxHistoryEntries {
+			return nil, errors.NewWithDetails(
+				errors.EInvalidArgument,
+				fmt.Sprintf("interactive history view supports at most %d checkpoints", maxHistoryEntries),
+				map[string]string{
+					"hint": "use explicit --checkpoint <id> for very large histories",
+				},
+			)
+		}
+		if result.Data.NextCursor == "" {
+			break
+		}
+		if result.Data.NextCursor == cursor {
+			return nil, errors.New(errors.EInternal, "checkpoint pagination cursor did not advance")
+		}
+		cursor = result.Data.NextCursor
+	}
+
+	turns := daemon.ProjectTimelineTurns(entries, checkpoints)
 	if len(turns) == 0 {
-		return errors.New(errors.ECheckpointNotFound, "no history entries available")
+		return nil, errors.New(errors.ECheckpointNotFound, "no history entries available")
 	}
-
-	m := newHistoryModel(turns, opts.NoColor)
-	programOptions := []tea.ProgramOption{}
-	if opts.Input != nil {
-		programOptions = append(programOptions, tea.WithInput(opts.Input))
-	}
-	if opts.Output != nil {
-		programOptions = append(programOptions, tea.WithOutput(opts.Output))
-	}
-
-	program := tea.NewProgram(m, programOptions...)
-	_, err := program.Run()
-	if err != nil {
-		if stderrors.Is(err, tea.ErrInterrupted) {
-			return nil
-		}
-		return errors.Wrap(errors.EInternal, "history view failed", err)
-	}
-	return nil
-}
-
-func newHistoryModel(turns []daemon.Turn, noColor bool) model {
-	selectedIndex := len(turns) - 1
-	if selectedIndex < 0 {
-		selectedIndex = 0
-	}
-
-	return model{
-		mode:                 modeHistory,
-		historyTurns:         turns,
-		historySelectedIndex: selectedIndex,
-		historyNoColor:       noColor,
-		historyKeys:          defaultHistoryKeys,
-	}
-}
-
-func (m model) updateHistory(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.historyKeys.Quit):
-		return m, tea.Quit
-	case key.Matches(msg, m.historyKeys.Up):
-		if m.historySelectedIndex > 0 {
-			m.historySelectedIndex--
-		}
-		return m, nil
-	case key.Matches(msg, m.historyKeys.Down):
-		if m.historySelectedIndex < len(m.historyTurns)-1 {
-			m.historySelectedIndex++
-		}
-		return m, nil
-	case key.Matches(msg, m.historyKeys.Top):
-		m.historySelectedIndex = 0
-		return m, nil
-	case key.Matches(msg, m.historyKeys.Bottom):
-		if len(m.historyTurns) > 0 {
-			m.historySelectedIndex = len(m.historyTurns) - 1
-		}
-		return m, nil
-	default:
-		return m, nil
-	}
+	return turns, nil
 }
 
 func (m model) renderHistory() string {
@@ -139,27 +104,46 @@ func (m model) renderHistory() string {
 	if width <= 0 {
 		width = 120
 	}
+
+	lines := []string{
+		m.renderHistoryHeader(fmt.Sprintf("invocation history  %s", m.selectedInvocationID)),
+		"",
+	}
+
+	if m.lastActionMessage != "" {
+		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
+		switch {
+		case m.lastActionError:
+			lines = append(lines, errorStyle.Render(actionLine))
+		case m.actionRunning:
+			lines = append(lines, warningStyle.Render(actionLine))
+		default:
+			lines = append(lines, actionStyle.Render(actionLine))
+		}
+		lines = append(lines, "")
+	}
+	if m.historyError != "" {
+		lines = append(lines, errorStyle.Render("history error: "+truncateWithEllipsis(m.historyError, width-4)))
+		lines = append(lines, "")
+	}
+	if m.historyLoading {
+		lines = append(lines, warningStyle.Render("loading history..."))
+		lines = append(lines, "")
+	}
 	if len(m.historyTurns) == 0 {
-		return "no history entries available"
+		lines = append(lines, "no history entries available")
+		lines = append(lines, "")
+		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • l logs • r refresh • b back • q quit"))
+		return strings.Join(lines, "\n")
 	}
 
 	var builder strings.Builder
-	builder.WriteString(m.renderHistoryHeader("invocation history"))
-	builder.WriteString("\n\n")
-
+	builder.WriteString(strings.Join(lines, "\n"))
 	for index, turn := range m.historyTurns {
 		m.renderHistoryTurn(&builder, index, turn, width)
 	}
-
 	builder.WriteString("\n")
-	bindings := m.historyKeys.ShortHelp()
-	parts := make([]string, 0, len(bindings))
-	for _, binding := range bindings {
-		help := binding.Help()
-		parts = append(parts, help.Key+": "+help.Desc)
-	}
-	builder.WriteString(m.renderHistoryHelp(strings.Join(parts, " • ")))
-
+	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • l logs • r refresh • b back • q quit"))
 	return builder.String()
 }
 
@@ -178,12 +162,10 @@ func (m model) renderHistoryTurn(builder *strings.Builder, index int, turn daemo
 		timestamp = "-"
 	}
 
-	kindLabel := "[" + render.NormalizeActivityKind(string(turn.Kind)) + "]"
-	header := marker + kindLabel + " (" + timestamp + ")"
+	header := marker + "[" + render.NormalizeActivityKind(string(turn.Kind)) + "] (" + timestamp + ")"
 	if turn.Restorable && turn.CheckpointID > 0 {
-		header += " " + m.renderHistoryCheckpoint("cp:"+strconv.Itoa(turn.CheckpointID))
+		header += " " + m.renderHistoryCheckpoint("cp:"+fmt.Sprintf("%d", turn.CheckpointID))
 	}
-
 	visibleLen := historyVisibleLen(header)
 	remaining := width - visibleLen - 1
 	if remaining > 2 {
@@ -251,57 +233,33 @@ func historyTruncate(value string, maxWidth int) string {
 }
 
 func (m model) renderHistoryHeader(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historyHeaderStyle.Render(value)
 }
 
 func (m model) renderHistorySelected(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historySelectedStyle.Render(value)
 }
 
 func (m model) renderHistoryMarker(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historyMarkerStyle.Render(value)
 }
 
 func (m model) renderHistoryCheckpoint(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historyCheckpointStyle.Render(value)
 }
 
 func (m model) renderHistoryToolCall(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historyToolCallStyle.Render(value)
 }
 
 func (m model) renderHistoryDim(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historyDimStyle.Render(value)
 }
 
 func (m model) renderHistorySeparator(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historySeparatorStyle.Render(value)
 }
 
 func (m model) renderHistoryHelp(value string) string {
-	if m.historyNoColor {
-		return value
-	}
 	return historyHelpStyle.Render(value)
 }

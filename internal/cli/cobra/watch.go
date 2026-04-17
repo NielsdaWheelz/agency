@@ -18,19 +18,22 @@ func newWatchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Full-screen workspace for readiness monitoring",
-		Long: `Open the full-screen watch workspace for live monitoring.
+		Short: "Unified workspace/history/logs TUI",
+		Long: `Open the unified Bubble Tea runtime for live monitoring.
 
-The watch workspace composes repositories, worktrees, invocations, and
-invocation check/readiness data from daemon-owned read APIs.
+The watch runtime composes workspace, history, and logs pages from
+daemon-owned read APIs.
 
 Keyboard shortcuts:
   - up/down (or k/j): move selection
   - enter: attach to selected headed invocation
   - o: open selected invocation sandbox
   - p: sync PR for selected invocation's worktree
+  - h: open history for the selected invocation
+  - l: open raw logs for the selected invocation
+  - b/esc: go back from history/logs
   - r: refresh now
-  - q/esc: exit watch
+  - q: exit watch
 
 Use --interval to tune periodic refresh cadence.`,
 		Args: cobra.NoArgs,
