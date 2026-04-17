@@ -128,24 +128,33 @@ func TestAgentCmd_HelpShowsGroupsWithoutDuplicateCatalog(t *testing.T) {
 	assert.Contains(t, stdout, "Run\n  followup")
 	assert.Contains(t, stdout, "Inspect\n  check")
 	assert.Contains(t, stdout, "  diff")
+	assert.Contains(t, stdout, "  history")
 	assert.Contains(t, stdout, "Navigate\n  attach")
-	assert.Contains(t, stdout, "Recover\n  checkpoint")
+	assert.Contains(t, stdout, "Recover\n  recreate")
+	assert.Contains(t, stdout, "  restore")
 	assert.Contains(t, stdout, "Finish\n  discard")
+	assert.NotContains(t, stdout, "Manage invocation checkpoints")
+	assert.NotContains(t, stdout, "Restart headless invocation from checkpoint/history")
+	assert.NotContains(t, stdout, "View invocation logs")
 	assert.NotContains(t, stdout, "Subcommands:")
 }
 
-func TestAgentCheckpointCmd_ReturnsUsageError(t *testing.T) {
+func TestAgentCheckpointCmd_LegacyCommandRemoved(t *testing.T) {
 	_, _, err := executeCmd("agent", "checkpoint")
-	require.Error(t, err, "expected error when agent checkpoint called without subcommand")
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	require.Error(t, err, "expected error when legacy agent checkpoint is called")
+	assert.Contains(t, err.Error(), "unknown command")
 }
 
-func TestAgentCheckpointCmd_HelpShowsCommandsWithoutDuplicateCatalog(t *testing.T) {
-	stdout, _, err := executeCmd("agent", "checkpoint", "--help")
-	require.NoError(t, err, "expected agent checkpoint help to render")
-	assert.Contains(t, stdout, "apply")
-	assert.Contains(t, stdout, "ls")
-	assert.NotContains(t, stdout, "Subcommands:")
+func TestAgentRestartCmd_LegacyCommandRemoved(t *testing.T) {
+	_, _, err := executeCmd("agent", "restart")
+	require.Error(t, err, "expected error when legacy agent restart is called")
+	assert.Contains(t, err.Error(), "unknown command")
+}
+
+func TestAgentLogsCmd_LegacyTopLevelCommandRemoved(t *testing.T) {
+	_, _, err := executeCmd("agent", "logs")
+	require.Error(t, err, "expected error when legacy top-level agent logs is called")
+	assert.Contains(t, err.Error(), "unknown command")
 }
 
 func TestCheckpointCmd_UnknownAtRoot(t *testing.T) {
@@ -154,10 +163,25 @@ func TestCheckpointCmd_UnknownAtRoot(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown command")
 }
 
-func TestAgentCheckpointApply_InvalidCheckpointID_ReturnsUsageError(t *testing.T) {
-	_, _, err := executeCmd("agent", "checkpoint", "apply", "inv-1", "abc")
-	require.Error(t, err, "expected error for non-numeric checkpoint id")
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+func TestAgentRestoreCmd_HelpShowsRestoreOnlySelectors(t *testing.T) {
+	stdout, _, err := executeCmd("agent", "restore", "--help")
+	require.NoError(t, err, "expected agent restore help to render")
+	assert.Contains(t, stdout, "--checkpoint")
+	assert.Contains(t, stdout, "--turn")
+	assert.Contains(t, stdout, "--repo")
+	assert.Contains(t, stdout, "--json")
+	assert.NotContains(t, stdout, "--history")
+	assert.NotContains(t, stdout, "--runner-arg")
+	assert.NotContains(t, stdout, "--model")
+	assert.NotContains(t, stdout, "--effort")
+	assert.NotContains(t, stdout, "--env")
+}
+
+func TestAgentHistoryCmd_HelpShowsLogsSubcommand(t *testing.T) {
+	stdout, _, err := executeCmd("agent", "history", "--help")
+	require.NoError(t, err, "expected agent history help to render")
+	assert.Contains(t, stdout, "logs")
+	assert.Contains(t, stdout, "--json")
 }
 
 func TestWatchCmd_NonInteractiveReturnsENotInteractive(t *testing.T) {

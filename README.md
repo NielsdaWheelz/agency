@@ -77,10 +77,10 @@ headless (fire-and-forget):
 ```bash
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
-agency agent logs <invocation-id> --follow
+agency agent history <invocation-id>                 # interactive invocation history UI (tty only)
+agency agent history <invocation-id> --json          # machine-readable timeline output
+agency agent history logs <invocation-id> --follow   # raw invocation logs
 agency agent followup <invocation-id> --prompt "continue with edge-case tests"
-agency agent history <invocation-id> --limit 50   # limit must be 1..500
-agency agent history <invocation-id> --last        # show latest meaningful turn/activity
 agency agent check <invocation-id>               # readiness verdict + blocking reasons
 agency agent diff <invocation-id> --turn <entry> # changes for a turn or range
 agency agent diff <invocation-id> --turn-range <start>..<end>
@@ -88,10 +88,8 @@ agency agent land <invocation-id> --apply         # land sandbox into integratio
 agency worktree pr sync <worktree-ref>            # push branch + create/update PR
 agency worktree pr merge <worktree-ref> --yes     # verify, merge, and archive worktree PR
 agency worktree rebase <worktree-ref>             # rebase worktree branch onto origin/<base_branch>
-agency agent checkpoint ls <invocation-id>
-agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
-agency agent restart <invocation-id> --checkpoint 3 --model opus --effort high
-agency agent restart <invocation-id> --history     # interactive history selector (tty only)
+agency agent restore <invocation-id> --checkpoint 3
+agency agent restore <invocation-id> --turn <entry>
 ```
 
 short alias parity for high-traffic s6 navigation/progression surfaces:
@@ -100,10 +98,11 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 - `agent check`: `-r/--repo`, `-j/--json`
 - `agent path|open|attach`: `-r/--repo`
 
-if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
-for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
-`agent restart` replays the invocation's stored original prompt; use `agency agent checkpoint apply` when you want restore-only rollback without restarting prompt execution.
-`agent restart --history` shows checkpoint-aware turn summaries, completed tool calls, and authoritative changed-file previews from checkpoint-to-checkpoint git diffs.
+`agency watch` and `agency agent history` open different pages of the same terminal runtime.
+`agency agent history` is the canonical inspection surface for invocation turns, checkpoints, and logs.
+`agency agent restore` restores sandbox state only; it does not rerun the original prompt.
+use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
+after a restore, use `agency agent followup` to continue from the restored state.
 typed model/effort knobs are supported for `claude-code`, `codex`, and `cursor`.
 for `claude-code` and `codex`, `--model` and `--effort` apply.
 for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).
@@ -130,7 +129,7 @@ agency worktree rebase <worktree-ref> --json
 agency agent discard <invocation-id> --json
 agency agent followup <invocation-id> --prompt "continue" --json
 agency agent recreate <invocation-id> --json
-agency agent restart <invocation-id> --checkpoint 3 --json
+agency agent restore <invocation-id> --checkpoint 3 --json
 agency repo add --json
 agency repo rm <repo-ref> --yes --json
 ```
@@ -138,7 +137,7 @@ agency repo rm <repo-ref> --yes --json
 all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `followup`,
-and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
+and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restore`).
 for `worktree pr sync` and `worktree pr merge`, additive report fields include
 `report_source` and `report_diagnostics`.
 

@@ -127,7 +127,7 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonInvocationFailed,
 			Message: message,
-			Hint:    "inspect logs and restart from checkpoint if needed",
+			Hint:    "inspect history/logs and restore a checkpoint if needed",
 		})
 	}
 

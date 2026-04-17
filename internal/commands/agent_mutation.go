@@ -6,14 +6,12 @@ import (
 	"io"
 	"os"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 )
 
 // AgentStopOpts holds options for the agent stop command.
@@ -521,29 +519,19 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	return nil
 }
 
-// AgentRestartOpts holds options for the agent restart command.
-type AgentRestartOpts struct {
-	InvocationRef       string
-	RepoRef             string
-	CheckpointID        int
-	InteractiveHistory  bool
-	RunnerArgs          []string
-	Model               string
-	Effort              string
-	Env                 map[string]string
-	JSON                bool
-	DataDirOverride     string
-	IsInteractive       func() bool
-	HistoryPickerRun    func(turns []historypicker.Turn, opts historypicker.RunOptions) (historypicker.Turn, error)
-	HistoryPickerInput  io.Reader
-	HistoryPickerOutput io.Writer
+// AgentRestoreOpts holds options for the agent restore command.
+type AgentRestoreOpts struct {
+	InvocationRef   string
+	RepoRef         string
+	CheckpointID    int
+	TurnID          string
+	JSON            bool
+	DataDirOverride string
 }
 
-const maxHistoryPickerEntries = 5000
-
-// AgentRestart performs invocation-scoped restart from an explicit checkpoint
-// or an interactively selected timeline point.
-func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestartOpts, stdout, stderr io.Writer) error {
+// AgentRestore restores an invocation sandbox to a checkpoint selected either
+// explicitly or by history turn id.
+func AgentRestore(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestoreOpts, stdout, stderr io.Writer) error {
 	fail := func(err error) error {
 		if err == nil || !opts.JSON {
 			return err
@@ -557,33 +545,14 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if opts.CheckpointID < 0 {
 		return fail(errors.New(errors.EUsage, "--checkpoint must be a positive integer"))
 	}
-	if opts.InteractiveHistory && opts.CheckpointID > 0 {
-		return fail(errors.New(errors.EUsage, "use either --checkpoint or --history, not both"))
+	if opts.TurnID != "" && opts.CheckpointID > 0 {
+		return fail(errors.New(errors.EUsage, "use either --checkpoint or --turn, not both"))
 	}
-	if !opts.InteractiveHistory && opts.CheckpointID <= 0 {
-		return fail(errors.New(errors.EUsage, "--checkpoint must be a positive integer (or pass --history)"))
-	}
-	if opts.InteractiveHistory {
-		isInteractiveFn := opts.IsInteractive
-		if isInteractiveFn == nil {
-			isInteractiveFn = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
-		}
-		if !isInteractiveFn() {
-			return fail(errors.NewWithDetails(
-				errors.ENotInteractive,
-				"interactive history selection requires a terminal",
-				map[string]string{
-					"hint": "run this command in an interactive terminal or use --checkpoint <id>",
-				},
-			))
-		}
+	if opts.TurnID == "" && opts.CheckpointID <= 0 {
+		return fail(errors.New(errors.EUsage, "pass either --checkpoint <id> or --turn <entry_id>"))
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-	userCfg, _, err := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
 	if err != nil {
 		return fail(err)
 	}
@@ -591,7 +560,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "agent restart",
+		CmdName:       "agent restore",
 	})
 	if err != nil {
 		return fail(err)
@@ -600,18 +569,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return fail(err)
 	}
-	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(
-		invocationResult.Data.Runner,
-		opts.RunnerArgs,
-		opts.Model,
-		opts.Effort,
-		userCfg.Defaults,
-	)
-	if err != nil {
-		return fail(err)
-	}
-
-	if opts.InteractiveHistory {
+	if opts.TurnID != "" {
 		timelineEntries, err := fetchAllTimelineEntries(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
 		if err != nil {
 			return fail(err)
@@ -623,7 +581,7 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		if len(timelineEntries) == 0 {
 			return fail(errors.NewWithDetails(
 				errors.ECheckpointNotFound,
-				"interactive history selection requires timeline entries",
+				"history turn restore requires timeline entries",
 				map[string]string{
 					"hint": "no history is available for this invocation; use --checkpoint <id>",
 				},
@@ -641,70 +599,58 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			))
 		}
 
-		pickerInput := opts.HistoryPickerInput
-		if pickerInput == nil {
-			pickerInput = os.Stdin
+		selectedIndex := -1
+		for i := range turns {
+			if turns[i].EntryID == opts.TurnID {
+				selectedIndex = i
+				break
+			}
 		}
-		pickerOutput := opts.HistoryPickerOutput
-		if pickerOutput == nil {
-			pickerOutput = stderr
-		}
-
-		runPicker := opts.HistoryPickerRun
-		if runPicker == nil {
-			runPicker = historypicker.Run
-		}
-
-		selected, err := runPicker(turns, historypicker.RunOptions{
-			Input:   pickerInput,
-			Output:  pickerOutput,
-			NoColor: os.Getenv("NO_COLOR") != "",
-		})
-		if err != nil {
-			return fail(err)
+		if selectedIndex < 0 {
+			return fail(errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"invalid value for parameter 'turn': turn id not found",
+				map[string]string{
+					"param": "turn",
+					"turn":  opts.TurnID,
+				},
+			))
 		}
 
+		selected := turns[selectedIndex]
 		if !selected.Restorable || selected.CheckpointID <= 0 {
 			return fail(errors.NewWithDetails(
 				errors.ECheckpointNotFound,
 				"selected turn does not have a checkpoint",
 				map[string]string{
-					"hint": "select a turn that shows a checkpoint badge, or use --checkpoint <id>",
+					"hint": "choose a turn that shows checkpoint=<id>, or use --checkpoint <id>",
 				},
 			))
 		}
 		opts.CheckpointID = selected.CheckpointID
 	}
 
-	resp, err := ns.client.RestartFromCheckpoint(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.RestartFromCheckpointOpts{
-		CheckpointID: opts.CheckpointID,
-		RunnerArgs:   effectiveRunnerArgs,
-		Env:          opts.Env,
-	})
+	resp, err := ns.client.CheckpointApply(ctx, repoCtx.RepoID, invocationResult.Data.InvocationID, opts.CheckpointID)
 	if err != nil {
-		return fail(err)
+		return fail(errors.Wrap(errors.EInternal, "checkpoint restore request failed", err))
 	}
 	if !resp.OK {
 		return fail(errors.NewWithDetails(
 			errors.Code(resp.ErrorCode),
 			resp.Message,
 			map[string]string{
-				"hint":       resp.Hint,
 				"request_id": resp.RequestID,
+				"hint":       resp.Hint,
 			},
 		))
 	}
 
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
+			envelope.InvocationID = invocationResult.Data.InvocationID
 			envelope.CheckpointID = resp.CheckpointID
 			envelope.SnapshotCommit = resp.SnapshotCommit
 			envelope.RestoredAt = resp.RestoredAt
-			envelope.PID = resp.PID
-			envelope.PGID = resp.PGID
-			envelope.DaemonInstanceID = resp.DaemonInstanceID
-			envelope.LogPaths = resp.LogPaths
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -715,11 +661,10 @@ func AgentRestart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		})
 	}
 
-	_, _ = fmt.Fprintln(stdout, "restarted invocation from checkpoint")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:    %s\n", resp.InvocationID)
+	_, _ = fmt.Fprintln(stdout, "restored invocation to checkpoint")
+	_, _ = fmt.Fprintf(stdout, "  invocation_id:    %s\n", invocationResult.Data.InvocationID)
 	_, _ = fmt.Fprintf(stdout, "  checkpoint_id:    %d\n", resp.CheckpointID)
 	_, _ = fmt.Fprintf(stdout, "  snapshot_commit:  %s\n", resp.SnapshotCommit)
 	_, _ = fmt.Fprintf(stdout, "  restored_at:      %s\n", resp.RestoredAt)
-	_, _ = fmt.Fprintf(stdout, "  pid:              %d\n", resp.PID)
 	return nil
 }

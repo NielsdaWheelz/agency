@@ -6,7 +6,9 @@ This document covers `internal/watch`.
 
 ## Rules
 
-- `internal/watch` owns the read-model and Bubble Tea workspace.
+- `internal/watch` owns the single Bubble Tea runtime for workspace and invocation history views.
+- It may expose explicit modes or pages, but should not split into separate TUI runtimes.
 - It should compose daemon read APIs into one snapshot.
 - It should not own persistence or mutation policy.
-- Actions should forward into canonical command contracts.
+- History and log views should be read-model pages over canonical daemon reads, not parallel UI stacks.
+- Actions should forward into canonical command contracts such as `agency agent history` and `agency agent restore`.

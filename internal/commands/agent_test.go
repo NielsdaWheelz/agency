@@ -27,7 +27,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1740,10 +1739,10 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// PR-B: AgentLogs integration tests
+// PR-B: AgentHistoryLogs integration tests
 // ---------------------------------------------------------------------------
 
-func TestAgentLogs_PageToEOF(t *testing.T) {
+func TestAgentHistoryLogs_PageToEOF(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "logs-test")
 	invocationID := "20260131140000-logs"
@@ -1761,7 +1760,7 @@ func TestAgentLogs_PageToEOF(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(context.Background(), cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -1770,7 +1769,7 @@ func TestAgentLogs_PageToEOF(t *testing.T) {
 	assert.Equal(t, "hello world\n", stdout.String())
 }
 
-func TestAgentLogs_FollowMode(t *testing.T) {
+func TestAgentHistoryLogs_FollowMode(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "follow-test")
 	invocationID := "20260131150000-foll"
@@ -1801,7 +1800,7 @@ func TestAgentLogs_FollowMode(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(context.Background(), cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
 		MaxIterations:   2,
@@ -1814,7 +1813,7 @@ func TestAgentLogs_FollowMode(t *testing.T) {
 	assert.Contains(t, stdout.String(), "line2\n")
 }
 
-func TestAgentLogs_ContextCancellation(t *testing.T) {
+func TestAgentHistoryLogs_ContextCancellation(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "ctx-test")
 	invocationID := "20260131160000-cctx"
@@ -1837,7 +1836,7 @@ func TestAgentLogs_ContextCancellation(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(ctx, cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(ctx, cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
 		SleepFn:         sleepFn,
@@ -1849,7 +1848,7 @@ func TestAgentLogs_ContextCancellation(t *testing.T) {
 	assert.Contains(t, stdout.String(), "data\n")
 }
 
-func TestAgentLogs_StderrKind(t *testing.T) {
+func TestAgentHistoryLogs_StderrKind(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "stderr-test")
 	invocationID := "20260131170000-stde"
@@ -1866,7 +1865,7 @@ func TestAgentLogs_StderrKind(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(context.Background(), cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Kind:            "stderr",
 		DataDirOverride: dataDir,
@@ -2008,7 +2007,7 @@ func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
-func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) {
+func TestAgentHistory_HumanTurnOutput_ConvergesWithRestoreTurnSelection(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-turn-converge")
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
@@ -2018,7 +2017,7 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) 
 
 	st := store.NewStore(fsys, dataDir, time.Now)
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("investigate restart convergence"), 0o600))
+	require.NoError(t, os.WriteFile(promptPath, []byte("investigate restore convergence"), 0o600))
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
@@ -2070,22 +2069,6 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) 
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
-	var pickerTurns []historypicker.Turn
-	var restartOut, restartErr bytes.Buffer
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:      invocationID,
-		InteractiveHistory: true,
-		IsInteractive:      func() bool { return true },
-		HistoryPickerRun: func(turns []historypicker.Turn, _ historypicker.RunOptions) (historypicker.Turn, error) {
-			pickerTurns = append([]historypicker.Turn(nil), turns...)
-			return historypicker.Turn{}, errors.New(errors.EAborted, "stop after capturing picker turns")
-		},
-		DataDirOverride: dataDir,
-	}, &restartOut, &restartErr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EAborted, errors.GetCode(err))
-	require.NotEmpty(t, pickerTurns)
-
 	var historyOut, historyErr bytes.Buffer
 	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
@@ -2094,9 +2077,18 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestartHistory(t *testing.T) 
 	}, &historyOut, &historyErr)
 	require.NoError(t, err)
 
+	ns, err := setupDaemonNav(context.Background(), fsys, dataDir)
+	require.NoError(t, err)
+	entries, err := fetchAllTimelineEntries(context.Background(), ns.client, invocationID, repoID)
+	require.NoError(t, err)
+	checkpoints, err := fetchAllCheckpoints(context.Background(), ns.client, invocationID, repoID)
+	require.NoError(t, err)
+	projectedTurns := daemon.ProjectTimelineTurns(entries, checkpoints)
+	require.NotEmpty(t, projectedTurns)
+
 	human := historyOut.String()
-	for _, turn := range pickerTurns {
-		assert.Contains(t, human, turn.EntryID, "history output should expose the same turn id used by restart history")
+	for _, turn := range projectedTurns {
+		assert.Contains(t, human, turn.EntryID, "history output should expose the same projected turn ids")
 	}
 	assert.Contains(t, human, "[prompt]")
 	assert.Contains(t, human, "[assistant]")
@@ -2321,153 +2313,6 @@ func TestAgentFollowup_HumanAndJSONAligned(t *testing.T) {
 	assert.Equal(t, invocationID, payload["invocation_id"])
 }
 
-func TestAgentRestart_InvalidCheckpointIDReturnsUsage(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef: "inv-123",
-		CheckpointID:  0,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-}
-
-func TestAgentRestart_NegativeCheckpointIDReturnsUsage(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef: "inv-123",
-		CheckpointID:  -1,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "--checkpoint must be a positive integer")
-}
-
-func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-output")
-	invocationID := "20260131183000-rout"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.PromptPath = promptPath
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	cpFile := checkpoint.CheckpointsFile{
-		SchemaVersion: checkpoint.SchemaVersion,
-		Checkpoints: []checkpoint.Checkpoint{
-			{
-				ID:                1,
-				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
-				SnapshotCommit:    "deadbeef",
-				SandboxHeadSHA:    "deadbeef",
-				CreatedAt:         "2026-02-05T11:50:30Z",
-				IncludesUntracked: true,
-				Diffstat:          "+0 -0 in 0 files",
-			},
-		},
-	}
-	cpBytes, err := json.Marshal(cpFile)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(
-		st.InvocationCheckpointsPath(repoID, invocationID),
-		cpBytes,
-		0o644,
-	))
-
-	runnerDir := t.TempDir()
-	runnerPath := filepath.Join(runnerDir, "restart-runner.sh")
-	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-
-	configDir := filepath.Join(dataDir, "config")
-	require.NoError(t, os.MkdirAll(configDir, 0o755))
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
-	cfg := map[string]any{
-		"version": 1,
-		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
-		},
-		"runners": map[string]string{
-			"claude-code": runnerPath,
-		},
-	}
-	cfgBytes, err := json.Marshal(cfg)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var humanOut, jsonOut, stderr bytes.Buffer
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:   invocationID,
-		CheckpointID:    1,
-		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
-		DataDirOverride: dataDir,
-	}, &humanOut, &stderr)
-	require.NoError(t, err)
-
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:   invocationID,
-		CheckpointID:    1,
-		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
-		JSON:            true,
-		DataDirOverride: dataDir,
-	}, &jsonOut, &stderr)
-	require.NoError(t, err)
-
-	assert.Contains(t, humanOut.String(), invocationID)
-	assert.Contains(t, strings.ToLower(humanOut.String()), "checkpoint")
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
-	assertMutationEnvelopeShape(t, payload)
-	assert.Equal(t, true, payload["ok"])
-	assert.Equal(t, invocationID, payload["invocation_id"])
-	assert.Equal(t, float64(1), payload["checkpoint_id"])
-}
-
-func TestAgentRestart_RequiresExplicitEnvReplayWhenProfilePresent(t *testing.T) {
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-env-required")
-	configDir := filepath.Join(dataDir, "config")
-	require.NoError(t, os.MkdirAll(configDir, 0o755))
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
-	invocationID := "20260131184000-renv"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.PromptPath = promptPath
-		meta.CustomEnvKeys = []string{"API_TOKEN"}
-	}))
-
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), cr, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:   invocationID,
-		CheckpointID:    1,
-		DataDirOverride: dataDir,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.Code("E_INVALID_REQUEST"), errors.GetCode(err))
-	assert.Contains(t, err.Error(), "explicit env values")
-}
-
 func TestResolveBoundedPromptInput_MissingPromptUsesContextMessage(t *testing.T) {
 	t.Parallel()
 
@@ -2496,124 +2341,6 @@ func TestResolveBoundedPromptInput_EmptyFileUsesContextMessage(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "context-specific empty file message")
-}
-
-func TestAgentRestart_InteractiveHistory_NonInteractiveFailsFast(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef:       "inv-123",
-		InteractiveHistory:  true,
-		IsInteractive:       func() bool { return false },
-		DataDirOverride:     t.TempDir(),
-		HistoryPickerInput:  bytes.NewBuffer(nil),
-		HistoryPickerOutput: &bytes.Buffer{},
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
-}
-
-func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestartFlow(t *testing.T) {
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-history")
-	invocationID := "20260131185000-rhist"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.PromptPath = promptPath
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	cpFile := checkpoint.CheckpointsFile{
-		SchemaVersion: checkpoint.SchemaVersion,
-		Checkpoints: []checkpoint.Checkpoint{
-			{
-				ID:                1,
-				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
-				SnapshotCommit:    "deadbeef",
-				SandboxHeadSHA:    "deadbeef",
-				CreatedAt:         "2026-02-05T11:50:10Z",
-				IncludesUntracked: true,
-				Diffstat:          "+1 -0 in 1 files",
-			},
-			{
-				ID:                2,
-				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/2",
-				SnapshotCommit:    "feedface",
-				SandboxHeadSHA:    "feedface",
-				CreatedAt:         "2026-02-05T11:50:30Z",
-				IncludesUntracked: true,
-				Diffstat:          "+1 -0 in 1 files",
-			},
-		},
-	}
-	cpBytes, err := json.Marshal(cpFile)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
-
-	eventsLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","kind":"agency.followup_prompt","data":{"text":"continue from cp1"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(eventsLines), 0o644))
-
-	runnerDir := t.TempDir()
-	runnerPath := filepath.Join(runnerDir, "restart-runner.sh")
-	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-
-	configDir := filepath.Join(dataDir, "config")
-	require.NoError(t, os.MkdirAll(configDir, 0o755))
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
-	cfg := map[string]any{
-		"version": 1,
-		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
-		},
-		"runners": map[string]string{
-			"claude-code": runnerPath,
-		},
-	}
-	cfgBytes, err := json.Marshal(cfg)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var jsonOut, stderr bytes.Buffer
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:      invocationID,
-		InteractiveHistory: true,
-		IsInteractive:      func() bool { return true },
-		HistoryPickerRun: func(turns []historypicker.Turn, _ historypicker.RunOptions) (historypicker.Turn, error) {
-			// Find the followup turn — it should be grouped as its own turn
-			for _, turn := range turns {
-				if turn.Kind == historypicker.TurnFollowup {
-					return turn, nil
-				}
-			}
-			t.Fatalf("expected follow-up turn in picker turns; got %d turns", len(turns))
-			return historypicker.Turn{}, nil
-		},
-		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
-		JSON:            true,
-		DataDirOverride: dataDir,
-	}, &jsonOut, &stderr)
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
-	assert.Equal(t, true, payload["ok"])
-	assert.Equal(t, invocationID, payload["invocation_id"])
-	// The followup turn inherits checkpoint 1 (the latest before it).
-	assert.Equal(t, float64(1), payload["checkpoint_id"])
 }
 
 func TestProjectTimelineTurns_SparseAssistantSummary_IncludesCheckpointMetadata(t *testing.T) {
@@ -2651,7 +2378,7 @@ func TestProjectTimelineTurns_SparseAssistantSummary_IncludesCheckpointMetadata(
 
 	turns := daemon.ProjectTimelineTurns(entries, checkpoints)
 	require.Len(t, turns, 1)
-	require.Equal(t, historypicker.TurnAssistant, turns[0].Kind)
+	require.Equal(t, daemon.TurnAssistant, turns[0].Kind)
 	assert.Equal(t, 1, turns[0].CheckpointID)
 	assert.True(t, turns[0].Restorable)
 

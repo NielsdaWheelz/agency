@@ -119,19 +119,6 @@ func (s *Server) writeFollowUpSuccessWithDelivery(w http.ResponseWriter, invocat
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) writeRestartError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := RestartFromCheckpointResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
-}
-
 func (s *Server) writeCheckpointError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	resp := CheckpointApplyResponse{
 		OK:           false,

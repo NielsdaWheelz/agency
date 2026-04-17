@@ -70,7 +70,7 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 	}
 	if record.Meta.Status != store.InvocationStatusRunning {
 		s.writeFollowUpError(w, http.StatusConflict, requestID, string(errors.EInvocationNotRunning),
-			"invocation is not running", "start or restart the invocation before sending follow-up prompts", req.ClientRequestID)
+			"invocation is not running", "start a new invocation before sending follow-up prompts", req.ClientRequestID)
 		return
 	}
 

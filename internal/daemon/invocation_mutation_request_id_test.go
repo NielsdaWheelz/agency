@@ -75,23 +75,10 @@ func TestInvocationMutations_RequestIDOnStopKillSuccessAndFailure(t *testing.T) 
 	})
 }
 
-func TestInvocationMutations_RequestIDOnRestartAndFollowUpErrors(t *testing.T) {
+func TestInvocationMutations_RequestIDOnFollowUpErrors(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
-
-	wRestart := env.doInvocationRequestWithBody(
-		t,
-		http.MethodPost,
-		"/invocations/inv-1/restart",
-		[]byte(`{"checkpoint_id":1}`),
-	)
-	var restartPayload map[string]any
-	require.NoError(t, json.NewDecoder(wRestart.Body).Decode(&restartPayload))
-	restartRequestID, ok := restartPayload["request_id"].(string)
-	require.True(t, ok, "restart request_id must be present")
-	assert.NotEmpty(t, restartRequestID)
-	assert.Equal(t, restartRequestID, wRestart.Header().Get("X-Request-ID"))
 
 	wFollowUp := env.doInvocationRequestWithBody(
 		t,

@@ -6,6 +6,5 @@ type ControlPlaneStartOpts = daemon.ControlPlaneStartRequest
 type ControlPlaneStartHeadedOpts = daemon.ControlPlaneStartHeadedRequest
 type SubmitFollowUpOpts = daemon.ControlPlaneFollowUpRequest
 type WorktreeCreateOpts = daemon.WorktreeCreateRequest
-type RestartFromCheckpointOpts = daemon.RestartFromCheckpointRequest
 type WorktreePRSyncOpts = daemon.WorktreePRSyncRequest
 type WorktreePRMergeOpts = daemon.WorktreePRMergeRequest

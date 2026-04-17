@@ -71,12 +71,6 @@ func TestRequestIDContractMatrix_InvocationMutationAndCheckEndpoints(t *testing.
 			body:   []byte(`{"client_request_id":"req-1","prompt":"continue"}`),
 		},
 		{
-			name:   "restart_missing_repo",
-			method: http.MethodPost,
-			path:   "/invocations/inv-1/restart",
-			body:   []byte(`{"checkpoint_id":1}`),
-		},
-		{
 			name:   "recreate_missing_repo",
 			method: http.MethodPost,
 			path:   "/invocations/inv-1/recreate",

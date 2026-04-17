@@ -171,6 +171,7 @@ func newAgentHistoryCmd() *cobra.Command {
 		},
 	}
 	cmd.GroupID = "inspect"
+	cmd.AddCommand(newAgentHistoryLogsCmd())
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
@@ -181,7 +182,7 @@ func newAgentHistoryCmd() *cobra.Command {
 	return cmd
 }
 
-func newAgentLogsCmd() *cobra.Command {
+func newAgentHistoryLogsCmd() *cobra.Command {
 	var repoRef string
 	var kind string
 	var follow bool
@@ -190,7 +191,7 @@ func newAgentLogsCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "logs <invocation_id|prefix>",
-		Short: "View invocation logs",
+		Short: "View raw invocation logs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -198,7 +199,7 @@ func newAgentLogsCmd() *cobra.Command {
 				return err
 			}
 
-			return commands.AgentLogs(ctx, cr, fsys, cwd, commands.AgentLogsOpts{
+			return commands.AgentHistoryLogs(ctx, cr, fsys, cwd, commands.AgentHistoryLogsOpts{
 				InvocationRef: args[0],
 				RepoRef:       repoRef,
 				Kind:          kind,
@@ -208,7 +209,6 @@ func newAgentLogsCmd() *cobra.Command {
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
-	cmd.GroupID = "inspect"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream, hooks, terminal)")

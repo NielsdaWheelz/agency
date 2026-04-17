@@ -19,6 +19,13 @@ const defaultRefreshInterval = 2 * time.Second
 
 const minPanelWidth = 40
 
+type watchMode string
+
+const (
+	modeWorkspace watchMode = "workspace"
+	modeHistory   watchMode = "history"
+)
+
 type loader interface {
 	Load(ctx context.Context) (Snapshot, error)
 }
@@ -141,6 +148,7 @@ type actionResultMsg struct {
 }
 
 type model struct {
+	mode     watchMode
 	ctx      context.Context
 	loader   loader
 	actions  ActionDispatcher
@@ -159,6 +167,10 @@ type model struct {
 	actionRunning        bool
 	lastActionMessage    string
 	lastActionError      bool
+	historyTurns         []daemon.Turn
+	historySelectedIndex int
+	historyNoColor       bool
+	historyKeys          historyKeyMap
 }
 
 func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration, actions ActionDispatcher) model {
@@ -173,6 +185,7 @@ func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration
 	h.ShortSeparator = " • "
 
 	return model{
+		mode:     modeWorkspace,
 		ctx:      ctx,
 		loader:   snapshotLoader,
 		actions:  actions,
@@ -183,6 +196,9 @@ func newModel(ctx context.Context, snapshotLoader loader, interval time.Duration
 }
 
 func (m model) Init() tea.Cmd {
+	if m.mode == modeHistory {
+		return nil
+	}
 	return tea.Batch(scheduleRefreshCmd(), tickCmd(m.interval))
 }
 
@@ -191,13 +207,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.help.SetWidth(msg.Width)
+		if m.mode == modeWorkspace {
+			m.help.SetWidth(msg.Width)
+		}
 		return m, nil
 
 	case refreshTickMsg:
+		if m.mode == modeHistory {
+			return m, nil
+		}
 		return m, tea.Batch(tickCmd(m.interval), scheduleRefreshCmd())
 
 	case refreshRequestMsg:
+		if m.mode == modeHistory {
+			return m, nil
+		}
 		if m.refreshing {
 			return m, nil
 		}
@@ -205,6 +229,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadSnapshotCmd()
 
 	case snapshotLoadedMsg:
+		if m.mode == modeHistory {
+			return m, nil
+		}
 		m.refreshing = false
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
@@ -216,6 +243,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionResultMsg:
+		if m.mode == modeHistory {
+			return m, nil
+		}
 		m.actionRunning = false
 		m.lastActionError = msg.err != nil
 		if msg.err != nil {
@@ -234,6 +264,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, scheduleRefreshCmd()
 
 	case tea.KeyPressMsg:
+		if m.mode == modeHistory {
+			return m.updateHistory(msg)
+		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -273,6 +306,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	content := m.renderWorkspace()
+	if m.mode == modeHistory {
+		content = m.renderHistory()
+	}
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.Cursor = nil
@@ -369,7 +405,7 @@ func formatActionError(kind actionKind, err error, invocationID, worktreeID stri
 	target := actionTarget(kind, invocationID, worktreeID)
 	code := agencyerrors.GetCode(err)
 	if code == agencyerrors.ESessionEnded {
-		hint := "session ended; use 'agency agent logs' or 'agency agent open' to view"
+		hint := "session ended; use 'agency agent history logs' or 'agency agent open' to view"
 		if ae, ok := agencyerrors.AsAgencyError(err); ok {
 			if resolvedHint := strings.TrimSpace(ae.Details["hint"]); resolvedHint != "" {
 				hint = resolvedHint

@@ -58,7 +58,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 	if meta.Mode != store.RunnerModeHeaded {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvocationInvalidMode), "recreate is only supported for headed invocations", "use 'agency agent restart' for headless invocations", "", requestID)
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvocationInvalidMode), "recreate is only supported for headed invocations", "use 'agency agent history' to inspect or 'agency agent restore' to roll back a headless invocation", "", requestID)
 		return
 	}
 	if meta.LandingStatus == store.LandingStatusLanded {

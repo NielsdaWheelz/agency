@@ -1,13 +1,9 @@
 package cobra
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
-	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func newAgentStopCmd() *cobra.Command {
@@ -245,65 +241,39 @@ Example:
 	return cmd
 }
 
-func newAgentRestartCmd() *cobra.Command {
+func newAgentRestoreCmd() *cobra.Command {
 	var repoRef string
 	var checkpointID int
-	var historySelector bool
-	var runnerArgs []string
-	var model string
-	var effort string
-	var envAssignments []string
+	var turnID string
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "restart <invocation_ref>",
-		Short: "Restart headless invocation from checkpoint/history",
-		Long: `Restart a headless invocation in one flow.
-
-This command performs checkpoint restore and runner restart as a single
-invocation-scoped operation.
+		Use:   "restore <invocation_ref>",
+		Short: "Restore an invocation sandbox to a checkpoint",
+		Long: `Restore a headless invocation sandbox to a previous checkpoint.
 
 Use either:
-  - --checkpoint <id> for explicit/scripted restart
-  - --history for interactive arrow-key selection over timeline history
-
-Deterministic mapping rule for --history:
-  the selected timeline entry resolves to the latest checkpoint_event at or before
-  that entry. If no valid checkpoint mapping exists, the command fails with a
-  deterministic error and guidance.
+  - --checkpoint <id> for explicit/scripted restore
+  - --turn <entry_id> to restore the latest checkpoint at or before a history turn
 
 Example:
-  agency agent restart 20260131 --checkpoint 3
-  agency agent restart 20260131 --history
-  agency agent restart --repo agency my-invocation --checkpoint 7
-  agency agent restart 20260131 --checkpoint 3 --runner-arg "--model=sonnet"
-  agency agent restart 20260131 --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
-  agency agent restart --json 20260131 --checkpoint 3`,
+  agency agent restore 20260131 --checkpoint 3
+  agency agent restore 20260131 --turn stream:9
+  agency agent restore --repo agency my-invocation --checkpoint 7
+  agency agent restore --json 20260131 --turn inv_event:2:agency.followup_prompt`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			envMap, err := parseEnvAssignments(envAssignments)
-			if err != nil {
-				if jsonOut {
-					return commands.WriteAgentMutationJSONError(cmd.OutOrStdout(), errors.New(errors.EUsage, err.Error()))
-				}
-				return err
-			}
-
 			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
 				return err
 			}
 
-			return commands.AgentRestart(ctx, cr, fsys, cwd, commands.AgentRestartOpts{
-				InvocationRef:      args[0],
-				RepoRef:            repoRef,
-				CheckpointID:       checkpointID,
-				InteractiveHistory: historySelector,
-				RunnerArgs:         runnerArgs,
-				Model:              model,
-				Effort:             effort,
-				Env:                envMap,
-				JSON:               jsonOut,
+			return commands.AgentRestore(ctx, cr, fsys, cwd, commands.AgentRestoreOpts{
+				InvocationRef: args[0],
+				RepoRef:       repoRef,
+				CheckpointID:  checkpointID,
+				TurnID:        turnID,
+				JSON:          jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -311,27 +281,8 @@ Example:
 
 	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
-	cmd.Flags().BoolVar(&historySelector, "history", false, "Select timeline history interactively (arrow keys)")
-	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to restarted runner (repeatable)")
-	cmd.Flags().StringVar(&model, "model", "", "Model override for restart (supported for runners claude-code, codex, cursor)")
-	cmd.Flags().StringVar(&effort, "effort", "", "Effort override for restart (claude-code: --effort, codex: model_reasoning_effort; cursor: choose thinking model via --model)")
-	cmd.Flags().StringArrayVar(&envAssignments, "env", nil, "Environment override KEY=VALUE for restart (repeatable)")
+	cmd.Flags().StringVar(&turnID, "turn", "", "History turn entry id to restore from")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 
 	return cmd
-}
-
-func parseEnvAssignments(assignments []string) (map[string]string, error) {
-	if len(assignments) == 0 {
-		return nil, nil
-	}
-	env := make(map[string]string, len(assignments))
-	for _, assignment := range assignments {
-		key, value, ok := strings.Cut(assignment, "=")
-		if !ok || key == "" {
-			return nil, fmt.Errorf("invalid --env value %q (expected KEY=VALUE)", assignment)
-		}
-		env[key] = value
-	}
-	return env, nil
 }

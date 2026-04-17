@@ -31,9 +31,6 @@ Use subcommands to run, inspect, navigate, recover, and finish invocations.`,
 		&cobra.Group{ID: "finish", Title: "Finish"},
 	)
 
-	checkpointCmd := newAgentCheckpointCmd()
-	checkpointCmd.GroupID = "recover"
-
 	cmd.AddCommand(
 		newAgentStartCmd(),
 		newAgentLSCmd(),
@@ -49,10 +46,8 @@ Use subcommands to run, inspect, navigate, recover, and finish invocations.`,
 		newAgentAttachCmd(),
 		newAgentFollowupCmd(),
 		newAgentRecreateCmd(),
-		checkpointCmd,
-		newAgentRestartCmd(),
 		newAgentHistoryCmd(),
-		newAgentLogsCmd(),
+		newAgentRestoreCmd(),
 		newAgentCheckCmd(),
 	)
 

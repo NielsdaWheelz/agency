@@ -10,7 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/render"
-	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 )
 
 // writeAgentLSJSONFromDTO outputs invocation list as JSON from daemon DTOs.
@@ -271,7 +270,7 @@ func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO
 	})
 }
 
-func writeAgentHistoryHumanFromTurns(w io.Writer, turns []historypicker.Turn, nextCursor string) error {
+func writeAgentHistoryHumanFromTurns(w io.Writer, turns []daemon.Turn, nextCursor string) error {
 	if len(turns) == 0 {
 		_, _ = fmt.Fprintln(w, "No timeline entries found.")
 		return nil

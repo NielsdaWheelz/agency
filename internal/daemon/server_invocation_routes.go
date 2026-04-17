@@ -59,11 +59,6 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		s.handleKill(w, r, invocationRef)
 	case "checkpoints":
 		s.handleCheckpointsRoute(w, r, invocationRef, action)
-	case "restart":
-		if !s.requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		s.handleRestartFromCheckpoint(w, r, invocationRef)
 	case "recreate":
 		if !s.requireMethod(w, r, http.MethodPost) {
 			return

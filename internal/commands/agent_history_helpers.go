@@ -9,6 +9,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
+const maxHistoryTUIEntries = 2000
+
 func fetchAllTimelineEntries(ctx context.Context, client *daemonclient.Client, invocationRef, repoID string) ([]daemon.TimelineEntryDTO, error) {
 	entries := make([]daemon.TimelineEntryDTO, 0, 128)
 	cursor := ""
@@ -23,10 +25,10 @@ func fetchAllTimelineEntries(ctx context.Context, client *daemonclient.Client, i
 		}
 
 		entries = append(entries, result.Data.Entries...)
-		if len(entries) > maxHistoryPickerEntries {
+		if len(entries) > maxHistoryTUIEntries {
 			return nil, errors.NewWithDetails(
 				errors.EInvalidArgument,
-				fmt.Sprintf("interactive history picker supports at most %d timeline entries", maxHistoryPickerEntries),
+				fmt.Sprintf("interactive history view supports at most %d timeline entries", maxHistoryTUIEntries),
 				map[string]string{
 					"hint": "narrow invocation scope or use explicit --checkpoint <id>",
 				},
@@ -57,10 +59,10 @@ func fetchAllCheckpoints(ctx context.Context, client *daemonclient.Client, invoc
 		}
 
 		checkpoints = append(checkpoints, result.Data.Checkpoints...)
-		if len(checkpoints) > maxHistoryPickerEntries {
+		if len(checkpoints) > maxHistoryTUIEntries {
 			return nil, errors.NewWithDetails(
 				errors.EInvalidArgument,
-				fmt.Sprintf("interactive history picker supports at most %d checkpoints", maxHistoryPickerEntries),
+				fmt.Sprintf("interactive history view supports at most %d checkpoints", maxHistoryTUIEntries),
 				map[string]string{
 					"hint": "use explicit --checkpoint <id> for very large histories",
 				},

@@ -262,7 +262,7 @@ func TestModel_ActionAttach_SessionEndedIsRecoverable(t *testing.T) {
 			errors.ESessionEnded,
 			"tmux session not found",
 			map[string]string{
-				"hint": "session ended; use 'agency agent logs' or 'agency agent open' to view",
+				"hint": "session ended; use 'agency agent history logs' or 'agency agent open' to view",
 			},
 		),
 	}

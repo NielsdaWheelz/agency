@@ -1,4 +1,4 @@
-package historypicker
+package daemon
 
 import (
 	"encoding/json"
@@ -16,18 +16,16 @@ const (
 	TurnFollowup  TurnKind = "followup"
 )
 
-// Turn represents one logical conversation turn in the history picker.
-// Timeline entries are grouped: an assistant message together with its
-// subsequent tool calls and tool results form a single Turn.
+// Turn represents one logical conversation turn in projected invocation history.
 type Turn struct {
 	EntryID        string
 	Kind           TurnKind
-	Timestamp      string // full RFC3339
-	ShortTimestamp string // HH:MM:SS only
+	Timestamp      string
+	ShortTimestamp string
 	Summary        string
 	ToolCalls      []ToolCall
 	CheckpointID   int
-	Restorable     bool // true when a valid checkpoint is mapped
+	Restorable     bool
 
 	CheckpointDescription  string
 	CheckpointDiffstat     string
@@ -45,17 +43,16 @@ type ToolCall struct {
 	HasExit  bool
 }
 
-// TimelineEntry is the input type for grouping. Callers convert from their
-// DTO types into this to avoid coupling the picker to daemon types.
-type TimelineEntry struct {
+// TimelineTurnEntry is the input type for grouping projected history turns.
+type TimelineTurnEntry struct {
 	EntryID   string
 	Kind      string
 	Timestamp string
 	Data      map[string]interface{}
 }
 
-// CheckpointRef identifies a valid checkpoint that can be restored.
-type CheckpointRef struct {
+// TurnCheckpointRef identifies a valid checkpoint that can be restored.
+type TurnCheckpointRef struct {
 	ID int
 
 	Description          string
@@ -65,21 +62,20 @@ type CheckpointRef struct {
 	ChangedPathTruncated bool
 }
 
-// GroupTimelineIntoTurns converts a flat timeline into grouped conversation
-// turns suitable for the interactive history picker.
-func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef) []Turn {
+// GroupTimelineIntoTurns converts a flat timeline into grouped conversation turns.
+func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheckpointRef) []Turn {
 	if len(entries) == 0 {
 		return nil
 	}
 
-	checkpointSet := make(map[int]CheckpointRef, len(checkpoints))
+	checkpointSet := make(map[int]TurnCheckpointRef, len(checkpoints))
 	for _, cp := range checkpoints {
 		checkpointSet[cp.ID] = cp
 	}
 
 	var turns []Turn
 	latestCheckpointID := 0
-	var latestCheckpoint CheckpointRef
+	var latestCheckpoint TurnCheckpointRef
 
 	for _, entry := range entries {
 		switch entry.Kind {
@@ -90,20 +86,13 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 					latestCheckpoint = cp
 				}
 			}
-			// Absorb into the preceding turn only if it's an assistant turn.
-			// Checkpoints represent code state snapshots produced by assistant
-			// work — they should not retroactively update prompt or followup
-			// turns which are user input, not work products.
 			if len(turns) > 0 && turns[len(turns)-1].Kind == TurnAssistant {
 				last := &turns[len(turns)-1]
 				applyCheckpointMetadata(last, latestCheckpointID, latestCheckpoint)
 			}
 			continue
-
 		case "session_start", "final", "error", "raw_log_coverage", "invocation_event", "usage", "status":
-			// Filtered out — not displayed as turns
 			continue
-
 		case "parse_error":
 			turns = appendDiagnosticTurn(
 				turns,
@@ -113,7 +102,6 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 				latestCheckpoint,
 			)
 			continue
-
 		case "unknown":
 			turns = appendDiagnosticTurn(
 				turns,
@@ -123,9 +111,7 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 				latestCheckpoint,
 			)
 			continue
-
 		case "tool_use":
-			// Attach to the current (last) assistant turn
 			if len(turns) > 0 && turns[len(turns)-1].Kind == TurnAssistant {
 				tc := ToolCall{
 					ID:      dataString(entry.Data, "tool_id"),
@@ -178,13 +164,9 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 				lastTurn.ToolCalls = append(lastTurn.ToolCalls, tc)
 			}
 			continue
-
 		case "message":
 			role := dataString(entry.Data, "role")
 			if role == "user" {
-				// Cursor and future runners may echo prompts as user messages.
-				// Preserve those as prompt/followup turns instead of collapsing
-				// them into tool-result noise.
 				if strings.EqualFold(strings.TrimSpace(dataString(entry.Data, "message_family")), "prompt") {
 					kind := TurnFollowup
 					if len(turns) == 0 {
@@ -199,13 +181,11 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 						latestCheckpoint,
 					)
 				}
-				// Non-prompt user messages are tool results and are absorbed.
 				continue
 			}
 			if role != "assistant" {
 				continue
 			}
-			// Assistant message starts a new turn
 			turns = append(turns, Turn{
 				EntryID:        entry.EntryID,
 				Kind:           TurnAssistant,
@@ -215,7 +195,6 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 			})
 			applyCheckpointMetadata(&turns[len(turns)-1], latestCheckpointID, latestCheckpoint)
 			continue
-
 		case "prompt_seed":
 			turns = appendPromptLikeTurn(
 				turns,
@@ -226,7 +205,6 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 				latestCheckpoint,
 			)
 			continue
-
 		case "followup_prompt":
 			turns = appendPromptLikeTurn(
 				turns,
@@ -237,7 +215,6 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 				latestCheckpoint,
 			)
 			continue
-
 		default:
 			turns = appendDiagnosticTurn(
 				turns,
@@ -255,11 +232,11 @@ func GroupTimelineIntoTurns(entries []TimelineEntry, checkpoints []CheckpointRef
 
 func appendPromptLikeTurn(
 	turns []Turn,
-	entry TimelineEntry,
+	entry TimelineTurnEntry,
 	kind TurnKind,
 	summary string,
 	latestCheckpointID int,
-	latestCheckpoint CheckpointRef,
+	latestCheckpoint TurnCheckpointRef,
 ) []Turn {
 	trimmedSummary := strings.TrimSpace(summary)
 	if trimmedSummary == "" {
@@ -273,7 +250,6 @@ func appendPromptLikeTurn(
 	if len(turns) > 0 {
 		last := &turns[len(turns)-1]
 		if (last.Kind == TurnPrompt || last.Kind == TurnFollowup) && promptSummaryEqual(last.Summary, trimmedSummary) {
-			// Prefer explicit Agency followup events as canonical prompt turn IDs.
 			if entry.Kind == "followup_prompt" {
 				last.EntryID = entry.EntryID
 				last.Kind = kind
@@ -298,10 +274,10 @@ func appendPromptLikeTurn(
 
 func appendDiagnosticTurn(
 	turns []Turn,
-	entry TimelineEntry,
+	entry TimelineTurnEntry,
 	summary string,
 	latestCheckpointID int,
-	latestCheckpoint CheckpointRef,
+	latestCheckpoint TurnCheckpointRef,
 ) []Turn {
 	turns = append(turns, Turn{
 		EntryID:        entry.EntryID,
@@ -331,7 +307,7 @@ func promptSummaryEqual(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
-func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint CheckpointRef) {
+func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint TurnCheckpointRef) {
 	if turn == nil {
 		return
 	}
@@ -371,9 +347,8 @@ func shouldEnrichTurnSummary(summary string) bool {
 	return false
 }
 
-func enrichTurnSummary(summary string, checkpoint CheckpointRef) string {
+func enrichTurnSummary(summary string, checkpoint TurnCheckpointRef) string {
 	parts := make([]string, 0, 3)
-
 	base := strings.TrimSpace(summary)
 	if base != "" {
 		parts = append(parts, base)
@@ -399,12 +374,9 @@ func assistantMessageSummary(data map[string]interface{}) string {
 	base := strings.TrimSpace(dataString(data, "text"))
 	textHints, toolHints := summaryHintsFromContentBlocks(data)
 	toolNames := normalizeSummaryHints(append(dataStringSlice(data, "tool_names"), toolHints...))
-
-	// Prefer natural-language content from content_blocks when top-level text is absent.
 	if base == "" && len(textHints) > 0 {
 		base = textHints[0]
 	}
-
 	if shouldEnrichTurnSummary(base) && len(toolNames) > 0 {
 		toolSummary := "tools: " + strings.Join(toolNames, ", ")
 		if base == "" {
@@ -412,7 +384,6 @@ func assistantMessageSummary(data map[string]interface{}) string {
 		}
 		return base + " (" + toolSummary + ")"
 	}
-
 	return base
 }
 
@@ -445,7 +416,6 @@ func summaryHintsFromContentBlocks(data map[string]interface{}) ([]string, []str
 		if !ok {
 			continue
 		}
-
 		switch strings.TrimSpace(dataString(block, "type")) {
 		case "text":
 			if txt := strings.TrimSpace(dataString(block, "text")); txt != "" {

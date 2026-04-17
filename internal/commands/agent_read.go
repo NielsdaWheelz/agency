@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
+	"github.com/NielsdaWheelz/agency/internal/watch"
 )
 
 // AgentLSOpts holds options for the agent ls command.
@@ -183,6 +184,16 @@ type AgentHistoryOpts struct {
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
+
+	// IsInteractive, when set, decides whether bare history opens the full-screen view.
+	IsInteractive func() bool
+
+	// HistoryInput and HistoryOutput override the watch history IO during tests.
+	HistoryInput  io.Reader
+	HistoryOutput io.Writer
+
+	// RunHistory overrides the shared watch history runtime during tests.
+	RunHistory func([]daemon.Turn, watch.HistoryRunOptions) error
 }
 
 // AgentHistory reads the unified invocation timeline via daemon read API.
@@ -219,7 +230,7 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	// JSON remains the machine-fidelity escape hatch for raw timeline entries.
 	// For default human history and --last resolution we project from shared turns
-	// so history aligns with restart --history semantics.
+	// so history aligns with restore --turn semantics.
 	if opts.JSON && !opts.Last {
 		result, err := ns.client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
 			Limit:  opts.Limit,
@@ -251,7 +262,7 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		if len(turns) == 0 {
 			return writeAgentHistoryHumanFromTurns(stdout, nil, "")
 		}
-		return writeAgentHistoryHumanFromTurns(stdout, []historypicker.Turn{turns[len(turns)-1]}, "")
+		return writeAgentHistoryHumanFromTurns(stdout, []daemon.Turn{turns[len(turns)-1]}, "")
 	}
 
 	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" && !daemon.HistoryTurnExists(turns, cursor) {
@@ -265,12 +276,33 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		)
 	}
 
+	isInteractive := opts.IsInteractive
+	if isInteractive == nil {
+		isInteractive = func() bool {
+			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
+		}
+	}
+	if isInteractive() && opts.Cursor == "" && opts.Limit == 50 {
+		historyOutput := opts.HistoryOutput
+		if historyOutput == nil {
+			historyOutput = stdout
+		}
+		runHistory := opts.RunHistory
+		if runHistory == nil {
+			runHistory = watch.RunHistory
+		}
+		return runHistory(turns, watch.HistoryRunOptions{
+			Input:  opts.HistoryInput,
+			Output: historyOutput,
+		})
+	}
+
 	page, nextCursor := daemon.PaginateHistoryTurns(turns, opts.Cursor, opts.Limit)
 	return writeAgentHistoryHumanFromTurns(stdout, page, nextCursor)
 }
 
-// AgentLogsOpts holds options for the agent logs command.
-type AgentLogsOpts struct {
+// AgentHistoryLogsOpts holds options for the agent history logs command.
+type AgentHistoryLogsOpts struct {
 	// InvocationRef is the invocation reference (id, name, or prefix).
 	InvocationRef string
 
@@ -296,10 +328,10 @@ type AgentLogsOpts struct {
 	DataDirOverride string
 }
 
-// AgentLogs views invocation logs via daemon offset-based API.
+// AgentHistoryLogs views raw invocation logs via daemon offset-based API.
 // Without --follow: pages to EOF and exits.
 // With --follow: pages to EOF, then polls for new data until interrupted.
-func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLogsOpts, stdout, stderr io.Writer) error {
+func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentHistoryLogsOpts, stdout, stderr io.Writer) error {
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
 		return err
@@ -308,7 +340,7 @@ func AgentLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllowAllRepos: false,
-		CmdName:       "agent logs",
+		CmdName:       "agent history logs",
 	})
 	if err != nil {
 		return err

@@ -6,10 +6,9 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
-	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
 )
 
-func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []historypicker.Turn {
+func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []Turn {
 	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
 	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
 	if err != nil && !os.IsNotExist(err) {
@@ -69,15 +68,15 @@ func checkpointDTOsFromCheckpoints(checkpoints []checkpoint.Checkpoint) []Checkp
 }
 
 // ProjectTimelineTurns converts daemon timeline and checkpoint DTOs into the
-// grouped turn view used by history and restart flows.
-func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDTO) []historypicker.Turn {
+// grouped turn view used by history and restore flows.
+func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDTO) []Turn {
 	if len(entries) == 0 {
 		return nil
 	}
 
-	pickerEntries := make([]historypicker.TimelineEntry, len(entries))
+	pickerEntries := make([]TimelineTurnEntry, len(entries))
 	for i, entry := range entries {
-		pickerEntries[i] = historypicker.TimelineEntry{
+		pickerEntries[i] = TimelineTurnEntry{
 			EntryID:   entry.EntryID,
 			Kind:      entry.Kind,
 			Timestamp: entry.Timestamp,
@@ -85,9 +84,9 @@ func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDT
 		}
 	}
 
-	pickerCheckpoints := make([]historypicker.CheckpointRef, len(checkpoints))
+	pickerCheckpoints := make([]TurnCheckpointRef, len(checkpoints))
 	for i, cp := range checkpoints {
-		pickerCheckpoints[i] = historypicker.CheckpointRef{
+		pickerCheckpoints[i] = TurnCheckpointRef{
 			ID:                   cp.ID,
 			Description:          cp.Description,
 			Diffstat:             cp.Diffstat,
@@ -97,11 +96,11 @@ func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDT
 		}
 	}
 
-	return historypicker.GroupTimelineIntoTurns(pickerEntries, pickerCheckpoints)
+	return GroupTimelineIntoTurns(pickerEntries, pickerCheckpoints)
 }
 
 // PaginateHistoryTurns returns a stable cursor page over projected turns.
-func PaginateHistoryTurns(turns []historypicker.Turn, cursor string, limit int) ([]historypicker.Turn, string) {
+func PaginateHistoryTurns(turns []Turn, cursor string, limit int) ([]Turn, string) {
 	if len(turns) == 0 {
 		return nil, ""
 	}
@@ -118,7 +117,7 @@ func PaginateHistoryTurns(turns []historypicker.Turn, cursor string, limit int) 
 	}
 
 	if start >= len(turns) {
-		return []historypicker.Turn{}, ""
+		return []Turn{}, ""
 	}
 
 	end := start + limit
@@ -135,7 +134,7 @@ func PaginateHistoryTurns(turns []historypicker.Turn, cursor string, limit int) 
 }
 
 // TimelineEntriesForTurn returns the raw timeline entries that belong to a turn.
-func TimelineEntriesForTurn(entries []TimelineEntryDTO, turns []historypicker.Turn, turnEntryID string) []TimelineEntryDTO {
+func TimelineEntriesForTurn(entries []TimelineEntryDTO, turns []Turn, turnEntryID string) []TimelineEntryDTO {
 	if len(entries) == 0 || len(turns) == 0 || strings.TrimSpace(turnEntryID) == "" {
 		return nil
 	}
@@ -197,7 +196,7 @@ func includeInLastTurnJSON(kind string) bool {
 }
 
 // HistoryTurnExists reports whether a projected turn ID is present.
-func HistoryTurnExists(turns []historypicker.Turn, entryID string) bool {
+func HistoryTurnExists(turns []Turn, entryID string) bool {
 	for _, turn := range turns {
 		if turn.EntryID == entryID {
 			return true
@@ -279,7 +278,7 @@ func (s *Server) buildInvocationActivityProjection(
 	return projection
 }
 
-func latestRestorableTurnID(turns []historypicker.Turn) string {
+func latestRestorableTurnID(turns []Turn) string {
 	for i := len(turns) - 1; i >= 0; i-- {
 		turn := turns[i]
 		if turn.Restorable && strings.TrimSpace(turn.EntryID) != "" {
@@ -289,15 +288,15 @@ func latestRestorableTurnID(turns []historypicker.Turn) string {
 	return ""
 }
 
-func normalizeLatestTurnSummary(turn historypicker.Turn) string {
+func normalizeLatestTurnSummary(turn Turn) string {
 	summary := strings.TrimSpace(turn.Summary)
 	if summary != "" {
 		return truncateActivitySummary(summary)
 	}
 	switch turn.Kind {
-	case historypicker.TurnPrompt:
+	case TurnPrompt:
 		return truncateActivitySummary("prompt")
-	case historypicker.TurnFollowup:
+	case TurnFollowup:
 		return truncateActivitySummary("follow-up prompt")
 	default:
 		return truncateActivitySummary("assistant turn")
@@ -394,7 +393,7 @@ func truncateActivitySummary(summary string) string {
 	return strings.TrimSpace(string(runes[:maxActivitySummaryChars])) + "..."
 }
 
-func projectLatestActivityToolCalls(calls []historypicker.ToolCall) []InvocationActivityToolCall {
+func projectLatestActivityToolCalls(calls []ToolCall) []InvocationActivityToolCall {
 	if len(calls) == 0 {
 		return nil
 	}

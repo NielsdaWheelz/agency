@@ -112,7 +112,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:
 			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.ECheckpointNotFound),
-				err.Error(), "run 'agency agent checkpoint ls' to see available checkpoints")
+				err.Error(), "run 'agency agent history <invocation_ref>' to inspect available checkpoints and turn ids")
 		case errors.ERollbackFailed:
 			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
 				err.Error(), "")

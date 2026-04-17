@@ -41,20 +41,6 @@ func (c *Client) CheckpointApply(ctx context.Context, repoID, invocationID strin
 	return &result, nil
 }
 
-// RestartFromCheckpoint applies checkpoint and restarts the same invocation in one flow.
-func (c *Client) RestartFromCheckpoint(ctx context.Context, invocationRef, repoID string, opts RestartFromCheckpointOpts) (*daemon.RestartFromCheckpointResponse, error) {
-	u := fmt.Sprintf("%s/invocations/%s/restart", daemonBaseURL, url.PathEscape(invocationRef))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-	var result daemon.RestartFromCheckpointResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
 // RecreateHeaded starts a new tmux session for an existing headed invocation.
 func (c *Client) RecreateHeaded(ctx context.Context, invocationRef, repoID string) (*daemon.ControlPlaneStartHeadedResponse, error) {
 	u := fmt.Sprintf("%s/invocations/%s/recreate", daemonBaseURL, url.PathEscape(invocationRef))

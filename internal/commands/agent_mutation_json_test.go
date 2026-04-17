@@ -232,11 +232,10 @@ func TestAgentFollowup_JSONFailureTransportEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EDaemonStartFailed), payload["error_code"])
 }
 
-func TestAgentRestart_JSONFailureValidationEnvelope(t *testing.T) {
+func TestAgentRestore_JSONFailureValidationEnvelope(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestartOpts{
+	err := AgentRestore(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestoreOpts{
 		InvocationRef: "inv-123",
-		CheckpointID:  0,
 		JSON:          true,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "json validation failures should not return a human-formatted error")
@@ -247,8 +246,8 @@ func TestAgentRestart_JSONFailureValidationEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EUsage), payload["error_code"])
 }
 
-func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "restart-json-daemon-fail")
+func TestAgentRestore_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "restore-json-daemon-fail")
 	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	cr := testutil.NewFakeCommandRunner()
@@ -256,7 +255,7 @@ func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), cr, fsys, repoDir, AgentRestartOpts{
+	err := AgentRestore(context.Background(), cr, fsys, repoDir, AgentRestoreOpts{
 		InvocationRef:   "does-not-exist",
 		CheckpointID:    1,
 		JSON:            true,
@@ -271,11 +270,11 @@ func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentRestart_JSONFailureTransportEnvelope(t *testing.T) {
+func TestAgentRestore_JSONFailureTransportEnvelope(t *testing.T) {
 	missingDataDir := filepath.Join(t.TempDir(), "missing")
 
 	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestartOpts{
+	err := AgentRestore(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestoreOpts{
 		InvocationRef:   "any",
 		CheckpointID:    1,
 		JSON:            true,
