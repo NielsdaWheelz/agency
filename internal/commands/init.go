@@ -3,7 +3,6 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -40,8 +39,6 @@ type InitResult struct {
 	AgencyJSONState  string // "created" or "overwritten"
 	ScriptsCreated   []string
 	GitignoreState   scaffold.GitignoreResult
-	UserConfigPath   string
-	UserConfigState  string // "created" or "exists"
 	ClaudeMDState    string // "created", "exists", or "skipped"
 }
 
@@ -65,7 +62,6 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		return err
 	}
 
-	// Ensure user config exists (user-level, not repo-level)
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
@@ -73,28 +69,6 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 	if opts.ConfigDirOverride != "" {
 		dirs.ConfigDir = opts.ConfigDirOverride
-	}
-	userConfigPath := config.UserConfigPath(dirs.ConfigDir)
-	userConfigState := "exists"
-
-	if _, err := fsys.Stat(userConfigPath); err != nil {
-		if os.IsNotExist(err) {
-			if err := fsys.MkdirAll(dirs.ConfigDir, 0o755); err != nil {
-				return errors.Wrap(errors.EInvalidUserConfig, "failed to create user config directory", err)
-			}
-			cfg := config.DefaultUserConfig()
-			data, err := json.MarshalIndent(cfg, "", "  ")
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to serialize user config", err)
-			}
-			data = append(data, '\n')
-			if err := fs.WriteFileAtomic(fsys, userConfigPath, data, 0o644); err != nil {
-				return errors.Wrap(errors.EInvalidUserConfig, "failed to write user config", err)
-			}
-			userConfigState = "created"
-		} else {
-			return errors.Wrap(errors.EInvalidUserConfig, "failed to check user config", err)
-		}
 	}
 
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
@@ -174,8 +148,6 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		AgencyJSONState:  agencyJSONState,
 		ScriptsCreated:   stubsResult.Created,
 		GitignoreState:   gitignoreState,
-		UserConfigPath:   userConfigPath,
-		UserConfigState:  userConfigState,
 		ClaudeMDState:    claudeMDState,
 	}
 
@@ -198,8 +170,6 @@ func writeInitOutput(w io.Writer, r InitResult) {
 	_, _ = fmt.Fprintf(w, "agency_json_path: %s\n", r.AgencyJSONPath)
 	_, _ = fmt.Fprintf(w, "agency_json_source: %s\n", r.AgencyJSONSource)
 	_, _ = fmt.Fprintf(w, "agency_json: %s\n", r.AgencyJSONState)
-	_, _ = fmt.Fprintf(w, "user_config_path: %s\n", r.UserConfigPath)
-	_, _ = fmt.Fprintf(w, "user_config: %s\n", r.UserConfigState)
 
 	scriptsCreated := "none"
 	if len(r.ScriptsCreated) > 0 {

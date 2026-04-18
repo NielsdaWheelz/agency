@@ -5,12 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -190,21 +188,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 
 	// Open in editor if requested
 	if opts.Open {
-		userCfg, _, err := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
-		if err != nil {
-			emitOpenOnCreateStatus(stdout, stderr, err)
-			return nil
-		}
-
-		editorName := opts.Editor
-		if editorName == "" {
-			editorName = userCfg.Defaults.Editor
-		}
-		if editorName == "" {
-			editorName = os.Getenv("EDITOR")
-		}
-
-		editorCmd, err := config.ResolveEditorCmd(cr, fsys, ns.dirs.ConfigDir, userCfg, editorName)
+		editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, opts.Editor)
 		if err != nil {
 			emitOpenOnCreateStatus(stdout, stderr, err)
 			return nil

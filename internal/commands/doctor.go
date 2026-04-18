@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -18,7 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/runners"
-	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // DoctorReport holds all the data for doctor output.
@@ -83,7 +81,7 @@ type DoctorOpts struct {
 }
 
 // Doctor implements the `agency doctor` command.
-// Validates repo, tools, config, scripts, and persists repo identity on success.
+// Validates repo, tools, config, and scripts without mutating on-disk state.
 func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts DoctorOpts, stdout, stderr io.Writer) error {
 	// 1. Discover repo root (use --repo if provided, otherwise CWD)
 	targetPath := cwd
@@ -116,12 +114,9 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	// 3. Load and validate user config
-	userCfg, found, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	userCfg, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return errors.New(errors.EInvalidUserConfig, "user config not found: "+config.UserConfigPath(dirs.ConfigDir))
 	}
 
 	// 4. Get origin info
@@ -251,12 +246,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		ScriptArchive:              scriptArchive,
 	}
 
-	// 10. Persist repo index and repo record (only on success)
-	if err := persistOnSuccess(fsys, dirs.DataDir, repoRoot.Path, repoIdentity, originInfo, resolvedAgencyConfig.Path); err != nil {
-		return err
-	}
-
-	// 11. Write output
+	// 10. Write output
 	writeDoctorOutput(stdout, report)
 
 	return nil
@@ -346,58 +336,6 @@ func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot st
 		return "", errors.Wrap(errors.EInternal, "failed to get current branch", err)
 	}
 	return strings.TrimSpace(result.Stdout), nil
-}
-
-// persistOnSuccess writes repo_index.json and repo.json atomically.
-func persistOnSuccess(fsys fs.FS, dataDir, repoRoot string, repoIdentity identity.RepoIdentity, originInfo git.OriginInfo, agencyJSONPath string) error {
-	st := store.NewStore(fsys, dataDir, time.Now)
-
-	// Load existing repo index (or empty if missing)
-	idx, err := st.LoadRepoIndex()
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to load repo_index.json", err)
-	}
-
-	// Upsert entry
-	idx = st.UpsertRepoIndexEntry(idx, repoIdentity.RepoKey, repoIdentity.RepoID, repoRoot)
-
-	// Load existing repo record (if any)
-	existingRec, exists, err := st.LoadRepoRecord(repoIdentity.RepoID)
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to load repo.json", err)
-	}
-
-	var existingPtr *store.RepoRecord
-	if exists {
-		existingPtr = &existingRec
-	}
-
-	rec := st.UpsertRepoRecord(existingPtr, store.BuildRepoRecordInput{
-		RepoKey:          repoIdentity.RepoKey,
-		RepoID:           repoIdentity.RepoID,
-		RepoRootLastSeen: repoRoot,
-		AgencyJSONPath:   agencyJSONPath,
-		OriginPresent:    originInfo.Present,
-		OriginURL:        originInfo.URL,
-		OriginHost:       originInfo.Host,
-		Capabilities: store.Capabilities{
-			GitHubOrigin: repoIdentity.GitHubFlowAvailable,
-			OriginHost:   originInfo.Host,
-			GhAuthed:     true,
-		},
-	})
-
-	// Save repo record first (so repo dir exists for repo_index to reference)
-	if err := st.SaveRepoRecord(rec); err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to write repo.json", err)
-	}
-
-	// Save repo index
-	if err := st.SaveRepoIndex(idx); err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to write repo_index.json", err)
-	}
-
-	return nil
 }
 
 // writeDoctorOutput writes the stable key: value output.

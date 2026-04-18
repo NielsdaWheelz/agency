@@ -3,6 +3,7 @@ package cobra
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -47,6 +48,30 @@ func TestInitCmd_NotInRepo(t *testing.T) {
 	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
+func TestConfigInitCmd_SucceedsOutsideRepo(t *testing.T) {
+	originalWd, err := os.Getwd()
+	require.NoError(t, err, "failed to get cwd")
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(originalWd), "failed to restore cwd")
+	})
+
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "agency-config")
+	binDir := filepath.Join(tmpDir, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0o755), "failed to create fake bin dir")
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o755), "failed to create fake codex")
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "code"), []byte("#!/bin/sh\nexit 0\n"), 0o755), "failed to create fake code")
+
+	t.Setenv("PATH", binDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	require.NoError(t, os.Chdir(tmpDir), "failed to chdir to non-repo dir")
+
+	stdout, _, err := executeCmd("config", "init")
+	require.NoError(t, err, "expected config init to succeed outside a repo")
+	assert.Contains(t, stdout, "user_config: created")
+	assert.FileExists(t, filepath.Join(configDir, "config.json"))
+}
+
 // TestDoctor_NotInRepo tests that doctor fails when not in a git repo.
 func TestDoctorCmd_NotInRepo(t *testing.T) {
 	// Save and restore cwd
@@ -84,6 +109,34 @@ func TestRepoCmd_HelpShowsRmSubcommand(t *testing.T) {
 	assert.Contains(t, stdout, "rm")
 	assert.Contains(t, stdout, "Remove a registered repository")
 	assert.NotContains(t, stdout, "Subcommands:")
+}
+
+func TestConfigCmd_HelpShowsInitSubcommand(t *testing.T) {
+	stdout, _, err := executeCmd("config", "--help")
+	require.NoError(t, err, "expected config help to render")
+	assert.Contains(t, stdout, "init")
+	assert.Contains(t, stdout, "Manage user-scoped agency configuration")
+}
+
+func TestConfigInitCmd_HelpShowsForceAndNoRepoBehavior(t *testing.T) {
+	stdout, _, err := executeCmd("config", "init", "--help")
+	require.NoError(t, err, "expected config init help to render")
+	assert.Contains(t, stdout, "--force")
+	assert.Contains(t, stdout, "works without a repo")
+	assert.Contains(t, stdout, "writes only AGENCY_CONFIG_DIR/config.json")
+}
+
+func TestInitCmd_HelpPointsToConfigInit(t *testing.T) {
+	stdout, _, err := executeCmd("init", "--help")
+	require.NoError(t, err, "expected init help to render")
+	assert.Contains(t, stdout, "does not create user config")
+	assert.Contains(t, stdout, "agency config init")
+}
+
+func TestDoctorCmd_HelpPointsToConfigInit(t *testing.T) {
+	stdout, _, err := executeCmd("doctor", "--help")
+	require.NoError(t, err, "expected doctor help to render")
+	assert.Contains(t, stdout, "agency config init")
 }
 
 func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {

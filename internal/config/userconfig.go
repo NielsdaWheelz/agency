@@ -34,7 +34,7 @@ type RunnerDefaults struct {
 	Effort string `json:"effort,omitempty"`
 }
 
-// DefaultUserConfig returns built-in defaults used when config.json is missing.
+// DefaultUserConfig returns scaffold content for creating a new user config.
 func DefaultUserConfig() UserConfig {
 	return UserConfig{
 		Version: 2,
@@ -54,36 +54,42 @@ func UserConfigPath(configDir string) string {
 }
 
 // LoadUserConfig loads and validates the user config.
-// If the file is missing, returns defaults with found=false.
-// If the file exists but is invalid, returns E_INVALID_USER_CONFIG.
-func LoadUserConfig(filesystem fs.FS, configDir string) (UserConfig, bool, error) {
+// Missing config returns E_NO_USER_CONFIG. Invalid config returns E_INVALID_USER_CONFIG.
+func LoadUserConfig(filesystem fs.FS, configDir string) (UserConfig, error) {
 	path := UserConfigPath(configDir)
 
 	data, err := filesystem.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultUserConfig(), false, nil
+			return UserConfig{}, errors.NewWithDetails(
+				errors.ENoUserConfig,
+				"user config not found: "+path,
+				map[string]string{
+					"path": path,
+					"hint": "run `agency config init`",
+				},
+			)
 		}
-		return UserConfig{}, false, errors.Wrap(errors.EInvalidUserConfig, "failed to read user config", err)
+		return UserConfig{}, errors.Wrap(errors.EInvalidUserConfig, "failed to read user config", err)
 	}
 
 	// First, unmarshal into raw map for type checking
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return UserConfig{}, false, errors.New(errors.EInvalidUserConfig, "invalid json: "+err.Error())
+		return UserConfig{}, errors.New(errors.EInvalidUserConfig, "invalid json: "+err.Error())
 	}
 
 	cfg, err := parseUserConfigStrict(raw)
 	if err != nil {
-		return UserConfig{}, false, err
+		return UserConfig{}, err
 	}
 
 	cfg, err = ValidateUserConfig(cfg)
 	if err != nil {
-		return UserConfig{}, false, err
+		return UserConfig{}, err
 	}
 
-	return cfg, true, nil
+	return cfg, nil
 }
 
 func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
@@ -115,6 +121,13 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "version must be an integer")
 			}
 		}
+		if version == 1 {
+			return UserConfig{}, errors.NewWithDetails(
+				errors.EInvalidUserConfig,
+				"version 1 is not supported; upgrade config.json to version 2",
+				map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 2 config"},
+			)
+		}
 		cfg.Version = version
 	}
 
@@ -130,6 +143,26 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			"base_branch": true,
 		}
 		for key := range defaultsMap {
+			switch key {
+			case "model":
+				return UserConfig{}, errors.NewWithDetails(
+					errors.EInvalidUserConfig,
+					"defaults.model is not supported; use runner_defaults.<runner>.model",
+					map[string]string{"hint": "move the model under runner_defaults.<runner>.model"},
+				)
+			case "effort":
+				return UserConfig{}, errors.NewWithDetails(
+					errors.EInvalidUserConfig,
+					"defaults.effort is not supported; use runner_defaults.<runner>.effort",
+					map[string]string{"hint": "move the effort under runner_defaults.<runner>.effort"},
+				)
+			case "thinking":
+				return UserConfig{}, errors.NewWithDetails(
+					errors.EInvalidUserConfig,
+					"defaults.thinking is not supported; select a thinking-capable model via runner_defaults.<runner>.model",
+					map[string]string{"hint": "pick a thinking-capable model in runner_defaults.<runner>.model"},
+				)
+			}
 			if !allowedDefaultKeys[key] {
 				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults contains unknown field: "+key)
 			}
@@ -237,6 +270,13 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 
 // ValidateUserConfig validates the user config and returns E_INVALID_USER_CONFIG on failure.
 func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
+	if cfg.Version == 1 {
+		return cfg, errors.NewWithDetails(
+			errors.EInvalidUserConfig,
+			"version 1 is not supported; upgrade config.json to version 2",
+			map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 2 config"},
+		)
+	}
 	if cfg.Version != 2 {
 		return cfg, errors.New(errors.EInvalidUserConfig, "version must be 2")
 	}

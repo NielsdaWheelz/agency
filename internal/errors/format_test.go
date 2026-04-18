@@ -493,6 +493,12 @@ func TestDeriveTryLines(t *testing.T) {
 			details:  nil,
 			contains: "gh auth login",
 		},
+		{
+			name:     "missing user config suggests config init",
+			code:     ENoUserConfig,
+			details:  nil,
+			contains: "agency config init",
+		},
 	}
 
 	for _, tt := range tests {

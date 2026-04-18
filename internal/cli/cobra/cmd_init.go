@@ -21,10 +21,11 @@ func newInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create agency config and stub scripts",
-		Long: `Create agency config and stub scripts.
-By default, config is local under AGENCY_CONFIG_DIR and nothing is written to the repo.
+		Short: "Create repo-scoped agency config and stub scripts",
+		Long: `Create repo-scoped agency config and stub scripts.
+By default, this writes local per-repo config under AGENCY_CONFIG_DIR and nothing is written to the repo.
 Use --repo-config to write shareable agency.json, scripts, .gitignore, and CLAUDE.md in the repo.
+This command requires a git repo and does not create user config; run "agency config init" first.
 Defaults to current directory; use --repo to target a different repo.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

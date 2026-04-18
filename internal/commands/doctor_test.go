@@ -7,12 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,9 +209,35 @@ func TestDoctor_Success(t *testing.T) {
 		assert.Contains(t, output, line, "output missing expected line")
 	}
 
-	// Check persistence files were created
-	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
-	assert.FileExists(t, repoIndexPath, "repo_index.json was not created")
+	entries, err := os.ReadDir(dataDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "doctor should not write files on success")
+}
+
+func TestDoctor_MissingUserConfig(t *testing.T) {
+	t.Parallel()
+	repoRoot := setupTestRepo(t)
+
+	dataDir := t.TempDir()
+	configDir := t.TempDir()
+
+	m := newDoctorRunner(repoRoot)
+	fsys := fs.NewRealFS()
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoUserConfig, errors.GetCode(err))
+	assert.Empty(t, stdout.String())
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(configDir, "config.json"), ae.Details["path"])
+	assert.Equal(t, "run `agency config init`", ae.Details["hint"])
+
+	entries, readErr := os.ReadDir(dataDir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries, "doctor should stay read-only when config is missing")
 }
 
 func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
@@ -357,7 +382,7 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	assert.Contains(t, output, "status: ok")
 }
 
-func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
+func TestDoctor_IsReadOnly(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
@@ -379,30 +404,9 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 	err = Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout2, &stderr2)
 	require.NoError(t, err, "second doctor run failed")
 
-	// Load repo.json and verify created_at is preserved
-	st := store.NewStore(fsys, dataDir, time.Now)
-	idx, err := st.LoadRepoIndex()
-	require.NoError(t, err, "failed to load repo_index")
-
-	// Should have exactly one entry
-	assert.Len(t, idx.Repos, 1, "expected 1 repo entry")
-
-	// Get the repo_id
-	var repoID string
-	for _, entry := range idx.Repos {
-		repoID = entry.RepoID
-		break
-	}
-
-	rec, exists, err := st.LoadRepoRecord(repoID)
-	require.NoError(t, err, "failed to load repo.json")
-	require.True(t, exists, "repo.json should exist")
-
-	// Verify timestamps
-	assert.NotEmpty(t, rec.CreatedAt, "created_at should not be empty")
-	assert.NotEmpty(t, rec.UpdatedAt, "updated_at should not be empty")
-	// updated_at should be >= created_at (we can't easily test they're different due to timing)
-	assert.GreaterOrEqual(t, rec.UpdatedAt, rec.CreatedAt, "updated_at should be >= created_at")
+	entries, readErr := os.ReadDir(dataDir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries, "doctor should not persist repo data")
 }
 
 func TestDoctor_OutputOrder(t *testing.T) {

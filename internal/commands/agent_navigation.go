@@ -10,7 +10,6 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -91,19 +90,12 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		)
 	}
 
-	editor := opts.Editor
-	if editor == "" {
-		userCfg, _, _ := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
-		editor = userCfg.Defaults.Editor
-	}
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "code"
+	editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, opts.Editor)
+	if err != nil {
+		return err
 	}
 
-	runResult, runErr := runAttachedInDir(ctx, editor, []string{sandboxPath}, sandboxPath)
+	runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{sandboxPath}, sandboxPath)
 	if runErr != nil {
 		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", runErr)
 	}

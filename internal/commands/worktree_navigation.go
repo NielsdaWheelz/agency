@@ -5,12 +5,27 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
+
+func resolveEditorCmdWithOptionalOverride(cr exec.CommandRunner, fsys fs.FS, configDir string, editorOverride string) (string, error) {
+	editorName := strings.TrimSpace(editorOverride)
+	if editorName != "" {
+		return config.ResolveEditorCmd(cr, fsys, configDir, config.UserConfig{}, editorName)
+	}
+
+	userCfg, err := config.LoadUserConfig(fsys, configDir)
+	if err != nil {
+		return "", err
+	}
+
+	return config.ResolveEditorCmd(cr, fsys, configDir, userCfg, userCfg.Defaults.Editor)
+}
 
 // WorktreePathOpts holds options for the worktree path command.
 type WorktreePathOpts struct {
@@ -72,13 +87,7 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 	treePath := worktree.Data.TreePath
 
-	userCfg, found, _ := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
-	editorName := opts.Editor
-	if found && editorName == "" {
-		editorName = userCfg.Defaults.Editor
-	}
-
-	editorCmd, err := config.ResolveEditorCmd(cr, fsys, ns.dirs.ConfigDir, userCfg, editorName)
+	editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, opts.Editor)
 	if err != nil {
 		return err
 	}

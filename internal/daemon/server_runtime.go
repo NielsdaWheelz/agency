@@ -38,8 +38,7 @@ func (s *Server) latestOutputAtUnixNano(proc *SupervisedProcess) int64 {
 }
 
 func (s *Server) LoadUserConfig() (config.UserConfig, error) {
-	cfg, _, err := config.LoadUserConfig(s.FS, s.ConfigDir)
-	return cfg, err
+	return config.LoadUserConfig(s.FS, s.ConfigDir)
 }
 
 func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *os.File) {

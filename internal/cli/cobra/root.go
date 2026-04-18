@@ -32,6 +32,7 @@ and provides commands to control the runner session.`,
 
 	// Add all subcommands
 	rootCmd.AddCommand(
+		newConfigCmd(),
 		newInitCmd(),
 		newDoctorCmd(),
 		newCompletionCmd(),

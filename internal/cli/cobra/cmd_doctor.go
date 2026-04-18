@@ -21,6 +21,7 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Check prerequisites and show resolved paths",
 		Long: `Check prerequisites and show resolved paths.
 Verifies git, tmux, gh, runner command, and scripts are present and configured.
+Requires user config; run "agency config init" first.
 Defaults to current directory; use --repo to target a different repo.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

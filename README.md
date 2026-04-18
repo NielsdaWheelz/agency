@@ -26,84 +26,56 @@ go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 
 ## prerequisites
 
-`git`, `tmux`, `gh` (authenticated), plus explicit runner mappings in user config.
+`git`, `tmux`, `gh` (authenticated), and at least one supported runner executable on `PATH`.
 
-runner commands must be configured in `config.json` under your agency config dir
-(`$AGENCY_CONFIG_DIR/config.json`; defaults to `~/Library/Preferences/agency/config.json` on macOS and `~/.config/agency/config.json` on Linux):
+Run `agency config init` first. It writes a working version `2` `config.json` under your agency config dir.
+For the full schema and setup rules, see [docs/configuration.md](docs/configuration.md).
+For paths and precedence, see [docs/environment.md](docs/environment.md).
+
+Short working `config.json` example:
 
 ```json
 {
   "version": 2,
   "defaults": {
-    "runner": "claude-code",
+    "runner": "codex",
     "editor": "code",
     "base_branch": "main"
   },
   "runner_defaults": {
-    "claude-code": {
-      "model": "opus-4.7",
-      "effort": "max"
-    },
     "codex": {
       "model": "gpt-5.4",
       "effort": "xhigh"
-    },
-    "cursor": {
-      "model": "sonnet-4.6-thinking"
     }
   },
   "runners": {
-    "claude-code": "claude",
     "codex": "codex"
+  },
+  "editors": {
+    "code": "code"
   }
 }
 ```
-
-supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
-`config.json` is version `2` only.
-global `defaults.model` and `defaults.effort` are not supported.
-per-runner model and effort selection belongs under `runner_defaults`.
-
-repo-scoped runner defaults belong in `agency.json`:
-
-```json
-{
-  "version": 2,
-  "runner_defaults": {
-    "codex": {
-      "model": "gpt-5.4",
-      "effort": "xhigh"
-    }
-  }
-}
-```
-
-`agency.json` is version `2` only.
 
 ## quick start
 
-`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they fall back to the current directory.
-`--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency init` writes per-repo agency config and scripts under `$AGENCY_CONFIG_DIR` by default, so setup/verify/archive scripts do not need to be committed to the repo.
 Use `agency init --repo-config` only when you want shareable `agency.json` and scripts in the repo.
+
+```bash
+agency config init
+agency repo add /path/to/myrepo
+agency init --repo /path/to/myrepo
+agency worktree create --repo <repo-ref> --name my-feature --base main
+agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
+agency agent land <invocation-id> --apply
+```
+
+`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they fall back to the current directory.
+`--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `worktree create` defaults omitted `--base` to the current branch.
 `agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
 `agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
-
-```bash
-agency init --repo /path/to/myrepo             # creates local per-repo agency config/scripts
-agency repo add /path/to/myrepo              # register this repo once
-agency worktree create --repo <repo-ref> --name my-feature --base main
-agency worktree create --name my-feature
-agency agent start --repo <repo-ref> --worktree my-feature # headed start requires an interactive terminal; use --detached to skip attach
-agency agent start --worktree my-feature
-agency agent start --repo <repo-ref> --worktree my-feature --agency-config /abs/path/to/agency.json
-# Ctrl+b, d to detach from tmux
-agency agent recreate <invocation-id> --detached # restore a missing headed tmux session in the same sandbox
-agency watch                                 # unified workspace/history/logs TUI (interactive tty; Enter=attach, h=history, l=logs, b/Esc=back, q=exit)
-agency agent ls                              # concise invocation list
-agency agent land <invocation-id> --apply    # land changes back to worktree
-```
 
 headless (fire-and-forget):
 
@@ -137,11 +109,7 @@ That runtime exposes workspace, history, and logs pages over the same daemon-bac
 `agency agent restore` restores sandbox state only; it does not rerun the original prompt.
 use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
 after a restore, use `agency agent followup` to continue from the restored state.
-typed runner defaults are configured in `runner_defaults`, not in `defaults`.
-typed runner defaults are supported for `claude-code`, `codex`, and `cursor`.
-for `claude-code` and `codex`, `runner_defaults.<runner>.model`, `runner_defaults.<runner>.effort`, `--model`, and `--effort` apply.
-for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).
-for other runners, keep using `--runner-arg`.
+runner config details live in [docs/configuration.md](docs/configuration.md).
 
 non-interactive destructive flows require explicit confirmation via `--yes`:
 
@@ -196,8 +164,10 @@ reports-v2 progression is mode-aware: headless `review`/`pr sync`/`pr merge` is 
 ## documentation
 
 - **[docs/index.md](docs/index.md)** — documentation map and ownership rules
+- **[docs/configuration.md](docs/configuration.md)** — config setup and version `2` schemas
 - **[docs/codebase.md](docs/codebase.md)** — package layout and architecture boundaries
 - **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
+- **[docs/environment.md](docs/environment.md)** — config paths, overrides, and precedence
 - **[docs/git-worktrees.md](docs/git-worktrees.md)** — repo, integration worktree, invocation, and sandbox model
 - **[docs/persistence.md](docs/persistence.md)** — on-disk schemas, atomic writes, and permissions
 - **[docs/testing.md](docs/testing.md)** — testing standards, layers, fixtures, and e2e rules

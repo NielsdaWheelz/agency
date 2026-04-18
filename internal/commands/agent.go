@@ -103,9 +103,19 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if err != nil {
 		return fail(err)
 	}
-	userCfg, _, err := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
-	if err != nil {
-		return fail(err)
+
+	headlessPrompt := ""
+	if opts.Headless {
+		headlessPrompt, err = resolveBoundedPromptInput(
+			opts.Prompt,
+			opts.PromptFile,
+			daemon.MaxPromptSize,
+			"headless mode requires a prompt (use --prompt or --prompt-file)",
+			"headless mode prompt cannot be empty",
+		)
+		if err != nil {
+			return fail(err)
+		}
 	}
 
 	repoRoot := ""
@@ -199,6 +209,32 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	opts.WorktreeRef = worktreeRef
 
+	userCfg := config.UserConfig{}
+	userCfgLoaded := false
+	loadUserCfg := func(required bool) error {
+		if userCfgLoaded {
+			return nil
+		}
+
+		cfg, loadErr := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
+		if loadErr != nil {
+			if !required && errors.GetCode(loadErr) == errors.ENoUserConfig {
+				return nil
+			}
+			return loadErr
+		}
+
+		userCfg = cfg
+		userCfgLoaded = true
+		return nil
+	}
+
+	if strings.TrimSpace(opts.Runner) == "" {
+		if err := loadUserCfg(true); err != nil {
+			return fail(err)
+		}
+	}
+
 	runner, err := resolveAgentRunner(opts.Runner, userCfg.Defaults.Runner)
 	if err != nil {
 		return fail(err)
@@ -225,6 +261,11 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	model := strings.TrimSpace(opts.Model)
 	effort := strings.TrimSpace(opts.Effort)
+	if model == "" || effort == "" {
+		if err := loadUserCfg(false); err != nil {
+			return fail(err)
+		}
+	}
 	if shouldResolveAgencyConfig {
 		resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot, ns.dirs.ConfigDir, repoID, agencyConfigPath)
 		if err != nil {
@@ -258,7 +299,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	opts.RunnerArgs = effectiveRunnerArgs
 
 	if opts.Headless {
-		return fail(agentStartHeadlessControlPlane(ctx, repoRoot, ns.client, opts, runner, stdout, stderr))
+		return fail(agentStartHeadlessControlPlane(ctx, repoRoot, ns.client, opts, runner, headlessPrompt, stdout, stderr))
 	}
 
 	return fail(agentStartHeadedControlPlane(ctx, repoRoot, ns.client, opts, runner, stdout, stderr))
@@ -356,18 +397,7 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 }
 
 // agentStartHeadlessControlPlane handles headless invocation start via daemon control plane.
-func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
-	prompt, err := resolveBoundedPromptInput(
-		opts.Prompt,
-		opts.PromptFile,
-		daemon.MaxPromptSize,
-		"headless mode requires a prompt (use --prompt or --prompt-file)",
-		"headless mode prompt cannot be empty",
-	)
-	if err != nil {
-		return err
-	}
-
+func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, prompt string, stdout, stderr io.Writer) error {
 	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}

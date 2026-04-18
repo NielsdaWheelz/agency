@@ -32,20 +32,21 @@ func (s stubRunner) LookPath(file string) (string, error) {
 func TestLoadUserConfig_MissingFile(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
-	cfg, found, err := LoadUserConfig(stub, "/cfg")
-	require.NoError(t, err)
-	assert.False(t, found, "expected found=false for missing config")
-	assert.Equal(t, 2, cfg.Version)
-	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
-	assert.Equal(t, "code", cfg.Defaults.Editor)
-	assert.Equal(t, "main", cfg.Defaults.BaseBranch)
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoUserConfig, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, "/cfg/config.json", ae.Details["path"])
+	assert.Equal(t, "run `agency config init`", ae.Details["hint"])
 }
 
 func TestLoadUserConfig_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{"version": 2, "defaults": {`)
-	_, _, err := LoadUserConfig(stub, "/cfg")
+	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for invalid JSON")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 }
@@ -58,7 +59,7 @@ func TestLoadUserConfig_UnknownKeys(t *testing.T) {
 	  "defaults": { "runner": "claude-code", "editor": "code" },
   "extra": "nope"
 }`)
-	_, _, err := LoadUserConfig(stub, "/cfg")
+	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for unknown keys")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 }
@@ -70,7 +71,7 @@ func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
   "version": 2,
 	  "defaults": { "runner": "claude-code", "editor": "code", "unknown": "nope" }
 }`)
-	_, _, err := LoadUserConfig(stub, "/cfg")
+	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for unknown defaults keys")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "defaults contains unknown field")
@@ -83,10 +84,11 @@ func TestLoadUserConfig_RemovedDefaultsModelRejected(t *testing.T) {
 	require.NoError(t, err, "failed to read fixture")
 	stub.files["/cfg/config.json"] = data
 
-	_, _, err = LoadUserConfig(stub, "/cfg")
+	_, err = LoadUserConfig(stub, "/cfg")
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "defaults contains unknown field: model")
+	assert.Contains(t, err.Error(), "defaults.model is not supported")
+	assert.Contains(t, err.Error(), "runner_defaults.<runner>.model")
 }
 
 func TestLoadUserConfig_RemovedDefaultsEffortRejected(t *testing.T) {
@@ -96,10 +98,11 @@ func TestLoadUserConfig_RemovedDefaultsEffortRejected(t *testing.T) {
 	require.NoError(t, err, "failed to read fixture")
 	stub.files["/cfg/config.json"] = data
 
-	_, _, err = LoadUserConfig(stub, "/cfg")
+	_, err = LoadUserConfig(stub, "/cfg")
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "defaults contains unknown field: effort")
+	assert.Contains(t, err.Error(), "defaults.effort is not supported")
+	assert.Contains(t, err.Error(), "runner_defaults.<runner>.effort")
 }
 
 func TestLoadUserConfig_DefaultsThinkingRejected(t *testing.T) {
@@ -113,10 +116,28 @@ func TestLoadUserConfig_DefaultsThinkingRejected(t *testing.T) {
     "thinking": "high"
   }
 }`)
-	_, _, err := LoadUserConfig(stub, "/cfg")
+	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "defaults contains unknown field")
+	assert.Contains(t, err.Error(), "defaults.thinking is not supported")
+	assert.Contains(t, err.Error(), "runner_defaults.<runner>.model")
+}
+
+func TestLoadUserConfig_Version1Rejected(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 1,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "version 1 is not supported")
 }
 
 func TestLoadUserConfig_ValidRunnerDefaults(t *testing.T) {
@@ -126,9 +147,8 @@ func TestLoadUserConfig_ValidRunnerDefaults(t *testing.T) {
 	require.NoError(t, err, "failed to read fixture")
 	stub.files["/cfg/config.json"] = data
 
-	cfg, found, err := LoadUserConfig(stub, "/cfg")
+	cfg, err := LoadUserConfig(stub, "/cfg")
 	require.NoError(t, err)
-	assert.True(t, found)
 	assert.Equal(t, 2, cfg.Version)
 	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
 	assert.Equal(t, "code", cfg.Defaults.Editor)
@@ -155,7 +175,7 @@ func TestLoadUserConfig_RunnerDefaultsWrongTypes(t *testing.T) {
 			stub := newStubFS()
 			stub.files["/cfg/config.json"] = data
 
-			_, _, err = LoadUserConfig(stub, "/cfg")
+			_, err = LoadUserConfig(stub, "/cfg")
 			require.Error(t, err)
 			assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 			assert.Contains(t, err.Error(), tt.wantMsg)
@@ -184,7 +204,7 @@ func TestLoadUserConfig_RunnerDefaultsValidation(t *testing.T) {
 			stub := newStubFS()
 			stub.files["/cfg/config.json"] = data
 
-			_, _, err = LoadUserConfig(stub, "/cfg")
+			_, err = LoadUserConfig(stub, "/cfg")
 			require.Error(t, err)
 			assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 			assert.Contains(t, err.Error(), tt.wantMsg)
@@ -204,6 +224,22 @@ func TestValidateUserConfig_WrongVersion(t *testing.T) {
 	t.Parallel()
 	cfg := UserConfig{
 		Version: 1,
+		Defaults: UserDefaults{
+			Runner: "claude-code",
+			Editor: "code",
+		},
+	}
+
+	_, err := ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "version 1 is not supported")
+}
+
+func TestValidateUserConfig_UnsupportedVersion(t *testing.T) {
+	t.Parallel()
+	cfg := UserConfig{
+		Version: 3,
 		Defaults: UserDefaults{
 			Runner: "claude-code",
 			Editor: "code",

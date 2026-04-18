@@ -371,6 +371,8 @@ func deriveTryLines(ae *AgencyError) []string {
 	switch ae.Code {
 	case EGhNotAuthenticated:
 		lines = append(lines, "gh auth login")
+	case ENoUserConfig:
+		lines = append(lines, "agency config init")
 	}
 
 	return lines

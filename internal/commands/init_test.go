@@ -103,11 +103,9 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 	assert.Contains(t, output, "scripts_created:", "output missing scripts_created")
 	assert.Contains(t, output, "gitignore: skipped", "output missing gitignore: skipped")
 	assert.Contains(t, output, "claude_md: skipped", "output missing claude_md: skipped")
-	assert.Contains(t, output, "user_config_path:", "output missing user_config_path")
-	assert.Contains(t, output, "user_config: created", "output missing user_config: created")
 
 	userConfigPath := filepath.Join(configDir, "config.json")
-	assert.FileExists(t, userConfigPath, "expected user config")
+	assert.NoFileExists(t, userConfigPath, "agency init should not create user config")
 }
 
 func TestInit_RefusesOverwrite(t *testing.T) {

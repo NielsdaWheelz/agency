@@ -18,6 +18,7 @@ const (
 	// Slice 0 error codes
 	ENoRepo              Code = "E_NO_REPO"
 	ENoAgencyJSON        Code = "E_NO_AGENCY_JSON"
+	ENoUserConfig        Code = "E_NO_USER_CONFIG"
 	EInvalidAgencyJSON   Code = "E_INVALID_AGENCY_JSON"
 	EInvalidUserConfig   Code = "E_INVALID_USER_CONFIG"
 	EAgencyJSONExists    Code = "E_AGENCY_JSON_EXISTS"
