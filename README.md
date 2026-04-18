@@ -33,12 +33,24 @@ runner commands must be configured in `config.json` under your agency config dir
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
-    "model": "opus",
-    "effort": "high"
+    "base_branch": "main"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "opus-4.7",
+      "effort": "max"
+    },
+    "codex": {
+      "model": "gpt-5.4",
+      "effort": "xhigh"
+    },
+    "cursor": {
+      "model": "sonnet-4.6-thinking"
+    }
   },
   "runners": {
     "claude-code": "claude",
@@ -48,6 +60,25 @@ runner commands must be configured in `config.json` under your agency config dir
 ```
 
 supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
+`config.json` is version `2` only.
+global `defaults.model` and `defaults.effort` are not supported.
+per-runner model and effort selection belongs under `runner_defaults`.
+
+repo-scoped runner defaults belong in `agency.json`:
+
+```json
+{
+  "version": 2,
+  "runner_defaults": {
+    "codex": {
+      "model": "gpt-5.4",
+      "effort": "xhigh"
+    }
+  }
+}
+```
+
+`agency.json` is version `2` only.
 
 ## quick start
 
@@ -57,6 +88,7 @@ supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 Use `agency init --repo-config` only when you want shareable `agency.json` and scripts in the repo.
 `worktree create` defaults omitted `--base` to the current branch.
 `agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
+`agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
 
 ```bash
 agency init --repo /path/to/myrepo             # creates local per-repo agency config/scripts
@@ -65,6 +97,7 @@ agency worktree create --repo <repo-ref> --name my-feature --base main
 agency worktree create --name my-feature
 agency agent start --repo <repo-ref> --worktree my-feature # headed start requires an interactive terminal; use --detached to skip attach
 agency agent start --worktree my-feature
+agency agent start --repo <repo-ref> --worktree my-feature --agency-config /abs/path/to/agency.json
 # Ctrl+b, d to detach from tmux
 agency agent recreate <invocation-id> --detached # restore a missing headed tmux session in the same sandbox
 agency watch                                 # unified workspace/history/logs TUI (interactive tty; Enter=attach, h=history, l=logs, b/Esc=back, q=exit)
@@ -76,7 +109,7 @@ headless (fire-and-forget):
 
 ```bash
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
-agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
+agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
 agency agent history <invocation-id>                 # interactive invocation history/logs UI (same runtime; tty only)
 agency agent history <invocation-id> --json          # machine-readable timeline output
 agency agent history logs <invocation-id> --follow   # raw invocation logs
@@ -104,8 +137,9 @@ That runtime exposes workspace, history, and logs pages over the same daemon-bac
 `agency agent restore` restores sandbox state only; it does not rerun the original prompt.
 use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
 after a restore, use `agency agent followup` to continue from the restored state.
-typed model/effort knobs are supported for `claude-code`, `codex`, and `cursor`.
-for `claude-code` and `codex`, `--model` and `--effort` apply.
+typed runner defaults are configured in `runner_defaults`, not in `defaults`.
+typed runner defaults are supported for `claude-code`, `codex`, and `cursor`.
+for `claude-code` and `codex`, `runner_defaults.<runner>.model`, `runner_defaults.<runner>.effort`, `--model`, and `--effort` apply.
 for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).
 for other runners, keep using `--runner-arg`.
 

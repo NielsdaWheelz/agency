@@ -6,7 +6,7 @@ package scaffold
 // Each script config has a "path" (required) and "timeout" (optional, Go duration format).
 // Default timeouts: setup=10m, verify=30m, archive=5m.
 const AgencyJSONTemplate = `{
-  "version": 1,
+  "version": 2,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",

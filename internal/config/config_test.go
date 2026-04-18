@@ -57,7 +57,7 @@ func TestLoadAgencyConfig_MissingFile(t *testing.T) {
 func TestLoadAgencyConfig_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
-	stub.files["/repo/agency.json"] = []byte(`{"version": 1, "scripts": {`)
+	stub.files["/repo/agency.json"] = []byte(`{"version": 2, "scripts": {`)
 	_, err := LoadAgencyConfig(stub, "/repo")
 	require.Error(t, err, "expected error for invalid JSON")
 	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
@@ -73,13 +73,26 @@ func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
 	require.NoError(t, err)
-	assert.Equal(t, 1, cfg.Version)
+	assert.Equal(t, 2, cfg.Version)
 	assert.Equal(t, "scripts/agency_setup.sh", cfg.Scripts.Setup.Path)
 	assert.Equal(t, 10*time.Minute, cfg.Scripts.Setup.Timeout)
 	assert.Equal(t, "scripts/agency_verify.sh", cfg.Scripts.Verify.Path)
 	assert.Equal(t, 30*time.Minute, cfg.Scripts.Verify.Timeout)
 	assert.Equal(t, "scripts/agency_archive.sh", cfg.Scripts.Archive.Path)
 	assert.Equal(t, 5*time.Minute, cfg.Scripts.Archive.Timeout)
+}
+
+func TestLoadAgencyConfig_ValidWithRunnerDefaults(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/agency_valid_with_runner_defaults.json")
+	require.NoError(t, err, "failed to read fixture")
+	stub := newStubFS()
+	stub.files["/repo/agency.json"] = data
+
+	cfg, err := LoadAgencyConfig(stub, "/repo")
+	require.NoError(t, err)
+	assert.Equal(t, 2, cfg.Version)
+	assert.Equal(t, "scripts/agency_setup.sh", cfg.Scripts.Setup.Path)
 }
 
 func TestResolveAgencyConfig_PrefersRepoThenLocal(t *testing.T) {
@@ -138,6 +151,8 @@ func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
 	}{
 		{"scripts as array", "wrong_types_scripts.json", "scripts must be an object"},
 		{"script verify missing path", "wrong_types_script_verify.json", "scripts.verify missing required field 'path'"},
+		{"runner_defaults as array", "agency_wrong_types_runner_defaults.json", "runner_defaults must be an object"},
+		{"runner_defaults entry as string", "agency_wrong_types_runner_defaults_entry.json", "runner_defaults.codex must be an object"},
 		{"version as string", "wrong_version_string.json", "version must be an integer"},
 		{"version as float", "wrong_version_float.json", "version must be an integer"},
 	}
@@ -201,7 +216,7 @@ func TestValidateAgencyConfig_WrongVersion(t *testing.T) {
 
 	_, err = ValidateAgencyConfig(cfg)
 	require.Error(t, err, "expected validation error")
-	assert.Contains(t, err.Error(), "version must be 1")
+	assert.Contains(t, err.Error(), "version must be 2")
 }
 
 func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {
@@ -246,7 +261,7 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	configContent := `{
-  "version": 1,
+  "version": 2,
   "scripts": {
     "setup": {
       "path": "scripts/setup.sh",
@@ -270,7 +285,39 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	cfg, err := LoadAgencyConfig(realFS, tmpDir)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, cfg.Version)
+	assert.Equal(t, 2, cfg.Version)
 	assert.Equal(t, "scripts/setup.sh", cfg.Scripts.Setup.Path)
 	assert.Equal(t, 10*time.Minute, cfg.Scripts.Setup.Timeout)
+}
+
+func TestValidateAgencyConfig_RunnerDefaultsValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		fixture string
+		wantMsg string
+	}{
+		{"unknown runner", "agency_runner_defaults_unknown_runner.json", "runner_defaults.amp is not supported"},
+		{"cursor effort unsupported", "agency_runner_defaults_cursor_effort.json", "runner_defaults.cursor.effort is not supported"},
+		{"missing model and effort", "agency_runner_defaults_empty_entry.json", "runner_defaults.codex requires at least one of model or effort"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
+			require.NoError(t, err, "failed to read fixture")
+			stub := newStubFS()
+			stub.files["/repo/agency.json"] = data
+
+			cfg, err := LoadAgencyConfig(stub, "/repo")
+			require.NoError(t, err)
+
+			_, err = ValidateAgencyConfig(cfg)
+			require.Error(t, err)
+			assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
+	}
 }

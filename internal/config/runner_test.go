@@ -45,7 +45,7 @@ func TestResolveRunnerCmd_UnknownRunner_ReturnsRunnerNotConfigured(t *testing.T)
 	cr := &configTestRunner{}
 
 	cfg := UserConfig{
-		Version:  1,
+		Version:  2,
 		Defaults: UserDefaults{Runner: "claude-code"},
 		Runners:  map[string]string{},
 	}
@@ -64,7 +64,7 @@ func TestResolveRunnerCmd_TargetRunnerSet_RequiresExplicitConfig(t *testing.T) {
 	fsys := fs.NewRealFS()
 	cr := &configTestRunner{}
 	cfg := UserConfig{
-		Version:  1,
+		Version:  2,
 		Defaults: UserDefaults{Runner: "claude-code"},
 		Runners:  map[string]string{},
 	}
@@ -87,7 +87,7 @@ func TestResolveRunnerCmd_TargetRunnerSet_ResolvesWhenExplicitlyConfigured(t *te
 	fsys := fs.NewRealFS()
 	cr := &configTestRunner{}
 	cfg := UserConfig{
-		Version: 1,
+		Version: 2,
 		Runners: map[string]string{
 			"claude-code": "claude",
 			"codex":       "codex",
@@ -117,7 +117,7 @@ func TestResolveRunnerCmd_ClaudeCode_RequiresCanonicalConfig(t *testing.T) {
 	cr := &configTestRunner{}
 
 	cfg := UserConfig{
-		Version: 1,
+		Version: 2,
 		Runners: map[string]string{
 			"claude": "./runner",
 		},
@@ -140,7 +140,7 @@ func TestResolveRunnerCmd_NotOnPath_ReturnsRunnerNotConfigured(t *testing.T) {
 	}
 
 	cfg := UserConfig{
-		Version:  1,
+		Version:  2,
 		Defaults: UserDefaults{Runner: "claude-code"},
 		Runners: map[string]string{
 			"claude-code": "claude-code",
@@ -165,7 +165,7 @@ func TestResolveRunnerCmd_PathNotExecutable_ReturnsRunnerNotConfigured(t *testin
 	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0644))
 
 	cfg := UserConfig{
-		Version: 1,
+		Version: 2,
 		Runners: map[string]string{
 			"claude-code": "./my-runner", // relative path triggers file stat check
 		},
@@ -184,7 +184,7 @@ func TestResolveRunnerCmd_PathNotFound_ReturnsRunnerNotConfigured(t *testing.T) 
 	cr := &configTestRunner{}
 
 	cfg := UserConfig{
-		Version: 1,
+		Version: 2,
 		Runners: map[string]string{
 			"claude-code": "./nonexistent-runner",
 		},
@@ -209,7 +209,7 @@ func TestResolveEditorCmd_NotOnPath_ReturnsEditorNotConfigured(t *testing.T) {
 	}
 
 	cfg := UserConfig{
-		Version:  1,
+		Version:  2,
 		Defaults: UserDefaults{Editor: "code"},
 	}
 
@@ -230,7 +230,7 @@ func TestResolveEditorCmd_PathNotExecutable_ReturnsEditorNotConfigured(t *testin
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0644))
 
 	cfg := UserConfig{
-		Version: 1,
+		Version: 2,
 		Editors: map[string]string{
 			"custom": "./my-editor",
 		},
@@ -249,7 +249,7 @@ func TestResolveEditorCmd_PathNotFound_ReturnsEditorNotConfigured(t *testing.T) 
 	cr := &configTestRunner{}
 
 	cfg := UserConfig{
-		Version: 1,
+		Version: 2,
 		Editors: map[string]string{
 			"custom": "./nonexistent-editor",
 		},

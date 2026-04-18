@@ -22,8 +22,9 @@ const (
 
 // AgencyConfig represents the parsed and validated agency.json configuration.
 type AgencyConfig struct {
-	Version int     `json:"version"`
-	Scripts Scripts `json:"scripts"`
+	Version        int                       `json:"version"`
+	Scripts        Scripts                   `json:"scripts"`
+	RunnerDefaults map[string]RunnerDefaults `json:"runner_defaults,omitempty"`
 }
 
 // Scripts contains configuration for the required agency scripts.
@@ -89,8 +90,9 @@ func loadAgencyConfigPath(filesystem fs.FS, path string) (AgencyConfig, error) {
 func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) {
 	var cfg AgencyConfig
 	allowedKeys := map[string]bool{
-		"version": true,
-		"scripts": true,
+		"version":         true,
+		"scripts":         true,
+		"runner_defaults": true,
 	}
 	for key := range raw {
 		if !allowedKeys[key] {
@@ -150,6 +152,49 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 				return AgencyConfig{}, err
 			}
 			cfg.Scripts.Archive = scriptCfg
+		}
+	}
+
+	if rawRunnerDefaults, ok := raw["runner_defaults"]; ok {
+		var defaultsMap map[string]json.RawMessage
+		if err := json.Unmarshal(rawRunnerDefaults, &defaultsMap); err != nil {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults must be an object")
+		}
+
+		cfg.RunnerDefaults = make(map[string]RunnerDefaults, len(defaultsMap))
+		for runnerName, rawRunnerDefaults := range defaultsMap {
+			var runnerDefaultsMap map[string]json.RawMessage
+			if err := json.Unmarshal(rawRunnerDefaults, &runnerDefaultsMap); err != nil {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" must be an object")
+			}
+
+			allowedRunnerDefaultsKeys := map[string]bool{
+				"model":  true,
+				"effort": true,
+			}
+			for key := range runnerDefaultsMap {
+				if !allowedRunnerDefaultsKeys[key] {
+					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" contains unknown field: "+key)
+				}
+			}
+
+			var runnerDefaults RunnerDefaults
+			if rawModel, ok := runnerDefaultsMap["model"]; ok {
+				var model string
+				if err := json.Unmarshal(rawModel, &model); err != nil {
+					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".model must be a string")
+				}
+				runnerDefaults.Model = model
+			}
+			if rawEffort, ok := runnerDefaultsMap["effort"]; ok {
+				var effort string
+				if err := json.Unmarshal(rawEffort, &effort); err != nil {
+					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".effort must be a string")
+				}
+				runnerDefaults.Effort = effort
+			}
+
+			cfg.RunnerDefaults[runnerName] = runnerDefaults
 		}
 	}
 

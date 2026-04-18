@@ -42,7 +42,7 @@ func startRepoTestDaemon(t *testing.T) *repoTestEnv {
 
 	// Minimal config.json — no runner binary needed for repo operations.
 	cfg := map[string]any{
-		"version": 1,
+		"version": 2,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  },
+  "runner_defaults": {
+    "codex": {}
+  }
+}

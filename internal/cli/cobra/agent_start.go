@@ -15,6 +15,7 @@ func newAgentStartCmd() *cobra.Command {
 	var detached bool
 	var prompt string
 	var promptFile string
+	var agencyConfigPath string
 	var runnerArgs []string
 	var model string
 	var effort string
@@ -46,6 +47,7 @@ Example:
   agency agent start --repo agency --worktree my-feature --runner claude-code
   agency agent start --repo agency --worktree my-feature --detached
   agency agent start --repo agency --worktree my-feature --name arch-agent
+  agency agent start --repo agency --worktree my-feature --agency-config /path/to/agency.json
   agency agent start --repo agency --worktree my-feature --headless --prompt "Fix the bug"
   agency agent start --repo agency --worktree my-feature --headless --prompt-file task.md
   agency agent start --repo agency --worktree my-feature --headless --no-include-untracked`,
@@ -65,6 +67,7 @@ Example:
 				Detached:           detached,
 				Prompt:             prompt,
 				PromptFile:         promptFile,
+				AgencyConfigPath:   agencyConfigPath,
 				RunnerArgs:         runnerArgs,
 				Model:              model,
 				Effort:             effort,
@@ -83,9 +86,10 @@ Example:
 	cmd.Flags().BoolVar(&detached, "detached", false, "Skip attach in headed mode")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt string for headless mode")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing prompt for headless mode")
+	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "load agency config from this file")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional argument to pass to the runner (repeatable)")
-	cmd.Flags().StringVar(&model, "model", "", "Model override (supported for runners claude-code, codex, cursor)")
-	cmd.Flags().StringVar(&effort, "effort", "", "Effort override (claude-code: --effort, codex: model_reasoning_effort; cursor: choose thinking model via --model)")
+	cmd.Flags().StringVar(&model, "model", "", "Model override (otherwise uses runner_defaults from agency config, then user config)")
+	cmd.Flags().StringVar(&effort, "effort", "", "Effort override (otherwise uses runner_defaults from agency config, then user config)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from checkpoint snapshots")
 

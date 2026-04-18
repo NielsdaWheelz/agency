@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  },
+  "runner_defaults": {
+    "cursor": {
+      "model": "sonnet-4.6-thinking",
+      "effort": "high"
+    }
+  }
+}

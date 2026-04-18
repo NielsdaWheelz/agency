@@ -11,7 +11,7 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - An invocation sandbox is an isolated per-invocation tree derived from one integration worktree.
 - Final PR progression uses `agency worktree pr sync` and `agency worktree pr merge`.
 - Successful worktree PR merge archives the worktree record and removes the tree directory.
-- Worktree PR merge uses the agency config selected by the standard config precedence; the config does not need to be committed to the repo.
+- `agency agent start` and worktree PR flows use the agency config selected by the standard config precedence; the config does not need to be committed to the repo.
 
 ## Rules
 
@@ -19,6 +19,7 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - `agency worktree create` and `agency agent start` accept an explicit `--repo` selector from any cwd; when omitted, they fall back to the current directory.
 - `agency worktree create` defaults an omitted `--base` to the current branch.
 - `agency agent start` may infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` remains required.
+- `agency agent start` should honor explicit `--agency-config` and otherwise resolve agency config in standard precedence order.
 - Creating a worktree requires a registered repo when `--repo` is supplied or a git repo with commits when falling back to cwd, plus a clean base checkout and an existing base branch.
 - Integration worktrees are stable collaboration surfaces.
 - Sandboxes are disposable execution surfaces.

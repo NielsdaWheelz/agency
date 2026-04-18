@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "base_branch": "main",
+    "model": "opus-4.7"
+  }
+}

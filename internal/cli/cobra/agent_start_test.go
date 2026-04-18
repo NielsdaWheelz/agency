@@ -11,4 +11,5 @@ func TestAgentStart_HasRepoRef(t *testing.T) {
 
 	cmd := newAgentStartCmd()
 	require.NotNil(t, cmd.Flag("repo"), "agent start must expose explicit repo selection")
+	require.NotNil(t, cmd.Flag("agency-config"), "agent start must expose explicit agency config selection")
 }

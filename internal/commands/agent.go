@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -42,6 +43,9 @@ type AgentStartOpts struct {
 
 	// PromptFile is the path to a file containing the prompt for headless mode.
 	PromptFile string
+
+	// AgencyConfigPath, if set, is the exact agency config file to load.
+	AgencyConfigPath string
 
 	// RunnerArgs are additional arguments to pass to the runner.
 	RunnerArgs []string
@@ -105,6 +109,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	repoRoot := ""
+	repoID := ""
 	if repoRef != "" {
 		repo, err := ns.client.GetRepo(ctx, repoRef)
 		if err != nil {
@@ -135,6 +140,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			worktreeRef = worktree.WorktreeID
 		}
 		repoRoot = repo.Data.PreferredRoot
+		repoID = repo.Data.RepoID
 	} else {
 		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
 		if err != nil {
@@ -156,6 +162,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				))
 			}
 			repoRoot = repo.Data.PreferredRoot
+			repoID = repo.Data.RepoID
 		} else {
 			if worktreeRef == "" {
 				return fail(errors.New(errors.EUsage, "--worktree is required unless current directory is an integration worktree"))
@@ -187,16 +194,64 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				))
 			}
 			repoRoot = reg.Data.PreferredRoot
+			repoID = reg.Data.RepoID
 		}
 	}
 	opts.WorktreeRef = worktreeRef
 
-	// Validate runner
 	runner, err := resolveAgentRunner(opts.Runner, userCfg.Defaults.Runner)
 	if err != nil {
 		return fail(err)
 	}
-	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, opts.Model, opts.Effort, userCfg.Defaults)
+
+	agencyConfigPath := strings.TrimSpace(opts.AgencyConfigPath)
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
+	}
+	shouldResolveAgencyConfig := agencyConfigPath != ""
+	if !shouldResolveAgencyConfig {
+		repoAgencyConfigPath := filepath.Join(repoRoot, "agency.json")
+		if _, err := fsys.Stat(repoAgencyConfigPath); err == nil {
+			shouldResolveAgencyConfig = true
+		} else if !os.IsNotExist(err) {
+			shouldResolveAgencyConfig = true
+		} else {
+			localAgencyConfigPath := config.LocalAgencyConfigPath(ns.dirs.ConfigDir, repoID)
+			if _, err := fsys.Stat(localAgencyConfigPath); err == nil || !os.IsNotExist(err) {
+				shouldResolveAgencyConfig = true
+			}
+		}
+	}
+
+	model := strings.TrimSpace(opts.Model)
+	effort := strings.TrimSpace(opts.Effort)
+	if shouldResolveAgencyConfig {
+		resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot, ns.dirs.ConfigDir, repoID, agencyConfigPath)
+		if err != nil {
+			return fail(err)
+		}
+		runnerDefaults, ok := resolvedAgencyConfig.Config.RunnerDefaults[runner]
+		if ok {
+			if model == "" {
+				model = runnerDefaults.Model
+			}
+			if effort == "" {
+				effort = runnerDefaults.Effort
+			}
+		}
+	}
+	if model == "" {
+		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
+			model = runnerDefaults.Model
+		}
+	}
+	if effort == "" {
+		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
+			effort = runnerDefaults.Effort
+		}
+	}
+
+	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, model, effort)
 	if err != nil {
 		return fail(err)
 	}

@@ -402,7 +402,7 @@ func writeWorktreeMergeScriptsAndConfig(t *testing.T, workspaceRoot, verifyScrip
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "archive.sh"), []byte(archiveScript), 0o755))
 
 	agencyJSON := `{
-  "version": 1,
+  "version": 2,
   "scripts": {
     "setup": {
       "path": "scripts/setup.sh",

@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "base_branch": "main"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "opus-4.7",
+      "effort": "max"
+    },
+    "codex": {
+      "model": "gpt-5.4",
+      "effort": "xhigh"
+    },
+    "cursor": {
+      "model": "sonnet-4.6-thinking"
+    }
+  },
+  "runners": {
+    "claude-code": "claude",
+    "codex": "codex"
+  },
+  "editors": {
+    "code": "code"
+  }
+}

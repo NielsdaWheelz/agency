@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -45,7 +44,7 @@ func resolveAgentRunner(input, defaultRunner string) (string, error) {
 	return canonicalRunner, nil
 }
 
-func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cliEffort string, defaults config.UserDefaults) ([]string, error) {
+func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effort string) ([]string, error) {
 	canonicalRunner, err := runners.Canonicalize(runner)
 	if err != nil {
 		return nil, errors.NewWithDetails(
@@ -58,16 +57,14 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cl
 		)
 	}
 
-	cliModel = strings.TrimSpace(cliModel)
-	cliEffort = strings.TrimSpace(cliEffort)
-	defaultModel := strings.TrimSpace(defaults.Model)
-	defaultEffort := strings.TrimSpace(defaults.Effort)
+	model = strings.TrimSpace(model)
+	effort = strings.TrimSpace(effort)
 
 	supportsModel := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex || canonicalRunner == runners.RunnerCursor
 	supportsEffort := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex
 
 	if !supportsModel {
-		if cliModel != "" || cliEffort != "" {
+		if model != "" || effort != "" {
 			return nil, errors.NewWithDetails(
 				errors.EUsage,
 				fmt.Sprintf("--model is supported for runners %s; --effort is supported for runners %s",
@@ -82,18 +79,8 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, cliModel, cl
 		}
 		return append([]string(nil), runnerArgs...), nil
 	}
-
-	model := cliModel
-	if model == "" {
-		model = defaultModel
-	}
-
-	effort := cliEffort
-	if supportsEffort && effort == "" {
-		effort = defaultEffort
-	}
 	if !supportsEffort {
-		if cliEffort != "" {
+		if effort != "" {
 			return nil, errors.NewWithDetails(
 				errors.EUsage,
 				"--effort is not supported for runner "+canonicalRunner,

@@ -17,6 +17,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -46,13 +47,17 @@ type DoctorReport struct {
 	GhAuthenticated bool
 
 	// Config resolution
-	DefaultsBaseBranch string
-	DefaultsRunner     string
-	DefaultsEditor     string
-	RunnerCmd          string
-	ScriptSetup        string
-	ScriptVerify       string
-	ScriptArchive      string
+	DefaultsBaseBranch         string
+	DefaultsRunner             string
+	DefaultsRunnerModel        string
+	DefaultsRunnerModelSource  string
+	DefaultsRunnerEffort       string
+	DefaultsRunnerEffortSource string
+	DefaultsEditor             string
+	RunnerCmd                  string
+	ScriptSetup                string
+	ScriptVerify               string
+	ScriptArchive              string
 }
 
 // osEnv implements paths.Env using os.Getenv.
@@ -165,6 +170,35 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	if _, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, userCfg.Defaults.Editor); err != nil {
 		return err
 	}
+	canonicalRunner, err := runners.Canonicalize(userCfg.Defaults.Runner)
+	if err != nil {
+		return err
+	}
+
+	defaultsRunnerModel := ""
+	defaultsRunnerModelSource := "none"
+	defaultsRunnerEffort := ""
+	defaultsRunnerEffortSource := "none"
+	if runnerDefaults, ok := userCfg.RunnerDefaults[canonicalRunner]; ok {
+		if runnerDefaults.Model != "" {
+			defaultsRunnerModel = runnerDefaults.Model
+			defaultsRunnerModelSource = "user"
+		}
+		if runnerDefaults.Effort != "" {
+			defaultsRunnerEffort = runnerDefaults.Effort
+			defaultsRunnerEffortSource = "user"
+		}
+	}
+	if runnerDefaults, ok := cfg.RunnerDefaults[canonicalRunner]; ok {
+		if runnerDefaults.Model != "" {
+			defaultsRunnerModel = runnerDefaults.Model
+			defaultsRunnerModelSource = resolvedAgencyConfig.Source
+		}
+		if runnerDefaults.Effort != "" {
+			defaultsRunnerEffort = runnerDefaults.Effort
+			defaultsRunnerEffortSource = resolvedAgencyConfig.Source
+		}
+	}
 
 	// 10. Check scripts exist and are executable
 	scriptSetup, err := checkScript(fsys, cfg.Scripts.Setup.Path, repoRoot.Path, "setup")
@@ -187,30 +221,34 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 
 	// Build report
 	report := DoctorReport{
-		RepoRoot:            repoRoot.Path,
-		AgencyDataDir:       dirs.DataDir,
-		AgencyConfigDir:     dirs.ConfigDir,
-		UserConfigPath:      config.UserConfigPath(dirs.ConfigDir),
-		AgencyJSONPath:      resolvedAgencyConfig.Path,
-		AgencyJSONSource:    resolvedAgencyConfig.Source,
-		AgencyCacheDir:      dirs.CacheDir,
-		RepoKey:             repoIdentity.RepoKey,
-		RepoID:              repoIdentity.RepoID,
-		OriginPresent:       originInfo.Present,
-		OriginURL:           originInfo.URL,
-		OriginHost:          originInfo.Host,
-		GitHubFlowAvailable: repoIdentity.GitHubFlowAvailable,
-		GitVersion:          gitVersion,
-		TmuxVersion:         tmuxVersion,
-		GhVersion:           ghVersion,
-		GhAuthenticated:     true,
-		DefaultsBaseBranch:  currentBranch,
-		DefaultsRunner:      userCfg.Defaults.Runner,
-		DefaultsEditor:      userCfg.Defaults.Editor,
-		RunnerCmd:           resolvedRunnerCmd,
-		ScriptSetup:         scriptSetup,
-		ScriptVerify:        scriptVerify,
-		ScriptArchive:       scriptArchive,
+		RepoRoot:                   repoRoot.Path,
+		AgencyDataDir:              dirs.DataDir,
+		AgencyConfigDir:            dirs.ConfigDir,
+		UserConfigPath:             config.UserConfigPath(dirs.ConfigDir),
+		AgencyJSONPath:             resolvedAgencyConfig.Path,
+		AgencyJSONSource:           resolvedAgencyConfig.Source,
+		AgencyCacheDir:             dirs.CacheDir,
+		RepoKey:                    repoIdentity.RepoKey,
+		RepoID:                     repoIdentity.RepoID,
+		OriginPresent:              originInfo.Present,
+		OriginURL:                  originInfo.URL,
+		OriginHost:                 originInfo.Host,
+		GitHubFlowAvailable:        repoIdentity.GitHubFlowAvailable,
+		GitVersion:                 gitVersion,
+		TmuxVersion:                tmuxVersion,
+		GhVersion:                  ghVersion,
+		GhAuthenticated:            true,
+		DefaultsBaseBranch:         currentBranch,
+		DefaultsRunner:             userCfg.Defaults.Runner,
+		DefaultsRunnerModel:        defaultsRunnerModel,
+		DefaultsRunnerModelSource:  defaultsRunnerModelSource,
+		DefaultsRunnerEffort:       defaultsRunnerEffort,
+		DefaultsRunnerEffortSource: defaultsRunnerEffortSource,
+		DefaultsEditor:             userCfg.Defaults.Editor,
+		RunnerCmd:                  resolvedRunnerCmd,
+		ScriptSetup:                scriptSetup,
+		ScriptVerify:               scriptVerify,
+		ScriptArchive:              scriptArchive,
 	}
 
 	// 10. Persist repo index and repo record (only on success)
@@ -392,6 +430,10 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	// Config resolution
 	_, _ = fmt.Fprintf(w, "defaults_base_branch: %s\n", r.DefaultsBaseBranch)
 	_, _ = fmt.Fprintf(w, "defaults_runner: %s\n", r.DefaultsRunner)
+	_, _ = fmt.Fprintf(w, "defaults_runner_model: %s\n", r.DefaultsRunnerModel)
+	_, _ = fmt.Fprintf(w, "defaults_runner_model_source: %s\n", r.DefaultsRunnerModelSource)
+	_, _ = fmt.Fprintf(w, "defaults_runner_effort: %s\n", r.DefaultsRunnerEffort)
+	_, _ = fmt.Fprintf(w, "defaults_runner_effort_source: %s\n", r.DefaultsRunnerEffortSource)
 	_, _ = fmt.Fprintf(w, "defaults_editor: %s\n", r.DefaultsEditor)
 	_, _ = fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)
 	_, _ = fmt.Fprintf(w, "script_setup: %s\n", r.ScriptSetup)

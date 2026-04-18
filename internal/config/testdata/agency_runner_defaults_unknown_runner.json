@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -12,6 +12,11 @@
     "archive": {
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "amp": {
+      "model": "amp-1"
     }
   }
 }

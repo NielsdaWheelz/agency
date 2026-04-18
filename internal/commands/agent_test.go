@@ -201,7 +201,7 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
 	cfg := map[string]any{
-		"version": 1,
+		"version": 2,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",
@@ -958,6 +958,200 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 
 	_, recordErr := os.Stat(env.RecordFile)
 	assert.True(t, os.IsNotExist(recordErr), "detached headed start must not attach")
+}
+
+func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-defaults", 1)
+
+	cfg := map[string]any{
+		"version": 2,
+		"defaults": map[string]string{
+			"runner": "claude-code",
+			"editor": "code",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"model":  "user-opus",
+				"effort": "max",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-user-runner-defaults",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "user-opus", "--effort", "max"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-agency-runner-defaults", 1)
+
+	cfg := map[string]any{
+		"version": 2,
+		"defaults": map[string]string{
+			"runner": "claude-code",
+			"editor": "code",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"model":  "user-opus",
+				"effort": "high",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	agencyJSON := `{
+  "version": 2,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "agency-opus",
+      "effort": "max"
+    }
+  }
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(agencyJSON), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-agency-runner-defaults",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "agency-opus", "--effort", "max"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-cli-runner-defaults", 1)
+
+	cfg := map[string]any{
+		"version": 2,
+		"defaults": map[string]string{
+			"runner": "claude-code",
+			"editor": "code",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"model":  "user-opus",
+				"effort": "high",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	agencyJSON := `{
+  "version": 2,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "agency-opus",
+      "effort": "max"
+    }
+  }
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(agencyJSON), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-cli-runner-defaults",
+		Runner:        "claude-code",
+		Model:         "cli-opus",
+		Effort:        "medium",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "cli-opus", "--effort", "medium"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_ExplicitMissingAgencyConfigFails(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-missing-agency-config", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:          env.RepoID,
+		WorktreeRef:      "start-missing-agency-config",
+		Runner:           "claude-code",
+		AgencyConfigPath: filepath.Join(env.RepoDir, "missing-agency.json"),
+		Detached:         true,
+		IsInteractive:    func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoAgencyJSON, errors.GetCode(err))
 }
 
 func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {

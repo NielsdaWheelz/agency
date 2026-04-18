@@ -6,14 +6,15 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
 // ValidateAgencyConfig validates the repo configuration (agency.json).
 // Returns E_INVALID_AGENCY_JSON for schema/required-field errors.
 func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	// Validate version
-	if cfg.Version != 1 {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 1")
+	if cfg.Version != 2 {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 2")
 	}
 
 	// Validate required fields in scripts
@@ -25,6 +26,38 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	}
 	if cfg.Scripts.Archive.Path == "" {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.archive.path")
+	}
+	for name, runnerDefaults := range cfg.RunnerDefaults {
+		canonicalRunner, err := runners.Canonicalize(name)
+		if err != nil {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
+		}
+		if canonicalRunner != runners.RunnerClaudeCode && canonicalRunner != runners.RunnerCodex && canonicalRunner != runners.RunnerCursor {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
+		}
+
+		model := strings.TrimSpace(runnerDefaults.Model)
+		effort := strings.TrimSpace(runnerDefaults.Effort)
+		if model == "" && effort == "" {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" requires at least one of model or effort")
+		}
+		if runnerDefaults.Model != "" && model == "" {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+".model must be a non-empty string")
+		}
+		if runnerDefaults.Effort != "" && effort == "" {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+".effort must be a non-empty string")
+		}
+		if canonicalRunner == runners.RunnerCursor && effort != "" {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults.cursor.effort is not supported")
+		}
+
+		cfg.RunnerDefaults[canonicalRunner] = RunnerDefaults{
+			Model:  model,
+			Effort: effort,
+		}
+		if canonicalRunner != name {
+			delete(cfg.RunnerDefaults, name)
+		}
 	}
 
 	return cfg, nil

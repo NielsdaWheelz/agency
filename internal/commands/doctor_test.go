@@ -32,7 +32,7 @@ func setupTestRepo(t *testing.T) string {
 
 	// Create agency.json
 	agencyJSON := `{
-  "version": 1,
+  "version": 2,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -64,10 +64,16 @@ func writeUserConfig(t *testing.T, configDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "failed to create config dir")
 	cfg := `{
-  "version": 1,
+  "version": 2,
   "defaults": {
     "runner": "claude-code",
     "editor": "code"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "user-opus",
+      "effort": "max"
+    }
   },
   "runners": {
     "claude-code": "claude",
@@ -89,7 +95,7 @@ func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
 	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create local config dir")
 
 	agencyJSON := `{
-  "version": 1,
+  "version": 2,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -102,6 +108,12 @@ func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
     "archive": {
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "local-opus",
+      "effort": "high"
     }
   }
 }`
@@ -185,6 +197,10 @@ func TestDoctor_Success(t *testing.T) {
 		"gh_authenticated: true",
 		"defaults_base_branch: main",
 		"defaults_runner: claude-code",
+		"defaults_runner_model: user-opus",
+		"defaults_runner_model_source: user",
+		"defaults_runner_effort: max",
+		"defaults_runner_effort_source: user",
 		"defaults_editor: code",
 		"runner_cmd: /usr/bin/claude",
 		"status: ok",
@@ -222,6 +238,10 @@ func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
 	output := stdout.String()
 	assert.Contains(t, output, "agency_json_path: "+agencyJSONPath)
 	assert.Contains(t, output, "agency_json_source: local")
+	assert.Contains(t, output, "defaults_runner_model: local-opus")
+	assert.Contains(t, output, "defaults_runner_model_source: local")
+	assert.Contains(t, output, "defaults_runner_effort: high")
+	assert.Contains(t, output, "defaults_runner_effort_source: local")
 	assert.Contains(t, output, "script_setup: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_setup.sh"))
 	assert.Contains(t, output, "script_verify: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_verify.sh"))
 	assert.Contains(t, output, "script_archive: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh"))
@@ -426,6 +446,10 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"gh_authenticated:",
 		"defaults_base_branch:",
 		"defaults_runner:",
+		"defaults_runner_model:",
+		"defaults_runner_model_source:",
+		"defaults_runner_effort:",
+		"defaults_runner_effort_source:",
 		"defaults_editor:",
 		"runner_cmd:",
 		"script_setup:",

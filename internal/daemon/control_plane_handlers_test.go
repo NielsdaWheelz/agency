@@ -407,7 +407,7 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 
 	// Write config pointing to nonexistent runner binary.
 	// Must include "defaults" for LoadUserConfig validation to pass.
-	cfg := `{"version":1,"defaults":{"runner":"claude-code","editor":"code"},"runners":{"claude-code":"/nonexistent/path/to/runner"}}`
+	cfg := `{"version":2,"defaults":{"runner":"claude-code","editor":"code"},"runners":{"claude-code":"/nonexistent/path/to/runner"}}`
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "write config")
 
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)

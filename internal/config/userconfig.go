@@ -5,17 +5,20 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
 // UserConfig represents the parsed and validated user configuration.
 type UserConfig struct {
-	Version  int               `json:"version"`
-	Defaults UserDefaults      `json:"defaults"`
-	Runners  map[string]string `json:"runners,omitempty"`
-	Editors  map[string]string `json:"editors,omitempty"`
+	Version        int                       `json:"version"`
+	Defaults       UserDefaults              `json:"defaults"`
+	RunnerDefaults map[string]RunnerDefaults `json:"runner_defaults,omitempty"`
+	Runners        map[string]string         `json:"runners,omitempty"`
+	Editors        map[string]string         `json:"editors,omitempty"`
 }
 
 // UserDefaults contains default values for user-scoped operations.
@@ -23,14 +26,18 @@ type UserDefaults struct {
 	Runner     string `json:"runner"`
 	Editor     string `json:"editor"`
 	BaseBranch string `json:"base_branch,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Effort     string `json:"effort,omitempty"`
+}
+
+// RunnerDefaults contains typed runner defaults for one canonical runner id.
+type RunnerDefaults struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // DefaultUserConfig returns built-in defaults used when config.json is missing.
 func DefaultUserConfig() UserConfig {
 	return UserConfig{
-		Version: 1,
+		Version: 2,
 		Defaults: UserDefaults{
 			Runner:     "claude-code",
 			Editor:     "code",
@@ -71,7 +78,8 @@ func LoadUserConfig(filesystem fs.FS, configDir string) (UserConfig, bool, error
 		return UserConfig{}, false, err
 	}
 
-	if _, err := ValidateUserConfig(cfg); err != nil {
+	cfg, err = ValidateUserConfig(cfg)
+	if err != nil {
 		return UserConfig{}, false, err
 	}
 
@@ -81,10 +89,11 @@ func LoadUserConfig(filesystem fs.FS, configDir string) (UserConfig, bool, error
 func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 	var cfg UserConfig
 	allowedKeys := map[string]bool{
-		"version":  true,
-		"defaults": true,
-		"runners":  true,
-		"editors":  true,
+		"version":         true,
+		"defaults":        true,
+		"runner_defaults": true,
+		"runners":         true,
+		"editors":         true,
 	}
 	for key := range raw {
 		if !allowedKeys[key] {
@@ -119,8 +128,6 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			"runner":      true,
 			"editor":      true,
 			"base_branch": true,
-			"model":       true,
-			"effort":      true,
 		}
 		for key := range defaultsMap {
 			if !allowedDefaultKeys[key] {
@@ -148,19 +155,48 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			}
 			cfg.Defaults.BaseBranch = baseBranch
 		}
-		if rawModel, ok := defaultsMap["model"]; ok {
-			var model string
-			if err := json.Unmarshal(rawModel, &model); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.model must be a string")
-			}
-			cfg.Defaults.Model = model
+	}
+
+	if rawRunnerDefaults, ok := raw["runner_defaults"]; ok {
+		var defaultsMap map[string]json.RawMessage
+		if err := json.Unmarshal(rawRunnerDefaults, &defaultsMap); err != nil {
+			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults must be an object")
 		}
-		if rawEffort, ok := defaultsMap["effort"]; ok {
-			var effort string
-			if err := json.Unmarshal(rawEffort, &effort); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.effort must be a string")
+
+		cfg.RunnerDefaults = make(map[string]RunnerDefaults, len(defaultsMap))
+		for runnerName, rawRunnerDefaults := range defaultsMap {
+			var runnerDefaultsMap map[string]json.RawMessage
+			if err := json.Unmarshal(rawRunnerDefaults, &runnerDefaultsMap); err != nil {
+				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+" must be an object")
 			}
-			cfg.Defaults.Effort = effort
+
+			allowedRunnerDefaultsKeys := map[string]bool{
+				"model":  true,
+				"effort": true,
+			}
+			for key := range runnerDefaultsMap {
+				if !allowedRunnerDefaultsKeys[key] {
+					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+" contains unknown field: "+key)
+				}
+			}
+
+			var runnerDefaults RunnerDefaults
+			if rawModel, ok := runnerDefaultsMap["model"]; ok {
+				var model string
+				if err := json.Unmarshal(rawModel, &model); err != nil {
+					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".model must be a string")
+				}
+				runnerDefaults.Model = model
+			}
+			if rawEffort, ok := runnerDefaultsMap["effort"]; ok {
+				var effort string
+				if err := json.Unmarshal(rawEffort, &effort); err != nil {
+					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".effort must be a string")
+				}
+				runnerDefaults.Effort = effort
+			}
+
+			cfg.RunnerDefaults[runnerName] = runnerDefaults
 		}
 	}
 
@@ -201,8 +237,8 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 
 // ValidateUserConfig validates the user config and returns E_INVALID_USER_CONFIG on failure.
 func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
-	if cfg.Version != 1 {
-		return cfg, errors.New(errors.EInvalidUserConfig, "version must be 1")
+	if cfg.Version != 2 {
+		return cfg, errors.New(errors.EInvalidUserConfig, "version must be 2")
 	}
 	if cfg.Defaults.Runner == "" {
 		return cfg, errors.New(errors.EInvalidUserConfig, "missing required field defaults.runner")
@@ -224,6 +260,38 @@ func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
 		}
 		if containsWhitespace(cmd) {
 			return cfg, errors.New(errors.EInvalidUserConfig, "editors."+name+" must be a single executable (no args); use a wrapper script")
+		}
+	}
+	for name, runnerDefaults := range cfg.RunnerDefaults {
+		canonicalRunner, err := runners.Canonicalize(name)
+		if err != nil {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
+		}
+		if canonicalRunner != runners.RunnerClaudeCode && canonicalRunner != runners.RunnerCodex && canonicalRunner != runners.RunnerCursor {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
+		}
+
+		model := strings.TrimSpace(runnerDefaults.Model)
+		effort := strings.TrimSpace(runnerDefaults.Effort)
+		if model == "" && effort == "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" requires at least one of model or effort")
+		}
+		if runnerDefaults.Model != "" && model == "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".model must be a non-empty string")
+		}
+		if runnerDefaults.Effort != "" && effort == "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".effort must be a non-empty string")
+		}
+		if canonicalRunner == runners.RunnerCursor && effort != "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults.cursor.effort is not supported")
+		}
+
+		cfg.RunnerDefaults[canonicalRunner] = RunnerDefaults{
+			Model:  model,
+			Effort: effort,
+		}
+		if canonicalRunner != name {
+			delete(cfg.RunnerDefaults, name)
 		}
 	}
 	return cfg, nil

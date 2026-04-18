@@ -470,7 +470,7 @@ func writeE2EConfig(t *testing.T, configDir, fakeRunnerBin string) {
 	t.Helper()
 
 	cfg := map[string]any{
-		"version": 1,
+		"version": 2,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",
