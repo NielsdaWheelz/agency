@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -575,12 +576,14 @@ func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T
 	env := setupWorktreeEnv(t, "rm-reject")
 
 	var stdout, stderr bytes.Buffer
-	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
-		WorktreeRef:    env.WorktreeID,
-		RepoRef:        env.RepoID,
-		IsInteractive:  func() bool { return true },
-		ConfirmationIn: strings.NewReader("no\n"),
-	}, &stdout, &stderr)
+	err := awaitConfirmationLineBeforeEOF(t, "no\n", func(confirmIn io.Reader) error {
+		return WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
+			WorktreeRef:    env.WorktreeID,
+			RepoRef:        env.RepoID,
+			IsInteractive:  func() bool { return true },
+			ConfirmationIn: confirmIn,
+		}, &stdout, &stderr)
+	})
 	require.Error(t, err)
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }

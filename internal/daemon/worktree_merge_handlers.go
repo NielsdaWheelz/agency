@@ -3,12 +3,14 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
@@ -20,6 +22,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/verify"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
+
+// worktreeMergeArchiveRemoveTimeout bounds the git worktree removal performed after archive cleanup.
+const worktreeMergeArchiveRemoveTimeout = 30 * time.Second
 
 // handleWorktreePRMerge handles POST /worktrees/{ref}/pr/merge.
 func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, worktreeRef string) {
@@ -549,7 +554,10 @@ func (s *Server) runWorktreeArchive(
 	}
 
 	removeArgs := []string{"-C", repoRoot, "worktree", "remove", "--force", wtMeta.TreePath}
-	removeResult, removeRunErr := s.Runner.Run(ctx, "git", removeArgs, exec.RunOpts{})
+	removeCtx, cancel := context.WithTimeout(ctx, worktreeMergeArchiveRemoveTimeout)
+	defer cancel()
+
+	removeResult, removeRunErr := s.Runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{})
 	removeCmd := "git " + strings.Join(removeArgs, " ")
 	appendArchiveSection := func(title string, result exec.CmdResult, runErr error) {
 		logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
@@ -586,6 +594,17 @@ func (s *Server) runWorktreeArchive(
 	}
 	appendArchiveSection(removeCmd, removeResult, removeRunErr)
 	if removeRunErr != nil {
+		if stderrors.Is(removeRunErr, context.DeadlineExceeded) {
+			return "", errors.NewWithDetails(
+				errors.EArchiveFailed,
+				"git worktree remove timed out after archive cleanup",
+				map[string]string{
+					"archive_log_path": archiveLogPath,
+					"command":          removeCmd,
+					"hint":             "inspect archive.log, retry the merge cleanup, or remove the worktree manually if git is blocked",
+				},
+			)
+		}
 		return "", errors.WrapWithDetails(
 			errors.EArchiveFailed,
 			"git worktree remove failed to start",

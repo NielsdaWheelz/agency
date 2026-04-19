@@ -1,11 +1,13 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -63,11 +65,18 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		if confirmationIn == nil {
 			confirmationIn = os.Stdin
 		}
-		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
-		if err != nil {
-			return err
+		line, err := bufio.NewReader(io.LimitReader(confirmationIn, maxConfirmationBytes+1)).ReadString('\n')
+		if err != nil && err != io.EOF {
+			return errors.Wrap(errors.EInternal, "failed to read worktree remove confirmation input", err)
 		}
-		if token != "rm" {
+		if len(line) > maxConfirmationBytes {
+			return errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"confirmation input exceeds maximum length",
+				map[string]string{"hint": "type 'rm' exactly"},
+			)
+		}
+		if strings.TrimSpace(line) != "rm" {
 			return errors.New(errors.EAborted, "worktree remove confirmation failed; expected 'rm'")
 		}
 	}
@@ -234,11 +243,18 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		if confirmationIn == nil {
 			confirmationIn = os.Stdin
 		}
-		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
-		if err != nil {
-			return fail(err)
+		line, err := bufio.NewReader(io.LimitReader(confirmationIn, maxConfirmationBytes+1)).ReadString('\n')
+		if err != nil && err != io.EOF {
+			return fail(errors.Wrap(errors.EInternal, "failed to read worktree merge confirmation input", err))
 		}
-		if token != "merge" {
+		if len(line) > maxConfirmationBytes {
+			return fail(errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"confirmation input exceeds maximum length",
+				map[string]string{"hint": "type 'merge' exactly"},
+			))
+		}
+		if strings.TrimSpace(line) != "merge" {
 			return fail(errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'"))
 		}
 		confirmationMode = "typed"

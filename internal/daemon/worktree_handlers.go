@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/landing"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -17,6 +19,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
+
+// worktreeRmGitRemoveTimeout bounds the git worktree removal performed by the worktree rm mutation surface.
+const worktreeRmGitRemoveTimeout = 30 * time.Second
 
 // handleWorktreeCreate handles POST /worktrees/create.
 func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
@@ -284,8 +289,16 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 	args = append(args, record.Meta.TreePath)
 
-	result, runErr := s.Runner.Run(ctx, "git", args, exec.RunOpts{})
+	removeCtx, cancel := context.WithTimeout(ctx, worktreeRmGitRemoveTimeout)
+	defer cancel()
+
+	result, runErr := s.Runner.Run(removeCtx, "git", args, exec.RunOpts{})
 	if runErr != nil {
+		if stderrors.Is(runErr, context.DeadlineExceeded) {
+			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
+				"git worktree remove timed out", "retry the removal or inspect the worktree for a blocked git process")
+			return
+		}
 		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
 			"failed to execute git worktree remove: "+runErr.Error(), "")
 		return

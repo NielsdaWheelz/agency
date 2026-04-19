@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,13 +48,15 @@ func TestWorktreePRMerge_InteractiveConfirmationRejected(t *testing.T) {
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
-	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
-		WorktreeRef:     worktreeID,
-		RepoRef:         repoID,
-		DataDirOverride: dataDir,
-		IsInteractive:   func() bool { return true },
-		ConfirmationIn:  strings.NewReader("nope\n"),
-	}, ioDiscard{}, ioDiscard{})
+	err := awaitConfirmationLineBeforeEOF(t, "nope\n", func(confirmIn io.Reader) error {
+		return WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
+			RepoRef:         repoID,
+			DataDirOverride: dataDir,
+			IsInteractive:   func() bool { return true },
+			ConfirmationIn:  confirmIn,
+		}, ioDiscard{}, ioDiscard{})
+	})
 	require.Error(t, err)
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
@@ -64,7 +67,7 @@ func TestWorktreePRMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "merge-confirm-too-large")
 	cr := testutil.NewFakeCommandRunner()
 
-	longToken := strings.Repeat("x", maxMergeConfirmationBytes+1) + "\n"
+	longToken := strings.Repeat("x", maxConfirmationBytes+1) + "\n"
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
 		RepoRef:         repoID,

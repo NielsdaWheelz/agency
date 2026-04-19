@@ -2,6 +2,7 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -308,11 +309,18 @@ func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmO
 		if confirmationIn == nil {
 			confirmationIn = os.Stdin
 		}
-		token, err := readBoundedMergeConfirmationToken(confirmationIn, maxMergeConfirmationBytes)
-		if err != nil {
-			return fail(err)
+		line, err := bufio.NewReader(io.LimitReader(confirmationIn, maxConfirmationBytes+1)).ReadString('\n')
+		if err != nil && err != io.EOF {
+			return fail(errors.Wrap(errors.EInternal, "failed to read repo remove confirmation input", err))
 		}
-		if token != "rm" {
+		if len(line) > maxConfirmationBytes {
+			return fail(errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"confirmation input exceeds maximum length",
+				map[string]string{"hint": "type 'rm' exactly"},
+			))
+		}
+		if strings.TrimSpace(line) != "rm" {
 			return fail(errors.New(errors.EAborted, "repo remove confirmation failed; expected 'rm'"))
 		}
 	}
