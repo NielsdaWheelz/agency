@@ -63,7 +63,7 @@ func newAgentShowCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "show <invocation_id|prefix>",
+		Use:   "<invocation-ref> [show]",
 		Short: "Show details of an invocation",
 		Long: `Show details of an agent invocation.
 
@@ -71,10 +71,19 @@ Pass --repo when cwd does not already identify the repo. The invocation
 argument should be the invocation id or an unambiguous id prefix.
 
 Examples:
-  agency agent show 20260131
-  agency agent show --repo agency 20260131
-  agency agent show --json 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131
+  agency agent 20260131 show
+  agency agent 20260131 --json
+  agency agent 20260131 show --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return nil
+			}
+			if len(args) == 2 && args[1] == "show" {
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -105,7 +114,7 @@ func newAgentDiffCmd() *cobra.Command {
 	var turnRange string
 
 	cmd := &cobra.Command{
-		Use:   "diff <invocation_ref>",
+		Use:   "<invocation-ref> diff",
 		Short: "Show invocation changes",
 		Long: `Show invocation changes from base_commit to the sandbox tip.
 
@@ -116,11 +125,16 @@ Use --turn or --turn-range when you want diff context anchored to specific
 timeline entries.
 
 Examples:
-  agency agent diff 20260131
-  agency agent diff --repo agency my-invocation
-  agency agent diff --turn inv_event:2:agency.followup_prompt 20260131
-  agency agent diff --turn-range stream:4..stream:9 --json 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 diff
+  agency agent my-invocation diff --repo agency
+  agency agent 20260131 diff --turn inv_event:2:agency.followup_prompt
+  agency agent 20260131 diff --turn-range stream:4..stream:9 --json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "diff" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
@@ -156,13 +170,13 @@ func newAgentHistoryCmd() *cobra.Command {
 	var cursor string
 
 	cmd := &cobra.Command{
-		Use:   "history <invocation_id|prefix>",
+		Use:   "<invocation-ref> history",
 		Short: "Show unified invocation timeline",
 		Long: `Show the unified timeline for one invocation.
 
 This is the canonical inspection surface for a single invocation.
 
-In an interactive terminal, plain "agency agent history <id>" opens the
+In an interactive terminal, plain "agency agent <id> history" opens the
 full-screen history view. Use --json, --last, --cursor, or --limit when you
 want direct terminal output instead.
 
@@ -170,12 +184,17 @@ Use the "logs" subcommand when you want the raw log subcommand rather than the
 structured timeline.
 
 Examples:
-  agency agent history 20260131
-  agency agent history --repo agency 20260131
-  agency agent history --last 20260131
-  agency agent history --limit 200 --json 20260131
-  agency agent history logs 20260131 --kind stream`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 history
+  agency agent 20260131 history --repo agency
+  agency agent 20260131 history --last
+  agency agent 20260131 history --limit 200 --json
+  agency agent 20260131 history logs --kind stream`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "history" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -215,7 +234,7 @@ func newAgentHistoryLogsCmd() *cobra.Command {
 	var maxIterations int
 
 	cmd := &cobra.Command{
-		Use:   "logs <invocation_id|prefix>",
+		Use:   "<invocation-ref> history logs",
 		Short: "View raw invocation logs",
 		Long: `Stream raw invocation log files for one invocation.
 
@@ -223,11 +242,16 @@ This is the raw log subcommand of the canonical history surface. Use it when
 you want byte-for-byte runner logs instead of the structured history timeline.
 
 Examples:
-  agency agent history logs 20260131
-  agency agent history logs --repo agency 20260131 --kind stderr
-  agency agent history logs 20260131 --kind stream --follow
-  agency agent history logs 20260131 --offset 1024`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 history logs
+  agency agent 20260131 history logs --repo agency --kind stderr
+  agency agent 20260131 history logs --kind stream --follow
+  agency agent 20260131 history logs --offset 1024`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 3 && args[1] == "history" && args[2] == "logs" {
+				return nil
+			}
+			return cobra.ExactArgs(3)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -262,7 +286,7 @@ func newAgentCheckCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "check <invocation_id|prefix>",
+		Use:   "<invocation-ref> check",
 		Short: "Check invocation readiness",
 		Long: `Show the daemon's readiness view for one invocation.
 
@@ -270,10 +294,15 @@ This is the canonical machine-friendly readiness surface for deciding whether
 an invocation is blocked, needs input, or is ready to land.
 
 Examples:
-  agency agent check 20260131
-  agency agent check --repo agency 20260131
-  agency agent check --json 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 check
+  agency agent 20260131 check --repo agency
+  agency agent 20260131 check --json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "check" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {

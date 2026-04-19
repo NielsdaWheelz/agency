@@ -65,12 +65,12 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		switch code {
 		case errors.EInvocationStillRunning:
 			httpStatus = http.StatusConflict
-			hint = "stop the invocation first with 'agency agent stop' or 'agency agent kill'"
+			hint = "stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'"
 		case errors.ELandAlreadyLanded, errors.ELandAlreadyDiscarded:
 			httpStatus = http.StatusConflict
 		case errors.ELandConflict:
 			httpStatus = http.StatusConflict
-			hint = "resolve conflicts manually or inspect sandbox with 'agency agent open'"
+			hint = "resolve conflicts manually or inspect sandbox with 'agency agent <invocation-ref> open'"
 			if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
 				if filesJSON, ok := ae.Details["conflict_files"]; ok {
 					_ = json.Unmarshal([]byte(filesJSON), &conflictFiles)
@@ -80,7 +80,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 			httpStatus = http.StatusBadRequest
 		case errors.ELandApplyRequired:
 			httpStatus = http.StatusBadRequest
-			hint = "run 'agency agent land --apply' to apply uncommitted changes"
+			hint = "run 'agency agent <invocation-ref> land --apply' to apply uncommitted changes"
 		case errors.ESandboxMissing, errors.EIntegrationTreeMissing:
 			httpStatus = http.StatusNotFound
 		case errors.ERepoLocked:

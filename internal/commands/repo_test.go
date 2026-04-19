@@ -136,7 +136,7 @@ func TestResolveRepoViaClient_ExplicitRepoRef(t *testing.T) {
 	cr := testutil.NewFakeCommandRunner()
 	result, err := ResolveRepoViaClient(ctx, cr, env.Client, "/irrelevant", ResolveRepoContextOpts{
 		RepoRef: "agency",
-		CmdName: "agency worktree show",
+		CmdName: "agency worktree <worktree-ref>",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, reg.Data.RepoID, result.RepoID)
@@ -179,7 +179,7 @@ func TestResolveRepoViaClient_AllReposDisallowed_ReturnsEUsage(t *testing.T) {
 	_, err := ResolveRepoViaClient(context.Background(), cr, nil, "/irrelevant", ResolveRepoContextOpts{
 		AllRepos:      true,
 		AllowAllRepos: false, // single-ref command
-		CmdName:       "agency worktree show",
+		CmdName:       "agency worktree <worktree-ref>",
 	})
 	require.Error(t, err)
 
@@ -202,7 +202,7 @@ func TestResolveRepoViaClient_NotInRepo_ReturnsENoRepoContext(t *testing.T) {
 
 	_, err := ResolveRepoViaClient(context.Background(), cr, nil, nonGitDir, ResolveRepoContextOpts{
 		AllowAllRepos: false,
-		CmdName:       "agency agent show",
+		CmdName:       "agency agent <invocation-ref>",
 	})
 	require.Error(t, err)
 

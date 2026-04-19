@@ -105,7 +105,7 @@ func TestModel_ActionAttach_SessionEndedIsRecoverable(t *testing.T) {
 				errors.ESessionEnded,
 				"tmux session not found",
 				map[string]string{
-					"hint": "session ended; use 'agency agent history logs' or 'agency agent open' to view",
+					"hint": "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view",
 				},
 			)
 		},
@@ -229,8 +229,8 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 					CheckpointChangedCount: 2,
 				},
 				Navigation: daemon.InvocationCheckNavigation{
-					HistoryCommand: "agency agent history inv-1 --repo repo-1",
-					DiffCommand:    "agency agent diff inv-1 --repo repo-1 --turn stream:1",
+					HistoryCommand: "agency agent inv-1 history --repo repo-1",
+					DiffCommand:    "agency agent inv-1 diff --repo repo-1 --turn stream:1",
 					LatestTurnID:   "stream:1",
 				},
 			},

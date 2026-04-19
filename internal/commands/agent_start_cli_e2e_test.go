@@ -157,7 +157,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			create := runAgencyCLI(t, agencyBin, nonGitCWD, env,
 				"worktree", "create",
 				"--repo", repo.RepoID,
-				"--name", worktreeName,
+				worktreeName,
 				"--base", "main",
 			)
 			require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
@@ -165,7 +165,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			start := runAgencyCLI(t, agencyBin, nonGitCWD, env,
 				"agent", "start",
 				"--repo", repo.RepoID,
-				"--worktree", worktreeName,
+				worktreeName,
 				"--runner", tc.runnerInput,
 				"--headless",
 				"--prompt", tc.prompt,
@@ -180,7 +180,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			require.NotEmpty(t, startResp.InvocationID)
 			require.NotEmpty(t, startResp.SandboxPath)
 
-			show := runAgencyCLI(t, agencyBin, repoDir, env, "agent", "show", startResp.InvocationID, "--json")
+			show := runAgencyCLI(t, agencyBin, repoDir, env, "agent", startResp.InvocationID, "--json")
 			require.Equalf(t, 0, show.ExitCode, "agent show failed\nstdout:\n%s\nstderr:\n%s", show.Stdout, show.Stderr)
 
 			var showResp invocationShowResponse
@@ -253,7 +253,7 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 		env,
 		"worktree", "create",
 		"--repo", repo.RepoID,
-		"--name", "e2e-conflict",
+		"e2e-conflict",
 		"--base", "main",
 	)
 	require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
@@ -261,7 +261,7 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 	start := runAgencyCLI(t, agencyBin, nonGitCWD, env,
 		"agent", "start",
 		"--repo", repo.RepoID,
-		"--worktree", "e2e-conflict",
+		"e2e-conflict",
 		"--runner", "cursor",
 		"--headless",
 		"--prompt", "reserved arg passthrough",
@@ -318,17 +318,17 @@ func TestAgentStartCLIE2E_CWDFallbacks(t *testing.T) {
 		"AGENCY_LOCAL_E2E":         "1",
 	}
 
-	create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "--name", "cwd-fallback")
+	create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "cwd-fallback")
 	require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
 
-	path := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "path", "cwd-fallback")
+	path := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "cwd-fallback", "path")
 	require.Equalf(t, 0, path.ExitCode, "worktree path failed\nstdout:\n%s\nstderr:\n%s", path.Stdout, path.Stderr)
 	worktreePath := strings.TrimSpace(path.Stdout)
 	require.NotEmpty(t, worktreePath)
 
 	fromRepo := runAgencyCLI(t, agencyBin, repoDir, env,
 		"agent", "start",
-		"--worktree", "cwd-fallback",
+		"cwd-fallback",
 		"--runner", "claude-code",
 		"--headless",
 		"--prompt", "start from repo cwd",

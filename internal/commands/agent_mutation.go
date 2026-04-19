@@ -79,7 +79,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Stop signal sent to invocation %s\n", invocationID)
-	_, _ = fmt.Fprintf(stdout, "Note: The runner may ignore the interrupt. Use 'agency agent kill' to force termination.\n")
+	_, _ = fmt.Fprintf(stdout, "Note: The runner may ignore the interrupt. Use 'agency agent <invocation-ref> kill' to force termination.\n")
 
 	return nil
 }
@@ -509,13 +509,13 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		}
 		if err := attachFn(resp.TmuxSession); err != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent attach %s' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach' to attach later.\n", shortID)
 		}
 		return nil
 	}
 
 	_, _ = fmt.Fprintln(stdout, "\nSession recreated in detached mode.")
-	_, _ = fmt.Fprintf(stdout, "Use 'agency agent attach %s' to attach.\n", shortID)
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach' to attach.\n", shortID)
 	return nil
 }
 

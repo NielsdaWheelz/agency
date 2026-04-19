@@ -221,7 +221,7 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 			map[string]string{
 				"invocation_id": invocation.Data.InvocationID,
 				"mode":          invocation.Data.Mode,
-				"hint":          "use 'agency agent logs' to view headless invocation output",
+				"hint":          "use 'agency agent <invocation-ref> history logs' to view headless invocation output",
 			},
 		)
 	}
@@ -247,7 +247,7 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 			map[string]string{
 				"session_name":  sessionName,
 				"invocation_id": invocation.Data.InvocationID,
-				"hint":          "session ended; use 'agency agent logs' or 'agency agent open' to view",
+				"hint":          "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view",
 			},
 		)
 	}

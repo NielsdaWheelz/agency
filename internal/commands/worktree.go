@@ -29,7 +29,7 @@ type WorktreeCreateOpts struct {
 func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
 	repoRef := strings.TrimSpace(opts.RepoRef)
 	if strings.TrimSpace(opts.Name) == "" {
-		return errors.New(errors.EUsage, "pass --name <worktree_name>")
+		return errors.New(errors.EUsage, "pass a worktree name: 'agency worktree create <worktree-name>'")
 	}
 	baseBranch := strings.TrimSpace(opts.BaseBranch)
 	if cr == nil {

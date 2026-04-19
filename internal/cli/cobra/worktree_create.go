@@ -10,13 +10,12 @@ import (
 
 func newWorktreeCreateCmd() *cobra.Command {
 	var repoRef string
-	var name string
 	var base string
 	var open bool
 	var editor string
 
 	cmd := &cobra.Command{
-		Use:   "create",
+		Use:   "create <worktree-name>",
 		Short: "Create a new integration worktree",
 		Long: `Create a new integration worktree.
 
@@ -28,10 +27,10 @@ If you omit --base, it defaults to the current branch of the selected checkout.
 The checkout used to resolve that branch must be clean.
 
 Examples:
-  agency worktree create --repo agency --name my-feature --base main
-  agency worktree create --name my-feature
-  agency worktree create --repo agency --name bugfix --base develop --open`,
-		Args: cobra.NoArgs,
+  agency worktree create my-feature --repo agency --base main
+  agency worktree create my-feature
+  agency worktree create bugfix --repo agency --base develop --open`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
@@ -40,7 +39,7 @@ Examples:
 
 			return commands.WorktreeCreate(ctx, cr, fsys, cwd, commands.WorktreeCreateOpts{
 				RepoRef:    repoRef,
-				Name:       name,
+				Name:       args[0],
 				BaseBranch: strings.TrimSpace(base),
 				Open:       open,
 				Editor:     editor,
@@ -49,11 +48,9 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Registered repo ref. Omit only when cwd already identifies the repo.")
-	cmd.Flags().StringVar(&name, "name", "", "New integration worktree name")
 	cmd.Flags().StringVar(&base, "base", "", "Base branch. Omit to use the current branch of the selected checkout.")
 	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the new worktree in your editor after creation")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor override to use with --open")
-	_ = cmd.MarkFlagRequired("name")
 	registerRepoFlagCompletion(cmd)
 
 	return cmd

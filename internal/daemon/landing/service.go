@@ -181,7 +181,7 @@ func (s *Service) landForState(ctx context.Context, opts LandOpts, meta *store.I
 			"no commits to cherry-pick; --apply required",
 			errors.NewWithDetails(errors.ELandApplyRequired,
 				"no commits to cherry-pick; use --apply to land working tree changes",
-				map[string]string{"hint": "run 'agency agent land --apply' to apply uncommitted changes"},
+				map[string]string{"hint": "run 'agency agent <invocation-ref> land --apply' to apply uncommitted changes"},
 			),
 		)
 	}

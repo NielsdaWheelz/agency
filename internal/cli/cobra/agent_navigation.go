@@ -10,14 +10,19 @@ func newAgentOpenCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "open <invocation_ref>",
+		Use:   "<invocation-ref> open",
 		Short: "Open sandbox in editor",
 		Long: `Open the sandbox directory for one invocation in your configured editor.
 
 Examples:
-  agency agent open 20260131
-  agency agent open --repo agency my-invocation`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 open
+  agency agent my-invocation open --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "open" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -42,17 +47,22 @@ func newAgentPathCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "path <invocation_ref>",
+		Use:   "<invocation-ref> path",
 		Short: "Print sandbox path",
 		Long: `Print the sandbox path for an agent invocation.
 
 This prints only the resolved path, so it is suitable for scripting.
 
 Examples:
-  agency agent path 20260131
-  agency agent path --repo agency my-invocation
-  cd $(agency agent path 20260131)`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 path
+  agency agent my-invocation path --repo agency
+  cd $(agency agent 20260131 path)`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "path" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -77,16 +87,21 @@ func newAgentShellCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "shell <invocation_ref>",
+		Use:   "<invocation-ref> shell",
 		Short: "Open shell in sandbox",
 		Long: `Open a login shell with the working directory set to the sandbox path.
 
 Use this when you want to inspect or edit the sandbox directly from a shell.
 
 Examples:
-  agency agent shell 20260131
-  agency agent shell --repo agency my-invocation`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 shell
+  agency agent my-invocation shell --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "shell" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -111,7 +126,7 @@ func newAgentAttachCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "attach <invocation_ref>",
+		Use:   "<invocation-ref> attach",
 		Short: "Attach to a running headed invocation",
 		Long: `Attach to a running headed invocation's tmux session.
 
@@ -119,9 +134,14 @@ This is the canonical interactive navigation command for headed invocations.
 Headless invocations are rejected. Detach from the session with Ctrl+b, d.
 
 Examples:
-  agency agent attach 20260131
-  agency agent attach --repo agency 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 attach
+  agency agent 20260131 attach --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "attach" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {

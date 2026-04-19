@@ -58,7 +58,7 @@ func newWorktreeShowCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "show <name|id|prefix>",
+		Use:   "<worktree-ref> [show]",
 		Short: "Show details of a worktree",
 		Long: `Show details of an integration worktree.
 
@@ -66,10 +66,19 @@ Pass --repo when cwd does not already identify the repo. The worktree argument
 can be the worktree name, full id, or an unambiguous id prefix.
 
 Examples:
-  agency worktree show my-feature
-  agency worktree show --repo agency my-feature
-  agency worktree show --json my-feature`,
-		Args: cobra.ExactArgs(1),
+  agency worktree my-feature
+  agency worktree my-feature show
+  agency worktree my-feature --json
+  agency worktree my-feature show --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return nil
+			}
+			if len(args) == 2 && args[1] == "show" {
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {

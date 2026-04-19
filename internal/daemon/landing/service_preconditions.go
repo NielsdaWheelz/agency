@@ -64,7 +64,7 @@ func (s *Service) validateLandPreconditions(meta *store.InvocationMeta) error {
 	if meta.Status != store.InvocationStatusFinished && meta.Status != store.InvocationStatusFailed {
 		return errors.NewWithDetails(errors.EInvocationStillRunning,
 			"invocation is still running",
-			map[string]string{"hint": "stop the invocation first with 'agency agent stop' or 'agency agent kill'"},
+			map[string]string{"hint": "stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'"},
 		)
 	}
 

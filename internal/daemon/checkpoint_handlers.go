@@ -78,7 +78,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if meta.Mode != store.RunnerModeHeadless {
 		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvocationInvalidMode),
 			"checkpoint apply is only supported for headless invocations",
-			"use 'agency agent recreate' to start a new headed tmux session in the same sandbox")
+			"use 'agency agent <invocation-ref> recreate' to start a new headed tmux session in the same sandbox")
 		return
 	}
 
@@ -86,7 +86,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
 		s.writeCheckpointError(w, http.StatusConflict, requestID, string(errors.EInvocationStillRunning),
 			"invocation is still running",
-			"stop the invocation first with 'agency agent stop' or 'agency agent kill'")
+			"stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'")
 		return
 	}
 
@@ -112,7 +112,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:
 			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.ECheckpointNotFound),
-				err.Error(), "run 'agency agent history <invocation_ref>' to inspect available checkpoints and turn ids")
+				err.Error(), "run 'agency agent <invocation_ref> history' to inspect available checkpoints and turn ids")
 		case errors.ERollbackFailed:
 			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
 				err.Error(), "")

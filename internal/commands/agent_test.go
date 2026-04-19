@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -688,7 +689,7 @@ func TestWriteAgentCheckHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T
 		Status:        "running",
 		DisplayStatus: "working",
 		Navigation: daemon.InvocationCheckNavigation{
-			HistoryCommand: "agency agent history inv-1 --repo repo-1",
+			HistoryCommand: "agency agent inv-1 history --repo repo-1",
 		},
 		LatestActivity: &daemon.InvocationLatestActivity{
 			TurnID:                 "stream:9",
@@ -725,7 +726,7 @@ func TestWriteAgentCheckHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *tes
 		Status:       "finished",
 		Readiness:    "ready",
 		Navigation: daemon.InvocationCheckNavigation{
-			HistoryCommand: "agency agent history inv-1 --repo repo-1",
+			HistoryCommand: "agency agent inv-1 history --repo repo-1",
 		},
 	}
 
@@ -948,7 +949,8 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, stdout.String(), "Session started in detached mode.")
-	assert.Contains(t, stdout.String(), "Use 'agency agent attach ")
+	assert.Regexp(t, regexp.MustCompile(`Use 'agency agent [^ ]+ attach' to attach\.`), stdout.String())
+	assert.NotContains(t, stdout.String(), "Use 'agency agent attach ")
 	assert.Empty(t, stderr.String())
 
 	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
@@ -1181,7 +1183,8 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	assert.NotEmpty(t, cwd)
 	assert.Equal(t, "attach -t "+session, args)
 	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
-	assert.Contains(t, stderr.String(), "Use 'agency agent attach ")
+	assert.Regexp(t, regexp.MustCompile(`Use 'agency agent [^ ]+ attach' to attach later\.`), stderr.String())
+	assert.NotContains(t, stderr.String(), "Use 'agency agent attach ")
 }
 
 func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {

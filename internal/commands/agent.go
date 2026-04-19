@@ -143,9 +143,9 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			if !ok {
 				return fail(errors.NewWithDetails(
 					errors.EUsage,
-					"pass --worktree <worktree_ref>, or run this command from the integration worktree you want to use",
+					"pass a worktree ref, or run this command from the integration worktree you want to use",
 					map[string]string{
-						"hint": "cwd-based --worktree inference only works inside a present integration worktree",
+						"hint": "cwd-based worktree inference only works inside a present integration worktree",
 					},
 				))
 			}
@@ -154,7 +154,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 					errors.EUsage,
 					"current integration worktree belongs to a different repo",
 					map[string]string{
-						"hint": "pass both --repo <repo_ref> and --worktree <worktree_ref>, or run from a worktree in the selected repo",
+						"hint": "pass both --repo <repo_ref> and a worktree ref, or run from a worktree in the selected repo",
 					},
 				))
 			}
@@ -191,9 +191,9 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			if worktreeRef == "" {
 				return fail(errors.NewWithDetails(
 					errors.EUsage,
-					"pass --worktree <worktree_ref>, or run this command from the integration worktree you want to use",
+					"pass a worktree ref, or run this command from the integration worktree you want to use",
 					map[string]string{
-						"hint": "cwd-based --worktree inference only works inside a present integration worktree",
+						"hint": "cwd-based worktree inference only works inside a present integration worktree",
 					},
 				))
 			}
@@ -202,7 +202,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 					errors.EUnsafeRepoRoot,
 					"current directory is inside an agency-managed tree but not a present integration worktree",
 					map[string]string{
-						"hint": "re-run from the original repo checkout, or pass both --repo <repo_ref> and --worktree <worktree_ref>",
+						"hint": "re-run from the original repo checkout, or pass both --repo <repo_ref> and a worktree ref",
 					},
 				))
 			}
@@ -212,7 +212,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 					errors.ENoRepoContext,
 					"cannot resolve agent start without a repo context",
 					map[string]string{
-						"hint": "run from a git checkout, or pass both --repo <repo_ref> and --worktree <worktree_ref>",
+						"hint": "run from a git checkout, or pass both --repo <repo_ref> and a worktree ref",
 					},
 				))
 			}
@@ -413,11 +413,11 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		if err := attachFn(resp.TmuxSession); err != nil {
 			// Attach failed but session exists - not a fatal error
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent attach %s' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach' to attach later.\n", shortID)
 		}
 	} else {
 		_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
-		_, _ = fmt.Fprintf(stdout, "Use 'agency agent attach %s' to attach.\n", shortID)
+		_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach' to attach.\n", shortID)
 	}
 
 	return nil
@@ -501,8 +501,8 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 	if len(shortID) > 8 {
 		shortID = shortID[:8]
 	}
-	_, _ = fmt.Fprintf(stdout, "\nUse 'agency agent show %s' to view status.\n", shortID)
-	_, _ = fmt.Fprintf(stdout, "Use 'agency agent stop %s' to stop gracefully.\n", shortID)
+	_, _ = fmt.Fprintf(stdout, "\nUse 'agency agent %s' to view status.\n", shortID)
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s stop' to stop gracefully.\n", shortID)
 
 	return nil
 }

@@ -26,3 +26,15 @@ func realCommandDepsFromCmd(cmd *cobra.Command) (context.Context, exec.CommandRu
 	}
 	return realCommandDeps(cmd.Context())
 }
+
+func runNestedCommand(parent *cobra.Command, child *cobra.Command, args []string) error {
+	if parent == nil || child == nil {
+		return errors.New(errors.EInternal, "nested command execution requires parent and child commands")
+	}
+
+	child.SetContext(parent.Context())
+	child.SetOut(parent.OutOrStdout())
+	child.SetErr(parent.ErrOrStderr())
+	child.SetArgs(args)
+	return child.Execute()
+}

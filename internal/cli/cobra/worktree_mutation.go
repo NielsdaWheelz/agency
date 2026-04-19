@@ -4,7 +4,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
-	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func newWorktreeRmCmd() *cobra.Command {
@@ -13,7 +12,7 @@ func newWorktreeRmCmd() *cobra.Command {
 	var yes bool
 
 	cmd := &cobra.Command{
-		Use:   "rm <name|id|prefix>",
+		Use:   "<worktree-ref> rm",
 		Short: "Remove a worktree",
 		Long: `Remove an integration worktree.
 
@@ -23,10 +22,15 @@ Use --force to remove regardless.
 The worktree record is retained (archived state) but the tree directory is removed.
 
 Examples:
-  agency worktree rm my-feature
-  agency worktree rm --repo agency my-feature
-  agency worktree rm my-feature --force`,
-		Args: cobra.ExactArgs(1),
+  agency worktree my-feature rm
+  agency worktree my-feature rm --repo agency
+  agency worktree my-feature rm --force`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "rm" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -51,24 +55,6 @@ Examples:
 	return cmd
 }
 
-func newWorktreePRCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "pr",
-		Short: "Manage a worktree pull request",
-		Long: `Manage the pull request attached to an integration worktree.
-
-Use sync to push the branch and create or update the pull request.
-Use merge to verify, merge, and archive the worktree.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand")
-		},
-	}
-	cmd.AddCommand(newWorktreePRSyncCmd(), newWorktreePRMergeCmd())
-	return cmd
-}
-
 func newWorktreePRSyncCmd() *cobra.Command {
 	var repoRef string
 	var jsonOut bool
@@ -76,7 +62,7 @@ func newWorktreePRSyncCmd() *cobra.Command {
 	var forceWithLease bool
 
 	cmd := &cobra.Command{
-		Use:   "sync <worktree_ref>",
+		Use:   "<worktree-ref> pr sync",
 		Short: "Push branch and create/update pull request",
 		Long: `Perform worktree-scoped PR synchronization.
 
@@ -84,12 +70,17 @@ This command pushes the integration branch, then creates or updates the
 branch-scoped pull request.
 
 Examples:
-  agency worktree pr sync my-feature
-  agency worktree pr sync --repo agency my-feature
-  agency worktree pr sync --allow-dirty my-feature
-  agency worktree pr sync --force-with-lease my-feature
-  agency worktree pr sync --json my-feature`,
-		Args: cobra.ExactArgs(1),
+  agency worktree my-feature pr sync
+  agency worktree my-feature pr sync --repo agency
+  agency worktree my-feature pr sync --allow-dirty
+  agency worktree my-feature pr sync --force-with-lease
+  agency worktree my-feature pr sync --json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 3 && args[1] == "pr" && args[2] == "sync" {
+				return nil
+			}
+			return cobra.ExactArgs(3)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -127,7 +118,7 @@ func newWorktreePRMergeCmd() *cobra.Command {
 	var agencyConfigPath string
 
 	cmd := &cobra.Command{
-		Use:   "merge <worktree_ref>",
+		Use:   "<worktree-ref> pr merge",
 		Short: "Verify and merge worktree pull request",
 		Long: `Perform worktree-scoped PR merge.
 
@@ -138,13 +129,18 @@ Non-interactive executions must pass --yes. Pass at most one merge strategy
 flag: --squash, --merge, or --rebase.
 
 Examples:
-  agency worktree pr merge my-feature
-  agency worktree pr merge --repo agency my-feature
-  agency worktree pr merge --yes --json my-feature
-  agency worktree pr merge --merge my-feature
-  agency worktree pr merge --rebase --no-delete-branch my-feature
-  agency worktree pr merge --agency-config /path/to/agency.json --yes my-feature`,
-		Args: cobra.ExactArgs(1),
+  agency worktree my-feature pr merge
+  agency worktree my-feature pr merge --repo agency
+  agency worktree my-feature pr merge --yes --json
+  agency worktree my-feature pr merge --merge
+  agency worktree my-feature pr merge --rebase --no-delete-branch
+  agency worktree my-feature pr merge --agency-config /path/to/agency.json --yes`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 3 && args[1] == "pr" && args[2] == "merge" {
+				return nil
+			}
+			return cobra.ExactArgs(3)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -185,7 +181,7 @@ func newWorktreeRebaseCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "rebase <worktree_ref>",
+		Use:   "<worktree-ref> rebase",
 		Short: "Rebase worktree branch onto base branch",
 		Long: `Fetch origin and rebase the worktree branch onto origin/<base_branch>.
 
@@ -193,10 +189,15 @@ This command requires a clean worktree and returns a typed conflict error if
 the rebase cannot be applied cleanly.
 
 Examples:
-  agency worktree rebase my-feature
-  agency worktree rebase --repo agency my-feature
-  agency worktree rebase --json my-feature`,
-		Args: cobra.ExactArgs(1),
+  agency worktree my-feature rebase
+  agency worktree my-feature rebase --repo agency
+  agency worktree my-feature rebase --json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "rebase" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {

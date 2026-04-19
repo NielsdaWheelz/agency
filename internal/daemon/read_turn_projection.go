@@ -222,8 +222,8 @@ func (s *Server) buildInvocationActivityProjection(
 
 	projection := invocationActivityProjection{
 		Navigation: &InvocationActivityNavigation{
-			HistoryCommand: fmt.Sprintf("agency agent history %s --repo %s", record.InvocationID, record.RepoID),
-			DiffCommand:    fmt.Sprintf("agency agent diff %s --repo %s", record.InvocationID, record.RepoID),
+			HistoryCommand: fmt.Sprintf("agency agent %s history --repo %s", record.InvocationID, record.RepoID),
+			DiffCommand:    fmt.Sprintf("agency agent %s diff --repo %s", record.InvocationID, record.RepoID),
 		},
 	}
 
@@ -248,7 +248,7 @@ func (s *Server) buildInvocationActivityProjection(
 		projection.Navigation.LatestTurnID = latest.EntryID
 		if restorableTurnID := latestRestorableTurnID(turns); restorableTurnID != "" {
 			projection.Navigation.DiffCommand = fmt.Sprintf(
-				"agency agent diff %s --repo %s --turn %s",
+				"agency agent %s diff --repo %s --turn %s",
 				record.InvocationID,
 				record.RepoID,
 				restorableTurnID,

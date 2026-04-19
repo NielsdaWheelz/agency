@@ -56,8 +56,8 @@ Setup commands like init and doctor operate on one checkout path. If you omit
 --path, they use the current directory. Workflow commands use repo refs with
 --repo after a repository has been registered.`,
 		Example: `  agency repo add /path/to/repo
-  agency worktree create --repo agency --name fix-help --base main
-  agency agent start --repo agency --worktree fix-help
+  agency worktree create fix-help --repo agency --base main
+  agency agent start fix-help --repo agency
   agency watch`,
 		Version:       version.FullVersion(),
 		SilenceErrors: true, // We handle error printing in main.go

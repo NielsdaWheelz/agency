@@ -41,13 +41,13 @@ type ConflictCardInputs struct {
 //
 //	next:
 //
-//	1. agency worktree open feature-x
+//	1. agency worktree feature-x open
 //	2. git fetch origin
 //	3. git rebase origin/main
 //	4. resolve conflicts, then:
 //	   git add -A && git rebase --continue
-//	5. agency worktree pr sync feature-x --force-with-lease
-//	6. agency worktree pr merge feature-x
+//	5. agency worktree feature-x pr sync --force-with-lease
+//	6. agency worktree feature-x pr merge
 //
 //	alt: cd "/path/to/worktree"
 func WriteConflictCard(w io.Writer, inputs ConflictCardInputs) {
@@ -67,13 +67,13 @@ func WriteConflictCard(w io.Writer, inputs ConflictCardInputs) {
 	ref := inputs.Ref
 	base := inputs.Base
 
-	_, _ = fmt.Fprintf(w, "1. agency worktree open %s\n", ref)
+	_, _ = fmt.Fprintf(w, "1. agency worktree %s open\n", ref)
 	_, _ = fmt.Fprintln(w, "2. git fetch origin")
 	_, _ = fmt.Fprintf(w, "3. git rebase origin/%s\n", base)
 	_, _ = fmt.Fprintln(w, "4. resolve conflicts, then:")
 	_, _ = fmt.Fprintln(w, "   git add -A && git rebase --continue")
-	_, _ = fmt.Fprintf(w, "5. agency worktree pr sync %s --force-with-lease\n", ref)
-	_, _ = fmt.Fprintf(w, "6. agency worktree pr merge %s\n", ref)
+	_, _ = fmt.Fprintf(w, "5. agency worktree %s pr sync --force-with-lease\n", ref)
+	_, _ = fmt.Fprintf(w, "6. agency worktree %s pr merge\n", ref)
 	_, _ = fmt.Fprintln(w)
 
 	// Alt section - cd fallback

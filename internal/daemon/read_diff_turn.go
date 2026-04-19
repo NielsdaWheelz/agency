@@ -67,7 +67,7 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 			errors.ECheckpointNotFound,
 			"turn-aware diff requires invocation timeline entries",
 			map[string]string{
-				"hint": "use 'agency agent history <invocation>' to inspect available turns",
+				"hint": "use 'agency agent <invocation> history' to inspect available turns",
 			},
 		)
 	}

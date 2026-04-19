@@ -116,8 +116,8 @@ func TestWorktreeCmd_LegacyMergeRemoved(t *testing.T) {
 func TestRepoCmd_HelpShowsRmSubcommand(t *testing.T) {
 	stdout, _, err := executeCmd("repo", "--help")
 	require.NoError(t, err, "expected repo help to render")
-	assert.Contains(t, stdout, "rm")
-	assert.Contains(t, stdout, "Remove a registered repository")
+	assert.Contains(t, stdout, "agency repo <repo-ref> rm --yes")
+	assert.NotContains(t, stdout, "\n  rm")
 	assert.NotContains(t, stdout, "Subcommands:")
 }
 
@@ -162,8 +162,17 @@ func TestRepoAddCmd_HelpUsesPositionalPath(t *testing.T) {
 	assert.NotContains(t, stdout, "--path")
 }
 
+func TestRoot_HelpExamplesUseTargetFirstGrammar(t *testing.T) {
+	stdout, _, err := executeCmd("--help")
+	require.NoError(t, err, "expected root help to render")
+	assert.Contains(t, stdout, "agency worktree create fix-help --repo agency --base main")
+	assert.Contains(t, stdout, "agency agent start fix-help --repo agency")
+	assert.NotContains(t, stdout, "agency worktree create --repo agency --name fix-help --base main")
+	assert.NotContains(t, stdout, "agency agent start --repo agency --worktree fix-help")
+}
+
 func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {
-	stdout, _, err := executeCmd("repo", "rm", "--help")
+	stdout, _, err := executeCmd("repo", "agency", "rm", "--help")
 	require.NoError(t, err, "expected repo rm help to render")
 	assert.Contains(t, stdout, "--yes")
 	assert.Contains(t, stdout, "--json")
@@ -180,16 +189,25 @@ func TestDaemonCmd_HelpShowsCommandsWithoutDuplicateCatalog(t *testing.T) {
 func TestWorktreeCmd_HelpPointsToPRCommand(t *testing.T) {
 	stdout, _, err := executeCmd("worktree", "--help")
 	require.NoError(t, err, "expected worktree help to render")
-	assert.Contains(t, stdout, "pr          Manage a worktree pull request")
-	assert.NotContains(t, stdout, "pr merge")
+	assert.Contains(t, stdout, "agency worktree <worktree-ref>")
+	assert.Contains(t, stdout, "agency worktree ls")
+	assert.NotContains(t, stdout, "agency worktree ls/show")
+	assert.NotContains(t, stdout, "agency worktree show")
+	assert.Contains(t, stdout, "agency worktree <worktree-ref> pr sync")
+	assert.NotContains(t, stdout, "\n  pr")
 	assert.NotContains(t, stdout, "Subcommands:")
 }
 
 func TestWorktreePRCmd_HelpShowsSyncAndMerge(t *testing.T) {
-	stdout, _, err := executeCmd("worktree", "pr", "--help")
-	require.NoError(t, err, "expected worktree pr help to render")
-	assert.Contains(t, stdout, "sync")
-	assert.Contains(t, stdout, "merge")
+	syncHelp, _, err := executeCmd("worktree", "my-feature", "pr", "sync", "--help")
+	require.NoError(t, err, "expected worktree pr sync help to render")
+	assert.Contains(t, syncHelp, "agency worktree my-feature pr sync")
+	assert.Contains(t, syncHelp, "--force-with-lease")
+
+	mergeHelp, _, err := executeCmd("worktree", "my-feature", "pr", "merge", "--help")
+	require.NoError(t, err, "expected worktree pr merge help to render")
+	assert.Contains(t, mergeHelp, "agency worktree my-feature pr merge")
+	assert.Contains(t, mergeHelp, "--yes")
 }
 
 func TestAgentCmd_ReturnsUsageError(t *testing.T) {
@@ -201,14 +219,10 @@ func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 func TestAgentCmd_HelpShowsGroupsWithoutDuplicateCatalog(t *testing.T) {
 	stdout, _, err := executeCmd("agent", "--help")
 	require.NoError(t, err, "expected agent help to render")
-	assert.Contains(t, stdout, "Run\n  followup")
-	assert.Contains(t, stdout, "Inspect\n  check")
-	assert.Contains(t, stdout, "  diff")
-	assert.Contains(t, stdout, "  history")
-	assert.Contains(t, stdout, "Navigate\n  attach")
-	assert.Contains(t, stdout, "Recover\n  recreate")
-	assert.Contains(t, stdout, "  restore")
-	assert.Contains(t, stdout, "Finish\n  discard")
+	assert.Contains(t, stdout, "agency agent <invocation-ref>")
+	assert.Contains(t, stdout, "agency agent ls")
+	assert.NotContains(t, stdout, "agency agent ls/show")
+	assert.NotContains(t, stdout, "agency agent show")
 	assert.NotContains(t, stdout, "Manage invocation checkpoints")
 	assert.NotContains(t, stdout, "Restart headless invocation from checkpoint/history")
 	assert.NotContains(t, stdout, "View invocation logs")
@@ -233,6 +247,26 @@ func TestAgentLogsCmd_LegacyTopLevelCommandRemoved(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown command")
 }
 
+func TestWorktreeVerbFirstTargetActionsRemoved(t *testing.T) {
+	_, _, showErr := executeCmd("worktree", "show", "wt-1")
+	require.Error(t, showErr, "expected legacy worktree show to be removed")
+	assert.Contains(t, showErr.Error(), "unknown command")
+
+	_, _, openErr := executeCmd("worktree", "open", "wt-1")
+	require.Error(t, openErr, "expected legacy worktree open to be removed")
+	assert.Contains(t, openErr.Error(), "unknown command")
+}
+
+func TestAgentVerbFirstTargetActionsRemoved(t *testing.T) {
+	_, _, showErr := executeCmd("agent", "show", "inv-1")
+	require.Error(t, showErr, "expected legacy agent show to be removed")
+	assert.Contains(t, showErr.Error(), "unknown command")
+
+	_, _, killErr := executeCmd("agent", "kill", "inv-1")
+	require.Error(t, killErr, "expected legacy agent kill to be removed")
+	assert.Contains(t, killErr.Error(), "unknown command")
+}
+
 func TestCheckpointCmd_UnknownAtRoot(t *testing.T) {
 	_, _, err := executeCmd("checkpoint")
 	require.Error(t, err, "expected error when checkpoint called at root")
@@ -240,7 +274,7 @@ func TestCheckpointCmd_UnknownAtRoot(t *testing.T) {
 }
 
 func TestAgentRestoreCmd_HelpShowsRestoreOnlySelectors(t *testing.T) {
-	stdout, _, err := executeCmd("agent", "restore", "--help")
+	stdout, _, err := executeCmd("agent", "inv-1", "restore", "--help")
 	require.NoError(t, err, "expected agent restore help to render")
 	assert.Contains(t, stdout, "--checkpoint")
 	assert.Contains(t, stdout, "--turn")
@@ -254,7 +288,7 @@ func TestAgentRestoreCmd_HelpShowsRestoreOnlySelectors(t *testing.T) {
 }
 
 func TestAgentHistoryCmd_HelpShowsLogsSubcommand(t *testing.T) {
-	stdout, _, err := executeCmd("agent", "history", "--help")
+	stdout, _, err := executeCmd("agent", "inv-1", "history", "--help")
 	require.NoError(t, err, "expected agent history help to render")
 	assert.Contains(t, stdout, "logs")
 	assert.Contains(t, stdout, "--json")
@@ -310,16 +344,18 @@ func TestCompletion_DynamicRepoFlag(t *testing.T) {
 }
 
 func TestCompletion_EnumFlag(t *testing.T) {
-	stdout, _, err := executeCmd("__complete", "agent", "history", "logs", "--kind", "st")
-	require.NoError(t, err, "expected enum completion to succeed")
-	assert.Contains(t, stdout, "stderr")
-	assert.Contains(t, stdout, "stream")
+	stdout, _, err := executeCmd("__complete", "agent", "inv-1", "history", "l")
+	require.NoError(t, err, "expected nested target-first completion to succeed")
+	assert.Contains(t, stdout, "logs")
 }
 
 func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Client) {
 	t.Helper()
 
-	dataDir := t.TempDir()
+	dataDir, err := os.MkdirTemp("", "agency-complete-data-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
@@ -341,11 +377,8 @@ func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Clie
 	st := store.NewStore(fsys, dataDir, time.Now)
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fsys, configDir)
 
-	sockDir, err := os.MkdirTemp("", "agency-complete-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-
-	socketPath := filepath.Join(sockDir, "d.sock")
+	socketPath := st.DaemonSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o755))
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 

@@ -709,7 +709,7 @@ func formatActionError(kind actionKind, err error, invocationID, worktreeID, tur
 	target := actionTarget(kind, invocationID, worktreeID, turnID)
 	code := agencyerrors.GetCode(err)
 	if code == agencyerrors.ESessionEnded {
-		hint := "session ended; use 'agency agent history logs' or 'agency agent open' to view"
+		hint := "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view"
 		if ae, ok := agencyerrors.AsAgencyError(err); ok {
 			if resolvedHint := strings.TrimSpace(ae.Details["hint"]); resolvedHint != "" {
 				hint = resolvedHint

@@ -481,7 +481,7 @@ func TestHandleGetInvocationCheck_NavigationDiffCommandOmitsTurnWhenLatestTurnNo
 	assert.Equal(t, "prompt_seed", nav["latest_turn_id"])
 	diffCommand, ok := nav["diff_command"].(string)
 	require.True(t, ok)
-	assert.Equal(t, "agency agent diff inv-1 --repo "+env.RepoID, diffCommand)
+	assert.Equal(t, "agency agent inv-1 diff --repo "+env.RepoID, diffCommand)
 	assert.NotContains(t, diffCommand, "--turn")
 }
 

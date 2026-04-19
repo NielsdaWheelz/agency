@@ -10,11 +10,14 @@ This document covers configuration and code escape hatches.
 - CLI flags may override user defaults only on surfaces that document that precedence.
 - `--repo` is a repo ref selector, not a filesystem path.
 - `--path` is the explicit checkout-path override for path-targeted commands such as `agency init` and `agency doctor`.
+- `agency worktree create <name>` takes the worktree name positionally; there is no `--name` compatibility flag.
+- `agency agent start [<worktree-ref>]` takes the worktree ref positionally; there is no `--worktree` compatibility flag.
 - `--agency-config` is the explicit override for the selected agency config file.
 - `agency agent start` accepts `--agency-config` and uses it before repo-local and per-repo agency config.
 - Daemon APIs that accept an agency config override require an absolute path.
 - Runner and editor command mappings must stay explicit in user config.
 - Runner-specific model and effort defaults belong in `runner_defaults`, not in `defaults`.
+- Legacy verb-first target forms are removed. Targeted commands should use noun-scoped target-first spellings such as `agency repo <repo-ref>`, `agency worktree <worktree-ref> open`, and `agency agent <invocation-ref> kill`.
 
 ## Dead Code
 

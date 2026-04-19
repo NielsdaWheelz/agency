@@ -9,12 +9,16 @@ This document covers entrypoints and side effects.
 - The only binary entrypoint is `cmd/agency`.
 - Cobra commands in `internal/cli/cobra` should parse flags, construct dependencies, and delegate to `internal/commands`.
 - `internal/commands` is the user-facing contract boundary for CLI behavior.
+- The public CLI grammar is noun-scoped and target-first: `agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms.
+- Collection verbs stay explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
+- Target actions should stay target-first: `agency worktree <worktree-ref> open`, `agency worktree <worktree-ref> pr sync`, `agency agent <invocation-ref> kill`, and similar surfaces place the target before the action.
 - `agency repo add` should accept an optional positional checkout path and use cwd when the path is omitted.
 - Path-targeted commands such as `agency init` and `agency doctor` should use `--path <checkout-path>` and default to cwd when `--path` is omitted.
 - Repo-aware commands such as `agency worktree create` and `agency agent start` should accept explicit `--repo` selectors from any cwd and fall back to the current directory only when the selector is omitted.
-- `agency worktree create` should default an omitted `--base` to the current branch of the selected checkout.
-- `agency agent start` may infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` remains required.
+- `agency worktree create <name>` should take the worktree name positionally and default an omitted `--base` to the current branch of the selected checkout.
+- `agency agent start [<worktree-ref>]` should take the worktree ref positionally and may infer an omitted ref only when cwd is inside a present agency integration worktree.
 - `agency agent start` should resolve repo-scoped runner defaults through the standard agency config precedence and honor explicit `--agency-config`.
+- Legacy verb-first target forms and the removed `--name` and `--worktree` flags should not retain compatibility paths.
 - Daemon HTTP handlers are service entrypoints and should delegate non-transport work into helper packages instead of accumulating policy inline.
 - Bubble Tea programs and models are TUI entrypoints, not persistence owners.
 - Only entrypoints should read terminals directly or decide final stdout and stderr rendering.

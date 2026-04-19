@@ -11,17 +11,22 @@ func newAgentStopCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "stop <invocation_id|prefix>",
+		Use:   "<invocation-ref> stop",
 		Short: "Stop an invocation gracefully",
 		Long: `Send a graceful stop signal (Ctrl-C) to a running invocation.
 
 This is the polite shutdown path. The runner may ignore the interrupt; use
-"agency agent kill" when you need forceful termination.
+'agency agent <invocation-ref> kill' when you need forceful termination.
 
 Examples:
-  agency agent stop 20260131
-  agency agent stop --repo agency 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 stop
+  agency agent 20260131 stop --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "stop" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -49,16 +54,21 @@ func newAgentKillCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "kill <invocation_id|prefix>",
+		Use:   "<invocation-ref> kill",
 		Short: "Kill an invocation forcefully",
 		Long: `Forcefully terminate a running invocation.
 
 The sandbox is preserved for inspection after termination.
 
 Examples:
-  agency agent kill 20260131
-  agency agent kill --repo agency 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 kill
+  agency agent 20260131 kill --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "kill" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -88,7 +98,7 @@ func newAgentLandCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "land <invocation_ref>",
+		Use:   "<invocation-ref> land",
 		Short: "Apply sandbox changes to integration",
 		Long: `Land sandbox changes into the integration worktree.
 
@@ -97,10 +107,15 @@ branch head. If the sandbox has no commits but still has uncommitted changes,
 pass --apply.
 
 Examples:
-  agency agent land 20260131
-  agency agent land --repo agency my-invocation --apply
-  agency agent land 20260131 --require-base`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 land
+  agency agent my-invocation land --repo agency --apply
+  agency agent 20260131 land --require-base`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "land" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -132,7 +147,7 @@ func newAgentDiscardCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "discard <invocation_ref>",
+		Use:   "<invocation-ref> discard",
 		Short: "Discard sandbox changes",
 		Long: `Discard a sandbox without landing its changes.
 
@@ -140,9 +155,14 @@ If the invocation is still running, it will be stopped first (gracefully,
 then forcefully killed after 5 seconds).
 
 Examples:
-  agency agent discard 20260131
-  agency agent discard --repo agency my-invocation`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 discard
+  agency agent my-invocation discard --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "discard" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -172,17 +192,22 @@ func newAgentFollowupCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "followup <invocation_ref>",
+		Use:   "<invocation-ref> followup",
 		Short: "Send follow-up prompt to a headless invocation",
 		Long: `Send a follow-up prompt to an existing headless invocation.
 
 Use exactly one prompt source: --prompt or --prompt-file.
 
 Examples:
-  agency agent followup 20260131 --prompt "continue with test fixes"
-  agency agent followup --repo agency my-invocation --prompt-file followup.md
-  agency agent followup --json 20260131 --prompt "next step"`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 followup --prompt "continue with test fixes"
+  agency agent my-invocation followup --repo agency --prompt-file followup.md
+  agency agent 20260131 followup --json --prompt "next step"`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "followup" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -216,7 +241,7 @@ func newAgentRecreateCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "recreate <invocation_ref>",
+		Use:   "<invocation-ref> recreate",
 		Short: "Recreate a headed invocation's tmux session",
 		Long: `Recreate a missing headed invocation tmux session.
 
@@ -224,10 +249,15 @@ This keeps the same invocation id and sandbox, starts the configured headed
 runner in that sandbox, and attaches unless --detached or --json is used.
 
 Examples:
-  agency agent recreate 20260131
-  agency agent recreate --repo agency my-invocation --detached
-  agency agent recreate --json 20260131`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 recreate
+  agency agent my-invocation recreate --repo agency --detached
+  agency agent 20260131 recreate --json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "recreate" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -259,7 +289,7 @@ func newAgentRestoreCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "restore <invocation_ref>",
+		Use:   "<invocation-ref> restore",
 		Short: "Restore an invocation sandbox to a checkpoint",
 		Long: `Restore a headless invocation sandbox to a previous checkpoint.
 
@@ -268,11 +298,16 @@ Use either:
   - --turn <entry_id> to restore the latest checkpoint at or before a history turn
 
 Examples:
-  agency agent restore 20260131 --checkpoint 3
-  agency agent restore 20260131 --turn stream:9
-  agency agent restore --repo agency my-invocation --checkpoint 7
-  agency agent restore --json 20260131 --turn inv_event:2:agency.followup_prompt`,
-		Args: cobra.ExactArgs(1),
+  agency agent 20260131 restore --checkpoint 3
+  agency agent 20260131 restore --turn stream:9
+  agency agent my-invocation restore --repo agency --checkpoint 7
+  agency agent 20260131 restore --json --turn inv_event:2:agency.followup_prompt`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "restore" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {

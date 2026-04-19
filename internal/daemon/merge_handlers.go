@@ -129,7 +129,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 			fmt.Sprintf("no pull request found for branch %q", wtMeta.Branch),
 			map[string]string{
 				"branch": wtMeta.Branch,
-				"hint":   "run 'agency worktree pr sync <worktree_ref>' first",
+				"hint":   "run 'agency worktree <worktree_ref> pr sync' first",
 			},
 		)
 	}

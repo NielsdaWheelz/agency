@@ -37,7 +37,7 @@ type ResolveRepoContextOpts struct {
 	// AllowAllRepos controls whether --all-repos is accepted.
 	// Must be true for list commands, false for single-ref commands.
 	AllowAllRepos bool
-	// CmdName is used in error messages ("agency agent show", etc.).
+	// CmdName is used in error messages ("agency agent <invocation-ref>", etc.).
 	CmdName string
 }
 

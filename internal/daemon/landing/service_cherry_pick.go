@@ -43,7 +43,7 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 			return nil, errors.NewWithDetails(errors.ELandConflict,
 				"cherry-pick resulted in merge conflicts",
 				map[string]string{
-					"hint":           "resolve conflicts manually or inspect sandbox with 'agency agent open'",
+					"hint":           "resolve conflicts manually or inspect sandbox with 'agency agent <invocation-ref> open'",
 					"conflict_count": fmt.Sprintf("%d", len(conflictFiles)),
 					"conflict_files": string(conflictFilesJSON),
 				},

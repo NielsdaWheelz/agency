@@ -10,7 +10,7 @@ import (
 func TestAgentRestoreCmd_HelpMentionsCheckpointAndTurnSelectors(t *testing.T) {
 	t.Parallel()
 
-	stdout, _, err := executeCmd("agent", "restore", "--help")
+	stdout, _, err := executeCmd("agent", "inv-1", "restore", "--help")
 	require.NoError(t, err, "expected agent restore help to render")
 	assert.Contains(t, stdout, "--checkpoint")
 	assert.Contains(t, stdout, "--turn")
@@ -20,7 +20,7 @@ func TestAgentRestoreCmd_HelpMentionsCheckpointAndTurnSelectors(t *testing.T) {
 func TestAgentHistoryLogsCmd_HelpMentionsFollowMode(t *testing.T) {
 	t.Parallel()
 
-	stdout, _, err := executeCmd("agent", "history", "logs", "--help")
+	stdout, _, err := executeCmd("agent", "inv-1", "history", "logs", "--help")
 	require.NoError(t, err, "expected agent history logs help to render")
 	assert.Contains(t, stdout, "raw log subcommand")
 	assert.Contains(t, stdout, "--follow")

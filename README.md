@@ -66,84 +66,86 @@ Use `agency init --repo-config` only when you want shareable `agency.json` and s
 agency config init
 agency repo add /path/to/myrepo
 agency init --path /path/to/myrepo
-agency worktree create --repo <repo-ref> --name my-feature --base main
-agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
-agency agent land <invocation-id> --apply
+agency worktree create my-feature --repo <repo-ref> --base main
+agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix the auth bug"
+agency agent <invocation-ref> land --apply
 ```
 
 `agency repo add [path]` uses a positional path. Omit it only when your current directory is already inside the repo you want to register.
 `agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
 `worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory.
+`agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
-`worktree create` defaults omitted `--base` to the current branch of the selected checkout.
-`agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree. From a repo root, subdirectory, or unrelated cwd, pass `--worktree`.
+`agency worktree create <name>` uses a positional name and defaults omitted `--base` to the current branch of the selected checkout.
+`agency agent start [<worktree-ref>]` uses a positional worktree ref. It can infer an omitted ref only when cwd is inside a present agency integration worktree. From a repo root, subdirectory, or unrelated cwd, pass the worktree ref explicitly.
 `agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
+Legacy verb-first target forms and the old `--name` and `--worktree` flags are removed with no backward compatibility.
 
 headless (fire-and-forget):
 
 ```bash
-agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
-agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
-agency agent history <invocation-id>                 # interactive invocation history/logs UI (same runtime; tty only)
-agency agent history <invocation-id> --json          # machine-readable timeline output
-agency agent history logs <invocation-id> --follow   # raw invocation logs
-agency agent followup <invocation-id> --prompt "continue with edge-case tests"
-agency agent check <invocation-id>               # readiness verdict + blocking reasons
-agency agent diff <invocation-id> --turn <entry> # changes for a turn or range
-agency agent diff <invocation-id> --turn-range <start>..<end>
-agency agent land <invocation-id> --apply         # land sandbox into integration worktree
-agency worktree pr sync <worktree-ref>            # push branch + create/update PR
-agency worktree pr merge <worktree-ref> --yes     # verify, merge, and archive worktree PR
-agency worktree rebase <worktree-ref>             # rebase worktree branch onto origin/<base_branch>
-agency agent restore <invocation-id> --checkpoint 3
-agency agent restore <invocation-id> --turn <entry>
+agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix the auth bug"
+agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
+agency agent <invocation-ref> history                 # interactive invocation history/logs UI (same runtime; tty only)
+agency agent <invocation-ref> history --json          # machine-readable timeline output
+agency agent <invocation-ref> history logs --follow   # raw invocation logs
+agency agent <invocation-ref> followup --prompt "continue with edge-case tests"
+agency agent <invocation-ref> check                   # readiness verdict + blocking reasons
+agency agent <invocation-ref> diff --turn <entry>    # changes for a turn or range
+agency agent <invocation-ref> diff --turn-range <start>..<end>
+agency agent <invocation-ref> land --apply           # land sandbox into integration worktree
+agency worktree <worktree-ref> pr sync               # push branch + create/update PR
+agency worktree <worktree-ref> pr merge --yes        # verify, merge, and archive worktree PR
+agency worktree <worktree-ref> rebase                # rebase worktree branch onto origin/<base_branch>
+agency agent <invocation-ref> restore --checkpoint 3
+agency agent <invocation-ref> restore --turn <entry>
 ```
 
 short alias parity for high-traffic s6 navigation/progression surfaces:
 - `worktree create`: `-r/--repo`
 - `agent start`: `-r/--repo`
-- `agent check`: `-r/--repo`, `-j/--json`
-- `agent path|open|attach`: `-r/--repo`
+- `agent <ref> check`: `-r/--repo`, `-j/--json`
+- `agent <ref> path|open|attach`: `-r/--repo`
 
-`agency watch` and `agency agent history` open different pages of the same Bubble Tea runtime.
+`agency watch` and `agency agent <invocation-ref> history` open different pages of the same Bubble Tea runtime.
 That runtime exposes workspace, history, and logs pages over the same daemon-backed read model.
-`agency agent history` is the canonical inspection surface for invocation turns, checkpoints, and logs.
-`agency agent restore` restores sandbox state only; it does not rerun the original prompt.
+`agency agent <invocation-ref> history` is the canonical inspection surface for invocation turns, checkpoints, and logs.
+`agency agent <invocation-ref> restore` restores sandbox state only; it does not rerun the original prompt.
 use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
-after a restore, use `agency agent followup` to continue from the restored state.
+after a restore, use `agency agent <invocation-ref> followup` to continue from the restored state.
 runner config details live in [docs/configuration.md](docs/configuration.md).
 
 non-interactive destructive flows require explicit confirmation via `--yes`:
 
 ```bash
-agency worktree rm <name|id|prefix> --yes
-agency worktree pr merge <worktree-ref> --yes
-agency repo rm <repo-ref> --yes
+agency worktree <worktree-ref> rm --yes
+agency worktree <worktree-ref> pr merge --yes
+agency repo <repo-ref> rm --yes
 ```
 
 automation-friendly mutation json:
 
 ```bash
-agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "fix bug" --json
-agency agent stop <invocation-id> --json
-agency agent kill <invocation-id> --json
-agency agent land <invocation-id> --json
-agency worktree pr sync <worktree-ref> --json
-agency worktree pr merge <worktree-ref> --yes --json
-agency worktree rebase <worktree-ref> --json
-agency agent discard <invocation-id> --json
-agency agent followup <invocation-id> --prompt "continue" --json
-agency agent recreate <invocation-id> --json
-agency agent restore <invocation-id> --checkpoint 3 --json
+agency agent start my-feature --repo <repo-ref> --headless --prompt "fix bug" --json
+agency agent <invocation-ref> stop --json
+agency agent <invocation-ref> kill --json
+agency agent <invocation-ref> land --json
+agency worktree <worktree-ref> pr sync --json
+agency worktree <worktree-ref> pr merge --yes --json
+agency worktree <worktree-ref> rebase --json
+agency agent <invocation-ref> discard --json
+agency agent <invocation-ref> followup --prompt "continue" --json
+agency agent <invocation-ref> recreate --json
+agency agent <invocation-ref> restore --checkpoint 3 --json
 agency repo add /abs/path/to/repo --json
-agency repo rm <repo-ref> --yes --json
+agency repo <repo-ref> rm --yes --json
 ```
 
 all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `followup`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restore`).
-for `worktree pr sync` and `worktree pr merge`, additive report fields include
+for `agency worktree <worktree-ref> pr sync` and `agency worktree <worktree-ref> pr merge`, additive report fields include
 `report_source` and `report_diagnostics`.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.

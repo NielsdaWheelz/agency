@@ -40,7 +40,7 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 			requestID,
 			string(errors.EInvalidArgument),
 			err.Error(),
-			"use a timeline turn id from 'agency agent history' and pass either turn or turn_start/turn_end",
+			"use a timeline turn id from 'agency agent <invocation-ref> history' and pass either turn or turn_start/turn_end",
 			nil,
 		)
 		return
@@ -60,7 +60,7 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 		switch code {
 		case errors.EInvalidArgument:
 			status = http.StatusBadRequest
-			hint = "use 'agency agent history' to list valid turn selectors"
+			hint = "use 'agency agent <invocation-ref> history' to list valid turn selectors"
 		case errors.ECheckpointNotFound:
 			status = http.StatusNotFound
 			hint = "ensure checkpoints exist for the selected turn context"
