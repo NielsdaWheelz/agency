@@ -10,11 +10,16 @@ import (
 func newRepoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repo",
-		Short: "Manage registered repositories",
-		Long: `Manage the daemon's repository registry.
+		Short: "Register repos and inspect the repo registry",
+		Long: `Register repositories so agency commands can target them by --repo.
 
-Registering a repo lets you run agency commands from any directory by
-specifying --repo.`,
+Once a repo is registered, worktree and agent commands can resolve it from any
+directory by repo ref. Repo refs accept a short name, owner/repo, repo key,
+repo_id, or a unique prefix.`,
+		Example: `  agency repo add /path/to/repo
+  agency repo ls
+  agency repo show agency
+  agency repo rm agency --yes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
@@ -33,26 +38,29 @@ specifying --repo.`,
 }
 
 func newRepoAddCmd() *cobra.Command {
-	var path string
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "add",
+		Use:   "add [path]",
 		Short: "Register a repository with the daemon",
-		Long: `Register a repository root with the daemon.
+		Long: `Register one git repository with the daemon.
 
-If --path is omitted, the current working directory is used.
-The daemon resolves the git toplevel and assigns a stable repo_id.
-
-Example:
-  agency repo add
-  agency repo add --path /home/user/myrepo
-  agency repo add --json`,
-		Args: cobra.NoArgs,
+Pass a checkout path explicitly, or omit [path] to register the repository that
+contains the current directory. The daemon resolves the git toplevel and stores
+the stable repo_id and repo_key that later --repo lookups use.`,
+		Example: `  agency repo add
+  agency repo add /home/user/myrepo
+  agency repo add /home/user/myrepo --json`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
 			if err != nil {
 				return err
+			}
+
+			path := ""
+			if len(args) == 1 {
+				path = args[0]
 			}
 
 			return commands.RepoAdd(ctx, cr, fsys, commands.RepoAddOpts{
@@ -62,8 +70,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&path, "path", "", "path to repository (defaults to cwd)")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVarP(&jsonOutput, "json", "j", false, "output as JSON")
 
 	return cmd
 }
@@ -74,10 +81,10 @@ func newRepoLSCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List registered repositories",
-		Long: `List all repositories registered with the daemon.
+		Long: `List every repository currently registered with the daemon.
 
-Example:
-  agency repo ls
+This is the starting point when you need a repo ref to pass to --repo.`,
+		Example: `  agency repo ls
   agency repo ls --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -92,7 +99,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVarP(&jsonOutput, "json", "j", false, "output as JSON")
 
 	return cmd
 }
@@ -101,18 +108,17 @@ func newRepoShowCmd() *cobra.Command {
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "show <repo_ref>",
+		Use:   "show <repo-ref>",
 		Short: "Show details of a registered repository",
-		Long: `Show details of a registered repository.
+		Long: `Show the canonical record for one registered repository.
 
-Accepted repo ref forms: name, owner/repo, repo key, id, or unique prefix.
-
-Example:
-  agency repo show agency
+Accepted repo refs include a short name, owner/repo, repo key, repo_id, or a
+unique prefix.`,
+		Example: `  agency repo show agency
   agency repo show NielsdaWheelz/agency
   agency repo show github:NielsdaWheelz/agency
   agency repo show 769749d
-  agency repo show --json agency`,
+  agency repo show agency --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
@@ -127,7 +133,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVarP(&jsonOutput, "json", "j", false, "output as JSON")
 
 	return cmd
 }
@@ -137,12 +143,13 @@ func newRepoRmCmd() *cobra.Command {
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "rm <repo_ref>",
+		Use:   "rm <repo-ref>",
 		Short: "Remove a registered repository",
-		Long: `Remove a registered repository from the daemon's registry.
+		Long: `Remove one repository from the daemon's registry.
 
-Example:
-  agency repo rm agency --yes
+This removes the registry entry only. It does not delete any checkout, branch,
+or worktree on disk.`,
+		Example: `  agency repo rm agency --yes
   agency repo rm 769749d77af0806f --yes --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -160,7 +167,7 @@ Example:
 	}
 
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm removal without prompting")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVarP(&jsonOutput, "json", "j", false, "output as JSON")
 
 	return cmd
 }

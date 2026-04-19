@@ -147,13 +147,13 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 				"AGENCY_LOCAL_E2E_TEST_CASE": tc.name,
 			}
 
-			add := runAgencyCLI(t, agencyBin, repoDir, env, "repo", "add", "--json")
+			nonGitCWD := mustMkdirTemp(t, "agency-e2e-cwd-*")
+			add := runAgencyCLI(t, agencyBin, nonGitCWD, env, "repo", "add", repoDir, "--json")
 			require.Equalf(t, 0, add.ExitCode, "repo add failed\nstdout:\n%s\nstderr:\n%s", add.Stdout, add.Stderr)
 			var repo repoAddResponse
 			require.NoError(t, json.Unmarshal([]byte(add.Stdout), &repo), "invalid repo add json: %s", add.Stdout)
 			require.NotEmpty(t, repo.RepoID)
 
-			nonGitCWD := mustMkdirTemp(t, "agency-e2e-cwd-*")
 			create := runAgencyCLI(t, agencyBin, nonGitCWD, env,
 				"worktree", "create",
 				"--repo", repo.RepoID,
@@ -242,13 +242,13 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 		"AGENCY_LOCAL_E2E":    "1",
 	}
 
-	add := runAgencyCLI(t, agencyBin, repoDir, env, "repo", "add", "--json")
+	nonGitCWD := mustMkdirTemp(t, "agency-e2e-cwd-*")
+	add := runAgencyCLI(t, agencyBin, nonGitCWD, env, "repo", "add", repoDir, "--json")
 	require.Equalf(t, 0, add.ExitCode, "repo add failed\nstdout:\n%s\nstderr:\n%s", add.Stdout, add.Stderr)
 	var repo repoAddResponse
 	require.NoError(t, json.Unmarshal([]byte(add.Stdout), &repo), "invalid repo add json: %s", add.Stdout)
 	require.NotEmpty(t, repo.RepoID)
 
-	nonGitCWD := mustMkdirTemp(t, "agency-e2e-cwd-*")
 	create := runAgencyCLI(t, agencyBin, nonGitCWD,
 		env,
 		"worktree", "create",

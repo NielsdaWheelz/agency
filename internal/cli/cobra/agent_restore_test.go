@@ -22,6 +22,7 @@ func TestAgentHistoryLogsCmd_HelpMentionsFollowMode(t *testing.T) {
 
 	stdout, _, err := executeCmd("agent", "history", "logs", "--help")
 	require.NoError(t, err, "expected agent history logs help to render")
+	assert.Contains(t, stdout, "raw log subcommand")
 	assert.Contains(t, stdout, "--follow")
 	assert.Contains(t, stdout, "--offset")
 	assert.Contains(t, stdout, "--kind")

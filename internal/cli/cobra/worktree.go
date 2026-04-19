@@ -12,12 +12,17 @@ func newWorktreeCmd() *cobra.Command {
 		Short: "Manage integration worktrees",
 		Long: `Manage integration worktrees.
 
-Integration worktrees are stable branches you intend to merge, push, or open pull requests from.
-Use agency worktree pr for pull request operations.`,
+Integration worktrees are the long-lived branches you intend to merge, push,
+rebase, and open pull requests from. They are separate from agent sandboxes.
+
+Use:
+  agency worktree create   to make a new integration worktree
+  agency worktree ls/show  to inspect worktrees
+  agency worktree pr ...   to push, sync, and merge pull requests`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand")
+			return errors.New(errors.EUsage, "specify a subcommand: agency worktree <command>")
 		},
 	}
 

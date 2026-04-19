@@ -2,11 +2,21 @@ package cobra
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -129,14 +139,27 @@ func TestConfigInitCmd_HelpShowsForceAndNoRepoBehavior(t *testing.T) {
 func TestInitCmd_HelpPointsToConfigInit(t *testing.T) {
 	stdout, _, err := executeCmd("init", "--help")
 	require.NoError(t, err, "expected init help to render")
-	assert.Contains(t, stdout, "does not create user config")
+	assert.Contains(t, stdout, "requires user config")
 	assert.Contains(t, stdout, "agency config init")
+	assert.Contains(t, stdout, "--path")
+	assert.NotContains(t, stdout, "--repo string")
+	assert.NotContains(t, stdout, "--local")
 }
 
 func TestDoctorCmd_HelpPointsToConfigInit(t *testing.T) {
 	stdout, _, err := executeCmd("doctor", "--help")
 	require.NoError(t, err, "expected doctor help to render")
 	assert.Contains(t, stdout, "agency config init")
+	assert.Contains(t, stdout, "--path")
+	assert.NotContains(t, stdout, "--repo")
+}
+
+func TestRepoAddCmd_HelpUsesPositionalPath(t *testing.T) {
+	stdout, _, err := executeCmd("repo", "add", "--help")
+	require.NoError(t, err, "expected repo add help to render")
+	assert.Contains(t, stdout, "agency repo add [path]")
+	assert.Contains(t, stdout, "agency repo add /home/user/myrepo")
+	assert.NotContains(t, stdout, "--path")
 }
 
 func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {
@@ -235,6 +258,7 @@ func TestAgentHistoryCmd_HelpShowsLogsSubcommand(t *testing.T) {
 	require.NoError(t, err, "expected agent history help to render")
 	assert.Contains(t, stdout, "logs")
 	assert.Contains(t, stdout, "--json")
+	assert.Contains(t, stdout, "canonical inspection surface")
 }
 
 func TestWatchCmd_NonInteractiveReturnsENotInteractive(t *testing.T) {
@@ -269,4 +293,105 @@ func TestCompletionCmd_InvalidShell(t *testing.T) {
 func TestCompletionCmd_MissingArg(t *testing.T) {
 	_, _, err := executeCmd("completion")
 	require.Error(t, err, "expected error when shell is missing")
+}
+
+func TestCompletion_DynamicRepoFlag(t *testing.T) {
+	dataDir, configDir, client := startCompletionTestDaemon(t)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	repoDir := setupCompletionTestRepo(t)
+	_, err := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, err, "expected repo registration to succeed")
+
+	stdout, _, err := executeCmd("__complete", "agent", "start", "--repo", "ag")
+	require.NoError(t, err, "expected dynamic repo completion to succeed")
+	assert.Contains(t, stdout, "agency")
+}
+
+func TestCompletion_EnumFlag(t *testing.T) {
+	stdout, _, err := executeCmd("__complete", "agent", "history", "logs", "--kind", "st")
+	require.NoError(t, err, "expected enum completion to succeed")
+	assert.Contains(t, stdout, "stderr")
+	assert.Contains(t, stdout, "stream")
+}
+
+func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Client) {
+	t.Helper()
+
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	cfg := map[string]any{
+		"version": 2,
+		"defaults": map[string]string{
+			"runner": "claude-code",
+			"editor": "code",
+		},
+		"runners": map[string]string{
+			"claude-code": "/bin/echo",
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+
+	fsys := fs.NewRealFS()
+	st := store.NewStore(fsys, dataDir, time.Now)
+	srv := daemon.NewServer(st, exec.NewRealRunner(), fsys, configDir)
+
+	sockDir, err := os.MkdirTemp("", "agency-complete-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+
+	socketPath := filepath.Join(sockDir, "d.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+
+	client := daemonclient.NewClient(socketPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.WaitForReady(ctx, 5*time.Second), "daemon not ready")
+
+	t.Cleanup(func() {
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutCancel()
+		_ = srv.Shutdown(shutCtx)
+		<-serveDone
+	})
+
+	return dataDir, configDir, client
+}
+
+func setupCompletionTestRepo(t *testing.T) string {
+	t.Helper()
+	testutil.HermeticGitEnv(t)
+
+	repoDir := t.TempDir()
+	cr := exec.NewRealRunner()
+	ctx := context.Background()
+
+	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git init: %s", result.Stderr)
+
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0o644))
+
+	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode)
+
+	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "init"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git commit: %s", result.Stderr)
+
+	result, err = cr.Run(ctx, "git", []string{"remote", "add", "origin", "git@github.com:owner/agency.git"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git remote add origin: %s", result.Stderr)
+
+	return repoDir
 }

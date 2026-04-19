@@ -18,10 +18,10 @@ func newAgentLSCmd() *cobra.Command {
 		Short: "List agent invocations",
 		Long: `List agent invocations for the current repository.
 
-By default, shows unresolved invocations (not yet landed or discarded).
-Use --repo to specify a repo ref (name, owner/repo, repo key, id, or prefix), or --all-repos to list globally.
+By default this lists unresolved invocations for one repo. Omit --repo only
+when cwd already identifies that repo. Use --all-repos to list globally.
 
-Example:
+Examples:
   agency agent ls
   agency agent ls --repo agency
   agency agent ls --all-repos
@@ -46,11 +46,14 @@ Example:
 	}
 	cmd.GroupID = "inspect"
 
-	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
-	cmd.Flags().StringVar(&worktree, "worktree", "", "Filter by integration worktree")
+	cmd.Flags().StringVar(&worktree, "worktree", "", "Only show invocations for this integration worktree")
 	cmd.Flags().BoolVar(&all, "all", false, "Include all invocations")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	cmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
+	registerRepoFlagCompletion(cmd)
+	registerWorktreeFlagCompletion(cmd, "present")
 
 	return cmd
 }
@@ -64,9 +67,10 @@ func newAgentShowCmd() *cobra.Command {
 		Short: "Show details of an invocation",
 		Long: `Show details of an agent invocation.
 
-The invocation can be specified by full ID or unique prefix.
+Pass --repo when cwd does not already identify the repo. The invocation
+argument should be the invocation id or an unambiguous id prefix.
 
-Example:
+Examples:
   agency agent show 20260131
   agency agent show --repo agency 20260131
   agency agent show --json 20260131`,
@@ -88,6 +92,8 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -103,16 +109,13 @@ func newAgentDiffCmd() *cobra.Command {
 		Short: "Show invocation changes",
 		Long: `Show invocation changes from base_commit to the sandbox tip.
 
-Displays:
-- Commits in the sandbox (since base_commit)
-- File changes between base_commit and sandbox tip
-- Uncommitted changes in sandbox (if any)
+This compares the sandbox against its recorded base commit. It includes sandbox
+commits, the overall diff, and any remaining uncommitted sandbox changes.
 
-Optionally anchor diff context to timeline turn selectors:
-- --turn <entry_id> for a single turn
-- --turn-range <start_entry_id>..<end_entry_id> for an inclusive turn range
+Use --turn or --turn-range when you want diff context anchored to specific
+timeline entries.
 
-Example:
+Examples:
   agency agent diff 20260131
   agency agent diff --repo agency my-invocation
   agency agent diff --turn inv_event:2:agency.followup_prompt 20260131
@@ -139,6 +142,8 @@ Example:
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().StringVar(&turnID, "turn", "", "Timeline entry id to anchor diff context")
 	cmd.Flags().StringVar(&turnRange, "turn-range", "", "Inclusive turn range (<start_entry_id>..<end_entry_id>)")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -153,7 +158,24 @@ func newAgentHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history <invocation_id|prefix>",
 		Short: "Show unified invocation timeline",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show the unified timeline for one invocation.
+
+This is the canonical inspection surface for a single invocation.
+
+In an interactive terminal, plain "agency agent history <id>" opens the
+full-screen history view. Use --json, --last, --cursor, or --limit when you
+want direct terminal output instead.
+
+Use the "logs" subcommand when you want the raw log subcommand rather than the
+structured timeline.
+
+Examples:
+  agency agent history 20260131
+  agency agent history --repo agency 20260131
+  agency agent history --last 20260131
+  agency agent history --limit 200 --json 20260131
+  agency agent history logs 20260131 --kind stream`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -174,10 +196,13 @@ func newAgentHistoryCmd() *cobra.Command {
 	cmd.AddCommand(newAgentHistoryLogsCmd())
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 	cmd.Flags().BoolVar(&last, "last", false, "Show only the last timeline entry")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum entries to show")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Cursor for pagination")
+	cmd.MarkFlagsMutuallyExclusive("last", "cursor")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -192,7 +217,17 @@ func newAgentHistoryLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs <invocation_id|prefix>",
 		Short: "View raw invocation logs",
-		Args:  cobra.ExactArgs(1),
+		Long: `Stream raw invocation log files for one invocation.
+
+This is the raw log subcommand of the canonical history surface. Use it when
+you want byte-for-byte runner logs instead of the structured history timeline.
+
+Examples:
+  agency agent history logs 20260131
+  agency agent history logs --repo agency 20260131 --kind stderr
+  agency agent history logs 20260131 --kind stream --follow
+  agency agent history logs 20260131 --offset 1024`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -215,6 +250,9 @@ func newAgentHistoryLogsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 0, "Limit follow iterations for testing")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
+	registerLogKindFlagCompletion(cmd)
 
 	return cmd
 }
@@ -226,7 +264,16 @@ func newAgentCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check <invocation_id|prefix>",
 		Short: "Check invocation readiness",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show the daemon's readiness view for one invocation.
+
+This is the canonical machine-friendly readiness surface for deciding whether
+an invocation is blocked, needs input, or is ready to land.
+
+Examples:
+  agency agent check 20260131
+  agency agent check --repo agency 20260131
+  agency agent check --json 20260131`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -244,6 +291,8 @@ func newAgentCheckCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }

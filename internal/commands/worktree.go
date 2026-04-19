@@ -29,7 +29,7 @@ type WorktreeCreateOpts struct {
 func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
 	repoRef := strings.TrimSpace(opts.RepoRef)
 	if strings.TrimSpace(opts.Name) == "" {
-		return errors.New(errors.EUsage, "--name is required")
+		return errors.New(errors.EUsage, "pass --name <worktree_name>")
 	}
 	baseBranch := strings.TrimSpace(opts.BaseBranch)
 	if cr == nil {
@@ -55,7 +55,10 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			return errors.NewWithDetails(
 				errors.ERepoRootInaccessible,
 				"repo preferred_root is not accessible",
-				map[string]string{"repo": repoRef, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+				map[string]string{
+					"repo": repoRef,
+					"hint": "re-register this repo from an accessible checkout, then re-run the command",
+				},
 			)
 		}
 		repoRoot = repo.Data.PreferredRoot
@@ -74,7 +77,10 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				return errors.NewWithDetails(
 					errors.ERepoRootInaccessible,
 					"repo preferred_root is not accessible",
-					map[string]string{"repo": worktree.RepoID, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+					map[string]string{
+						"repo": worktree.RepoID,
+						"hint": "re-register this repo from an accessible checkout, then re-run the command",
+					},
 				)
 			}
 			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -88,7 +94,9 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				return errors.NewWithDetails(
 					errors.EUnsafeRepoRoot,
 					"current directory is inside an agency-managed tree but not a present integration worktree",
-					map[string]string{"hint": "re-run from the original repo or pass --repo and --base explicitly"},
+					map[string]string{
+						"hint": "re-run from the original repo checkout, or pass --repo <repo_ref> explicitly",
+					},
 				)
 			}
 			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -96,7 +104,9 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				return errors.NewWithDetails(
 					errors.ENoRepoContext,
 					"cannot resolve worktree create without a repo context",
-					map[string]string{"hint": "run from a git checkout or pass --repo <repo_ref>"},
+					map[string]string{
+						"hint": "run from a git checkout, or pass --repo <repo_ref>",
+					},
 				)
 			}
 			reg, err := ns.client.RegisterRepo(ctx, currentRoot.Path)
@@ -107,7 +117,10 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				return errors.NewWithDetails(
 					errors.ERepoRootInaccessible,
 					"repo preferred_root is not accessible",
-					map[string]string{"repo": reg.Data.RepoID, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+					map[string]string{
+						"repo": reg.Data.RepoID,
+						"hint": "re-register this repo from an accessible checkout, then re-run the command",
+					},
 				)
 			}
 			repoRoot = reg.Data.PreferredRoot
@@ -118,13 +131,13 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	if baseBranch == "" {
 		result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: baseRoot})
 		if err != nil {
-			return errors.Wrap(errors.EBaseBranchNotFound, "failed to determine current branch; pass --base", err)
+			return errors.Wrap(errors.EBaseBranchNotFound, "failed to determine the current branch; pass --base explicitly", err)
 		}
 		baseBranch = strings.TrimSpace(result.Stdout)
 		if result.ExitCode != 0 || baseBranch == "" {
 			return errors.NewWithDetails(
 				errors.EBaseBranchNotFound,
-				"failed to determine current branch; pass --base",
+				"failed to determine the current branch; pass --base explicitly",
 				map[string]string{"repo_root": baseRoot},
 			)
 		}
@@ -143,7 +156,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return err
 	}
 	if !clean {
-		return errors.New(errors.EBaseDirty, "working tree has uncommitted changes; commit or stash them first")
+		return errors.New(errors.EBaseDirty, "the checkout used to resolve --base is dirty; commit or stash changes first")
 	}
 
 	branchExists, err := git.BranchExists(ctx, cr, baseRoot, baseBranch)
@@ -153,7 +166,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	if !branchExists {
 		return errors.NewWithDetails(
 			errors.EBaseBranchNotFound,
-			"local branch '"+baseBranch+"' not found; checkout or fetch base locally (no auto-fetch in v1)",
+			"local base branch '"+baseBranch+"' was not found",
 			map[string]string{"branch": baseBranch},
 		)
 	}

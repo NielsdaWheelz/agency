@@ -17,10 +17,10 @@ func newWorktreeLSCmd() *cobra.Command {
 		Short: "List integration worktrees",
 		Long: `List integration worktrees for the current repository.
 
-By default, only shows non-archived worktrees for the current repo.
-Use --repo to specify a repo ref (name, owner/repo, repo key, id, or prefix), or --all-repos to list globally.
+By default this lists present worktrees for one repo. Omit --repo only when
+cwd already identifies that repo. Use --all-repos to list globally.
 
-Example:
+Examples:
   agency worktree ls
   agency worktree ls --all
   agency worktree ls --repo agency
@@ -43,10 +43,12 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	cmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -60,9 +62,10 @@ func newWorktreeShowCmd() *cobra.Command {
 		Short: "Show details of a worktree",
 		Long: `Show details of an integration worktree.
 
-The worktree can be specified by name, id, or unique prefix.
+Pass --repo when cwd does not already identify the repo. The worktree argument
+can be the worktree name, full id, or an unambiguous id prefix.
 
-Example:
+Examples:
   agency worktree show my-feature
   agency worktree show --repo agency my-feature
   agency worktree show --json my-feature`,
@@ -81,8 +84,10 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setWorktreeArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }

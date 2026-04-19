@@ -15,10 +15,10 @@ func newAgentStopCmd() *cobra.Command {
 		Short: "Stop an invocation gracefully",
 		Long: `Send a graceful stop signal (Ctrl-C) to a running invocation.
 
-For headed invocations, this sends C-c via tmux send-keys.
-The runner may ignore the signal; use 'kill' for forceful termination.
+This is the polite shutdown path. The runner may ignore the interrupt; use
+"agency agent kill" when you need forceful termination.
 
-Example:
+Examples:
   agency agent stop 20260131
   agency agent stop --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
@@ -39,6 +39,8 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -51,11 +53,9 @@ func newAgentKillCmd() *cobra.Command {
 		Short: "Kill an invocation forcefully",
 		Long: `Forcefully terminate a running invocation.
 
-For headed invocations, this kills the tmux session.
-The invocation is marked as failed with exit_reason="killed".
-The sandbox is preserved for inspection.
+The sandbox is preserved for inspection after termination.
 
-Example:
+Examples:
   agency agent kill 20260131
   agency agent kill --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
@@ -76,6 +76,8 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -90,10 +92,11 @@ func newAgentLandCmd() *cobra.Command {
 		Short: "Apply sandbox changes to integration",
 		Long: `Land sandbox changes into the integration worktree.
 
-By default, cherry-picks sandbox commits onto the integration branch HEAD.
-If the sandbox has no commits but has uncommitted changes, use --apply.
+By default this cherry-picks sandbox commits onto the current integration
+branch head. If the sandbox has no commits but still has uncommitted changes,
+pass --apply.
 
-Example:
+Examples:
   agency agent land 20260131
   agency agent land --repo agency my-invocation --apply
   agency agent land 20260131 --require-base`,
@@ -115,10 +118,12 @@ Example:
 	}
 	cmd.GroupID = "finish"
 
-	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Apply uncommitted changes (when no commits exist)")
 	cmd.Flags().BoolVar(&requireBase, "require-base", false, "Fail if integration has diverged from base_commit")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -134,7 +139,7 @@ func newAgentDiscardCmd() *cobra.Command {
 If the invocation is still running, it will be stopped first (gracefully,
 then forcefully killed after 5 seconds).
 
-Example:
+Examples:
   agency agent discard 20260131
   agency agent discard --repo agency my-invocation`,
 		Args: cobra.ExactArgs(1),
@@ -155,6 +160,8 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -169,10 +176,9 @@ func newAgentFollowupCmd() *cobra.Command {
 		Short: "Send follow-up prompt to a headless invocation",
 		Long: `Send a follow-up prompt to an existing headless invocation.
 
-Use either --prompt or --prompt-file. The request is idempotent at the
-daemon control plane using client_request_id semantics.
+Use exactly one prompt source: --prompt or --prompt-file.
 
-Example:
+Examples:
   agency agent followup 20260131 --prompt "continue with test fixes"
   agency agent followup --repo agency my-invocation --prompt-file followup.md
   agency agent followup --json 20260131 --prompt "next step"`,
@@ -194,10 +200,13 @@ Example:
 	}
 	cmd.GroupID = "run"
 
-	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Follow-up prompt text")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Path to file containing follow-up prompt")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -214,7 +223,7 @@ func newAgentRecreateCmd() *cobra.Command {
 This keeps the same invocation id and sandbox, starts the configured headed
 runner in that sandbox, and attaches unless --detached or --json is used.
 
-Example:
+Examples:
   agency agent recreate 20260131
   agency agent recreate --repo agency my-invocation --detached
   agency agent recreate --json 20260131`,
@@ -235,9 +244,11 @@ Example:
 	}
 	cmd.GroupID = "recover"
 
-	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Recreate tmux session without attaching")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -256,7 +267,7 @@ Use either:
   - --checkpoint <id> for explicit/scripted restore
   - --turn <entry_id> to restore the latest checkpoint at or before a history turn
 
-Example:
+Examples:
   agency agent restore 20260131 --checkpoint 3
   agency agent restore 20260131 --turn stream:9
   agency agent restore --repo agency my-invocation --checkpoint 7
@@ -279,10 +290,13 @@ Example:
 	}
 	cmd.GroupID = "recover"
 
-	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
 	cmd.Flags().StringVar(&turnID, "turn", "", "History turn entry id to restore from")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	cmd.MarkFlagsMutuallyExclusive("checkpoint", "turn")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }

@@ -14,10 +14,10 @@ func newWorktreePathCmd() *cobra.Command {
 		Short: "Output worktree path for scripting",
 		Long: `Output the tree path of an integration worktree.
 
-Outputs only the path, suitable for scripting:
+This prints only the path, so it is suitable for scripting:
   cd $(agency worktree path my-feature)
 
-Example:
+Examples:
   agency worktree path my-feature
   agency worktree path --repo agency my-feature`,
 		Args: cobra.ExactArgs(1),
@@ -35,6 +35,8 @@ Example:
 	}
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -47,7 +49,7 @@ func newWorktreeOpenCmd() *cobra.Command {
 		Short: "Open worktree in editor",
 		Long: `Open an integration worktree in the configured editor.
 
-Example:
+Examples:
   agency worktree open my-feature
   agency worktree open --repo agency my-feature
   agency worktree open my-feature --editor cursor`,
@@ -68,6 +70,8 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -82,7 +86,7 @@ func newWorktreeShellCmd() *cobra.Command {
 Spawns $SHELL (or /bin/sh) with the worktree as the working directory.
 Exiting the shell returns control to agency.
 
-Example:
+Examples:
   agency worktree shell my-feature
   agency worktree shell --repo agency my-feature`,
 		Args: cobra.ExactArgs(1),
@@ -100,5 +104,7 @@ Example:
 	}
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }

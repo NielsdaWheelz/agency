@@ -65,16 +65,18 @@ Use `agency init --repo-config` only when you want shareable `agency.json` and s
 ```bash
 agency config init
 agency repo add /path/to/myrepo
-agency init --repo /path/to/myrepo
+agency init --path /path/to/myrepo
 agency worktree create --repo <repo-ref> --name my-feature --base main
 agency agent start --repo <repo-ref> --worktree my-feature --headless --prompt "Fix the auth bug"
 agency agent land <invocation-id> --apply
 ```
 
-`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they fall back to the current directory.
+`agency repo add [path]` uses a positional path. Omit it only when your current directory is already inside the repo you want to register.
+`agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
+`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
-`worktree create` defaults omitted `--base` to the current branch.
-`agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` is required.
+`worktree create` defaults omitted `--base` to the current branch of the selected checkout.
+`agent start` can infer `--worktree` only when cwd is inside a present agency integration worktree. From a repo root, subdirectory, or unrelated cwd, pass `--worktree`.
 `agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
 
 headless (fire-and-forget):
@@ -133,7 +135,7 @@ agency agent discard <invocation-id> --json
 agency agent followup <invocation-id> --prompt "continue" --json
 agency agent recreate <invocation-id> --json
 agency agent restore <invocation-id> --checkpoint 3 --json
-agency repo add --json
+agency repo add /abs/path/to/repo --json
 agency repo rm <repo-ref> --yes --json
 ```
 
@@ -169,6 +171,7 @@ reports-v2 progression is mode-aware: headless `review`/`pr sync`/`pr merge` is 
 - **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
 - **[docs/environment.md](docs/environment.md)** — config paths, overrides, and precedence
 - **[docs/git-worktrees.md](docs/git-worktrees.md)** — repo, integration worktree, invocation, and sandbox model
+- **[docs/overrides.md](docs/overrides.md)** — explicit CLI and config override rules
 - **[docs/persistence.md](docs/persistence.md)** — on-disk schemas, atomic writes, and permissions
 - **[docs/testing.md](docs/testing.md)** — testing standards, layers, fixtures, and e2e rules
 - **[docs/modules/index.md](docs/modules/index.md)** — subsystem-owned docs

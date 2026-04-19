@@ -129,7 +129,10 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			return fail(errors.NewWithDetails(
 				errors.ERepoRootInaccessible,
 				"repo preferred_root is not accessible",
-				map[string]string{"repo": repoRef, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+				map[string]string{
+					"repo": repoRef,
+					"hint": "re-register this repo from an accessible checkout, then re-run the command",
+				},
 			))
 		}
 		if worktreeRef == "" {
@@ -138,13 +141,21 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				return fail(err)
 			}
 			if !ok {
-				return fail(errors.New(errors.EUsage, "--worktree is required unless current directory is an integration worktree"))
+				return fail(errors.NewWithDetails(
+					errors.EUsage,
+					"pass --worktree <worktree_ref>, or run this command from the integration worktree you want to use",
+					map[string]string{
+						"hint": "cwd-based --worktree inference only works inside a present integration worktree",
+					},
+				))
 			}
 			if worktree.RepoID != repo.Data.RepoID {
 				return fail(errors.NewWithDetails(
 					errors.EUsage,
 					"current integration worktree belongs to a different repo",
-					map[string]string{"hint": "pass --worktree explicitly or run from the selected repo's worktree"},
+					map[string]string{
+						"hint": "pass both --repo <repo_ref> and --worktree <worktree_ref>, or run from a worktree in the selected repo",
+					},
 				))
 			}
 			worktreeRef = worktree.WorktreeID
@@ -168,20 +179,31 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				return fail(errors.NewWithDetails(
 					errors.ERepoRootInaccessible,
 					"repo preferred_root is not accessible",
-					map[string]string{"repo": worktree.RepoID, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+					map[string]string{
+						"repo": worktree.RepoID,
+						"hint": "re-register this repo from an accessible checkout, then re-run the command",
+					},
 				))
 			}
 			repoRoot = repo.Data.PreferredRoot
 			repoID = repo.Data.RepoID
 		} else {
 			if worktreeRef == "" {
-				return fail(errors.New(errors.EUsage, "--worktree is required unless current directory is an integration worktree"))
+				return fail(errors.NewWithDetails(
+					errors.EUsage,
+					"pass --worktree <worktree_ref>, or run this command from the integration worktree you want to use",
+					map[string]string{
+						"hint": "cwd-based --worktree inference only works inside a present integration worktree",
+					},
+				))
 			}
 			if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
 				return fail(errors.NewWithDetails(
 					errors.EUnsafeRepoRoot,
 					"current directory is inside an agency-managed tree but not a present integration worktree",
-					map[string]string{"hint": "re-run from the original repo or pass --repo and --worktree explicitly"},
+					map[string]string{
+						"hint": "re-run from the original repo checkout, or pass both --repo <repo_ref> and --worktree <worktree_ref>",
+					},
 				))
 			}
 			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
@@ -189,7 +211,9 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				return fail(errors.NewWithDetails(
 					errors.ENoRepoContext,
 					"cannot resolve agent start without a repo context",
-					map[string]string{"hint": "run from a git checkout or pass --repo <repo_ref>"},
+					map[string]string{
+						"hint": "run from a git checkout, or pass both --repo <repo_ref> and --worktree <worktree_ref>",
+					},
 				))
 			}
 			reg, err := ns.client.RegisterRepo(ctx, currentRoot.Path)
@@ -200,7 +224,10 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				return fail(errors.NewWithDetails(
 					errors.ERepoRootInaccessible,
 					"repo preferred_root is not accessible",
-					map[string]string{"repo": reg.Data.RepoID, "hint": "run `agency repo add /path/to/repo` from an accessible checkout"},
+					map[string]string{
+						"repo": reg.Data.RepoID,
+						"hint": "re-register this repo from an accessible checkout, then re-run the command",
+					},
 				))
 			}
 			repoRoot = reg.Data.PreferredRoot

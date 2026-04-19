@@ -10,6 +10,8 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 - `agency watch` and `agency agent history` should open explicit pages of that one runtime.
 - `watch` is a terminal UI over daemon state, not a source of truth.
 - The runtime should expose workspace, history, and logs pages over the same read model.
+- `agency agent history` is the canonical invocation inspection surface.
+- `agency agent history logs` is the raw log subcommand of that same inspection surface, not a separate top-level workflow.
 - Snapshot loading should compose daemon read APIs rather than reconstruct state from raw files.
 - Interactive terminal checks belong at the command boundary before launching the UI.
 - Invocation history UI should live in `internal/watch`, not in a second TUI package.

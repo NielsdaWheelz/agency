@@ -292,7 +292,8 @@ func TestRepoLS_FormatOutput_Empty(t *testing.T) {
 	}
 
 	assert.Contains(t, stdout.String(), "No repos registered")
-	assert.Contains(t, stdout.String(), "agency repo add")
+	assert.Contains(t, stdout.String(), "agency repo add /path/to/repo")
+	assert.NotContains(t, stdout.String(), "--path")
 }
 
 func TestRepoShow_FormatOutput_Accessible(t *testing.T) {

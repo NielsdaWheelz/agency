@@ -20,10 +20,14 @@ func newWorktreeCreateCmd() *cobra.Command {
 		Short: "Create a new integration worktree",
 		Long: `Create a new integration worktree.
 
-An integration worktree is a stable branch you intend to merge, push, or PR.
-It is independent of any agent invocation.
+Use --repo to target a registered repo from any cwd. If you omit --repo, cwd
+must already identify the repo, either because you are inside the repo checkout
+or inside one of its present integration worktrees.
 
-Example:
+If you omit --base, it defaults to the current branch of the selected checkout.
+The checkout used to resolve that branch must be clean.
+
+Examples:
   agency worktree create --repo agency --name my-feature --base main
   agency worktree create --name my-feature
   agency worktree create --repo agency --name bugfix --base develop --open`,
@@ -44,11 +48,13 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo name, key, id, or prefix (defaults to current directory)")
-	cmd.Flags().StringVar(&name, "name", "", "Name for the integration worktree (required)")
-	cmd.Flags().StringVar(&base, "base", "", "Base branch to branch from (defaults to current branch)")
-	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the worktree in editor after creation")
-	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Registered repo ref. Omit only when cwd already identifies the repo.")
+	cmd.Flags().StringVar(&name, "name", "", "New integration worktree name")
+	cmd.Flags().StringVar(&base, "base", "", "Base branch. Omit to use the current branch of the selected checkout.")
+	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the new worktree in your editor after creation")
+	cmd.Flags().StringVar(&editor, "editor", "", "Editor override to use with --open")
+	_ = cmd.MarkFlagRequired("name")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }

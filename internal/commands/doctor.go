@@ -67,8 +67,8 @@ func (osEnv) Get(key string) string {
 
 // DoctorOpts holds options for the doctor command.
 type DoctorOpts struct {
-	// RepoPath is the optional --repo flag to target a specific repo.
-	RepoPath string
+	// Path is the optional --path flag to target a specific repo checkout.
+	Path string
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
@@ -83,18 +83,18 @@ type DoctorOpts struct {
 // Doctor implements the `agency doctor` command.
 // Validates repo, tools, config, and scripts without mutating on-disk state.
 func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts DoctorOpts, stdout, stderr io.Writer) error {
-	// 1. Discover repo root (use --repo if provided, otherwise CWD)
+	// 1. Discover repo root (use --path if provided, otherwise CWD)
 	targetPath := cwd
-	if opts.RepoPath != "" {
-		targetPath = opts.RepoPath
+	if opts.Path != "" {
+		targetPath = opts.Path
 	}
 	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)
 	if err != nil {
-		if opts.RepoPath != "" {
+		if opts.Path != "" {
 			return errors.NewWithDetails(
 				errors.EInvalidRepoPath,
-				fmt.Sprintf("--repo path is not inside a git repository: %s", opts.RepoPath),
-				map[string]string{"path": opts.RepoPath},
+				fmt.Sprintf("--path is not inside a git repository: %s", opts.Path),
+				map[string]string{"path": opts.Path},
 			)
 		}
 		return err

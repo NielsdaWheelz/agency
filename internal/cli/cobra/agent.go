@@ -12,10 +12,15 @@ func newAgentCmd() *cobra.Command {
 		Short: "Manage agent invocations",
 		Long: `Manage agent invocations.
 
-Agent invocations run a runner inside an isolated sandbox worktree and
-produce logs, checkpoints, and lifecycle outcomes.
+An agent invocation runs a configured runner inside an isolated sandbox cloned
+from an integration worktree. Invocations are the execution layer: they run the
+model, stream logs, create checkpoints, and eventually land or discard work.
 
-Use subcommands to run, inspect, navigate, recover, and finish invocations.`,
+Use:
+  agency agent start      to create a new sandbox and run a runner
+  agency agent ls/show    to inspect invocations
+  agency agent history    to read the timeline or open the history UI
+  agency agent land       to apply sandbox changes back to integration`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()

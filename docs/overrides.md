@@ -8,6 +8,8 @@ This document covers configuration and code escape hatches.
 
 - Directory overrides are explicit: `AGENCY_DATA_DIR`, `AGENCY_CONFIG_DIR`, and `AGENCY_CACHE_DIR`.
 - CLI flags may override user defaults only on surfaces that document that precedence.
+- `--repo` is a repo ref selector, not a filesystem path.
+- `--path` is the explicit checkout-path override for path-targeted commands such as `agency init` and `agency doctor`.
 - `--agency-config` is the explicit override for the selected agency config file.
 - `agency agent start` accepts `--agency-config` and uses it before repo-local and per-repo agency config.
 - Daemon APIs that accept an agency config override require an absolute path.

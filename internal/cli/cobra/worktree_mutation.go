@@ -22,7 +22,7 @@ Use --force to remove regardless.
 
 The worktree record is retained (archived state) but the tree directory is removed.
 
-Example:
+Examples:
   agency worktree rm my-feature
   agency worktree rm --repo agency my-feature
   agency worktree rm my-feature --force`,
@@ -44,7 +44,9 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm remove in non-interactive mode")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm removal in non-interactive mode")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -81,7 +83,7 @@ func newWorktreePRSyncCmd() *cobra.Command {
 This command pushes the integration branch, then creates or updates the
 branch-scoped pull request.
 
-Example:
+Examples:
   agency worktree pr sync my-feature
   agency worktree pr sync --repo agency my-feature
   agency worktree pr sync --allow-dirty my-feature
@@ -108,6 +110,8 @@ Example:
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
 	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -130,9 +134,10 @@ func newWorktreePRMergeCmd() *cobra.Command {
 This command runs verify, merges the branch-scoped pull request, runs the
 archive script, and archives the worktree by removing its tree directory.
 
-Non-interactive executions must pass --yes.
+Non-interactive executions must pass --yes. Pass at most one merge strategy
+flag: --squash, --merge, or --rebase.
 
-Example:
+Examples:
   agency worktree pr merge my-feature
   agency worktree pr merge --repo agency my-feature
   agency worktree pr merge --yes --json my-feature
@@ -168,6 +173,9 @@ Example:
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm merge in non-interactive mode")
 	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "load agency config from this file")
+	cmd.MarkFlagsMutuallyExclusive("squash", "merge", "rebase")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }
@@ -184,7 +192,7 @@ func newWorktreeRebaseCmd() *cobra.Command {
 This command requires a clean worktree and returns a typed conflict error if
 the rebase cannot be applied cleanly.
 
-Example:
+Examples:
   agency worktree rebase my-feature
   agency worktree rebase --repo agency my-feature
   agency worktree rebase --json my-feature`,
@@ -205,6 +213,8 @@ Example:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	setWorktreeArgCompletion(cmd, "present")
+	registerRepoFlagCompletion(cmd)
 
 	return cmd
 }

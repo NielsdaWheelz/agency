@@ -13,6 +13,7 @@ This document covers config paths, directory overrides, and precedence.
 - Repo-shared config path is `<repo>/agency.json`.
 - `agency init` writes the local per-repo config by default.
 - `agency init --repo-config` writes the repo-shared config in the target repo.
+- `agency init` and `agency doctor` default to cwd and accept `--path <checkout-path>` when you want to target a different repo checkout.
 
 ## Precedence
 

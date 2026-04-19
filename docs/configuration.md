@@ -11,7 +11,7 @@ For file locations and precedence, see [environment.md](environment.md).
 1. Run `agency config init`.
 2. Edit `config.json` only if you need different runner defaults or command mappings.
 3. Register a repo with `agency repo add /path/to/repo`.
-4. Run `agency init --repo /path/to/repo` for local per-repo config, or `agency init --repo /path/to/repo --repo-config` for shareable repo files.
+4. Run `agency init --path /path/to/repo` for local per-repo config, or `agency init --path /path/to/repo --repo-config` for shareable repo files.
 
 `agency config init` owns user config. `agency init` owns repo config and repo scripts only.
 

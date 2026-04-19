@@ -21,6 +21,7 @@ This directory is the canonical home for repository documentation.
 - [git-worktrees.md](git-worktrees.md): repo, integration worktree, sandbox, and landing rules
 - [persistence.md](persistence.md): JSON and JSONL contracts, atomic writes, and file permissions
 - [environment.md](environment.md): config paths, overrides, and precedence
+- [overrides.md](overrides.md): explicit CLI and config override rules
 - [errors.md](errors.md): stable error-code and corruption rules
 - [concurrency.md](concurrency.md): repo locks and mutation ordering
 - [modules/index.md](modules/index.md): subsystem-owned docs

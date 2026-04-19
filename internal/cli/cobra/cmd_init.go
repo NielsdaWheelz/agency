@@ -13,26 +13,30 @@ import (
 )
 
 func newInitCmd() *cobra.Command {
-	var repoPath string
+	var path string
 	var noGitignore bool
 	var force bool
-	var local bool
 	var repoConfig bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create repo-scoped agency config and stub scripts",
-		Long: `Create repo-scoped agency config and stub scripts.
-By default, this writes local per-repo config under AGENCY_CONFIG_DIR and nothing is written to the repo.
-Use --repo-config to write shareable agency.json, scripts, .gitignore, and CLAUDE.md in the repo.
-This command requires a git repo and does not create user config; run "agency config init" first.
-Defaults to current directory; use --repo to target a different repo.`,
+		Short: "Create agency config for one git checkout",
+		Long: `Create agency config for one existing git repository.
+
+By default, init writes local per-repo config under AGENCY_CONFIG_DIR and does
+not modify the repository checkout. Use --repo-config when you want shareable
+repo files in the checkout itself: agency.json, scripts, .gitignore, and
+CLAUDE.md.
+
+This command requires user config from "agency config init". If --path is
+omitted, the current directory must be inside the repository you want to
+initialize.`,
+		Example: `  agency init
+  agency init --path /path/to/repo
+  agency init --repo-config
+  agency init --path /path/to/repo --repo-config --force`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if local && repoConfig {
-				return errors.New(errors.EUsage, "--local and --repo-config cannot both be set")
-			}
-
 			stdout := cmd.OutOrStdout()
 			stderr := cmd.ErrOrStderr()
 
@@ -46,7 +50,7 @@ Defaults to current directory; use --repo to target a different repo.`,
 			ctx := context.Background()
 
 			opts := commands.InitOpts{
-				RepoPath:    repoPath,
+				Path:        path,
 				NoGitignore: noGitignore,
 				Force:       force,
 				RepoConfig:  repoConfig,
@@ -56,10 +60,9 @@ Defaults to current directory; use --repo to target a different repo.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&repoPath, "repo", "", "target a specific repo (default: current directory)")
+	cmd.Flags().StringVar(&path, "path", "", "target checkout path (defaults to current directory)")
 	cmd.Flags().BoolVar(&noGitignore, "no-gitignore", false, "do not modify .gitignore")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing agency.json")
-	cmd.Flags().BoolVar(&local, "local", false, "write local per-repo config under AGENCY_CONFIG_DIR (default)")
 	cmd.Flags().BoolVar(&repoConfig, "repo-config", false, "write shareable agency.json and scripts in the repo")
 
 	return cmd

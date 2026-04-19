@@ -11,14 +11,54 @@ import (
 
 // NewRootCmd creates the root cobra command for agency.
 func NewRootCmd() *cobra.Command {
+	repoCmd := newRepoCmd()
+	repoCmd.GroupID = "workflow"
+
+	worktreeCmd := newWorktreeCmd()
+	worktreeCmd.GroupID = "workflow"
+
+	agentCmd := newAgentCmd()
+	agentCmd.GroupID = "workflow"
+
+	watchCmd := newWatchCmd()
+	watchCmd.GroupID = "workflow"
+
+	configCmd := newConfigCmd()
+	configCmd.GroupID = "setup"
+
+	initCmd := newInitCmd()
+	initCmd.GroupID = "setup"
+
+	doctorCmd := newDoctorCmd()
+	doctorCmd.GroupID = "setup"
+
+	daemonCmd := newDaemonCmd()
+	daemonCmd.GroupID = "operations"
+
+	completionCmd := newCompletionCmd()
+	completionCmd.GroupID = "other"
+
+	versionCmd := newVersionCmd()
+	versionCmd.GroupID = "other"
+
 	rootCmd := &cobra.Command{
 		Use:   "agency",
-		Short: "Local-first runner manager for AI coding sessions",
-		Long: `agency - local-first runner manager for AI coding sessions
+		Short: "Manage repos, worktrees, and agent sessions for local AI coding",
+		Long: `agency manages the local workflow for AI coding in git repositories.
 
-Agency manages AI coding sessions with worktrees, tmux sessions, and lifecycle
-orchestration. It creates isolated workspaces for each task, runs setup scripts,
-and provides commands to control the runner session.`,
+Primary workflow:
+  1. Register a repo once so --repo works from any directory.
+  2. Create an integration worktree for a task.
+  3. Start an agent in that worktree.
+  4. Use watch to inspect running sessions and history.
+
+Setup commands like init and doctor operate on one checkout path. If you omit
+--path, they use the current directory. Workflow commands use repo refs with
+--repo after a repository has been registered.`,
+		Example: `  agency repo add /path/to/repo
+  agency worktree create --repo agency --name fix-help --base main
+  agency agent start --repo agency --worktree fix-help
+  agency watch`,
 		Version:       version.FullVersion(),
 		SilenceErrors: true, // We handle error printing in main.go
 		SilenceUsage:  true, // We handle usage printing manually
@@ -30,18 +70,25 @@ and provides commands to control the runner session.`,
 	// Disable Cobra's default completion command (we register our own)
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
+	rootCmd.AddGroup(
+		&cobra.Group{ID: "workflow", Title: "Workflow"},
+		&cobra.Group{ID: "setup", Title: "Setup"},
+		&cobra.Group{ID: "operations", Title: "Operations"},
+		&cobra.Group{ID: "other", Title: "Other"},
+	)
+
 	// Add all subcommands
 	rootCmd.AddCommand(
-		newConfigCmd(),
-		newInitCmd(),
-		newDoctorCmd(),
-		newCompletionCmd(),
-		newVersionCmd(),
-		newWorktreeCmd(),
-		newAgentCmd(),
-		newWatchCmd(),
-		newDaemonCmd(),
-		newRepoCmd(),
+		repoCmd,
+		worktreeCmd,
+		agentCmd,
+		watchCmd,
+		configCmd,
+		initCmd,
+		doctorCmd,
+		daemonCmd,
+		completionCmd,
+		versionCmd,
 		newInternalCmd(),
 	)
 

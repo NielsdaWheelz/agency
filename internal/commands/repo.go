@@ -104,6 +104,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 
 // RepoAddOpts holds options for the repo add command.
 type RepoAddOpts struct {
+	// Path is the optional repo checkout path from the positional [path] arg.
 	Path string
 	JSON bool
 }

@@ -656,7 +656,7 @@ func TestWorktreeCreate_ExplicitMissingBaseBranchFailsBeforeCreate(t *testing.T)
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EBaseBranchNotFound, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "local branch 'does-not-exist' not found")
+	assert.Contains(t, err.Error(), "local base branch 'does-not-exist' was not found")
 }
 
 func TestWorktreeCreate_EmptyRepoFailsBeforeCreate(t *testing.T) {

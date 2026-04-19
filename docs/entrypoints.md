@@ -9,7 +9,9 @@ This document covers entrypoints and side effects.
 - The only binary entrypoint is `cmd/agency`.
 - Cobra commands in `internal/cli/cobra` should parse flags, construct dependencies, and delegate to `internal/commands`.
 - `internal/commands` is the user-facing contract boundary for CLI behavior.
-- Repo-aware creation and start commands should accept explicit repository selectors from any cwd and fall back to the current directory only when the selector is omitted.
+- `agency repo add` should accept an optional positional checkout path and use cwd when the path is omitted.
+- Path-targeted commands such as `agency init` and `agency doctor` should use `--path <checkout-path>` and default to cwd when `--path` is omitted.
+- Repo-aware commands such as `agency worktree create` and `agency agent start` should accept explicit `--repo` selectors from any cwd and fall back to the current directory only when the selector is omitted.
 - `agency worktree create` should default an omitted `--base` to the current branch of the selected checkout.
 - `agency agent start` may infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` remains required.
 - `agency agent start` should resolve repo-scoped runner defaults through the standard agency config precedence and honor explicit `--agency-config`.

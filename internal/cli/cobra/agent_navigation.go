@@ -12,9 +12,9 @@ func newAgentOpenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "open <invocation_ref>",
 		Short: "Open sandbox in editor",
-		Long: `Open the sandbox directory in your configured editor.
+		Long: `Open the sandbox directory for one invocation in your configured editor.
 
-Example:
+Examples:
   agency agent open 20260131
   agency agent open --repo agency my-invocation`,
 		Args: cobra.ExactArgs(1),
@@ -33,6 +33,8 @@ Example:
 	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -44,9 +46,9 @@ func newAgentPathCmd() *cobra.Command {
 		Short: "Print sandbox path",
 		Long: `Print the sandbox path for an agent invocation.
 
-The path is resolved via the daemon and printed to stdout.
+This prints only the resolved path, so it is suitable for scripting.
 
-Example:
+Examples:
   agency agent path 20260131
   agency agent path --repo agency my-invocation
   cd $(agency agent path 20260131)`,
@@ -66,6 +68,8 @@ Example:
 	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -77,9 +81,9 @@ func newAgentShellCmd() *cobra.Command {
 		Short: "Open shell in sandbox",
 		Long: `Open a login shell with the working directory set to the sandbox path.
 
-The sandbox path is resolved via the daemon before shell dispatch.
+Use this when you want to inspect or edit the sandbox directly from a shell.
 
-Example:
+Examples:
   agency agent shell 20260131
   agency agent shell --repo agency my-invocation`,
 		Args: cobra.ExactArgs(1),
@@ -97,7 +101,9 @@ Example:
 	}
 	cmd.GroupID = "navigate"
 
-	cmd.Flags().StringVar(&repoRef, "repo", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }
 
@@ -112,7 +118,7 @@ func newAgentAttachCmd() *cobra.Command {
 This is the canonical interactive navigation command for headed invocations.
 Headless invocations are rejected. Detach from the session with Ctrl+b, d.
 
-Example:
+Examples:
   agency agent attach 20260131
   agency agent attach --repo agency 20260131`,
 		Args: cobra.ExactArgs(1),
@@ -131,5 +137,7 @@ Example:
 	cmd.GroupID = "navigate"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
 	return cmd
 }

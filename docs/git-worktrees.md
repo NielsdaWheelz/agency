@@ -16,8 +16,10 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 ## Rules
 
 - Repo discovery must resolve one clean absolute repo root.
-- `agency worktree create` and `agency agent start` accept an explicit `--repo` selector from any cwd; when omitted, they fall back to the current directory.
-- `agency worktree create` defaults an omitted `--base` to the current branch.
+- `agency repo add [path]` accepts a positional checkout path. Omitting the path means use cwd.
+- `agency init` and `agency doctor` default to cwd and accept `--path <checkout-path>` when targeting a different repo checkout.
+- `agency worktree create` and `agency agent start` accept an explicit `--repo` selector from any cwd; when omitted, they resolve the repo from the current directory.
+- `agency worktree create` defaults an omitted `--base` to the current branch of the selected checkout.
 - `agency agent start` may infer `--worktree` only when cwd is inside a present agency integration worktree; otherwise `--worktree` remains required.
 - `agency agent start` should honor explicit `--agency-config` and otherwise resolve agency config in standard precedence order.
 - Creating a worktree requires a registered repo when `--repo` is supplied or a git repo with commits when falling back to cwd, plus a clean base checkout and an existing base branch.
