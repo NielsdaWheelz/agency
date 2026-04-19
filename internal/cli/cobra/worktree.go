@@ -10,8 +10,9 @@ import (
 
 func newWorktreeCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "worktree",
-		Short: "Manage integration worktrees",
+		Use:     "worktree",
+		Aliases: []string{"wt"},
+		Short:   "Manage integration worktrees",
 		Long: `Manage integration worktrees.
 
 Integration worktrees are the long-lived branches you intend to merge, push,

@@ -10,8 +10,9 @@ import (
 
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "Manage agent invocations",
+		Use:     "agent",
+		Aliases: []string{"ag"},
+		Short:   "Manage agent invocations",
 		Long: `Manage agent invocations.
 
 An agent invocation runs a configured runner inside an isolated sandbox cloned

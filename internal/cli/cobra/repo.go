@@ -11,8 +11,9 @@ import (
 
 func newRepoCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "repo",
-		Short: "Register repos and inspect the repo registry",
+		Use:     "repo",
+		Aliases: []string{"r"},
+		Short:   "Register repos and inspect the repo registry",
 		Long: `Register repositories so agency commands can target them by --repo.
 
 Once a repo is registered, worktree and agent commands can resolve it from any

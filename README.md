@@ -75,6 +75,7 @@ agency agent <invocation-ref> land --apply
 `agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
 `worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory.
 `agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
+`agency r`, `agency wt`, and `agency ag` are supported noun aliases for `repo`, `worktree`, and `agent`, but the long forms remain the primary documented CLI surface.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency worktree create <name>` uses a positional name and defaults omitted `--base` to the current branch of the selected checkout.
 `agency agent start [<worktree-ref>]` uses a positional worktree ref. It can infer an omitted ref only when cwd is inside a present agency integration worktree. From a repo root, subdirectory, or unrelated cwd, pass the worktree ref explicitly.

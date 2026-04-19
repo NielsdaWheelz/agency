@@ -121,6 +121,68 @@ func TestRepoCmd_HelpShowsRmSubcommand(t *testing.T) {
 	assert.NotContains(t, stdout, "Subcommands:")
 }
 
+func TestNounAliases_ReturnSameUsageAsCanonical(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		canonical string
+		alias     string
+	}{
+		{name: "repo", canonical: "repo", alias: "r"},
+		{name: "worktree", canonical: "worktree", alias: "wt"},
+		{name: "agent", canonical: "agent", alias: "ag"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wantStdout, wantStderr, wantErr := executeCmd(tt.canonical)
+			require.Error(t, wantErr, "expected %s without subcommand to fail", tt.canonical)
+
+			gotStdout, gotStderr, gotErr := executeCmd(tt.alias)
+			require.Error(t, gotErr, "expected %s without subcommand to fail", tt.alias)
+
+			assert.Equal(t, errors.GetCode(wantErr), errors.GetCode(gotErr))
+			assert.Equal(t, wantErr.Error(), gotErr.Error())
+			assert.Equal(t, wantStdout, gotStdout)
+			assert.Equal(t, wantStderr, gotStderr)
+		})
+	}
+}
+
+func TestNounAliases_HelpMatchesCanonical(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		canonical string
+		alias     string
+	}{
+		{name: "repo", canonical: "repo", alias: "r"},
+		{name: "worktree", canonical: "worktree", alias: "wt"},
+		{name: "agent", canonical: "agent", alias: "ag"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wantStdout, wantStderr, wantErr := executeCmd(tt.canonical, "--help")
+			require.NoError(t, wantErr, "expected %s help to render", tt.canonical)
+
+			gotStdout, gotStderr, gotErr := executeCmd(tt.alias, "--help")
+			require.NoError(t, gotErr, "expected %s help to render", tt.alias)
+
+			assert.Equal(t, wantStdout, gotStdout)
+			assert.Equal(t, wantStderr, gotStderr)
+		})
+	}
+}
+
 func TestConfigCmd_HelpShowsInitSubcommand(t *testing.T) {
 	stdout, _, err := executeCmd("config", "--help")
 	require.NoError(t, err, "expected config help to render")
@@ -327,6 +389,37 @@ func TestCompletionCmd_InvalidShell(t *testing.T) {
 func TestCompletionCmd_MissingArg(t *testing.T) {
 	_, _, err := executeCmd("completion")
 	require.Error(t, err, "expected error when shell is missing")
+}
+
+func TestNounAliases_CompletionMatchesCanonical(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		canonical string
+		alias     string
+		prefix    string
+	}{
+		{name: "repo", canonical: "repo", alias: "r", prefix: "a"},
+		{name: "worktree", canonical: "worktree", alias: "wt", prefix: "c"},
+		{name: "agent", canonical: "agent", alias: "ag", prefix: "s"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wantStdout, wantStderr, wantErr := executeCmd("__complete", tt.canonical, tt.prefix)
+			require.NoError(t, wantErr, "expected %s completion to succeed", tt.canonical)
+
+			gotStdout, gotStderr, gotErr := executeCmd("__complete", tt.alias, tt.prefix)
+			require.NoError(t, gotErr, "expected %s completion to succeed", tt.alias)
+
+			assert.Equal(t, wantStdout, gotStdout)
+			assert.Equal(t, wantStderr, gotStderr)
+		})
+	}
 }
 
 func TestCompletion_DynamicRepoFlag(t *testing.T) {

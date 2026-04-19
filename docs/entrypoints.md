@@ -10,6 +10,7 @@ This document covers entrypoints and side effects.
 - Cobra commands in `internal/cli/cobra` should parse flags, construct dependencies, and delegate to `internal/commands`.
 - `internal/commands` is the user-facing contract boundary for CLI behavior.
 - The public CLI grammar is noun-scoped and target-first: `agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms.
+- `agency r`, `agency wt`, and `agency ag` are supported aliases for `repo`, `worktree`, and `agent`, but docs and help should keep the long noun forms as the primary surface.
 - Collection verbs stay explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
 - Target actions should stay target-first: `agency worktree <worktree-ref> open`, `agency worktree <worktree-ref> pr sync`, `agency agent <invocation-ref> kill`, and similar surfaces place the target before the action.
 - `agency repo add` should accept an optional positional checkout path and use cwd when the path is omitted.
