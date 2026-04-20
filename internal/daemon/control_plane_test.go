@@ -287,7 +287,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--full-auto", "--disable", "unified_exec", "fix the bug"},
+			wantArgs:    []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", "/sandbox/path", "--json", "--disable", "unified_exec", "fix the bug"},
 		},
 		{
 			name:        "codex with extra args",
@@ -295,7 +295,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "gpt-4"},
-			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--full-auto", "--model", "gpt-4", "--disable", "unified_exec", "fix the bug"},
+			wantArgs:    []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", "/sandbox/path", "--json", "--model", "gpt-4", "--disable", "unified_exec", "fix the bug"},
 		},
 		{
 			name:        "amp basic",

@@ -105,12 +105,14 @@ var capabilityByID = map[string]Capability{
 		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"exec", "resume", "--json", "-C", "--cd", "--last"},
-		reservedHeadlessArgs: []string{"--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
+		reservedHeadlessArgs: []string{"-a", "--ask-for-approval", "-s", "--sandbox", "--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
 		headlessTemplate: []string{
+			// Codex approval and sandbox policy are global flags, so they must precede `exec`.
+			"--ask-for-approval", "never",
+			"--sandbox", "workspace-write",
 			"exec",
 			"--cd", launchTokenSandboxPath,
 			"--json",
-			"--full-auto",
 			launchTokenExtraArgs,
 			// codex unified_exec drops early command output for long-running commands.
 			// keep this disabled so aggregated_output remains complete.
@@ -118,11 +120,12 @@ var capabilityByID = map[string]Capability{
 			launchTokenPrompt,
 		},
 		resumeTemplate: []string{
+			"--ask-for-approval", "never",
+			"--sandbox", "workspace-write",
 			"exec",
 			"resume",
 			"--last",
 			"--json",
-			"--full-auto",
 			launchTokenExtraArgs,
 			"--disable", "unified_exec",
 			launchTokenPrompt,

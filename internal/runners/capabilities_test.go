@@ -77,6 +77,8 @@ func TestValidateArgs(t *testing.T) {
 	// Permission flags are allowed in headed mode (user at terminal).
 	require.NoError(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
 	require.NoError(t, ValidateArgs("codex", []string{"--full-auto"}))
+	require.NoError(t, ValidateArgs("codex", []string{"--ask-for-approval", "never"}))
+	require.NoError(t, ValidateArgs("codex", []string{"--sandbox", "workspace-write"}))
 	require.NoError(t, ValidateArgs("cursor", []string{"--force"}))
 	require.NoError(t, ValidateArgs("opencode", []string{"--mode", "safe"}))
 }
@@ -93,6 +95,12 @@ func TestValidateHeadlessArgs(t *testing.T) {
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--dangerously-skip-permissions"}))
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "default"}))
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode=acceptEdits"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"-a", "never"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--ask-for-approval", "never"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--ask-for-approval=never"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"-s", "workspace-write"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--sandbox", "workspace-write"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--sandbox=workspace-write"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--full-auto"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--yolo"}))
@@ -118,7 +126,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "fix bug"}, codexArgs)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", "/sandbox", "--json", "--model", "gpt-5", "--disable", "unified_exec", "fix bug"}, codexArgs)
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
@@ -158,11 +166,11 @@ func TestBuildResumeArgs(t *testing.T) {
 
 	codexArgs, err := BuildResumeArgs("codex", "continue from previous turn", "", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "resume", "--last", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexArgs)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "resume", "--last", "--json", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexArgs)
 
 	codexExplicitArgs, err := BuildResumeArgs("codex", "continue from previous turn", "thread_abc123", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "resume", "thread_abc123", "--json", "--full-auto", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexExplicitArgs)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "resume", "thread_abc123", "--json", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexExplicitArgs)
 
 	cursorArgs, err := BuildResumeArgs("cursor", "continue from previous turn", "", []string{"--model", "sonnet-4.6-thinking"})
 	require.NoError(t, err)

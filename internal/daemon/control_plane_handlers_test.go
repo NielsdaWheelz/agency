@@ -136,6 +136,18 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 			},
 			wantCode: string(errors.ERunnerArgConflict),
 		},
+		{
+			name: "reserved codex approval arg",
+			req: ControlPlaneStartRequest{
+				ClientRequestID: "test-uuid",
+				RepoRoot:        "/tmp/repo",
+				WorktreeRef:     "wt-1",
+				Runner:          "codex",
+				Prompt:          "test",
+				RunnerArgs:      []string{"--ask-for-approval", "never"},
+			},
+			wantCode: string(errors.ERunnerArgConflict),
+		},
 	}
 
 	for _, tc := range tests {

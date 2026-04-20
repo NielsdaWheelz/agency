@@ -324,7 +324,7 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "codex":
-				wantArgs = append(wantArgs, "exec", "--cd", resp.SandboxPath, "--json", "--full-auto")
+				wantArgs = append(wantArgs, "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", resp.SandboxPath, "--json")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, "--disable", "unified_exec")
 				wantArgs = append(wantArgs, tc.prompt)
@@ -347,9 +347,9 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			}
 
 			if tc.canonicalRunner == "codex" {
-				require.GreaterOrEqual(t, len(capture.Args), 3)
-				assert.Equal(t, normalizePathForAssert(t, resp.SandboxPath), normalizePathForAssert(t, capture.Args[2]))
-				wantArgs[2] = capture.Args[2]
+				require.GreaterOrEqual(t, len(capture.Args), 7)
+				assert.Equal(t, normalizePathForAssert(t, resp.SandboxPath), normalizePathForAssert(t, capture.Args[6]))
+				wantArgs[6] = capture.Args[6]
 			}
 
 			assert.Equal(t, wantArgs, capture.Args)
@@ -462,7 +462,7 @@ func TestDaemonControlPlaneFollowUp_CodexQueuedPromptResumesNextTurn(t *testing.
 	// Capture file is overwritten per launch; after resume it reflects the second turn launch args.
 	capture := readFakeRunnerLaunchCapture(t, capturePath)
 	assert.Equal(t, "codex-thread-sleep-then-exit-ok", capture.Mode)
-	assert.Equal(t, []string{"exec", "resume", "thread_resume_test", "--json", "--full-auto", "--model", "gpt-5-codex", "--disable", "unified_exec", "second codex turn"}, capture.Args)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "resume", "thread_resume_test", "--json", "--model", "gpt-5-codex", "--disable", "unified_exec", "second codex turn"}, capture.Args)
 }
 
 func TestDaemonControlPlaneFollowUp_CursorQueuedPromptResumesNextTurn(t *testing.T) {

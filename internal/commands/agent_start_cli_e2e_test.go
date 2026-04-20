@@ -193,9 +193,9 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 
 			wantArgs := expectedHeadlessArgs(tc.canonicalRunner, tc.runnerArg, tc.prompt, startResp.SandboxPath)
 			if tc.canonicalRunner == "codex" {
-				require.GreaterOrEqual(t, len(capture.Args), 3)
-				assert.Equal(t, normalizePathForAssert(t, startResp.SandboxPath), normalizePathForAssert(t, capture.Args[2]))
-				wantArgs[2] = capture.Args[2]
+				require.GreaterOrEqual(t, len(capture.Args), 7)
+				assert.Equal(t, normalizePathForAssert(t, startResp.SandboxPath), normalizePathForAssert(t, capture.Args[6]))
+				wantArgs[6] = capture.Args[6]
 			}
 			assert.Equal(t, wantArgs, capture.Args)
 
@@ -452,7 +452,7 @@ func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string
 	case "claude-code":
 		return []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", runnerArg, prompt}
 	case "codex":
-		return []string{"exec", "--cd", sandboxPath, "--json", "--full-auto", runnerArg, "--disable", "unified_exec", prompt}
+		return []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", sandboxPath, "--json", runnerArg, "--disable", "unified_exec", prompt}
 	case "amp":
 		return []string{"-x", "--stream-json", "--stream-json-input", runnerArg}
 	case "opencode":
