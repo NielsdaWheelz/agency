@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
@@ -364,6 +365,20 @@ func TestHandleGetWorktree_ByName(t *testing.T) {
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "wt-1", dto.WorktreeID)
+}
+
+func TestHandleGetWorktree_RequiresRepoID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo_id query parameter is required")
 }
 
 func TestHandleGetWorktree_ByNameIgnoresArchivedDuplicate(t *testing.T) {
@@ -1612,6 +1627,20 @@ func TestHandleListInvocations_WorktreeRefFilter(t *testing.T) {
 		gotIDs = append(gotIDs, inv.InvocationID)
 	}
 	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
+}
+
+func TestHandleListInvocations_WorktreeRefFilter_RequiresRepoID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?worktree_ref=alpha")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo_id query parameter is required")
 }
 
 func TestHandleListInvocations_WorktreeRefFilter_IgnoresArchivedDuplicateName(t *testing.T) {

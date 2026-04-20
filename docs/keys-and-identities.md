@@ -20,3 +20,5 @@ This document covers repository, worktree, invocation, and run identity rules.
 
 - Resolve by id when possible.
 - Name-based lookup is for convenience and must still resolve to one canonical id.
+- Worktree name and id-prefix lookup only consider present worktrees.
+- Archived or broken worktrees must be addressed by exact `worktree_id`.

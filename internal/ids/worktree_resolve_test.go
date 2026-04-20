@@ -79,6 +79,28 @@ func TestResolveWorktreeRef_ByPrefix(t *testing.T) {
 	assert.Equal(t, "20260131110000-c3d4", ref.WorktreeID)
 }
 
+func TestResolveWorktreeRef_IgnoresArchivedNameAndPrefixMatchesByDefault(t *testing.T) {
+	t.Parallel()
+	refs := []WorktreeRef{
+		{WorktreeID: "20260205120000-aa11", Name: "shared-name", State: "present"},
+		{WorktreeID: "20260205130000-bb22", Name: "shared-name", State: "archived"},
+		{WorktreeID: "20260206120000-cc33", Name: "prefix-present", State: "present"},
+		{WorktreeID: "20260206120000-dd44", Name: "prefix-archived", State: "archived"},
+	}
+
+	ref, err := ResolveWorktreeRef("shared-name", refs, ResolveWorktreeRefOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, "20260205120000-aa11", ref.WorktreeID)
+
+	ref, err = ResolveWorktreeRef("20260206120000", refs, ResolveWorktreeRefOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, "20260206120000-cc33", ref.WorktreeID)
+
+	_, err = ResolveWorktreeRef("20260206120000", refs, ResolveWorktreeRefOpts{IncludeArchived: true})
+	require.Error(t, err)
+	assert.IsType(t, &ErrWorktreeAmbiguous{}, err)
+}
+
 func TestResolveWorktreeRef_NotFound(t *testing.T) {
 	t.Parallel()
 	refs := []WorktreeRef{

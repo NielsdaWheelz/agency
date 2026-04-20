@@ -35,7 +35,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	record, err := s.resolveWorktreeRef(worktreeRef, repoID)
+	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -44,8 +44,12 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
 		return
 	}
-	if record == nil || record.Meta == nil {
-		s.writeWorktreeRebaseError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "worktree metadata missing", "")
+	if record == nil || record.Broken || record.Meta == nil {
+		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		return
+	}
+	if record.Meta.State != store.WorktreeStatePresent {
+		s.writeWorktreeRebaseError(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
 		return
 	}
 

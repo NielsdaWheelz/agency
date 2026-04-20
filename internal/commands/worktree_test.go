@@ -369,6 +369,70 @@ func TestWorktreeShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 		"shell should be invoked with -l (login)")
 }
 
+func TestWorktreePath_ArchivedExactIDFails(t *testing.T) {
+	env := setupWorktreeEnv(t, "archived-path")
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(env.RepoID, env.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreePathOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "archived")
+}
+
+func TestWorktreeOpen_ArchivedExactIDFailsWithoutDispatch(t *testing.T) {
+	env := setupWorktreeEnv(t, "archived-open")
+	shimPath, recordFile := createShimScript(t)
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(env.RepoID, env.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreeOpenOpts{
+			WorktreeRef: env.WorktreeID,
+			RepoRef:     env.RepoID,
+			Editor:      shimPath,
+		}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "archived")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr), "editor shim must not run for archived worktrees")
+}
+
+func TestWorktreeShell_ArchivedExactIDFailsWithoutDispatch(t *testing.T) {
+	env := setupWorktreeEnv(t, "archived-shell")
+	shimPath, recordFile := createShimScript(t)
+	t.Setenv("SHELL", shimPath)
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(env.RepoID, env.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreeShellOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "archived")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr), "shell shim must not run for archived worktrees")
+}
+
 func TestWorktreePath_AmbiguityUsesEAmbiguous(t *testing.T) {
 	dataTmp, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)

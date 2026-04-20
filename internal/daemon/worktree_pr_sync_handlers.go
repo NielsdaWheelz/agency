@@ -32,7 +32,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		)
 		return
 	}
-	record, err := s.resolveWorktreeRef(worktreeRef, repoID)
+	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -42,8 +42,12 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		s.writeWorktreePRSyncError(w, status, requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
 		return
 	}
-	if record == nil || record.Meta == nil {
-		s.writeWorktreePRSyncError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "worktree metadata missing", "")
+	if record == nil || record.Broken || record.Meta == nil {
+		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		return
+	}
+	if record.Meta.State != store.WorktreeStatePresent {
+		s.writeWorktreePRSyncError(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
 		return
 	}
 
@@ -123,8 +127,6 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		PRNumber:              result.PRNumber,
 		PRURL:                 result.PRURL,
 		PRAction:              result.PRAction,
-		ReportSource:          result.ReportSource,
-		ReportDiagnostics:     reportDiagnostics(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }

@@ -63,7 +63,8 @@ func newWorktreeShowCmd() *cobra.Command {
 		Long: `Show details of an integration worktree.
 
 Pass --repo when cwd does not already identify the repo. The worktree argument
-can be the worktree name, full id, or an unambiguous id prefix.
+can be the worktree name, full id, or an unambiguous id prefix. Archived
+worktrees must be addressed by full id.
 
 Examples:
   agency worktree my-feature
@@ -95,7 +96,7 @@ Examples:
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	setWorktreeArgCompletion(cmd, "all")
+	setWorktreeArgCompletion(cmd, "present")
 	registerRepoFlagCompletion(cmd)
 
 	return cmd

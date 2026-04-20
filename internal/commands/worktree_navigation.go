@@ -53,6 +53,13 @@ func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return translateNavigationError(err, "worktree")
 	}
+	if worktree.Data.State != "present" {
+		return errors.NewWithDetails(
+			errors.EWorktreeNotFound,
+			"integration worktree is archived",
+			map[string]string{"hint": "worktree path requires a present integration worktree"},
+		)
+	}
 
 	_, _ = fmt.Fprintln(stdout, worktree.Data.TreePath)
 	return nil
@@ -84,6 +91,13 @@ func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
 	if err != nil {
 		return translateNavigationError(err, "worktree")
+	}
+	if worktree.Data.State != "present" {
+		return errors.NewWithDetails(
+			errors.EWorktreeNotFound,
+			"integration worktree is archived",
+			map[string]string{"hint": "worktree open requires a present integration worktree"},
+		)
 	}
 	treePath := worktree.Data.TreePath
 
@@ -131,6 +145,13 @@ func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
 	if err != nil {
 		return translateNavigationError(err, "worktree")
+	}
+	if worktree.Data.State != "present" {
+		return errors.NewWithDetails(
+			errors.EWorktreeNotFound,
+			"integration worktree is archived",
+			map[string]string{"hint": "worktree shell requires a present integration worktree"},
+		)
 	}
 	treePath := worktree.Data.TreePath
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/ids"
@@ -70,37 +71,23 @@ func (s *Server) handleGetWorktree(w http.ResponseWriter, r *http.Request, workt
 		return
 	}
 
-	record, resolveErr := s.resolveWorktreeRef(worktreeRef, r.URL.Query().Get("repo_id"))
+	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
+	if repoID == "" {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_id query parameter is required", "pass ?repo_id=<repo_id>", nil)
+		return
+	}
+
+	record, resolveErr := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if resolveErr != nil {
 		s.writeReadResolveError(w, requestID, resolveErr, "use 'agency worktree ls' to list available worktrees", errors.EWorktreeIDAmbiguous)
 		return
 	}
+	if record.Broken || record.Meta == nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree", nil)
+		return
+	}
 
 	s.writeAPIResponse(w, requestID, WorktreeMetaToDTO(record.Meta))
-}
-
-// resolveWorktreeRef resolves a worktree reference across all repos.
-func (s *Server) resolveWorktreeRef(ref string, repoID string) (*store.IntegrationWorktreeRecord, error) {
-	repoIDs, err := getRepoIDsForQuery(s, repoID)
-	if err != nil {
-		return nil, err
-	}
-
-	var lastAmbiguousErr error
-	for _, rid := range repoIDs {
-		record, err := s.resolveWorktreeRefForRepo(ref, rid)
-		if err == nil && record != nil {
-			return record, nil
-		}
-		if _, ok := err.(*ids.ErrWorktreeAmbiguous); ok {
-			lastAmbiguousErr = err
-		}
-	}
-
-	if lastAmbiguousErr != nil {
-		return nil, lastAmbiguousErr
-	}
-	return nil, errors.New(errors.EWorktreeNotFound, "worktree not found: "+ref)
 }
 
 // resolveWorktreeRefForRepo resolves a worktree reference within a specific repo.
@@ -112,19 +99,20 @@ func (s *Server) resolveWorktreeRefForRepo(ref string, repoID string) (*store.In
 
 	refs := make([]ids.WorktreeRef, 0, len(records))
 	for _, r := range records {
-		if r.Broken || r.Meta == nil {
-			continue
+		state := ""
+		if r.Meta != nil {
+			state = string(r.Meta.State)
 		}
 		refs = append(refs, ids.WorktreeRef{
 			WorktreeID: r.WorktreeID,
 			RepoID:     repoID,
-			Name:       r.Meta.Name,
-			State:      string(r.Meta.State),
+			Name:       r.Name,
+			State:      state,
 			Broken:     r.Broken,
 		})
 	}
 
-	resolved, err := ids.ResolveWorktreeRef(ref, refs, ids.ResolveWorktreeRefOpts{IncludeArchived: true})
+	resolved, err := ids.ResolveWorktreeRef(ref, refs, ids.ResolveWorktreeRefOpts{})
 	if err != nil {
 		return nil, err
 	}

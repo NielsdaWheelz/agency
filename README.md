@@ -79,6 +79,7 @@ agency agent <invocation-ref> land --apply
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency worktree create <name>` uses a positional name and defaults omitted `--base` to the current branch of the selected checkout.
 `agency agent start [<worktree-ref>]` uses a positional worktree ref. It can infer an omitted ref only when cwd is inside a present agency integration worktree. From a repo root, subdirectory, or unrelated cwd, pass the worktree ref explicitly.
+Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
 `agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
 Legacy verb-first target forms and the old `--name` and `--worktree` flags are removed with no backward compatibility.
 
@@ -148,8 +149,6 @@ all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `followup`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restore`).
-for `agency worktree <worktree-ref> pr sync` and `agency worktree <worktree-ref> pr merge`, additive report fields include
-`report_source` and `report_diagnostics`.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
 daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed `E_INVALID_ARGUMENT` errors.
@@ -166,7 +165,7 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, headed recreate, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
-reports-v2 progression is mode-aware: headless `review`/`pr sync`/`pr merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
+runner status progression is mode-aware: headless `review`/`pr sync`/`pr merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
 
 ## documentation
 

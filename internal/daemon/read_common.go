@@ -75,7 +75,16 @@ func (s *Server) writeReadResolveError(w http.ResponseWriter, requestID string, 
 
 	code := errors.GetCode(err)
 	if code == "" {
-		code = errors.EInternal
+		switch err.(type) {
+		case *ids.ErrRepoNotFound:
+			code = errors.ERepoNotFound
+		case *ids.ErrWorktreeNotFound:
+			code = errors.EWorktreeNotFound
+		case *ids.ErrInvocationNotFound:
+			code = errors.EInvocationNotFound
+		default:
+			code = errors.EInternal
+		}
 	}
 	s.writeAPIError(w, http.StatusNotFound, requestID, string(code), err.Error(), notFoundHint, nil)
 }

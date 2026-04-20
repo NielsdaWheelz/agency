@@ -11,6 +11,8 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - An invocation sandbox is an isolated per-invocation tree derived from one integration worktree.
 - Final PR progression uses `agency worktree <worktree-ref> pr sync` and `agency worktree <worktree-ref> pr merge`.
 - Successful worktree PR merge archives the worktree record and removes the tree directory.
+- Archived worktrees stay discoverable through `agency worktree ls --all`, but targeted lookup by name or id prefix only considers present worktrees.
+- Archived worktrees must be addressed by exact `worktree_id`.
 - `agency agent start` and worktree PR flows use the agency config selected by the standard config precedence; the config does not need to be committed to the repo.
 
 ## Rules

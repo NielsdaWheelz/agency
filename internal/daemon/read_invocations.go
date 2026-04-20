@@ -26,6 +26,10 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 			*invalid)
 		return
 	}
+	if params.WorktreeRef != "" && params.RepoID == "" {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_id query parameter is required when worktree_ref is set", "pass ?repo_id=<repo_id>", nil)
+		return
+	}
 
 	repoIDs, err := getRepoIDsForQuery(s, params.RepoID)
 	if err != nil {

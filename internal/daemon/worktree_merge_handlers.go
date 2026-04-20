@@ -17,7 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
-	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/verify"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -83,7 +82,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 
-	record, err := s.resolveWorktreeRef(worktreeRef, repoID)
+	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -92,8 +91,12 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		s.writeWorktreeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
 		return
 	}
-	if record == nil || record.Meta == nil {
-		s.writeWorktreeMergeError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "worktree metadata missing", "")
+	if record == nil || record.Broken || record.Meta == nil {
+		s.writeWorktreeMergeError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		return
+	}
+	if record.Meta.State != store.WorktreeStatePresent {
+		s.writeWorktreeMergeError(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
 		return
 	}
 
@@ -200,8 +203,6 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		MergeLogPath:          result.MergeLogPath,
 		VerifyLogPath:         result.VerifyLog,
 		ArchiveLogPath:        result.ArchiveLogPath,
-		ReportSource:          result.ReportSource,
-		ReportDiagnostics:     reportDiagnostics(result.ReportDiagnostics),
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -231,25 +232,12 @@ func (s *Server) runWorktreeMerge(
 
 	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot)
 	if err != nil {
-		if errors.GetCode(err) == errors.ENoPR {
-			_, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
-				MaxBytes: report.MaxPRBodyReportBytes,
-			})
-			if reportErr != nil {
-				return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
-			}
-			if reportViolation != nil {
-				return nil, reportViolationToAgencyError(reportViolation)
-			}
-		}
 		return nil, err
 	}
 
 	mergeLogPath := filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
 	alreadyMerged := strings.EqualFold(strings.TrimSpace(pr.State), "MERGED")
 	var verifyLogPath string
-	var reportSource string
-	var reportDiagnostics []report.Diagnostic
 
 	if alreadyMerged {
 		skippedCommand := fmt.Sprintf("gh pr merge %d -R %s --%s (skipped: already merged)", pr.Number, ghRepo, req.Strategy)
@@ -268,21 +256,6 @@ func (s *Server) runWorktreeMerge(
 			)
 		}
 	} else {
-		reportResolution, reportViolation, reportErr := report.ResolveCanonicalReport(s.FS, wtMeta.TreePath, report.ResolveOptions{
-			MaxBytes: report.MaxPRBodyReportBytes,
-		})
-		if reportErr != nil {
-			return nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", reportErr)
-		}
-		if reportViolation != nil {
-			return nil, reportViolationToAgencyError(reportViolation)
-		}
-		if reportResolution == nil {
-			return nil, errors.New(errors.EInternal, "report resolution produced no result")
-		}
-		reportSource = string(reportResolution.Source)
-		reportDiagnostics = reportResolution.Diagnostics
-
 		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
 		if err != nil {
 			return nil, err
@@ -370,16 +343,14 @@ func (s *Server) runWorktreeMerge(
 	}
 
 	return &mergeResult{
-		Branch:            wtMeta.Branch,
-		PRNumber:          pr.Number,
-		PRURL:             pr.URL,
-		Strategy:          req.Strategy,
-		DeleteBranch:      req.DeleteBranch,
-		MergeLogPath:      mergeLogPath,
-		ArchiveLogPath:    archiveLogPath,
-		VerifyLog:         verifyLogPath,
-		ReportSource:      reportSource,
-		ReportDiagnostics: reportDiagnostics,
+		Branch:         wtMeta.Branch,
+		PRNumber:       pr.Number,
+		PRURL:          pr.URL,
+		Strategy:       req.Strategy,
+		DeleteBranch:   req.DeleteBranch,
+		MergeLogPath:   mergeLogPath,
+		ArchiveLogPath: archiveLogPath,
+		VerifyLog:      verifyLogPath,
 	}, nil
 }
 
