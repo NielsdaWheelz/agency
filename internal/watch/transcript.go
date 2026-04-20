@@ -62,10 +62,7 @@ func (m model) renderTranscript() string {
 		width = 120
 	}
 
-	lines := []string{
-		headerStyle.Render("invocation transcript  " + m.selectedInvocationID),
-		"",
-	}
+	lines := m.renderPageHeader("transcript")
 	if m.lastActionMessage != "" {
 		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
 		switch {
@@ -106,7 +103,7 @@ func (m model) renderTranscript() string {
 		))
 	}
 	lines = append(lines, "")
-	lines = append(lines, warningStyle.Render("j/k move • a attach • l logs • r refresh • b back • q quit"))
+	lines = append(lines, warningStyle.Render("j/k move • a attach • x actions • l logs • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
 }
 
@@ -138,7 +135,7 @@ func (m model) transcriptVisibleLines() int {
 	if height <= 0 {
 		height = 36
 	}
-	visible := height - 5
+	visible := height - 8
 	if visible < 5 {
 		visible = 5
 	}

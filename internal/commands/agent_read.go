@@ -257,7 +257,15 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			Input:        opts.WatchInput,
 			Output:       watchOutput,
 			Open:         actionDelegates.Open,
+			Stop:         actionDelegates.Stop,
+			Kill:         actionDelegates.Kill,
+			Land:         actionDelegates.Land,
+			Discard:      actionDelegates.Discard,
+			Recreate:     actionDelegates.Recreate,
+			Followup:     actionDelegates.Followup,
 			PRSync:       actionDelegates.PRSync,
+			PRMerge:      actionDelegates.PRMerge,
+			Rebase:       actionDelegates.Rebase,
 			Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
 				return actionDelegates.capture(func(stdout, stderr io.Writer) error {
 					return AgentRestore(ctx, actionDelegates.cr, actionDelegates.fsys, actionDelegates.cwd, AgentRestoreOpts{

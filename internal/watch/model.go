@@ -37,10 +37,18 @@ const (
 type actionKind string
 
 const (
-	actionAttach  actionKind = "attach"
-	actionOpen    actionKind = "open"
-	actionPRSync  actionKind = "pr sync"
-	actionRestore actionKind = "restore"
+	actionAttach   actionKind = "attach"
+	actionOpen     actionKind = "open"
+	actionStop     actionKind = "stop"
+	actionKill     actionKind = "kill"
+	actionLand     actionKind = "land"
+	actionDiscard  actionKind = "discard"
+	actionFollowup actionKind = "followup"
+	actionRecreate actionKind = "recreate"
+	actionPRSync   actionKind = "pr sync"
+	actionPRMerge  actionKind = "pr merge"
+	actionRebase   actionKind = "rebase"
+	actionRestore  actionKind = "restore"
 )
 
 func (k actionKind) String() string {
@@ -56,11 +64,10 @@ var (
 				Bold(true).
 				Foreground(lipgloss.Color("229")).
 				Background(lipgloss.Color("57"))
-	readyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	actionStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	dimStyle     = lipgloss.NewStyle().Faint(true)
 )
 
 type refreshTickMsg time.Time
@@ -91,6 +98,7 @@ type actionResultMsg struct {
 	invocationID string
 	worktreeID   string
 	turnID       string
+	prompt       string
 	output       string
 	err          error
 }
@@ -135,14 +143,26 @@ type model struct {
 	actionRunning     bool
 	lastActionMessage string
 	lastActionError   bool
+	actionMenuOpen    bool
+	confirmAction     actionKind
+	followupInput     bool
+	followupText      string
 
 	attachRequested     bool
 	attachInvocationID  string
 	attachRequestedRepo string
 
-	open    func(context.Context, string, string) (string, error)
-	prSync  func(context.Context, string, string) (string, error)
-	restore func(context.Context, string, string, string) (string, error)
+	open     func(context.Context, string, string) (string, error)
+	stop     func(context.Context, string, string) (string, error)
+	kill     func(context.Context, string, string) (string, error)
+	land     func(context.Context, string, string) (string, error)
+	discard  func(context.Context, string, string) (string, error)
+	recreate func(context.Context, string, string) (string, error)
+	followup func(context.Context, string, string, string) (string, error)
+	prSync   func(context.Context, string, string) (string, error)
+	prMerge  func(context.Context, string, string) (string, error)
+	rebase   func(context.Context, string, string) (string, error)
+	restore  func(context.Context, string, string, string) (string, error)
 }
 
 func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions) model {
@@ -174,7 +194,15 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 		selectedInvocationID: strings.TrimSpace(opts.InvocationID),
 		selectedRepoID:       strings.TrimSpace(opts.RepoID),
 		open:                 opts.Open,
+		stop:                 opts.Stop,
+		kill:                 opts.Kill,
+		land:                 opts.Land,
+		discard:              opts.Discard,
+		recreate:             opts.Recreate,
+		followup:             opts.Followup,
 		prSync:               opts.PRSync,
+		prMerge:              opts.PRMerge,
+		rebase:               opts.Rebase,
 		restore:              opts.Restore,
 	}
 }
@@ -268,6 +296,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionResultMsg:
 		m.actionRunning = false
+		m.actionMenuOpen = false
+		m.confirmAction = ""
+		m.followupInput = false
+		m.followupText = ""
 		m.lastActionError = msg.err != nil
 		if msg.err != nil {
 			m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID, msg.turnID)
@@ -280,21 +312,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID, msg.turnID))
 		}
 
-		switch msg.kind {
-		case actionAttach, actionOpen, actionPRSync:
-			if m.page == pageWorkspace && !m.workspaceLoading {
-				m.workspaceLoading = true
-				return m, m.loadWorkspaceSnapshotCmd()
-			}
-		case actionRestore:
-			if m.page == pageHistory && !m.historyLoading {
-				m.historyLoading = true
-				return m, m.loadHistoryCmd()
-			}
+		cmds := make([]tea.Cmd, 0, 2)
+		if msg.kind == actionRestore && m.page == pageHistory && !m.historyLoading {
+			m.historyLoading = true
+			cmds = append(cmds, m.loadHistoryCmd())
 		}
-		return m, nil
+		if !m.workspaceLoading {
+			m.workspaceLoading = true
+			cmds = append(cmds, m.loadWorkspaceSnapshotCmd())
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if m.followupInput {
+			return m.updateFollowupKey(msg)
+		}
+		if m.confirmAction != "" {
+			return m.updateConfirmKey(msg)
+		}
+		if m.actionMenuOpen {
+			return m.updateActionMenuKey(msg)
+		}
 		switch m.page {
 		case pageWorkspace:
 			return m.updateWorkspaceKey(msg)
@@ -390,12 +434,17 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
+	case msg.Text == "x":
+		return m.openActionMenu()
 	case isEnterKey(msg):
-		return m.startWorkspaceAction(actionAttach)
+		if m.canStartAction(actionAttach) {
+			return m.startInvocationAction(actionAttach)
+		}
+		return m.openActionMenu()
 	case msg.Text == "o":
-		return m.startWorkspaceAction(actionOpen)
+		return m.startInvocationAction(actionOpen)
 	case msg.Text == "p":
-		return m.startWorkspaceAction(actionPRSync)
+		return m.startInvocationAction(actionPRSync)
 	default:
 		return m, nil
 	}
@@ -446,7 +495,7 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case msg.Text == "a":
-		return m.requestAttach()
+		return m.startInvocationAction(actionAttach)
 	case msg.Text == "t":
 		m.page = pageTranscript
 		m.backPage = pageHistory
@@ -464,6 +513,8 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
+	case msg.Text == "x":
+		return m.openActionMenu()
 	case isEnterKey(msg):
 		return m.startRestoreAction()
 	default:
@@ -497,7 +548,7 @@ func (m model) updateTranscriptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.transcriptScroll = m.maxTranscriptScroll()
 		return m, nil
 	case msg.Text == "a":
-		return m.requestAttach()
+		return m.startInvocationAction(actionAttach)
 	case msg.Text == "l":
 		m.page = pageLogs
 		m.backPage = pageTranscript
@@ -507,6 +558,8 @@ func (m model) updateTranscriptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
+	case msg.Text == "x":
+		return m.openActionMenu()
 	default:
 		return m, nil
 	}
@@ -545,7 +598,9 @@ func (m model) updateLogsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsScroll = m.maxLogsScroll()
 		return m, nil
 	case msg.Text == "a":
-		return m.requestAttach()
+		return m.startInvocationAction(actionAttach)
+	case msg.Text == "x":
+		return m.openActionMenu()
 	default:
 		return m, nil
 	}
@@ -600,13 +655,124 @@ func tickCmd(interval time.Duration) tea.Cmd {
 	})
 }
 
-func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
+func (m model) openActionMenu() (tea.Model, tea.Cmd) {
+	if _, ok := m.selectedInvocation(); !ok {
+		m.lastActionError = true
+		m.lastActionMessage = "actions unavailable: no invocation selected"
+		return m, nil
+	}
+	m.actionMenuOpen = true
+	m.confirmAction = ""
+	m.followupInput = false
+	m.followupText = ""
+	return m, nil
+}
+
+func (m model) updateActionMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Code == tea.KeyEsc || msg.Text == "x":
+		m.actionMenuOpen = false
+		return m, nil
+	case msg.Text == "q":
+		return m, tea.Quit
+	case msg.Text == "a":
+		return m.startInvocationAction(actionAttach)
+	case msg.Text == "o":
+		return m.startInvocationAction(actionOpen)
+	case msg.Text == "s":
+		return m.startInvocationAction(actionStop)
+	case msg.Text == "k":
+		return m.startInvocationAction(actionKill)
+	case msg.Text == "n":
+		return m.startInvocationAction(actionLand)
+	case msg.Text == "d":
+		return m.startInvocationAction(actionDiscard)
+	case msg.Text == "f":
+		return m.startInvocationAction(actionFollowup)
+	case msg.Text == "c":
+		return m.startInvocationAction(actionRecreate)
+	case msg.Text == "p":
+		return m.startInvocationAction(actionPRSync)
+	case msg.Text == "m":
+		return m.startInvocationAction(actionPRMerge)
+	case msg.Text == "b":
+		return m.startInvocationAction(actionRebase)
+	default:
+		return m, nil
+	}
+}
+
+func (m model) updateConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Code == tea.KeyEsc:
+		m.confirmAction = ""
+		return m, nil
+	case msg.Text == "y":
+		kind := m.confirmAction
+		m.confirmAction = ""
+		return m.executeInvocationAction(kind, "")
+	default:
+		return m, nil
+	}
+}
+
+func (m model) updateFollowupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Code == tea.KeyEsc:
+		m.followupInput = false
+		m.followupText = ""
+		return m, nil
+	case isEnterKey(msg):
+		prompt := strings.TrimSpace(m.followupText)
+		if prompt == "" {
+			m.lastActionError = true
+			m.lastActionMessage = "followup unavailable: prompt is empty"
+			return m, nil
+		}
+		return m.executeInvocationAction(actionFollowup, prompt)
+	case msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete:
+		runes := []rune(m.followupText)
+		if len(runes) > 0 {
+			m.followupText = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	case msg.Text != "":
+		m.followupText += msg.Text
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m model) startInvocationAction(kind actionKind) (tea.Model, tea.Cmd) {
+	if kind == actionFollowup {
+		if !m.canStartAction(kind) {
+			m.lastActionError = true
+			m.lastActionMessage = "followup unavailable for the selected invocation"
+			m.actionMenuOpen = false
+			return m, nil
+		}
+		m.actionMenuOpen = false
+		m.confirmAction = ""
+		m.followupInput = true
+		m.followupText = ""
+		return m, nil
+	}
+	if actionNeedsConfirm(kind) {
+		m.actionMenuOpen = false
+		m.confirmAction = kind
+		return m, nil
+	}
+	return m.executeInvocationAction(kind, "")
+}
+
+func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Model, tea.Cmd) {
 	if m.actionRunning {
 		return m, nil
 	}
 
 	selected, ok := m.selectedInvocation()
-	if !ok {
+	if !ok && kind != actionAttach {
 		m.lastActionError = true
 		m.lastActionMessage = fmt.Sprintf("%s unavailable: no invocation selected", kind)
 		return m, nil
@@ -615,7 +781,22 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 	var run func() (string, error)
 	switch kind {
 	case actionAttach:
-		if selected.Mode != "headed" {
+		invocationID := strings.TrimSpace(m.selectedInvocationID)
+		repoID := strings.TrimSpace(m.selectedRepoID)
+		mode := strings.TrimSpace(m.selectedMode)
+		status := strings.TrimSpace(m.selectedStatus)
+		if ok {
+			invocationID = selected.InvocationID
+			repoID = selected.RepoID
+			mode = firstNonEmpty(selected.Mode, mode)
+			status = firstNonEmpty(selected.Status, status)
+		}
+		if invocationID == "" || repoID == "" {
+			m.lastActionError = true
+			m.lastActionMessage = "attach unavailable: no invocation selected"
+			return m, nil
+		}
+		if mode != "headed" {
 			m.lastActionError = true
 			m.lastActionMessage = formatActionError(
 				kind,
@@ -623,18 +804,18 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 					agencyerrors.EInvocationInvalidMode,
 					"invocation is headless; attach is only supported for headed invocations",
 					map[string]string{
-						"invocation_id": selected.InvocationID,
-						"mode":          selected.Mode,
+						"invocation_id": invocationID,
+						"mode":          mode,
 						"hint":          "use history, transcript, or logs to inspect headless invocations",
 					},
 				),
-				selected.InvocationID,
-				selected.WorktreeID,
+				invocationID,
+				"",
 				"",
 			)
 			return m, nil
 		}
-		if selected.Status != "running" {
+		if status != "running" {
 			m.lastActionError = true
 			m.lastActionMessage = formatActionError(
 				kind,
@@ -642,19 +823,23 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 					agencyerrors.ESessionEnded,
 					"tmux session not found",
 					map[string]string{
-						"invocation_id": selected.InvocationID,
+						"invocation_id": invocationID,
 						"hint":          "session ended; use history, transcript, logs, or open to inspect the invocation",
 					},
 				),
-				selected.InvocationID,
-				selected.WorktreeID,
+				invocationID,
+				"",
 				"",
 			)
 			return m, nil
 		}
 		m.attachRequested = true
-		m.attachInvocationID = selected.InvocationID
-		m.attachRequestedRepo = selected.RepoID
+		m.attachInvocationID = invocationID
+		m.attachRequestedRepo = repoID
+		m.actionMenuOpen = false
+		m.confirmAction = ""
+		m.followupInput = false
+		m.followupText = ""
 		return m, tea.Quit
 	case actionOpen:
 		if m.open == nil {
@@ -665,6 +850,65 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 		run = func() (string, error) {
 			return m.open(m.ctx, selected.InvocationID, selected.RepoID)
 		}
+	case actionStop:
+		if m.stop == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.stop(m.ctx, selected.InvocationID, selected.RepoID)
+		}
+	case actionKill:
+		if m.kill == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.kill(m.ctx, selected.InvocationID, selected.RepoID)
+		}
+	case actionLand:
+		if m.land == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.land(m.ctx, selected.InvocationID, selected.RepoID)
+		}
+	case actionDiscard:
+		if m.discard == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.discard(m.ctx, selected.InvocationID, selected.RepoID)
+		}
+	case actionFollowup:
+		if m.followup == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		if strings.TrimSpace(prompt) == "" {
+			m.lastActionError = true
+			m.lastActionMessage = "followup unavailable: prompt is empty"
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.followup(m.ctx, selected.InvocationID, selected.RepoID, prompt)
+		}
+	case actionRecreate:
+		if m.recreate == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.recreate(m.ctx, selected.InvocationID, selected.RepoID)
+		}
 	case actionPRSync:
 		if m.prSync == nil {
 			m.lastActionError = true
@@ -674,12 +918,30 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 		run = func() (string, error) {
 			return m.prSync(m.ctx, selected.WorktreeID, selected.RepoID)
 		}
+	case actionPRMerge:
+		if m.prMerge == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.prMerge(m.ctx, selected.WorktreeID, selected.RepoID)
+		}
+	case actionRebase:
+		if m.rebase == nil {
+			m.lastActionError = true
+			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			return m, nil
+		}
+		run = func() (string, error) {
+			return m.rebase(m.ctx, selected.WorktreeID, selected.RepoID)
+		}
 	default:
 		m.lastActionError = true
-		m.lastActionMessage = fmt.Sprintf("%s unavailable: unsupported workspace action", kind)
+		m.lastActionMessage = fmt.Sprintf("%s unavailable: unsupported action", kind)
 		return m, nil
 	}
-	if kind == actionPRSync && strings.TrimSpace(selected.WorktreeID) == "" {
+	if (kind == actionPRSync || kind == actionPRMerge || kind == actionRebase) && strings.TrimSpace(selected.WorktreeID) == "" {
 		m.lastActionError = true
 		m.lastActionMessage = formatActionError(
 			kind,
@@ -699,6 +961,10 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 	}
 
 	m.actionRunning = true
+	m.actionMenuOpen = false
+	m.confirmAction = ""
+	m.followupInput = false
+	m.followupText = ""
 	m.lastActionError = false
 	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID, ""))
 
@@ -710,73 +976,11 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 			kind:         kind,
 			invocationID: invocationID,
 			worktreeID:   worktreeID,
+			prompt:       prompt,
 			output:       output,
 			err:          err,
 		}
 	}
-}
-
-func (m model) requestAttach() (tea.Model, tea.Cmd) {
-	if strings.TrimSpace(m.selectedInvocationID) == "" || strings.TrimSpace(m.selectedRepoID) == "" {
-		m.lastActionError = true
-		m.lastActionMessage = "attach unavailable: no invocation selected"
-		return m, nil
-	}
-
-	mode := strings.TrimSpace(m.selectedMode)
-	status := strings.TrimSpace(m.selectedStatus)
-	if selected, ok := m.selectedInvocation(); ok && selected.InvocationID == m.selectedInvocationID {
-		if mode == "" {
-			mode = strings.TrimSpace(selected.Mode)
-		}
-		if status == "" {
-			status = strings.TrimSpace(selected.Status)
-		}
-	}
-
-	if mode != "headed" {
-		m.lastActionError = true
-		m.lastActionMessage = formatActionError(
-			actionAttach,
-			agencyerrors.NewWithDetails(
-				agencyerrors.EInvocationInvalidMode,
-				"invocation is headless; attach is only supported for headed invocations",
-				map[string]string{
-					"invocation_id": m.selectedInvocationID,
-					"mode":          mode,
-					"hint":          "use logs or transcript to inspect headless invocations",
-				},
-			),
-			m.selectedInvocationID,
-			"",
-			"",
-		)
-		return m, nil
-	}
-
-	if status != "running" {
-		m.lastActionError = true
-		m.lastActionMessage = formatActionError(
-			actionAttach,
-			agencyerrors.NewWithDetails(
-				agencyerrors.ESessionEnded,
-				"tmux session not found",
-				map[string]string{
-					"invocation_id": m.selectedInvocationID,
-					"hint":          "session ended; use transcript, logs, or open to inspect the invocation",
-				},
-			),
-			m.selectedInvocationID,
-			"",
-			"",
-		)
-		return m, nil
-	}
-
-	m.attachRequested = true
-	m.attachInvocationID = m.selectedInvocationID
-	m.attachRequestedRepo = m.selectedRepoID
-	return m, tea.Quit
 }
 
 func (m model) requestedAttach() (string, string, bool) {
@@ -846,6 +1050,71 @@ func (m model) selectedTurn() (daemon.Turn, bool) {
 	}
 	idx := clamp(m.historySelectedIndex, 0, len(m.historyTurns)-1)
 	return m.historyTurns[idx], true
+}
+
+func (m model) selectedCheck() (daemon.InvocationCheckData, bool) {
+	selected, ok := m.selectedInvocation()
+	if !ok {
+		return daemon.InvocationCheckData{}, false
+	}
+	check, ok := m.snapshot.Checks[selected.InvocationID]
+	return check, ok
+}
+
+func (m model) canStartAction(kind actionKind) bool {
+	selected, ok := m.selectedInvocation()
+	if !ok && kind != actionAttach {
+		return false
+	}
+
+	switch kind {
+	case actionAttach:
+		mode := strings.TrimSpace(m.selectedMode)
+		status := strings.TrimSpace(m.selectedStatus)
+		if ok {
+			mode = firstNonEmpty(selected.Mode, mode)
+			status = firstNonEmpty(selected.Status, status)
+		}
+		return mode == "headed" && status == "running" && strings.TrimSpace(m.selectedInvocationID) != "" && strings.TrimSpace(m.selectedRepoID) != ""
+	case actionOpen:
+		return m.open != nil
+	case actionStop:
+		return m.stop != nil && (selected.Status == "starting" || selected.Status == "running" || selected.Status == "stopping")
+	case actionKill:
+		return m.kill != nil && (selected.Status == "starting" || selected.Status == "running" || selected.Status == "stopping")
+	case actionLand:
+		return m.land != nil && selected.LandingStatus != "landed" && selected.LandingStatus != "discarded"
+	case actionDiscard:
+		return m.discard != nil && selected.LandingStatus != "landed" && selected.LandingStatus != "discarded"
+	case actionFollowup:
+		return m.followup != nil && selected.Mode == "headless" && selected.Status == "running"
+	case actionRecreate:
+		return m.recreate != nil && selected.Mode == "headed"
+	case actionPRSync:
+		if m.prSync == nil || strings.TrimSpace(selected.WorktreeID) == "" {
+			return false
+		}
+		check, ok := m.selectedCheck()
+		if !ok {
+			return true
+		}
+		return check.PRSyncEligible || selected.LandingStatus == "landed"
+	case actionPRMerge:
+		return m.prMerge != nil && strings.TrimSpace(selected.WorktreeID) != ""
+	case actionRebase:
+		return m.rebase != nil && strings.TrimSpace(selected.WorktreeID) != ""
+	default:
+		return false
+	}
+}
+
+func actionNeedsConfirm(kind actionKind) bool {
+	switch kind {
+	case actionKill, actionLand, actionDiscard, actionPRMerge, actionRebase:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *model) moveSelection(delta int) {
@@ -928,7 +1197,7 @@ func (m model) logVisibleLines() int {
 	if height <= 0 {
 		height = 36
 	}
-	visible := height - 5
+	visible := height - 8
 	if visible < 5 {
 		visible = 5
 	}
@@ -1005,22 +1274,6 @@ func isBottomKey(msg tea.KeyPressMsg) bool {
 	return msg.Code == tea.KeyEnd || msg.Text == "G"
 }
 
-func readinessCounts(invocations []daemon.InvocationDTO, checks map[string]daemon.InvocationCheckData) (ready int, blocked int, unknown int) {
-	for _, inv := range invocations {
-		check, ok := checks[inv.InvocationID]
-		if !ok {
-			unknown++
-			continue
-		}
-		if check.Ready || check.Readiness == "ready" {
-			ready++
-			continue
-		}
-		blocked++
-	}
-	return ready, blocked, unknown
-}
-
 func windowForSelection(total, selected, size int) (start, end int) {
 	if total <= 0 {
 		return 0, 0
@@ -1094,4 +1347,13 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

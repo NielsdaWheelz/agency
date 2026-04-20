@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
@@ -21,7 +22,15 @@ type RunOptions struct {
 	Input        io.Reader
 	Output       io.Writer
 	Open         func(context.Context, string, string) (string, error)
+	Stop         func(context.Context, string, string) (string, error)
+	Kill         func(context.Context, string, string) (string, error)
+	Land         func(context.Context, string, string) (string, error)
+	Discard      func(context.Context, string, string) (string, error)
+	Recreate     func(context.Context, string, string) (string, error)
+	Followup     func(context.Context, string, string, string) (string, error)
 	PRSync       func(context.Context, string, string) (string, error)
+	PRMerge      func(context.Context, string, string) (string, error)
+	Rebase       func(context.Context, string, string) (string, error)
 	Restore      func(context.Context, string, string, string) (string, error)
 }
 
@@ -55,8 +64,32 @@ func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) (Run
 		if err != nil {
 			return RunResult{}, err
 		}
+		m.snapshot.Invocations = []daemon.InvocationDTO{invocation.Data}
+		m.selectedInvocationID = invocation.Data.InvocationID
+		m.selectedRepoID = invocation.Data.RepoID
 		m.selectedMode = invocation.Data.Mode
 		m.selectedStatus = invocation.Data.Status
+		repos, err := client.ListRepos(ctx)
+		if err == nil {
+			for _, repo := range repos.Data.Repos {
+				if repo.RepoID == opts.RepoID {
+					m.snapshot.Repos = []daemon.RepoDTO{repo}
+					break
+				}
+			}
+		}
+		if invocation.Data.WorktreeID != "" {
+			worktree, err := client.GetWorktree(ctx, invocation.Data.WorktreeID, opts.RepoID)
+			if err == nil {
+				m.snapshot.Worktrees = []daemon.WorktreeDTO{worktree.Data}
+			}
+		}
+		check, err := client.GetInvocationCheck(ctx, opts.InvocationID, opts.RepoID)
+		if err == nil {
+			m.snapshot.Checks = map[string]daemon.InvocationCheckData{
+				opts.InvocationID: check.Data,
+			}
+		}
 		turns, err := loadHistoryTurns(ctx, client, opts.InvocationID, opts.RepoID)
 		if err != nil {
 			return RunResult{}, err

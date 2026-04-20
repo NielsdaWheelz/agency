@@ -55,6 +55,85 @@ func (d *watchActionDispatcher) PRSync(ctx context.Context, worktreeID, repoID s
 	})
 }
 
+func (d *watchActionDispatcher) Stop(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentStop(ctx, d.cr, d.fsys, d.cwd, AgentStopOpts{
+			InvocationRef: invocationID,
+			RepoRef:       repoID,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) Kill(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentKill(ctx, d.cr, d.fsys, d.cwd, AgentKillOpts{
+			InvocationRef: invocationID,
+			RepoRef:       repoID,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) Land(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentLand(ctx, d.cr, d.fsys, d.cwd, AgentLandOpts{
+			InvocationRef: invocationID,
+			RepoRef:       repoID,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) Discard(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentDiscard(ctx, d.cr, d.fsys, d.cwd, AgentDiscardOpts{
+			InvocationRef: invocationID,
+			RepoRef:       repoID,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) Recreate(ctx context.Context, invocationID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentRecreate(ctx, d.cr, d.fsys, d.cwd, AgentRecreateOpts{
+			InvocationRef:   invocationID,
+			RepoRef:         repoID,
+			Detached:        true,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) Followup(ctx context.Context, invocationID, repoID, prompt string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return AgentFollowup(ctx, d.cr, d.fsys, d.cwd, AgentFollowupOpts{
+			InvocationRef:   invocationID,
+			RepoRef:         repoID,
+			Prompt:          prompt,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) PRMerge(ctx context.Context, worktreeID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return WorktreePRMerge(ctx, d.cr, d.fsys, d.cwd, WorktreePRMergeOpts{
+			WorktreeRef:     worktreeID,
+			RepoRef:         repoID,
+			Yes:             true,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
+}
+
+func (d *watchActionDispatcher) Rebase(ctx context.Context, worktreeID, repoID string) (string, error) {
+	return d.capture(func(stdout, stderr io.Writer) error {
+		return WorktreeRebase(ctx, d.cr, d.fsys, d.cwd, WorktreeRebaseOpts{
+			WorktreeRef:     worktreeID,
+			RepoRef:         repoID,
+			DataDirOverride: d.dataDirOverride,
+		}, stdout, stderr)
+	})
+}
+
 func (d *watchActionDispatcher) capture(run func(stdout, stderr io.Writer) error) (string, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -136,13 +215,21 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		cwd:             cwd,
 		dataDirOverride: opts.DataDirOverride,
 	}
-	result, err := watch.Run(ctx, client, watch.RunOptions{
+	runOpts := watch.RunOptions{
 		InitialPage: watch.InitialPageWorkspace,
 		Interval:    interval,
 		Input:       input,
 		Output:      output,
 		Open:        actionDelegates.Open,
+		Stop:        actionDelegates.Stop,
+		Kill:        actionDelegates.Kill,
+		Land:        actionDelegates.Land,
+		Discard:     actionDelegates.Discard,
+		Recreate:    actionDelegates.Recreate,
+		Followup:    actionDelegates.Followup,
 		PRSync:      actionDelegates.PRSync,
+		PRMerge:     actionDelegates.PRMerge,
+		Rebase:      actionDelegates.Rebase,
 		Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
 			return actionDelegates.capture(func(stdout, stderr io.Writer) error {
 				return AgentRestore(ctx, actionDelegates.cr, actionDelegates.fsys, actionDelegates.cwd, AgentRestoreOpts{
@@ -153,7 +240,9 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 				}, stdout, stderr)
 			})
 		},
-	})
+	}
+
+	result, err := watch.Run(ctx, client, runOpts)
 	if err != nil {
 		return err
 	}

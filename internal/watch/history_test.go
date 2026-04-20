@@ -79,6 +79,20 @@ func TestHistoryPage_ViewContainsTurnDataAndHelp(t *testing.T) {
 
 	m := newModel(context.Background(), nil, RunOptions{InitialPage: InitialPageHistory, InvocationID: "inv-1", RepoID: "repo-1"})
 	m.page = pageHistory
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{
+			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
+		},
+		Worktrees: []daemon.WorktreeDTO{
+			{WorktreeID: "wt-1", RepoID: "repo-1", Name: "feature-auth"},
+		},
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", Runner: "codex", Mode: "headed"},
+		},
+	}
+	m.selectedIndex = 0
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
 	m.historyTurns = historyTestTurns()
 	m.historySelectedIndex = len(m.historyTurns) - 1
 	m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
@@ -89,6 +103,9 @@ func TestHistoryPage_ViewContainsTurnDataAndHelp(t *testing.T) {
 	view := m.View()
 	content := view.Content
 
+	assert.Contains(t, content, "codex/headed / feature-auth / github.com/acme/one")
+	assert.Contains(t, content, "history / invocation inv-1")
+	assert.NotContains(t, content, "invocation history  inv-1")
 	assert.Contains(t, content, "Fix the bug")
 	assert.Contains(t, content, "I'll examine the code")
 	assert.Contains(t, content, "The fix is applied")

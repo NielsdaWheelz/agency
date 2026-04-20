@@ -7,6 +7,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
+	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
@@ -20,15 +22,11 @@ func (m model) renderWorkspace() string {
 		height = 36
 	}
 
-	readyCount, blockedCount, unknownCount := readinessCounts(m.snapshot.Invocations, m.snapshot.Checks)
 	headerParts := []string{
 		"agency watch",
-		fmt.Sprintf("repos:%d", len(m.snapshot.Repos)),
+		fmt.Sprintf("agents:%d", len(m.snapshot.Invocations)),
 		fmt.Sprintf("worktrees:%d", len(m.snapshot.Worktrees)),
-		fmt.Sprintf("invocations:%d", len(m.snapshot.Invocations)),
-		fmt.Sprintf("ready:%d", readyCount),
-		fmt.Sprintf("blocked:%d", blockedCount),
-		fmt.Sprintf("unknown:%d", unknownCount),
+		fmt.Sprintf("repos:%d", len(m.snapshot.Repos)),
 	}
 	if m.workspaceLoading {
 		headerParts = append(headerParts, "refreshing")
@@ -37,7 +35,7 @@ func (m model) renderWorkspace() string {
 		headerParts = append(headerParts, "action-running")
 	}
 	if !m.snapshot.UpdatedAt.IsZero() {
-		headerParts = append(headerParts, "updated:"+m.snapshot.UpdatedAt.Format(time.RFC3339))
+		headerParts = append(headerParts, "updated:"+m.snapshot.UpdatedAt.Format(time.Kitchen))
 	}
 
 	contentHeight := height - 6
@@ -49,7 +47,6 @@ func (m model) renderWorkspace() string {
 		headerStyle.Render(strings.Join(headerParts, "  ")),
 		m.renderWorkspacePanels(width, contentHeight),
 	}
-
 	if m.lastActionMessage != "" {
 		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
 		switch {
@@ -66,20 +63,15 @@ func (m model) renderWorkspace() string {
 	}
 	if len(m.snapshot.Warnings) > 0 {
 		lines = append(lines, warningStyle.Render(
-			fmt.Sprintf(
-				"warnings: %d (first: %s)",
-				len(m.snapshot.Warnings),
-				truncateWithEllipsis(m.snapshot.Warnings[0], width-20),
-			),
+			fmt.Sprintf("warnings: %d (first: %s)", len(m.snapshot.Warnings), truncateWithEllipsis(m.snapshot.Warnings[0], width-20)),
 		))
 	}
-	lines = append(lines, warningStyle.Render("j/k move • enter attach • o open • p pr sync • h history • l logs • r refresh • q quit"))
-
+	lines = append(lines, warningStyle.Render("j/k move • enter default • x actions • h history • l logs • o open • p pr sync • r refresh • q quit"))
 	return strings.Join(lines, "\n")
 }
 
 func (m model) renderWorkspacePanels(width, contentHeight int) string {
-	leftWidth := width / 2
+	leftWidth := width * 3 / 5
 	if leftWidth < minPanelWidth {
 		leftWidth = minPanelWidth
 	}
@@ -93,231 +85,309 @@ func (m model) renderWorkspacePanels(width, contentHeight int) string {
 		panelWidth := max(1, width-2)
 		leftHeight := max(6, contentHeight/2)
 		rightHeight := max(6, contentHeight-leftHeight)
-		leftPanel := panelStyle.Width(panelWidth).Height(leftHeight).Render(m.renderInvocationsPanel(max(1, panelWidth-2)))
+		leftPanel := panelStyle.Width(panelWidth).Height(leftHeight).Render(m.renderInvocationsPanel(max(1, panelWidth-2), max(6, leftHeight-2)))
 		rightPanel := panelStyle.Width(panelWidth).Height(rightHeight).Render(m.renderDetailsPanel(max(1, panelWidth-2)))
 		return lipgloss.JoinVertical(lipgloss.Left, leftPanel, rightPanel)
 	}
 
-	leftPanel := panelStyle.Width(leftWidth).Height(contentHeight).Render(m.renderInvocationsPanel(max(1, leftWidth-2)))
+	leftPanel := panelStyle.Width(leftWidth).Height(contentHeight).Render(m.renderInvocationsPanel(max(1, leftWidth-2), max(6, contentHeight-2)))
 	rightPanel := panelStyle.Width(rightWidth).Height(contentHeight).Render(m.renderDetailsPanel(max(1, rightWidth-2)))
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 }
 
-func (m model) renderInvocationsPanel(width int) string {
+func (m model) renderInvocationsPanel(width, height int) string {
 	if len(m.snapshot.Invocations) == 0 {
-		return "invocations\n\n(no invocations found)"
+		return "agents\n\n(no agents found)"
 	}
 
-	repoLabels := make(map[string]string, len(m.snapshot.Repos))
-	for _, repo := range m.snapshot.Repos {
-		label := strings.TrimSpace(repo.RepoKey)
-		if label == "" {
-			label = repo.RepoID
-		}
-		repoLabels[repo.RepoID] = label
+	stateWidth := 10
+	agentWidth := max(16, width/5)
+	worktreeWidth := max(14, width/6)
+	repoWidth := max(10, width/8)
+	latestWidth := max(12, width-stateWidth-agentWidth-worktreeWidth-repoWidth-8)
+
+	lines := []string{
+		"agents",
+		"",
+		dimStyle.Render(fmt.Sprintf("  %-*s %-*s %-*s %-*s %s", stateWidth, "STATE", agentWidth, "AGENT", worktreeWidth, "WORKTREE", repoWidth, "REPO", "LATEST")),
 	}
 
-	worktreeNames := make(map[string]string, len(m.snapshot.Worktrees))
-	for _, wt := range m.snapshot.Worktrees {
-		worktreeNames[wt.WorktreeID] = wt.Name
-	}
-
-	lines := []string{"invocations", ""}
-	maxRows := 18
+	maxRows := max(4, height-5)
 	start, end := windowForSelection(len(m.snapshot.Invocations), m.selectedIndex, maxRows)
 	for idx := start; idx < end; idx++ {
 		inv := m.snapshot.Invocations[idx]
-
 		prefix := " "
 		if idx == m.selectedIndex {
 			prefix = ">"
 		}
 
-		verdict := inv.DisplayStatus
-		if strings.TrimSpace(verdict) == "" {
-			verdict = inv.Status
-		}
-		if check, ok := m.snapshot.Checks[inv.InvocationID]; ok {
-			if check.Ready || check.Readiness == "ready" {
-				verdict = "READY"
-			} else {
-				verdict = "BLOCKED"
-			}
-		}
-
-		location := worktreeNames[inv.WorktreeID]
-		if location == "" {
-			location = inv.WorktreeID
-		}
-		repoLabel := repoLabels[inv.RepoID]
-		if repoLabel != "" && location != "" {
-			location = repoLabel + " / " + location
-		} else if repoLabel != "" {
-			location = repoLabel
-		}
-
-		summary := strings.TrimSpace(inv.StatusSummary)
-		if activity := inv.LatestActivity; activity != nil {
-			toolCount := activity.ToolCallCount
-			if toolCount == 0 {
-				toolCount = len(activity.ToolCalls)
-			}
-			if strings.TrimSpace(activity.Kind) != "" || strings.TrimSpace(activity.Summary) != "" || toolCount > 0 || activity.CheckpointID > 0 {
-				summary = render.FormatActivityWithExtras(
-					activity.Kind,
-					activity.Summary,
-					toolCount,
-					activity.CheckpointID,
-					activity.Restorable,
-				)
-			}
-		}
-
-		attention := ""
-		if len(inv.AttentionFlags) > 0 {
-			attention = " [" + strings.Join(inv.AttentionFlags, ",") + "]"
-		}
-
-		row := truncateWithEllipsis(
-			fmt.Sprintf(
-				"%s %-9s %-12s %s%s",
-				prefix,
-				verdict,
-				truncateWithEllipsis(inv.Runner+"/"+inv.Mode, 12),
-				truncateWithEllipsis(location, max(1, width/3)),
-				attention,
-			),
-			width,
+		row := fmt.Sprintf(
+			"%s %-*s %-*s %-*s %-*s %s",
+			prefix,
+			stateWidth, truncateWithEllipsis(m.invocationState(inv), stateWidth),
+			agentWidth, truncateWithEllipsis(m.agentDisplay(inv), agentWidth),
+			worktreeWidth, truncateWithEllipsis(m.worktreeDisplay(inv.WorktreeID), worktreeWidth),
+			repoWidth, truncateWithEllipsis(m.repoDisplay(inv.RepoID), repoWidth),
+			truncateWithEllipsis(m.latestSummary(inv), latestWidth),
 		)
+		row = truncateWithEllipsis(row, width)
 		if idx == m.selectedIndex {
 			row = selectedRowStyle.Render(row)
 		}
 		lines = append(lines, row)
-
-		if summary != "" {
-			detail := "  " + truncateWithEllipsis(summary, width-2)
-			if idx == m.selectedIndex {
-				detail = selectedRowStyle.Render(detail)
-			}
-			lines = append(lines, detail)
-		}
 	}
 
 	if start > 0 || end < len(m.snapshot.Invocations) {
 		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("showing %d-%d of %d", start+1, end, len(m.snapshot.Invocations)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("showing %d-%d of %d", start+1, end, len(m.snapshot.Invocations))))
 	}
 
 	return strings.Join(lines, "\n")
 }
 
 func (m model) renderDetailsPanel(width int) string {
-	lines := []string{"selected invocation", ""}
+	lines := []string{"selected", ""}
 
 	selected, ok := m.selectedInvocation()
 	if !ok {
-		lines = append(lines, "select an invocation to view readiness and actions")
+		lines = append(lines, "select an agent to inspect it")
 		return strings.Join(lines, "\n")
 	}
 
-	check, hasCheck := m.snapshot.Checks[selected.InvocationID]
-	if !hasCheck {
-		lines = append(lines, warningStyle.Render("check data unavailable (retrying)"))
-		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("invocation: %s", selected.InvocationID))
-		lines = append(lines, fmt.Sprintf("status:     %s", selected.DisplayStatus))
-		return truncateLines(lines, width)
-	}
-
-	readiness := blockedStyle.Render("BLOCKED")
-	if check.Ready || check.Readiness == "ready" {
-		readiness = readyStyle.Render("READY")
-	}
-
-	lines = append(lines, "readiness: "+readiness)
-	status := strings.TrimSpace(check.DisplayStatus)
-	if status == "" {
-		status = strings.TrimSpace(selected.DisplayStatus)
-	}
-	if status == "" {
-		status = strings.TrimSpace(selected.Status)
-	}
-	lines = append(lines, fmt.Sprintf("status:    %s", status))
+	state := m.invocationState(selected)
 	if len(selected.AttentionFlags) > 0 {
-		lines = append(lines, "attention: "+strings.Join(selected.AttentionFlags, ", "))
+		state += " [" + strings.Join(selected.AttentionFlags, ", ") + "]"
 	}
 
-	summary := strings.TrimSpace(check.StatusSummary)
-	if summary == "" {
-		summary = strings.TrimSpace(check.RunnerSummary)
-	}
-	if summary != "" {
-		lines = append(lines, "summary:   "+summary)
+	latest := m.latestSummary(selected)
+	if latest == "" {
+		latest = "no recent activity"
 	}
 
-	if len(check.BlockingReasons) > 0 {
-		lines = append(lines, "why:       "+check.BlockingReasons[0].Message)
-		if hint := strings.TrimSpace(check.BlockingReasons[0].Hint); hint != "" {
-			lines = append(lines, "hint:      "+hint)
-		}
-	} else {
-		lines = append(lines, "why:       no blocking reasons")
-	}
-
-	nextAction := "h for history, o to open sandbox"
-	switch {
-	case check.Ready && check.PRSyncEligible:
-		nextAction = "p to sync the PR"
-	case selected.Mode == "headed" && selected.Status == "running":
-		nextAction = "enter to attach to the running session"
-	case strings.TrimSpace(selected.WorktreeID) != "":
-		nextAction = "h for history, then restore or inspect logs"
-	}
-	lines = append(lines, "next:      "+nextAction)
-	lines = append(lines, fmt.Sprintf("pr_sync:   %t", check.PRSyncEligible))
-	if check.HowToTest != "" {
-		lines = append(lines, "how_to_test: "+check.HowToTest)
-	}
-
-	if activity := check.LatestActivity; activity != nil {
-		toolCount := activity.ToolCallCount
-		if toolCount == 0 {
-			toolCount = len(activity.ToolCalls)
-		}
-		if strings.TrimSpace(activity.Kind) != "" || strings.TrimSpace(activity.Summary) != "" || toolCount > 0 || activity.CheckpointID > 0 {
-			latest := render.FormatActivityWithExtras(
-				activity.Kind,
-				activity.Summary,
-				toolCount,
-				activity.CheckpointID,
-				activity.Restorable,
-			)
-			if turnID := strings.TrimSpace(activity.TurnID); turnID != "" {
-				lines = append(lines, "latest:    ["+turnID+"] "+latest)
-			} else {
-				lines = append(lines, "latest:    "+latest)
-			}
-			for _, tool := range activity.ToolCalls {
-				lines = append(lines, "tool:      "+render.FormatToolCallSummary(tool.Name, tool.Command, tool.HasExit, tool.ExitCode))
-			}
-			if paths := render.FormatChangedPathSummary(activity.CheckpointChangedPaths, activity.CheckpointChangedCount, activity.CheckpointPathsTrimmed); paths != "" {
-				lines = append(lines, "files:     "+paths)
-			}
-		}
-	}
-
+	lines = append(lines, "Agent:      "+m.agentDisplay(selected))
+	lines = append(lines, "Worktree:   "+m.worktreeDisplay(selected.WorktreeID))
+	lines = append(lines, "Repo:       "+m.repoDisplay(selected.RepoID))
+	lines = append(lines, "Runner:     "+selected.Runner+" / "+selected.Mode)
+	lines = append(lines, "State:      "+state)
+	lines = append(lines, "Latest:     "+latest)
+	lines = append(lines, "Next:       "+m.nextActionSummary(selected))
 	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("invocation_id: %s", selected.InvocationID))
-	lines = append(lines, fmt.Sprintf("repo_id:       %s", selected.RepoID))
-	lines = append(lines, fmt.Sprintf("worktree_id:   %s", selected.WorktreeID))
-	lines = append(lines, fmt.Sprintf("runner/mode:   %s / %s", selected.Runner, selected.Mode))
-
-	if check.Navigation.HistoryCommand != "" {
-		lines = append(lines, "history: "+check.Navigation.HistoryCommand)
-	}
-	if check.Navigation.LatestTurnID != "" {
-		lines = append(lines, "turn:    "+check.Navigation.LatestTurnID)
-	}
-
+	lines = append(lines, m.renderActionPanel(width)...)
+	lines = append(lines, "")
+	lines = append(lines, "IDs:        "+selected.InvocationID+" · "+firstNonEmpty(selected.WorktreeID, "-")+" · "+selected.RepoID)
 	return truncateLines(lines, width)
+}
+
+func (m model) renderPageHeader(title string) []string {
+	lines := []string{headerStyle.Render(title)}
+
+	selected, ok := m.selectedInvocation()
+	if !ok {
+		lines = append(lines, dimStyle.Render("agent unavailable"))
+		lines = append(lines, "")
+		return lines
+	}
+
+	lines = append(lines, dimStyle.Render(
+		"agent "+m.agentDisplay(selected)+"  worktree "+m.worktreeDisplay(selected.WorktreeID)+"  repo "+m.repoDisplay(selected.RepoID),
+	))
+	lines = append(lines, dimStyle.Render(
+		"state "+m.invocationState(selected)+"  runner "+selected.Runner+"/"+selected.Mode,
+	))
+	lines = append(lines, "")
+	lines = append(lines, m.renderTransientActionPanel(m.width)...)
+	return lines
+}
+
+func (m model) renderActionPanel(width int) []string {
+	lines := make([]string, 0, 16)
+	switch {
+	case m.followupInput:
+		lines = append(lines, "Follow-up:")
+		lines = append(lines, "  prompt: "+truncateWithEllipsis(m.followupText, max(1, width-10)))
+		lines = append(lines, dimStyle.Render("  enter send • esc cancel"))
+	case m.confirmAction != "":
+		lines = append(lines, "Confirm:")
+		lines = append(lines, "  "+string(m.confirmAction)+" "+m.selectedActionTarget())
+		lines = append(lines, dimStyle.Render("  y confirm • esc cancel"))
+	case m.actionMenuOpen:
+		lines = append(lines, "Actions:")
+		if m.canStartAction(actionAttach) {
+			lines = append(lines, "  a attach")
+		}
+		if m.canStartAction(actionOpen) {
+			lines = append(lines, "  o open sandbox")
+		}
+		if m.canStartAction(actionStop) {
+			lines = append(lines, "  s stop invocation")
+		}
+		if m.canStartAction(actionKill) {
+			lines = append(lines, "  k kill invocation")
+		}
+		if m.canStartAction(actionLand) {
+			lines = append(lines, "  n land changes")
+		}
+		if m.canStartAction(actionDiscard) {
+			lines = append(lines, "  d discard changes")
+		}
+		if m.canStartAction(actionFollowup) {
+			lines = append(lines, "  f send follow-up")
+		}
+		if m.canStartAction(actionRecreate) {
+			lines = append(lines, "  c recreate headed session")
+		}
+		if m.canStartAction(actionPRSync) {
+			lines = append(lines, "  p sync PR")
+		}
+		if m.canStartAction(actionPRMerge) {
+			lines = append(lines, "  m merge PR")
+		}
+		if m.canStartAction(actionRebase) {
+			lines = append(lines, "  b rebase worktree")
+		}
+		lines = append(lines, dimStyle.Render("  esc cancel"))
+	default:
+		lines = append(lines, "Actions:")
+		if m.canStartAction(actionAttach) {
+			lines = append(lines, "  enter attach")
+		} else {
+			lines = append(lines, "  enter open actions")
+		}
+		lines = append(lines, "  x more actions")
+		lines = append(lines, "  h history • l logs")
+	}
+	return lines
+}
+
+func (m model) renderTransientActionPanel(width int) []string {
+	if !m.actionMenuOpen && m.confirmAction == "" && !m.followupInput {
+		return nil
+	}
+	lines := m.renderActionPanel(width)
+	lines = append(lines, "")
+	return lines
+}
+
+func (m model) selectedActionTarget() string {
+	selected, ok := m.selectedInvocation()
+	if !ok {
+		return "selected invocation"
+	}
+	return m.agentDisplay(selected) + " / " + m.worktreeDisplay(selected.WorktreeID) + " / " + m.repoDisplay(selected.RepoID)
+}
+
+func (m model) invocationState(inv daemon.InvocationDTO) string {
+	check, ok := m.snapshot.Checks[inv.InvocationID]
+	if ok && strings.TrimSpace(check.DisplayStatus) != "" {
+		return check.DisplayStatus
+	}
+	if strings.TrimSpace(inv.DisplayStatus) != "" {
+		return inv.DisplayStatus
+	}
+	return inv.Status
+}
+
+func (m model) latestSummary(inv daemon.InvocationDTO) string {
+	check, ok := m.snapshot.Checks[inv.InvocationID]
+	if ok {
+		if latest := latestSummaryFromActivity(check.LatestActivity); latest != "" {
+			return latest
+		}
+		if summary := strings.TrimSpace(check.StatusSummary); summary != "" {
+			return summary
+		}
+	}
+	if latest := latestSummaryFromActivity(inv.LatestActivity); latest != "" {
+		return latest
+	}
+	return strings.TrimSpace(inv.StatusSummary)
+}
+
+func latestSummaryFromActivity(activity *daemon.InvocationLatestActivity) string {
+	if activity == nil {
+		return ""
+	}
+	toolCount := activity.ToolCallCount
+	if toolCount == 0 {
+		toolCount = len(activity.ToolCalls)
+	}
+	if strings.TrimSpace(activity.Kind) == "" &&
+		strings.TrimSpace(activity.Summary) == "" &&
+		toolCount == 0 &&
+		activity.CheckpointID == 0 {
+		return ""
+	}
+	return render.FormatActivityWithExtras(
+		activity.Kind,
+		activity.Summary,
+		toolCount,
+		activity.CheckpointID,
+		activity.Restorable,
+	)
+}
+
+func (m model) nextActionSummary(inv daemon.InvocationDTO) string {
+	switch {
+	case m.followupInput:
+		return "type a follow-up prompt and press enter"
+	case m.confirmAction != "":
+		return "confirm the selected action or cancel it"
+	case m.actionMenuOpen:
+		return "choose an action key from the list"
+	case m.canStartAction(actionAttach):
+		return "attach to the running session"
+	case m.canStartAction(actionLand):
+		return "land the agent changes"
+	case m.canStartAction(actionPRSync):
+		return "sync the PR"
+	default:
+		return "open actions, inspect history, or read logs"
+	}
+}
+
+func (m model) agentDisplay(inv daemon.InvocationDTO) string {
+	name := strings.TrimSpace(inv.InvocationName)
+	if name == "" {
+		return shortID(inv.InvocationID, 12)
+	}
+	return name + " (" + shortID(inv.InvocationID, 12) + ")"
+}
+
+func (m model) worktreeDisplay(worktreeID string) string {
+	worktreeID = strings.TrimSpace(worktreeID)
+	if worktreeID == "" {
+		return "-"
+	}
+	for _, wt := range m.snapshot.Worktrees {
+		if wt.WorktreeID != worktreeID {
+			continue
+		}
+		name := strings.TrimSpace(wt.Name)
+		if name == "" {
+			return shortID(worktreeID, 12)
+		}
+		return name + " (" + shortID(worktreeID, 12) + ")"
+	}
+	return shortID(worktreeID, 12)
+}
+
+func (m model) repoDisplay(repoID string) string {
+	repoID = strings.TrimSpace(repoID)
+	if repoID == "" {
+		return "-"
+	}
+	for _, repo := range m.snapshot.Repos {
+		if repo.RepoID != repoID {
+			continue
+		}
+		label := ids.RepoShortName(repo.RepoKey)
+		if label == "" {
+			label = strings.TrimSpace(repo.RepoKey)
+		}
+		if label == "" {
+			label = shortID(repo.RepoID, 12)
+		}
+		return label + " (" + shortID(repo.RepoID, 12) + ")"
+	}
+	return shortID(repoID, 12)
 }

@@ -105,10 +105,9 @@ func (m model) renderHistory() string {
 		width = 120
 	}
 
-	lines := []string{
-		m.renderHistoryHeader(fmt.Sprintf("invocation history  %s", m.selectedInvocationID)),
-		"",
-	}
+	lines := m.renderHistoryHeaderLines(width)
+	lines = append(lines, "")
+	lines = append(lines, m.renderTransientActionPanel(width)...)
 
 	if m.lastActionMessage != "" {
 		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
@@ -133,7 +132,7 @@ func (m model) renderHistory() string {
 	if len(m.historyTurns) == 0 {
 		lines = append(lines, "no history entries available")
 		lines = append(lines, "")
-		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • r refresh • b back • q quit"))
+		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • x actions • r refresh • b back • q quit"))
 		return strings.Join(lines, "\n")
 	}
 
@@ -143,8 +142,127 @@ func (m model) renderHistory() string {
 		m.renderHistoryTurn(&builder, index, turn, width)
 	}
 	builder.WriteString("\n")
-	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • r refresh • b back • q quit"))
+	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • x actions • r refresh • b back • q quit"))
 	return builder.String()
+}
+
+func (m model) renderHistoryHeaderLines(width int) []string {
+	primary, secondary := m.historyHeaderContext()
+	lines := []string{m.renderHistoryHeader(truncateWithEllipsis(primary, width))}
+	if secondary != "" {
+		lines = append(lines, m.renderHistoryHelp(truncateWithEllipsis(secondary, width)))
+	}
+	return lines
+}
+
+func (m model) historyHeaderContext() (string, string) {
+	primaryParts := make([]string, 0, 3)
+	secondaryParts := []string{"history"}
+
+	if inv, ok := m.historyContextInvocation(); ok {
+		if label := historyAgentLabel(inv); label != "" {
+			primaryParts = append(primaryParts, label)
+		}
+		if label := m.historyWorktreeLabel(inv.WorktreeID); label != "" {
+			primaryParts = append(primaryParts, label)
+		}
+		if label := m.historyRepoLabel(inv.RepoID); label != "" {
+			primaryParts = append(primaryParts, label)
+		}
+		if invocationID := strings.TrimSpace(inv.InvocationID); invocationID != "" {
+			secondaryParts = append(secondaryParts, "invocation "+invocationID)
+		}
+	} else {
+		if label := m.historyRepoLabel(m.selectedRepoID); label != "" {
+			primaryParts = append(primaryParts, label)
+		}
+		if invocationID := strings.TrimSpace(m.selectedInvocationID); invocationID != "" {
+			secondaryParts = append(secondaryParts, "invocation "+invocationID)
+		}
+	}
+
+	primary := strings.Join(primaryParts, " / ")
+	if primary == "" {
+		primary = "history"
+	}
+
+	secondary := strings.Join(secondaryParts, " / ")
+	if secondary == "history" || secondary == primary {
+		secondary = ""
+	}
+
+	return primary, secondary
+}
+
+func (m model) historyContextInvocation() (daemon.InvocationDTO, bool) {
+	invocationID := strings.TrimSpace(m.selectedInvocationID)
+	if invocationID != "" {
+		for _, inv := range m.snapshot.Invocations {
+			if inv.InvocationID == invocationID {
+				return inv, true
+			}
+		}
+		return daemon.InvocationDTO{}, false
+	}
+	if len(m.snapshot.Invocations) == 0 {
+		return daemon.InvocationDTO{}, false
+	}
+	idx := clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
+	return m.snapshot.Invocations[idx], true
+}
+
+func (m model) historyRepoLabel(repoID string) string {
+	repoID = strings.TrimSpace(repoID)
+	if repoID == "" {
+		return ""
+	}
+	for _, repo := range m.snapshot.Repos {
+		if repo.RepoID != repoID {
+			continue
+		}
+		label := strings.TrimSpace(repo.RepoKey)
+		if label != "" {
+			return label
+		}
+		return repo.RepoID
+	}
+	return repoID
+}
+
+func (m model) historyWorktreeLabel(worktreeID string) string {
+	worktreeID = strings.TrimSpace(worktreeID)
+	if worktreeID == "" {
+		return ""
+	}
+	for _, wt := range m.snapshot.Worktrees {
+		if wt.WorktreeID != worktreeID {
+			continue
+		}
+		label := strings.TrimSpace(wt.Name)
+		if label != "" {
+			return label
+		}
+		return wt.WorktreeID
+	}
+	return worktreeID
+}
+
+func historyAgentLabel(inv daemon.InvocationDTO) string {
+	if name := strings.TrimSpace(inv.InvocationName); name != "" {
+		return name
+	}
+	runner := strings.TrimSpace(inv.Runner)
+	mode := strings.TrimSpace(inv.Mode)
+	switch {
+	case runner != "" && mode != "":
+		return runner + "/" + mode
+	case runner != "":
+		return runner
+	case mode != "":
+		return mode
+	default:
+		return ""
+	}
 }
 
 func (m model) renderHistoryTurn(builder *strings.Builder, index int, turn daemon.Turn, width int) {

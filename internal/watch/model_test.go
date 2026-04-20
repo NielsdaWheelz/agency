@@ -139,8 +139,9 @@ func TestModel_ActionAttach_HeadlessInvocationStaysInTUI(t *testing.T) {
 
 	_, _, ok := nextModel.requestedAttach()
 	assert.False(t, ok)
-	assert.True(t, nextModel.lastActionError)
-	assert.Contains(t, nextModel.lastActionMessage, string(errors.EInvocationInvalidMode))
+	assert.True(t, nextModel.actionMenuOpen)
+	assert.False(t, nextModel.lastActionError)
+	assert.Empty(t, nextModel.lastActionMessage)
 }
 
 func TestModel_ActionAttach_NonRunningInvocationStaysInTUI(t *testing.T) {
@@ -161,8 +162,9 @@ func TestModel_ActionAttach_NonRunningInvocationStaysInTUI(t *testing.T) {
 
 	_, _, ok := nextModel.requestedAttach()
 	assert.False(t, ok)
-	assert.True(t, nextModel.lastActionError)
-	assert.Contains(t, nextModel.lastActionMessage, string(errors.ESessionEnded))
+	assert.True(t, nextModel.actionMenuOpen)
+	assert.False(t, nextModel.lastActionError)
+	assert.Empty(t, nextModel.lastActionMessage)
 }
 
 func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
@@ -221,20 +223,30 @@ func TestModel_ActionOpenSuccessUsesConfiguredOutput(t *testing.T) {
 func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), nil, RunOptions{})
+	m := newModel(context.Background(), nil, RunOptions{
+		Open:     func(context.Context, string, string) (string, error) { return "", nil },
+		Stop:     func(context.Context, string, string) (string, error) { return "", nil },
+		Kill:     func(context.Context, string, string) (string, error) { return "", nil },
+		Followup: func(context.Context, string, string, string) (string, error) { return "", nil },
+		PRSync:   func(context.Context, string, string) (string, error) { return "", nil },
+		PRMerge:  func(context.Context, string, string) (string, error) { return "", nil },
+		Rebase:   func(context.Context, string, string) (string, error) { return "", nil },
+	})
 	m.width = 240
 	m.height = 28
 	m.snapshot = Snapshot{
 		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
 		Invocations: []daemon.InvocationDTO{
 			{
-				InvocationID:  "inv-1",
-				RepoID:        "repo-1",
-				WorktreeID:    "wt-1",
-				Runner:        "claude-code",
-				Mode:          "headless",
-				Status:        "running",
-				DisplayStatus: "working",
+				InvocationID:   "inv-1",
+				InvocationName: "agent auth",
+				RepoID:         "repo-1",
+				WorktreeID:     "wt-1",
+				Runner:         "claude-code",
+				Mode:           "headless",
+				Status:         "running",
+				DisplayStatus:  "working",
+				LandingStatus:  "landed",
 			},
 		},
 		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", Name: "feature-auth"}},
@@ -271,18 +283,27 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	}
 	m.selectedInvocationID = "inv-1"
 	m.selectedIndex = 0
+	m.actionMenuOpen = true
 
 	view := m.View()
-	assert.Contains(t, view.Content, "invocations")
-	assert.Contains(t, view.Content, "selected invocation")
-	assert.Contains(t, view.Content, "attach")
+	assert.Contains(t, view.Content, "agents")
+	assert.Contains(t, view.Content, "selected")
+	assert.Contains(t, view.Content, "STATE")
+	assert.Contains(t, view.Content, "AGENT")
+	assert.Contains(t, view.Content, "agent auth (inv-1)")
+	assert.Contains(t, view.Content, "Worktree:   feature-auth (wt-1)")
+	assert.Contains(t, view.Content, "Repo:       github.com/acme/one (repo-1)")
+	assert.Contains(t, view.Content, "State:      working")
+	assert.Contains(t, view.Content, "Latest:     [assistant] latest activity summary (tools=1, checkpoint=3)")
+	assert.Contains(t, view.Content, "open sandbox")
+	assert.Contains(t, view.Content, "send follow-up")
+	assert.Contains(t, view.Content, "sync PR")
+	assert.Contains(t, view.Content, "merge PR")
+	assert.Contains(t, view.Content, "rebase worktree")
+	assert.Contains(t, view.Content, "stop invocation")
+	assert.Contains(t, view.Content, "kill invocation")
 	assert.Contains(t, view.Content, "open")
-	assert.Contains(t, view.Content, "pr sync")
-	assert.Contains(t, view.Content, "summary:   waiting on api contract")
-	assert.Contains(t, view.Content, "latest:    [stream:1] [assistant] latest activity summary (tools=1, checkpoint=3)")
-	assert.Contains(t, view.Content, "tool:      ▶ Bash go test ./... (exit=1)")
-	assert.Contains(t, view.Content, "files:     internal/watch/model.go, internal/watch/model_test.go")
-	assert.Contains(t, view.Content, "turn:    stream:1")
+	assert.Contains(t, view.Content, "IDs:        inv-1 · wt-1 · repo-1")
 }
 
 func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {

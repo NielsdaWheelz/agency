@@ -56,10 +56,7 @@ func (m model) renderLogs() string {
 		width = 120
 	}
 
-	lines := []string{
-		headerStyle.Render("invocation logs  " + m.selectedInvocationID + "  (" + m.currentLogsKind() + ")"),
-		"",
-	}
+	lines := m.renderPageHeader("logs (" + m.currentLogsKind() + ")")
 	if m.lastActionMessage != "" {
 		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
 		switch {
@@ -100,7 +97,7 @@ func (m model) renderLogs() string {
 		))
 	}
 	lines = append(lines, "")
-	lines = append(lines, warningStyle.Render("j/k move • a attach • r refresh • b back • q quit"))
+	lines = append(lines, warningStyle.Render("j/k move • a attach • x actions • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
 }
 
