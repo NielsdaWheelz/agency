@@ -296,10 +296,13 @@ func translateNavigationError(err error, targetKind string) error {
 	return err
 }
 
-// realTmuxAttach performs a real interactive tmux attach with stdin/stdout/stderr connected.
-// This is the only way to get proper interactive terminal behavior.
+// realTmuxAttach performs the canonical tmux client handoff with stdin/stdout/stderr connected.
 func realTmuxAttach(sessionName string) error {
-	result, err := exec.RunAttached(context.Background(), "tmux", []string{"attach", "-t", sessionName}, exec.AttachedRunOpts{
+	args := []string{"attach-session", "-t", sessionName}
+	if os.Getenv("TMUX") != "" {
+		args = []string{"switch-client", "-t", sessionName}
+	}
+	result, err := exec.RunAttached(context.Background(), "tmux", args, exec.AttachedRunOpts{
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
@@ -308,7 +311,7 @@ func realTmuxAttach(sessionName string) error {
 		return err
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("tmux attach exited with code %d", result.ExitCode)
+		return fmt.Errorf("tmux command exited with code %d", result.ExitCode)
 	}
 	return nil
 }

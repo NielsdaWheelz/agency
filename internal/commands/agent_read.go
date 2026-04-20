@@ -193,7 +193,7 @@ type AgentHistoryOpts struct {
 	WatchOutput io.Writer
 
 	// RunWatch overrides the shared watch runtime during tests.
-	RunWatch func(context.Context, *daemonclient.Client, watch.RunOptions) error
+	RunWatch func(context.Context, *daemonclient.Client, watch.RunOptions) (watch.RunResult, error)
 }
 
 // AgentHistory reads the unified invocation timeline via daemon read API.
@@ -250,13 +250,12 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 			cwd:             cwd,
 			dataDirOverride: opts.DataDirOverride,
 		}
-		return runWatch(ctx, ns.client, watch.RunOptions{
+		result, err := runWatch(ctx, ns.client, watch.RunOptions{
 			InitialPage:  watch.InitialPageHistory,
 			InvocationID: opts.InvocationRef,
 			RepoID:       repoCtx.RepoID,
 			Input:        opts.WatchInput,
 			Output:       watchOutput,
-			Attach:       actionDelegates.Attach,
 			Open:         actionDelegates.Open,
 			PRSync:       actionDelegates.PRSync,
 			Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
@@ -270,6 +269,18 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 				})
 			},
 		})
+		if err != nil {
+			return err
+		}
+		if result.AttachInvocationID == "" || result.AttachRepoID == "" {
+			return nil
+		}
+		return AgentAttach(ctx, cr, fsys, cwd, AgentAttachOpts{
+			InvocationRef:   result.AttachInvocationID,
+			RepoRef:         result.AttachRepoID,
+			IsInteractive:   isInteractive,
+			DataDirOverride: opts.DataDirOverride,
+		}, stdout, stderr)
 	}
 
 	// JSON remains the machine-fidelity escape hatch for raw timeline entries.

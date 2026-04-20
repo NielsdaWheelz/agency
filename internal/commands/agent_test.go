@@ -1216,7 +1216,7 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 
 	cwd, args := readShimRecord(t, env.RecordFile)
 	assert.NotEmpty(t, cwd)
-	assert.Equal(t, "attach -t "+session, args)
+	assert.Equal(t, "attach-session -t "+session, args)
 	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
 	assert.Regexp(t, regexp.MustCompile(`Use 'agency agent [^ ]+ attach' to attach later\.`), stderr.String())
 	assert.NotContains(t, stderr.String(), "Use 'agency agent attach ")
@@ -1289,6 +1289,70 @@ func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 
 		assert.True(t, attachCalled, "tmux attach must be called")
 		assert.Equal(t, fallbackSession, attachedSession, "agent attach must fall back to tmux.SessionName(invocation_id)")
+	})
+}
+
+func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
+	t.Run("outside tmux uses attach-session", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "attach-outside-tmux", store.RunnerModeHeaded)
+		sessionName := tmux.SessionName(env.InvocationID)
+
+		fakeTmux := testutil.NewFakeTmuxClient()
+		fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+		shimDir := t.TempDir()
+		recordFile := filepath.Join(shimDir, "record.txt")
+		shimPath := filepath.Join(shimDir, "tmux")
+		script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
+		require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
+
+		t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("TMUX", "")
+
+		var stdout, stderr bytes.Buffer
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
+				InvocationRef:   env.InvocationID,
+				RepoRef:         env.RepoID,
+				IsInteractive:   func() bool { return true },
+				TmuxClient:      fakeTmux,
+				DataDirOverride: env.DataDir,
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		_, args := readShimRecord(t, recordFile)
+		assert.Equal(t, "attach-session -t "+sessionName, args)
+	})
+
+	t.Run("inside tmux uses switch-client", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "attach-inside-tmux", store.RunnerModeHeaded)
+		sessionName := tmux.SessionName(env.InvocationID)
+
+		fakeTmux := testutil.NewFakeTmuxClient()
+		fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+		shimDir := t.TempDir()
+		recordFile := filepath.Join(shimDir, "record.txt")
+		shimPath := filepath.Join(shimDir, "tmux")
+		script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
+		require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
+
+		t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("TMUX", "/tmp/tmux-test/default,123,0")
+
+		var stdout, stderr bytes.Buffer
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
+				InvocationRef:   env.InvocationID,
+				RepoRef:         env.RepoID,
+				IsInteractive:   func() bool { return true },
+				TmuxClient:      fakeTmux,
+				DataDirOverride: env.DataDir,
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		_, args := readShimRecord(t, recordFile)
+		assert.Equal(t, "switch-client -t "+sessionName, args)
 	})
 }
 
@@ -1991,10 +2055,10 @@ func TestAgentHistory_InteractiveUsesSharedWatchRuntime(t *testing.T) {
 		IsInteractive: func() bool {
 			return true
 		},
-		RunWatch: func(_ context.Context, client *daemonclient.Client, opts watch.RunOptions) error {
+		RunWatch: func(_ context.Context, client *daemonclient.Client, opts watch.RunOptions) (watch.RunResult, error) {
 			require.NotNil(t, client)
 			captured = opts
-			return nil
+			return watch.RunResult{}, nil
 		},
 	}, &stdout, &stderr)
 	require.NoError(t, err)
@@ -2002,7 +2066,6 @@ func TestAgentHistory_InteractiveUsesSharedWatchRuntime(t *testing.T) {
 	assert.Equal(t, watch.InitialPageHistory, captured.InitialPage)
 	assert.Equal(t, invocationID, captured.InvocationID)
 	assert.Equal(t, repoID, captured.RepoID)
-	assert.NotNil(t, captured.Attach)
 	assert.NotNil(t, captured.Open)
 	assert.NotNil(t, captured.PRSync)
 	assert.NotNil(t, captured.Restore)

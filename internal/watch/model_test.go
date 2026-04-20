@@ -96,23 +96,13 @@ func TestModel_PageSwitchingBetweenWorkspaceHistoryAndLogs(t *testing.T) {
 	assert.True(t, logsModel.logsLoading)
 }
 
-func TestModel_ActionAttach_SessionEndedIsRecoverable(t *testing.T) {
+func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), nil, RunOptions{
-		Attach: func(context.Context, string, string) (string, error) {
-			return "", errors.NewWithDetails(
-				errors.ESessionEnded,
-				"tmux session not found",
-				map[string]string{
-					"hint": "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view",
-				},
-			)
-		},
-	})
+	m := newModel(context.Background(), nil, RunOptions{})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1"},
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", Status: "running"},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -120,16 +110,59 @@ func TestModel_ActionAttach_SessionEndedIsRecoverable(t *testing.T) {
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
 
-	msg := cmd()
-	next, _ = next.(model).Update(msg)
+	nextModel := next.(model)
+	invocationID, repoID, ok := nextModel.requestedAttach()
+	require.True(t, ok)
+	assert.Equal(t, "inv-1", invocationID)
+	assert.Equal(t, "repo-1", repoID)
+	assert.False(t, nextModel.actionRunning)
+	assert.Empty(t, nextModel.lastActionMessage)
+}
+
+func TestModel_ActionAttach_HeadlessInvocationStaysInTUI(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headless", Status: "running"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Nil(t, cmd)
 	nextModel := next.(model)
 
-	assert.Equal(t, "inv-1", nextModel.selectedInvocationID)
-	assert.Equal(t, 0, nextModel.selectedIndex)
+	_, _, ok := nextModel.requestedAttach()
+	assert.False(t, ok)
+	assert.True(t, nextModel.lastActionError)
+	assert.Contains(t, nextModel.lastActionMessage, string(errors.EInvocationInvalidMode))
+}
+
+func TestModel_ActionAttach_NonRunningInvocationStaysInTUI(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", Status: "finished"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+
+	_, _, ok := nextModel.requestedAttach()
+	assert.False(t, ok)
 	assert.True(t, nextModel.lastActionError)
 	assert.Contains(t, nextModel.lastActionMessage, string(errors.ESessionEnded))
-	assert.Contains(t, nextModel.lastActionMessage, "session ended")
 }
 
 func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
@@ -159,12 +192,12 @@ func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
 	assert.Contains(t, nextModel.lastActionMessage, "inv-1")
 }
 
-func TestModel_ActionSuccessUsesConfiguredOutput(t *testing.T) {
+func TestModel_ActionOpenSuccessUsesConfiguredOutput(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{
-		Attach: func(context.Context, string, string) (string, error) {
-			return "attached to tmux session", nil
+		Open: func(context.Context, string, string) (string, error) {
+			return "opened sandbox", nil
 		},
 	})
 	m.snapshot = Snapshot{
@@ -175,13 +208,13 @@ func TestModel_ActionSuccessUsesConfiguredOutput(t *testing.T) {
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
 
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	require.NotNil(t, cmd)
 	msg := cmd()
 	next, _ = next.(model).Update(msg)
 	nextModel := next.(model)
 
-	assert.Equal(t, "attached to tmux session", nextModel.lastActionMessage)
+	assert.Equal(t, "opened sandbox", nextModel.lastActionMessage)
 	assert.False(t, nextModel.lastActionError)
 }
 

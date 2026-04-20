@@ -121,7 +121,10 @@ type model struct {
 	lastActionMessage string
 	lastActionError   bool
 
-	attach  func(context.Context, string, string) (string, error)
+	attachRequested     bool
+	attachInvocationID  string
+	attachRequestedRepo string
+
 	open    func(context.Context, string, string) (string, error)
 	prSync  func(context.Context, string, string) (string, error)
 	restore func(context.Context, string, string, string) (string, error)
@@ -155,7 +158,6 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 		backPage:             pageWorkspace,
 		selectedInvocationID: strings.TrimSpace(opts.InvocationID),
 		selectedRepoID:       strings.TrimSpace(opts.RepoID),
-		attach:               opts.Attach,
 		open:                 opts.Open,
 		prSync:               opts.PRSync,
 		restore:              opts.Restore,
@@ -503,14 +505,47 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 	var run func() (string, error)
 	switch kind {
 	case actionAttach:
-		if m.attach == nil {
+		if selected.Mode != "headed" {
 			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.lastActionMessage = formatActionError(
+				kind,
+				agencyerrors.NewWithDetails(
+					agencyerrors.EInvocationInvalidMode,
+					"invocation is headless; attach is only supported for headed invocations",
+					map[string]string{
+						"invocation_id": selected.InvocationID,
+						"mode":          selected.Mode,
+						"hint":          "use 'agency agent <invocation-ref> history logs' to view headless invocation output",
+					},
+				),
+				selected.InvocationID,
+				selected.WorktreeID,
+				"",
+			)
 			return m, nil
 		}
-		run = func() (string, error) {
-			return m.attach(m.ctx, selected.InvocationID, selected.RepoID)
+		if selected.Status != "running" {
+			m.lastActionError = true
+			m.lastActionMessage = formatActionError(
+				kind,
+				agencyerrors.NewWithDetails(
+					agencyerrors.ESessionEnded,
+					"tmux session not found",
+					map[string]string{
+						"invocation_id": selected.InvocationID,
+						"hint":          "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view",
+					},
+				),
+				selected.InvocationID,
+				selected.WorktreeID,
+				"",
+			)
+			return m, nil
 		}
+		m.attachRequested = true
+		m.attachInvocationID = selected.InvocationID
+		m.attachRequestedRepo = selected.RepoID
+		return m, tea.Quit
 	case actionOpen:
 		if m.open == nil {
 			m.lastActionError = true
@@ -569,6 +604,18 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 			err:          err,
 		}
 	}
+}
+
+func (m model) requestedAttach() (string, string, bool) {
+	if !m.attachRequested {
+		return "", "", false
+	}
+	invocationID := strings.TrimSpace(m.attachInvocationID)
+	repoID := strings.TrimSpace(m.attachRequestedRepo)
+	if invocationID == "" || repoID == "" {
+		return "", "", false
+	}
+	return invocationID, repoID, true
 }
 
 func (m model) startRestoreAction() (tea.Model, tea.Cmd) {

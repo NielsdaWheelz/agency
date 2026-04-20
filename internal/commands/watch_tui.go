@@ -35,16 +35,6 @@ type watchActionDispatcher struct {
 	dataDirOverride string
 }
 
-func (d *watchActionDispatcher) Attach(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentAttach(ctx, d.cr, d.fsys, d.cwd, AgentAttachOpts{
-			InvocationRef:   invocationID,
-			RepoRef:         repoID,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
 func (d *watchActionDispatcher) Open(ctx context.Context, invocationID, repoID string) (string, error) {
 	return d.capture(func(stdout, stderr io.Writer) error {
 		return AgentOpen(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
@@ -83,7 +73,6 @@ func (d *watchActionDispatcher) capture(run func(stdout, stderr io.Writer) error
 
 // Watch launches the full-screen, daemon-backed watch workspace.
 func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WatchOpts, stdout, stderr io.Writer) error {
-	_ = stderr
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -147,12 +136,11 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		cwd:             cwd,
 		dataDirOverride: opts.DataDirOverride,
 	}
-	return watch.Run(ctx, client, watch.RunOptions{
+	result, err := watch.Run(ctx, client, watch.RunOptions{
 		InitialPage: watch.InitialPageWorkspace,
 		Interval:    interval,
 		Input:       input,
 		Output:      output,
-		Attach:      actionDelegates.Attach,
 		Open:        actionDelegates.Open,
 		PRSync:      actionDelegates.PRSync,
 		Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
@@ -166,4 +154,16 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 			})
 		},
 	})
+	if err != nil {
+		return err
+	}
+	if result.AttachInvocationID == "" || result.AttachRepoID == "" {
+		return nil
+	}
+	return AgentAttach(ctx, cr, fsys, cwd, AgentAttachOpts{
+		InvocationRef:   result.AttachInvocationID,
+		RepoRef:         result.AttachRepoID,
+		IsInteractive:   isInteractive,
+		DataDirOverride: opts.DataDirOverride,
+	}, stdout, stderr)
 }

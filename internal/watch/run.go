@@ -20,36 +20,40 @@ type RunOptions struct {
 	Interval     time.Duration
 	Input        io.Reader
 	Output       io.Writer
-	Attach       func(context.Context, string, string) (string, error)
 	Open         func(context.Context, string, string) (string, error)
 	PRSync       func(context.Context, string, string) (string, error)
 	Restore      func(context.Context, string, string, string) (string, error)
 }
 
+type RunResult struct {
+	AttachInvocationID string
+	AttachRepoID       string
+}
+
 // Run launches the full-screen watch TUI.
-func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) error {
+func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) (RunResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if client == nil {
-		return errors.New(errors.EInternal, "watch runtime requires a daemon client")
+		return RunResult{}, errors.New(errors.EInternal, "watch runtime requires a daemon client")
 	}
 
 	switch opts.InitialPage {
 	case "", InitialPageWorkspace:
 	case InitialPageHistory:
 		if opts.InvocationID == "" || opts.RepoID == "" {
-			return errors.New(errors.EInvalidArgument, "history page requires an invocation and repo")
+			return RunResult{}, errors.New(errors.EInvalidArgument, "history page requires an invocation and repo")
 		}
 	default:
-		return errors.New(errors.EInternal, "unknown watch initial page")
+		return RunResult{}, errors.New(errors.EInternal, "unknown watch initial page")
 	}
 
 	m := newModel(ctx, client, opts)
 	if opts.InitialPage == InitialPageHistory {
 		turns, err := loadHistoryTurns(ctx, client, opts.InvocationID, opts.RepoID)
 		if err != nil {
-			return err
+			return RunResult{}, err
 		}
 		m.historyTurns = turns
 		m.reconcileHistorySelection()
@@ -64,12 +68,23 @@ func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) erro
 	}
 
 	program := tea.NewProgram(m, programOptions...)
-	_, err := program.Run()
+	finalModel, err := program.Run()
 	if err == nil {
-		return nil
+		resolvedModel, ok := finalModel.(model)
+		if !ok {
+			return RunResult{}, nil
+		}
+		invocationID, repoID, ok := resolvedModel.requestedAttach()
+		if !ok {
+			return RunResult{}, nil
+		}
+		return RunResult{
+			AttachInvocationID: invocationID,
+			AttachRepoID:       repoID,
+		}, nil
 	}
 	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, tea.ErrInterrupted) {
-		return nil
+		return RunResult{}, nil
 	}
-	return err
+	return RunResult{}, err
 }
