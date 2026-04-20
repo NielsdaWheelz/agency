@@ -51,6 +51,12 @@ func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) (Run
 
 	m := newModel(ctx, client, opts)
 	if opts.InitialPage == InitialPageHistory {
+		invocation, err := client.GetInvocation(ctx, opts.InvocationID, opts.RepoID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		m.selectedMode = invocation.Data.Mode
+		m.selectedStatus = invocation.Data.Status
 		turns, err := loadHistoryTurns(ctx, client, opts.InvocationID, opts.RepoID)
 		if err != nil {
 			return RunResult{}, err

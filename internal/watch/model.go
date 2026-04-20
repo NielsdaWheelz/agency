@@ -28,9 +28,10 @@ const (
 type watchPage string
 
 const (
-	pageWorkspace watchPage = "workspace"
-	pageHistory   watchPage = "history"
-	pageLogs      watchPage = "logs"
+	pageWorkspace  watchPage = "workspace"
+	pageHistory    watchPage = "history"
+	pageTranscript watchPage = "transcript"
+	pageLogs       watchPage = "logs"
 )
 
 type actionKind string
@@ -75,6 +76,12 @@ type historyLoadedMsg struct {
 }
 
 type logsLoadedMsg struct {
+	kind    string
+	content string
+	err     error
+}
+
+type transcriptLoadedMsg struct {
 	content string
 	err     error
 }
@@ -102,6 +109,8 @@ type model struct {
 	selectedIndex        int
 	selectedInvocationID string
 	selectedRepoID       string
+	selectedMode         string
+	selectedStatus       string
 
 	workspaceLoading bool
 	workspaceError   string
@@ -112,6 +121,12 @@ type model struct {
 	historyLoading         bool
 	historyError           string
 
+	transcriptContent string
+	transcriptScroll  int
+	transcriptLoading bool
+	transcriptError   string
+
+	logsKind    string
 	logsContent string
 	logsScroll  int
 	logsLoading bool
@@ -175,6 +190,12 @@ func (m model) Init() tea.Cmd {
 		}
 		m.historyLoading = true
 		return m.loadHistoryCmd()
+	case pageTranscript:
+		if strings.TrimSpace(m.transcriptContent) != "" {
+			return nil
+		}
+		m.transcriptLoading = true
+		return m.loadTranscriptCmd()
 	case pageLogs:
 		m.logsLoading = true
 		return m.loadLogsCmd()
@@ -222,12 +243,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reconcileHistorySelection()
 		return m, nil
 
+	case transcriptLoadedMsg:
+		m.transcriptLoading = false
+		if msg.err != nil {
+			m.transcriptError = msg.err.Error()
+			return m, nil
+		}
+		m.transcriptContent = msg.content
+		m.transcriptError = ""
+		m.transcriptScroll = clamp(m.transcriptScroll, 0, m.maxTranscriptScroll())
+		return m, nil
+
 	case logsLoadedMsg:
 		m.logsLoading = false
 		if msg.err != nil {
 			m.logsError = msg.err.Error()
 			return m, nil
 		}
+		m.logsKind = msg.kind
 		m.logsContent = msg.content
 		m.logsError = ""
 		m.logsScroll = clamp(m.logsScroll, 0, m.maxLogsScroll())
@@ -267,6 +300,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateWorkspaceKey(msg)
 		case pageHistory:
 			return m.updateHistoryKey(msg)
+		case pageTranscript:
+			return m.updateTranscriptKey(msg)
 		case pageLogs:
 			return m.updateLogsKey(msg)
 		default:
@@ -282,6 +317,8 @@ func (m model) View() tea.View {
 	switch m.page {
 	case pageHistory:
 		content = m.renderHistory()
+	case pageTranscript:
+		content = m.renderTranscript()
 	case pageLogs:
 		content = m.renderLogs()
 	default:
@@ -315,6 +352,8 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedIndex = 0
 			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
 			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
+			m.selectedMode = m.snapshot.Invocations[0].Mode
+			m.selectedStatus = m.snapshot.Invocations[0].Status
 		}
 		return m, nil
 	case isBottomKey(msg):
@@ -322,6 +361,8 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedIndex = len(m.snapshot.Invocations) - 1
 			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+			m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
+			m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].Status
 		}
 		return m, nil
 	case msg.Text == "h":
@@ -343,6 +384,8 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.page = pageLogs
 		m.backPage = pageWorkspace
+		m.logsKind = m.currentLogsKind()
+		m.logsContent = ""
 		m.logsLoading = true
 		m.logsError = ""
 		m.logsScroll = 0
@@ -402,15 +445,68 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
 		}
 		return m, nil
+	case msg.Text == "a":
+		return m.requestAttach()
+	case msg.Text == "t":
+		m.page = pageTranscript
+		m.backPage = pageHistory
+		m.transcriptContent = ""
+		m.transcriptLoading = true
+		m.transcriptError = ""
+		m.transcriptScroll = 0
+		return m, m.loadTranscriptCmd()
 	case msg.Text == "l":
 		m.page = pageLogs
 		m.backPage = pageHistory
+		m.logsKind = m.currentLogsKind()
+		m.logsContent = ""
 		m.logsLoading = true
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
 	case isEnterKey(msg):
 		return m.startRestoreAction()
+	default:
+		return m, nil
+	}
+}
+
+func (m model) updateTranscriptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isQuitKey(msg):
+		return m, tea.Quit
+	case isBackKey(msg):
+		m.page = pageHistory
+		return m, nil
+	case isRefreshKey(msg):
+		if m.transcriptLoading {
+			return m, nil
+		}
+		m.transcriptLoading = true
+		return m, m.loadTranscriptCmd()
+	case isUpKey(msg):
+		m.transcriptScroll = clamp(m.transcriptScroll-1, 0, m.maxTranscriptScroll())
+		return m, nil
+	case isDownKey(msg):
+		m.transcriptScroll = clamp(m.transcriptScroll+1, 0, m.maxTranscriptScroll())
+		return m, nil
+	case isTopKey(msg):
+		m.transcriptScroll = 0
+		return m, nil
+	case isBottomKey(msg):
+		m.transcriptScroll = m.maxTranscriptScroll()
+		return m, nil
+	case msg.Text == "a":
+		return m.requestAttach()
+	case msg.Text == "l":
+		m.page = pageLogs
+		m.backPage = pageTranscript
+		m.logsKind = m.currentLogsKind()
+		m.logsContent = ""
+		m.logsLoading = true
+		m.logsError = ""
+		m.logsScroll = 0
+		return m, m.loadLogsCmd()
 	default:
 		return m, nil
 	}
@@ -448,6 +544,8 @@ func (m model) updateLogsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isBottomKey(msg):
 		m.logsScroll = m.maxLogsScroll()
 		return m, nil
+	case msg.Text == "a":
+		return m.requestAttach()
 	default:
 		return m, nil
 	}
@@ -473,14 +571,26 @@ func (m *model) loadHistoryCmd() tea.Cmd {
 	}
 }
 
-func (m *model) loadLogsCmd() tea.Cmd {
+func (m *model) loadTranscriptCmd() tea.Cmd {
 	ctx := m.ctx
 	client := m.client
 	invocationID := m.selectedInvocationID
 	repoID := m.selectedRepoID
 	return func() tea.Msg {
-		content, err := loadInvocationLogs(ctx, client, invocationID, repoID)
-		return logsLoadedMsg{content: content, err: err}
+		content, err := loadInvocationTranscript(ctx, client, invocationID, repoID)
+		return transcriptLoadedMsg{content: content, err: err}
+	}
+}
+
+func (m *model) loadLogsCmd() tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	invocationID := m.selectedInvocationID
+	repoID := m.selectedRepoID
+	kind := m.currentLogsKind()
+	return func() tea.Msg {
+		content, err := loadInvocationLogs(ctx, client, invocationID, repoID, kind)
+		return logsLoadedMsg{kind: kind, content: content, err: err}
 	}
 }
 
@@ -515,7 +625,7 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 					map[string]string{
 						"invocation_id": selected.InvocationID,
 						"mode":          selected.Mode,
-						"hint":          "use 'agency agent <invocation-ref> history logs' to view headless invocation output",
+						"hint":          "use history, transcript, or logs to inspect headless invocations",
 					},
 				),
 				selected.InvocationID,
@@ -533,7 +643,7 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 					"tmux session not found",
 					map[string]string{
 						"invocation_id": selected.InvocationID,
-						"hint":          "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view",
+						"hint":          "session ended; use history, transcript, logs, or open to inspect the invocation",
 					},
 				),
 				selected.InvocationID,
@@ -604,6 +714,69 @@ func (m model) startWorkspaceAction(kind actionKind) (tea.Model, tea.Cmd) {
 			err:          err,
 		}
 	}
+}
+
+func (m model) requestAttach() (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(m.selectedInvocationID) == "" || strings.TrimSpace(m.selectedRepoID) == "" {
+		m.lastActionError = true
+		m.lastActionMessage = "attach unavailable: no invocation selected"
+		return m, nil
+	}
+
+	mode := strings.TrimSpace(m.selectedMode)
+	status := strings.TrimSpace(m.selectedStatus)
+	if selected, ok := m.selectedInvocation(); ok && selected.InvocationID == m.selectedInvocationID {
+		if mode == "" {
+			mode = strings.TrimSpace(selected.Mode)
+		}
+		if status == "" {
+			status = strings.TrimSpace(selected.Status)
+		}
+	}
+
+	if mode != "headed" {
+		m.lastActionError = true
+		m.lastActionMessage = formatActionError(
+			actionAttach,
+			agencyerrors.NewWithDetails(
+				agencyerrors.EInvocationInvalidMode,
+				"invocation is headless; attach is only supported for headed invocations",
+				map[string]string{
+					"invocation_id": m.selectedInvocationID,
+					"mode":          mode,
+					"hint":          "use logs or transcript to inspect headless invocations",
+				},
+			),
+			m.selectedInvocationID,
+			"",
+			"",
+		)
+		return m, nil
+	}
+
+	if status != "running" {
+		m.lastActionError = true
+		m.lastActionMessage = formatActionError(
+			actionAttach,
+			agencyerrors.NewWithDetails(
+				agencyerrors.ESessionEnded,
+				"tmux session not found",
+				map[string]string{
+					"invocation_id": m.selectedInvocationID,
+					"hint":          "session ended; use transcript, logs, or open to inspect the invocation",
+				},
+			),
+			m.selectedInvocationID,
+			"",
+			"",
+		)
+		return m, nil
+	}
+
+	m.attachRequested = true
+	m.attachInvocationID = m.selectedInvocationID
+	m.attachRequestedRepo = m.selectedRepoID
+	return m, tea.Quit
 }
 
 func (m model) requestedAttach() (string, string, bool) {
@@ -680,12 +853,16 @@ func (m *model) moveSelection(delta int) {
 		m.selectedIndex = 0
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
+		m.selectedMode = ""
+		m.selectedStatus = ""
 		return
 	}
 	next := clamp(m.selectedIndex+delta, 0, len(m.snapshot.Invocations)-1)
 	m.selectedIndex = next
 	m.selectedInvocationID = m.snapshot.Invocations[next].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[next].RepoID
+	m.selectedMode = m.snapshot.Invocations[next].Mode
+	m.selectedStatus = m.snapshot.Invocations[next].Status
 }
 
 func (m *model) reconcileSelection() {
@@ -693,6 +870,8 @@ func (m *model) reconcileSelection() {
 		m.selectedIndex = 0
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
+		m.selectedMode = ""
+		m.selectedStatus = ""
 		return
 	}
 
@@ -701,6 +880,8 @@ func (m *model) reconcileSelection() {
 			if inv.InvocationID == m.selectedInvocationID {
 				m.selectedIndex = idx
 				m.selectedRepoID = inv.RepoID
+				m.selectedMode = inv.Mode
+				m.selectedStatus = inv.Status
 				return
 			}
 		}
@@ -709,6 +890,8 @@ func (m *model) reconcileSelection() {
 	m.selectedIndex = clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
 	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+	m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
+	m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].Status
 }
 
 func (m *model) reconcileHistorySelection() {
@@ -756,7 +939,7 @@ func formatActionError(kind actionKind, err error, invocationID, worktreeID, tur
 	target := actionTarget(kind, invocationID, worktreeID, turnID)
 	code := agencyerrors.GetCode(err)
 	if code == agencyerrors.ESessionEnded {
-		hint := "session ended; use 'agency agent <invocation-ref> history logs' or 'agency agent <invocation-ref> open' to view"
+		hint := "session ended; use history, transcript, logs, or open to inspect the invocation"
 		if ae, ok := agencyerrors.AsAgencyError(err); ok {
 			if resolvedHint := strings.TrimSpace(ae.Details["hint"]); resolvedHint != "" {
 				hint = resolvedHint

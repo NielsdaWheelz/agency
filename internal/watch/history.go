@@ -133,7 +133,7 @@ func (m model) renderHistory() string {
 	if len(m.historyTurns) == 0 {
 		lines = append(lines, "no history entries available")
 		lines = append(lines, "")
-		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • l logs • r refresh • b back • q quit"))
+		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • r refresh • b back • q quit"))
 		return strings.Join(lines, "\n")
 	}
 
@@ -143,7 +143,7 @@ func (m model) renderHistory() string {
 		m.renderHistoryTurn(&builder, index, turn, width)
 	}
 	builder.WriteString("\n")
-	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • l logs • r refresh • b back • q quit"))
+	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • r refresh • b back • q quit"))
 	return builder.String()
 }
 

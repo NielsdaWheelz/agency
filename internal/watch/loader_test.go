@@ -311,7 +311,7 @@ func TestLoadInvocationLogs_DrainsOffsetPages(t *testing.T) {
 		}
 	})))
 
-	content, err := loadInvocationLogs(context.Background(), client, "inv-1", "repo-1")
+	content, err := loadInvocationLogs(context.Background(), client, "inv-1", "repo-1", "raw")
 	require.NoError(t, err)
 	assert.Equal(t, "hello world", content)
 }

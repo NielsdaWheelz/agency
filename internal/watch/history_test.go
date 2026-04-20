@@ -139,6 +139,27 @@ func TestHistoryPageRestoreAction_UsesSelectedTurnAndQueuesReload(t *testing.T) 
 	require.NotNil(t, followCmd)
 }
 
+func TestHistoryPageAttach_QuitsAndDefersAttach(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{InitialPage: InitialPageHistory, InvocationID: "inv-1", RepoID: "repo-1"})
+	m.page = pageHistory
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+	m.selectedMode = "headed"
+	m.selectedStatus = "running"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "a"})
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
+
+	nextModel := next.(model)
+	invocationID, repoID, ok := nextModel.requestedAttach()
+	require.True(t, ok)
+	assert.Equal(t, "inv-1", invocationID)
+	assert.Equal(t, "repo-1", repoID)
+}
+
 func TestLoadHistoryTurns_ValidatesScopeBeforeLoading(t *testing.T) {
 	t.Parallel()
 

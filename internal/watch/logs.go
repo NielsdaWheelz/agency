@@ -12,19 +12,22 @@ import (
 
 const logReadLimit = 65536
 
-func loadInvocationLogs(ctx context.Context, client *daemonclient.Client, invocationID, repoID string) (string, error) {
+func loadInvocationLogs(ctx context.Context, client *daemonclient.Client, invocationID, repoID, kind string) (string, error) {
 	if client == nil {
 		return "", errors.New(errors.EInternal, "watch runtime requires a daemon client")
 	}
 	if strings.TrimSpace(invocationID) == "" || strings.TrimSpace(repoID) == "" {
 		return "", errors.New(errors.EInvalidArgument, "logs page requires an invocation and repo")
 	}
+	if strings.TrimSpace(kind) == "" {
+		kind = "raw"
+	}
 
 	var builder strings.Builder
 	offset := int64(0)
 	for {
 		result, err := client.GetInvocationLogsOffset(ctx, invocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{
-			Kind:   "raw",
+			Kind:   kind,
 			Offset: offset,
 			Limit:  logReadLimit,
 		})
@@ -54,7 +57,7 @@ func (m model) renderLogs() string {
 	}
 
 	lines := []string{
-		headerStyle.Render("invocation logs  " + m.selectedInvocationID),
+		headerStyle.Render("invocation logs  " + m.selectedInvocationID + "  (" + m.currentLogsKind() + ")"),
 		"",
 	}
 	if m.lastActionMessage != "" {
@@ -97,7 +100,7 @@ func (m model) renderLogs() string {
 		))
 	}
 	lines = append(lines, "")
-	lines = append(lines, warningStyle.Render("j/k move • r refresh • b back • q quit"))
+	lines = append(lines, warningStyle.Render("j/k move • a attach • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
 }
 
@@ -113,4 +116,18 @@ func logLines(content string) []string {
 		return []string{"(no log output yet)"}
 	}
 	return lines
+}
+
+func (m model) currentLogsKind() string {
+	if strings.TrimSpace(m.logsKind) != "" {
+		return m.logsKind
+	}
+	mode := strings.TrimSpace(m.selectedMode)
+	if selected, ok := m.selectedInvocation(); ok && selected.InvocationID == m.selectedInvocationID && mode == "" {
+		mode = strings.TrimSpace(selected.Mode)
+	}
+	if mode == "headed" {
+		return "terminal"
+	}
+	return "raw"
 }

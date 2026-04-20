@@ -87,7 +87,7 @@ headless (fire-and-forget):
 ```bash
 agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix the auth bug"
 agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
-agency agent <invocation-ref> history                 # interactive invocation history/logs UI (same runtime; tty only)
+agency agent <invocation-ref> history                 # interactive invocation history/transcript/logs UI (same runtime; tty only)
 agency agent <invocation-ref> history --json          # machine-readable timeline output
 agency agent <invocation-ref> history logs --follow   # raw invocation logs
 agency agent <invocation-ref> followup --prompt "continue with edge-case tests"
@@ -109,8 +109,10 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 - `agent <ref> path|open|attach`: `-r/--repo`
 
 `agency watch` and `agency agent <invocation-ref> history` open different pages of the same Bubble Tea runtime.
-That runtime exposes workspace, history, and logs pages over the same daemon-backed read model.
-`agency agent <invocation-ref> history` is the canonical inspection surface for invocation turns, checkpoints, and logs.
+That runtime exposes workspace, history, transcript, and logs pages over the same daemon-backed read model.
+`agency agent <invocation-ref> history` is the canonical inspection surface for invocation turns, checkpoints, transcripts, and logs.
+`agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations; it is not a parallel inspection workflow.
+For headed interactive logs, prefer the live terminal output; use history/transcript/logs pages for daemon-backed inspection and replay.
 `agency agent <invocation-ref> restore` restores sandbox state only; it does not rerun the original prompt.
 use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
 after a restore, use `agency agent <invocation-ref> followup` to continue from the restored state.
