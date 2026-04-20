@@ -60,15 +60,16 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
-		if m.StopRequestedAt == "" {
-			m.StopRequestedAt = now
-		}
-		m.Flags.NeedsAttention = true
-	})
-
 	if meta.Mode == store.RunnerModeHeaded {
+		now := s.Clock().UTC().Format(time.RFC3339)
+		_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
+			if m.StopRequestedAt == "" {
+				m.StopRequestedAt = now
+			}
+			m.Status = store.InvocationStatusStopping
+			m.Flags.NeedsAttention = true
+		})
+
 		sessionName := meta.TmuxSession
 		if sessionName == "" {
 			sessionName = tmux.SessionName(record.InvocationID)
@@ -81,14 +82,20 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 			})
 		}
 		if !exists {
-			if meta.Status == store.InvocationStatusRunning {
-				finishedAt := s.Clock().UTC().Format(time.RFC3339)
-				_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
-					m.Status = store.InvocationStatusFinished
-					m.ExitReason = "exited"
-					m.FinishedAt = finishedAt
-				})
+			finishedAt := s.Clock().UTC().Format(time.RFC3339)
+			_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
+				m.Status = store.InvocationStatusFailed
+				m.ExitReason = "stopped"
+				m.FailureReason = "stopped"
+				m.FinishedAt = finishedAt
+				m.LifecycleOwner = ""
+			})
+			s.mu.Lock()
+			if proc, ok := s.processes[record.InvocationID]; ok {
+				proc.CloseDone()
+				delete(s.processes, record.InvocationID)
 			}
+			s.mu.Unlock()
 			s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 			return
 		}
@@ -97,6 +104,29 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 			s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_send_ctrl_c_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
 			})
+
+			exists, checkErr := s.TmuxClient.HasSession(ctx, sessionName)
+			if checkErr != nil {
+				s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_has_session_failed_after_send", checkErr.Error(), map[string]any{
+					"session_name": sessionName,
+				})
+			}
+			if !exists {
+				finishedAt := s.Clock().UTC().Format(time.RFC3339)
+				_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
+					m.Status = store.InvocationStatusFailed
+					m.ExitReason = "stopped"
+					m.FailureReason = "stopped"
+					m.FinishedAt = finishedAt
+					m.LifecycleOwner = ""
+				})
+				s.mu.Lock()
+				if proc, ok := s.processes[record.InvocationID]; ok {
+					proc.CloseDone()
+					delete(s.processes, record.InvocationID)
+				}
+				s.mu.Unlock()
+			}
 		}
 
 		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
@@ -111,6 +141,15 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
 		return
 	}
+
+	now := s.Clock().UTC().Format(time.RFC3339)
+	_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
+		if m.StopRequestedAt == "" {
+			m.StopRequestedAt = now
+		}
+		m.Status = store.InvocationStatusStopping
+		m.Flags.NeedsAttention = true
+	})
 
 	s.mu.RLock()
 	proc, supervised := s.processes[record.InvocationID]
@@ -131,6 +170,17 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 	}
 
 	if err := syscall.Kill(-pgid, syscall.SIGINT); err == syscall.ESRCH {
+		if !supervised {
+			now := s.Clock().UTC().Format(time.RFC3339)
+			_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+				m.Status = store.InvocationStatusFailed
+				m.ExitReason = "stopped"
+				m.FailureReason = "stopped"
+				m.FinishedAt = now
+				m.PID = nil
+				m.LifecycleOwner = ""
+			})
+		}
 		return
 	}
 	if supervised && proc != nil {
@@ -142,11 +192,31 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 	} else {
 		time.Sleep(5 * time.Second)
 		if !s.PIDChecker(pgid) {
+			now := s.Clock().UTC().Format(time.RFC3339)
+			_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+				m.Status = store.InvocationStatusFailed
+				m.ExitReason = "stopped"
+				m.FailureReason = "stopped"
+				m.FinishedAt = now
+				m.PID = nil
+				m.LifecycleOwner = ""
+			})
 			return
 		}
 	}
 
 	if err := syscall.Kill(-pgid, syscall.SIGTERM); err == syscall.ESRCH {
+		if !supervised {
+			now := s.Clock().UTC().Format(time.RFC3339)
+			_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+				m.Status = store.InvocationStatusFailed
+				m.ExitReason = "stopped"
+				m.FailureReason = "stopped"
+				m.FinishedAt = now
+				m.PID = nil
+				m.LifecycleOwner = ""
+			})
+		}
 		return
 	}
 	if supervised && proc != nil {
@@ -158,6 +228,15 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 	} else {
 		time.Sleep(2 * time.Second)
 		if !s.PIDChecker(pgid) {
+			now := s.Clock().UTC().Format(time.RFC3339)
+			_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+				m.Status = store.InvocationStatusFailed
+				m.ExitReason = "stopped"
+				m.FailureReason = "stopped"
+				m.FinishedAt = now
+				m.PID = nil
+				m.LifecycleOwner = ""
+			})
 			return
 		}
 	}

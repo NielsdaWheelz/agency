@@ -58,7 +58,9 @@ func (s *Server) reconcileHeadedInvocationsForRepo(ctx context.Context, repoID s
 		if r.Broken || r.Meta == nil {
 			continue
 		}
-		if r.Meta.Status != store.InvocationStatusStarting && r.Meta.Status != store.InvocationStatusRunning {
+		if r.Meta.Status != store.InvocationStatusStarting &&
+			r.Meta.Status != store.InvocationStatusRunning &&
+			r.Meta.Status != store.InvocationStatusStopping {
 			s.cleanupHeadedStartingTracking(r.InvocationID)
 			continue
 		}
@@ -105,11 +107,29 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 			delete(s.processes, r.InvocationID)
 		}
 		s.mu.Unlock()
+	case store.InvocationStatusStopping:
+		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFailed
+			meta.ExitReason = "stopped"
+			meta.FailureReason = "stopped"
+			meta.FinishedAt = now
+			meta.LifecycleOwner = ""
+		})
+		s.mu.Lock()
+		if proc, ok := s.processes[r.InvocationID]; ok {
+			proc.CloseDone()
+			delete(s.processes, r.InvocationID)
+		}
+		s.mu.Unlock()
 	}
 }
 
 func (s *Server) reconcileHeadlessInvocation(repoID string, r store.InvocationRecord, now string) {
-	if r.Meta.Status != store.InvocationStatusRunning || r.Meta.PID == nil {
+	if r.Meta.Status != store.InvocationStatusRunning &&
+		r.Meta.Status != store.InvocationStatusStopping {
+		return
+	}
+	if r.Meta.PID == nil {
 		return
 	}
 	pid := *r.Meta.PID
@@ -122,6 +142,15 @@ func (s *Server) reconcileHeadlessInvocation(repoID string, r store.InvocationRe
 	}
 
 	_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+		if meta.Status == store.InvocationStatusStopping {
+			meta.Status = store.InvocationStatusFailed
+			meta.ExitReason = "stopped"
+			meta.FailureReason = "stopped"
+			meta.FinishedAt = now
+			meta.PID = nil
+			meta.LifecycleOwner = ""
+			return
+		}
 		if meta.Status != store.InvocationStatusRunning {
 			return
 		}

@@ -366,6 +366,46 @@ func TestHandleGetWorktree_ByName(t *testing.T) {
 	assert.Equal(t, "wt-1", dto.WorktreeID)
 }
 
+func TestHandleGetWorktree_ByNameIgnoresArchivedDuplicate(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-2", func(meta *store.IntegrationWorktreeMeta) {
+		meta.Name = "alpha"
+	}))
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto WorktreeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "wt-1", dto.WorktreeID)
+	assert.Equal(t, "present", dto.State)
+}
+
+func TestHandleGetWorktree_ByExactArchivedID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-2?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto WorktreeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "wt-2", dto.WorktreeID)
+	assert.Equal(t, "archived", dto.State)
+}
+
 func TestHandleGetWorktree_NotFound(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -605,6 +645,84 @@ func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup
 	var dto InvocationDTO
 	decodeData(t, resp, &dto)
 	assert.Equal(t, "invocation-owned summary survives cleanup", dto.StatusSummary)
+}
+
+func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	working := runnerstatus.StatusWorking
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusStopping
+		meta.Flags.NeedsAttention = true
+		meta.SemanticStatus = &working
+	}))
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	assert.Equal(t, string(store.InvocationStatusStopping), shown.Status)
+	assert.Equal(t, DisplayStatusStopping, shown.DisplayStatus)
+	assert.Contains(t, shown.AttentionFlags, AttentionFlagNeedsAttention)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Equal(t, string(store.InvocationStatusStopping), check.Status)
+	assert.Equal(t, DisplayStatusStopping, check.DisplayStatus)
+	assert.Contains(t, check.BlockingReasons, InvocationCheckReason{
+		Code:    checkReasonInvocationActive,
+		Message: "invocation is still active",
+		Hint:    "wait for completion before check/merge progression",
+	})
+}
+
+func TestHandleCheckpointApply_StoppingInvocationReturnsConflict(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusStopping
+	}))
+
+	body := []byte(`{"checkpoint_id":1}`)
+	req := env.newInvocationRequestWithHeaders(t, http.MethodPost, "/invocations/inv-1/checkpoints/apply?repo_id="+env.RepoID, body, nil)
+	w := httptest.NewRecorder()
+	env.apiHandler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
+	assert.Equal(t, "invocation is still active", resp.Message)
+}
+
+func TestHandleRepoRm_StoppingInvocationReturnsConflict(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusStopping
+	}))
+
+	body := []byte(`{"repo_ref":"` + env.RepoID + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/repos/rm", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.apiHandler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_REPO_HAS_INVOCATIONS", resp.ErrorCode)
+	assert.Equal(t, "active invocations exist for repo "+env.RepoID, resp.Message)
 }
 
 func TestHandleGetInvocation_NotFound(t *testing.T) {
@@ -854,6 +972,7 @@ func TestMatchesInvocationState(t *testing.T) {
 	}{
 		{"starting_unresolved", store.InvocationStatusStarting, "", "unresolved", true},
 		{"running_unresolved", store.InvocationStatusRunning, "", "unresolved", true},
+		{"stopping_unresolved", store.InvocationStatusStopping, "", "unresolved", true},
 		{"finished_no_landing_unresolved", store.InvocationStatusFinished, "", "unresolved", true},
 		{"finished_landed_unresolved", store.InvocationStatusFinished, store.LandingStatusLanded, "unresolved", false},
 		{"finished_discarded_unresolved", store.InvocationStatusFinished, store.LandingStatusDiscarded, "unresolved", false},
@@ -861,7 +980,9 @@ func TestMatchesInvocationState(t *testing.T) {
 		{"finished_finished", store.InvocationStatusFinished, "", "finished", true},
 		{"failed_finished", store.InvocationStatusFailed, "", "finished", true},
 		{"running_finished", store.InvocationStatusRunning, "", "finished", false},
+		{"stopping_finished", store.InvocationStatusStopping, "", "finished", false},
 		{"running_all", store.InvocationStatusRunning, "", "all", true},
+		{"stopping_all", store.InvocationStatusStopping, "", "all", true},
 	}
 
 	for _, tt := range tests {
@@ -1491,6 +1612,46 @@ func TestHandleListInvocations_WorktreeRefFilter(t *testing.T) {
 		gotIDs = append(gotIDs, inv.InvocationID)
 	}
 	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
+}
+
+func TestHandleListInvocations_WorktreeRefFilter_IgnoresArchivedDuplicateName(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-2", func(meta *store.IntegrationWorktreeMeta) {
+		meta.Name = "alpha"
+	}))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_ref=alpha")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Invocations, 2)
+	var gotIDs []string
+	for _, inv := range data.Invocations {
+		gotIDs = append(gotIDs, inv.InvocationID)
+	}
+	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
+}
+
+func TestHandleListInvocations_WorktreeRefFilter_ByExactArchivedID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_ref=wt-2")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	require.Len(t, data.Invocations, 1)
+	assert.Equal(t, "inv-3", data.Invocations[0].InvocationID)
 }
 
 func TestHandleListInvocations_WorktreeRefFilter_NotFound(t *testing.T) {

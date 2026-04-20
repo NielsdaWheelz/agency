@@ -398,9 +398,19 @@ func matchesInvocationState(status store.InvocationStatus, landing store.Landing
 	case "all":
 		return true
 	case "unresolved":
-		return landing != store.LandingStatusLanded && landing != store.LandingStatusDiscarded
+		switch status {
+		case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
+			return true
+		case store.InvocationStatusFinished, store.InvocationStatusFailed:
+			return landing != store.LandingStatusLanded && landing != store.LandingStatusDiscarded
+		}
+		return false
 	case "finished":
-		return status == store.InvocationStatusFinished || status == store.InvocationStatusFailed
+		switch status {
+		case store.InvocationStatusFinished, store.InvocationStatusFailed:
+			return true
+		}
+		return false
 	}
 	return false
 }

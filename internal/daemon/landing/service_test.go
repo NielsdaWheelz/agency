@@ -151,6 +151,12 @@ func TestLand_Preconditions(t *testing.T) {
 			wantCode:      errors.EInvocationStillRunning,
 		},
 		{
+			name:          "still stopping",
+			status:        store.InvocationStatusStopping,
+			landingStatus: "",
+			wantCode:      errors.EInvocationStillRunning,
+		},
+		{
 			name:          "already landed",
 			status:        store.InvocationStatusFinished,
 			landingStatus: store.LandingStatusLanded,

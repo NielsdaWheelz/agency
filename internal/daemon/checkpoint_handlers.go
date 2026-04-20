@@ -82,10 +82,12 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	// Precondition: invocation must be finished or failed
-	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
+	// Precondition: invocation must already be terminal.
+	if meta.Status == store.InvocationStatusStarting ||
+		meta.Status == store.InvocationStatusRunning ||
+		meta.Status == store.InvocationStatusStopping {
 		s.writeCheckpointError(w, http.StatusConflict, requestID, string(errors.EInvocationStillRunning),
-			"invocation is still running",
+			"invocation is still active",
 			"stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'")
 		return
 	}

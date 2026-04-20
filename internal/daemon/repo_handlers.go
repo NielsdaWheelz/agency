@@ -467,8 +467,12 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, record := range invocations {
-		if record.Broken || record.Meta == nil || record.Meta.Status == store.InvocationStatusStarting || record.Meta.Status == store.InvocationStatusRunning {
-			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoHasInvocations), "running invocations exist for repo "+resolved.RepoID, "stop or finish repo invocations before unregistering the repo", nil)
+		if record.Broken ||
+			record.Meta == nil ||
+			record.Meta.Status == store.InvocationStatusStarting ||
+			record.Meta.Status == store.InvocationStatusRunning ||
+			record.Meta.Status == store.InvocationStatusStopping {
+			s.writeAPIError(w, http.StatusConflict, requestID, string(errors.ERepoHasInvocations), "active invocations exist for repo "+resolved.RepoID, "stop or finish repo invocations before unregistering the repo", nil)
 			return
 		}
 	}

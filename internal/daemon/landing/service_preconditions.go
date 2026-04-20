@@ -63,7 +63,7 @@ func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *
 func (s *Service) validateLandPreconditions(meta *store.InvocationMeta) error {
 	if meta.Status != store.InvocationStatusFinished && meta.Status != store.InvocationStatusFailed {
 		return errors.NewWithDetails(errors.EInvocationStillRunning,
-			"invocation is still running",
+			"invocation is still active",
 			map[string]string{"hint": "stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'"},
 		)
 	}

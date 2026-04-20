@@ -92,7 +92,7 @@ type InvocationDTO struct {
 	LastOutputAt string `json:"last_output_at,omitempty"`
 
 	// Lifecycle status
-	Status     string `json:"status"`      // starting, running, finished, failed
+	Status     string `json:"status"`      // starting, running, stopping, finished, failed
 	ExitReason string `json:"exit_reason"` // exited, killed, stopped, start_failed, unknown
 	ExitCode   *int   `json:"exit_code,omitempty"`
 
@@ -315,6 +315,7 @@ type CheckpointCursor struct {
 // Display status values derived by daemon.
 const (
 	DisplayStatusFailed         = "failed"
+	DisplayStatusStopping       = "stopping"
 	DisplayStatusNeedsAttention = "needs attention"
 	DisplayStatusNeedsInput     = "needs input"
 	DisplayStatusBlocked        = "blocked"
@@ -338,6 +339,7 @@ const (
 // Sort key constants (lower = higher priority).
 const (
 	SortKeyFailed         = 10
+	SortKeyStopping       = 15
 	SortKeyNeedsAttention = 20
 	SortKeyNeedsInput     = 30
 	SortKeyBlocked        = 40

@@ -44,6 +44,27 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	}
 	defer func() { _ = mutation.unlock() }()
 
+	meta, err := s.Store.ReadInvocationMeta(mutation.record.RepoID, mutation.record.InvocationID)
+	if err != nil {
+		s.writeLandError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to read invocation meta: "+err.Error(), "", nil)
+		return
+	}
+	switch meta.Status {
+	case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
+		now := s.Clock().UTC().Format(time.RFC3339)
+		record := store.InvocationRecord{
+			InvocationID: mutation.record.InvocationID,
+			RepoID:       mutation.record.RepoID,
+			Meta:         meta,
+		}
+		switch meta.Mode {
+		case store.RunnerModeHeaded:
+			s.reconcileHeadedInvocation(r.Context(), mutation.record.RepoID, record, now)
+		case store.RunnerModeHeadless:
+			s.reconcileHeadlessInvocation(mutation.record.RepoID, record, now)
+		}
+	}
+
 	// Execute land
 	result, err := mutation.service.Land(r.Context(), landing.LandOpts{
 		RepoID:       mutation.record.RepoID,

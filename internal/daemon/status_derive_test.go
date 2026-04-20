@@ -80,6 +80,23 @@ func TestDeriveDisplayStatus_Precedence(t *testing.T) {
 			wantSortKey:       daemon.SortKeyNeedsAttention,
 		},
 		{
+			name: "stopping",
+			meta: &store.InvocationMeta{
+				Status: store.InvocationStatusStopping,
+			},
+			wantDisplayStatus: "stopping",
+			wantSortKey:       daemon.SortKeyStopping,
+		},
+		{
+			name: "stopping_overrides_needs_attention",
+			meta: &store.InvocationMeta{
+				Status: store.InvocationStatusStopping,
+				Flags:  store.InvocationFlags{NeedsAttention: true},
+			},
+			wantDisplayStatus: "stopping",
+			wantSortKey:       daemon.SortKeyStopping,
+		},
+		{
 			name: "needs_input",
 			meta: &store.InvocationMeta{
 				Status:         store.InvocationStatusRunning,
@@ -240,6 +257,14 @@ func TestDeriveDisplayStatus_AttentionFlags(t *testing.T) {
 				LastOutputAt: tenMinAgo,
 			},
 			wantFlags: []string{"needs_attention", "orphaned", "stalled"},
+		},
+		{
+			name: "stopping_is_not_stalled",
+			meta: &store.InvocationMeta{
+				Status:       store.InvocationStatusStopping,
+				LastOutputAt: tenMinAgo,
+			},
+			wantFlags: nil,
 		},
 	}
 

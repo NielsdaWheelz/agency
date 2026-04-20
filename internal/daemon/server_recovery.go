@@ -67,11 +67,55 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 			}
 			continue
 		}
-		if r.Meta.Status != store.InvocationStatusRunning || r.Meta.PID == nil {
+		if r.Meta.Status != store.InvocationStatusRunning &&
+			r.Meta.Status != store.InvocationStatusStopping {
+			continue
+		}
+		if r.Meta.PID == nil {
+			if r.Meta.Status == store.InvocationStatusStopping {
+				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+					meta.Status = store.InvocationStatusFailed
+					meta.ExitReason = "stopped"
+					meta.FailureReason = "stopped"
+					meta.FinishedAt = now
+					meta.LifecycleOwner = ""
+				})
+			}
 			continue
 		}
 
 		pid := *r.Meta.PID
+		if r.Meta.Status == store.InvocationStatusStopping {
+			if !s.PIDChecker(pid) {
+				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+					meta.Status = store.InvocationStatusFailed
+					meta.ExitReason = "stopped"
+					meta.FailureReason = "stopped"
+					meta.FinishedAt = now
+					meta.PID = nil
+					meta.LifecycleOwner = ""
+				})
+				continue
+			}
+
+			pgid := safeIntPtr(r.Meta.PGID)
+			if pgid <= 0 {
+				pgid = pid
+			}
+			if pgid <= 0 {
+				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+					meta.Status = store.InvocationStatusFailed
+					meta.ExitReason = "stopped"
+					meta.FailureReason = "stopped"
+					meta.FinishedAt = now
+					meta.LifecycleOwner = ""
+				})
+				continue
+			}
+
+			go s.stopEscalation(repoID, r.InvocationID, pgid, false, nil)
+			continue
+		}
 		if !s.PIDChecker(pid) {
 			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
 				meta.Status = store.InvocationStatusFailed
@@ -97,7 +141,9 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 }
 
 func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r store.InvocationRecord, now string, nowTime time.Time) {
-	if r.Meta.Status != store.InvocationStatusStarting && r.Meta.Status != store.InvocationStatusRunning {
+	if r.Meta.Status != store.InvocationStatusStarting &&
+		r.Meta.Status != store.InvocationStatusRunning &&
+		r.Meta.Status != store.InvocationStatusStopping {
 		return
 	}
 
@@ -142,6 +188,14 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
 			meta.Status = store.InvocationStatusFinished
 			meta.ExitReason = "exited"
+			meta.FinishedAt = now
+			meta.LifecycleOwner = ""
+		})
+	case store.InvocationStatusStopping:
+		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
+			meta.Status = store.InvocationStatusFailed
+			meta.ExitReason = "stopped"
+			meta.FailureReason = "stopped"
 			meta.FinishedAt = now
 			meta.LifecycleOwner = ""
 		})

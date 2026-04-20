@@ -23,6 +23,10 @@ const (
 	// InvocationStatusRunning indicates the invocation is actively running.
 	InvocationStatusRunning InvocationStatus = "running"
 
+	// InvocationStatusStopping indicates graceful shutdown was requested and
+	// terminal exit has not been observed yet.
+	InvocationStatusStopping InvocationStatus = "stopping"
+
 	// InvocationStatusFinished indicates the runner exited normally.
 	InvocationStatusFinished InvocationStatus = "finished"
 
@@ -102,7 +106,7 @@ type InvocationMeta struct {
 	// FinishedAt is the finish timestamp in RFC3339 UTC format (null if running).
 	FinishedAt string `json:"finished_at,omitempty"`
 
-	// Status is the lifecycle status (starting, running, finished, failed).
+	// Status is the lifecycle status (starting, running, stopping, finished, failed).
 	Status InvocationStatus `json:"status"`
 
 	// ExitReason describes how the invocation ended (exited, killed, stopped, start_failed, unknown).

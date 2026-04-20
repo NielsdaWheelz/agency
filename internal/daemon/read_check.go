@@ -113,7 +113,7 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 	}
 
 	switch meta.Status {
-	case store.InvocationStatusStarting, store.InvocationStatusRunning:
+	case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
 		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonInvocationActive,
 			Message: "invocation is still active",

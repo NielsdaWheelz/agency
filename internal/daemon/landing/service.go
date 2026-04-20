@@ -216,7 +216,9 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 		return err
 	}
 
-	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
+	if meta.Status == store.InvocationStatusRunning ||
+		meta.Status == store.InvocationStatusStarting ||
+		meta.Status == store.InvocationStatusStopping {
 		if opts.StopCallback != nil {
 			if err := opts.StopCallback(ctx, opts.RepoID, opts.InvocationID); err != nil {
 				if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_stop_warning", map[string]any{
@@ -244,7 +246,9 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 		if m.FinishedAt == "" {
 			m.FinishedAt = now
 		}
-		if m.Status == store.InvocationStatusRunning || m.Status == store.InvocationStatusStarting {
+		if m.Status == store.InvocationStatusRunning ||
+			m.Status == store.InvocationStatusStarting ||
+			m.Status == store.InvocationStatusStopping {
 			m.Status = store.InvocationStatusFailed
 			m.ExitReason = "discarded"
 		}

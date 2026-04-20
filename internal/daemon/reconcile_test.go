@@ -206,6 +206,39 @@ func TestReconcile_RunningToFinished(t *testing.T) {
 	assert.Empty(t, meta.LifecycleOwner)
 }
 
+func TestReconcile_StoppingToFailed(t *testing.T) {
+	t.Parallel()
+	// Test: Stopping → Failed(stopped) when tmux session disappears
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-stop-1"
+	invocationID := "20260205120000-stop"
+	sessionName := tmux.SessionName(invocationID)
+
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusStopping, sessionName)
+
+	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	meta, err := st.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusStopping, meta.Status)
+
+	fakeTmux.Mu.Lock()
+	delete(fakeTmux.Sessions, sessionName)
+	fakeTmux.Mu.Unlock()
+
+	meta = waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "stopped", meta.ExitReason)
+	assert.Equal(t, "stopped", meta.FailureReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
+}
+
 func TestReconcile_StartingToFailed_GraceWindow(t *testing.T) {
 	t.Parallel()
 	// Test: Starting → Failed only after grace window (2 consecutive ticks)
@@ -684,6 +717,29 @@ func TestRecovery_RunningNoSession(t *testing.T) {
 	// Recovery should have transitioned to finished
 	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
 	assert.Equal(t, "exited", meta.ExitReason)
+	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
+	assert.Empty(t, meta.LifecycleOwner)
+}
+
+func TestRecovery_StoppingNoSession(t *testing.T) {
+	t.Parallel()
+	// Test: Recovery scan: stopping + no tmux session → failed(stopped)
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "test-repo-rec-stop"
+	invocationID := "20260205120020-stop"
+	sessionName := tmux.SessionName(invocationID)
+
+	ensureRepoDir(t, st, repoID)
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusStopping, sessionName, -60*time.Second)
+
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "stopped", meta.ExitReason)
+	assert.Equal(t, "stopped", meta.FailureReason)
 	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
 	assert.Empty(t, meta.LifecycleOwner)
 }

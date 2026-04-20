@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -2412,12 +2413,12 @@ func TestDaemonHeadedStop(t *testing.T) {
 	assert.Equal(t, []tmux.Key{tmux.KeyCtrlC}, fakeTmux.SendKeysCalls[0].Keys)
 	fakeTmux.Mu.Unlock()
 
-	// Verify meta: stop_requested_at set, needs_attention, still running
+	// Verify meta: stop_requested_at set, needs_attention, now stopping
 	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
 	require.NoError(t, err)
 	assert.NotEmpty(t, meta.StopRequestedAt)
 	assert.True(t, meta.Flags.NeedsAttention)
-	assert.Equal(t, store.InvocationStatusRunning, meta.Status, "headed stop should not terminate the invocation")
+	assert.Equal(t, store.InvocationStatusStopping, meta.Status)
 
 	// Cleanup
 	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
@@ -2451,16 +2452,99 @@ func TestDaemonHeadedStopSessionMissing(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, stopResp.OK)
 
-	// Verify meta: should be finished with exited reason
+	// Verify meta: should stop immediately without waiting for reconcile
 	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
 	require.NoError(t, err)
-	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
-	assert.Equal(t, "exited", meta.ExitReason)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "stopped", meta.ExitReason)
+	assert.Equal(t, "stopped", meta.FailureReason)
+	assert.NotEmpty(t, meta.StopRequestedAt)
 
 	// Verify no C-c was sent
 	fakeTmux.Mu.Lock()
 	assert.Len(t, fakeTmux.SendKeysCalls, 0, "no C-c should be sent when session is missing")
 	fakeTmux.Mu.Unlock()
+}
+
+func TestDaemonHeadedStopSendKeysRaceFinalizesImmediately(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-stop-race")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-stop-race")
+
+	hasSessionChecks := 0
+	fakeTmux.SendKeysErr = errors.New("session not found")
+	fakeTmux.HasSessionFunc = func(string) (bool, error) {
+		hasSessionChecks++
+		return hasSessionChecks == 1, nil
+	}
+
+	stopResp, err := env.Client.Stop(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.True(t, stopResp.OK)
+
+	fakeTmux.Mu.Lock()
+	require.Len(t, fakeTmux.SendKeysCalls, 1)
+	fakeTmux.Mu.Unlock()
+
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, "stopped", meta.ExitReason)
+	assert.Equal(t, "stopped", meta.FailureReason)
+	assert.NotEmpty(t, meta.StopRequestedAt)
+}
+
+func TestDaemonHeadedLandImmediatelyAfterStopReconcilesStopping(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-stop-land")
+
+	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-stop-land")
+	require.NoError(t, os.WriteFile(filepath.Join(resp.SandboxPath, "land-me.txt"), []byte("dirty\n"), 0o644))
+
+	stopResp, err := env.Client.Stop(ctx, resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	require.True(t, stopResp.OK)
+
+	fakeTmux.Mu.Lock()
+	for name := range fakeTmux.Sessions {
+		delete(fakeTmux.Sessions, name)
+	}
+	fakeTmux.Mu.Unlock()
+
+	landResp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+		RepoID:       resp.RepoID,
+		InvocationID: resp.InvocationID,
+		Apply:        true,
+	})
+	require.NoError(t, err)
+	assert.True(t, landResp.OK)
+
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
+	assert.Equal(t, store.LandingStatusLanded, meta.LandingStatus)
+	assert.Equal(t, "stopped", meta.ExitReason)
 }
 
 func TestDaemonHeadedStopAlreadyFinished(t *testing.T) {

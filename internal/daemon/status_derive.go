@@ -24,14 +24,15 @@ const StallThreshold = 5 * time.Minute
 //  1. lifecycle == failed → "failed"
 //  2. landing_status == landed → "landed"
 //  3. landing_status == discarded → "discarded"
-//  4. needs_attention flag → "needs attention"
-//  5. semantic == needs_input → "needs input"
-//  6. semantic == blocked → "blocked"
-//  7. semantic == ready → "ready"
-//  8. running + semantic working → "working"
-//  9. running → "running"
-//  10. finished → "finished"
-//  11. starting → "starting"
+//  4. stopping → "stopping"
+//  5. needs_attention flag → "needs attention"
+//  6. semantic == needs_input → "needs input"
+//  7. semantic == blocked → "blocked"
+//  8. semantic == ready → "ready"
+//  9. running + semantic working → "working"
+//  10. running → "running"
+//  11. finished → "finished"
+//  12. starting → "starting"
 func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatus {
 	var flags []string
 
@@ -93,7 +94,16 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 4. Needs attention
+	// 4. Stopping
+	if meta.Status == store.InvocationStatusStopping {
+		return DerivedStatus{
+			DisplayStatus:  DisplayStatusStopping,
+			AttentionFlags: flags,
+			SortKey:        SortKeyStopping,
+		}
+	}
+
+	// 5. Needs attention
 	if meta.Flags.NeedsAttention {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusNeedsAttention,
@@ -102,7 +112,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 5. Semantic: needs_input
+	// 6. Semantic: needs_input
 	if semanticStatus == string(runnerstatus.StatusNeedsInput) {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusNeedsInput,
@@ -111,7 +121,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 6. Semantic: blocked
+	// 7. Semantic: blocked
 	if semanticStatus == string(runnerstatus.StatusBlocked) {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusBlocked,
@@ -120,7 +130,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 7. Semantic: ready
+	// 8. Semantic: ready
 	if semanticStatus == string(runnerstatus.StatusReady) {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusReady,
@@ -129,7 +139,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 8. Running + working
+	// 9. Running + working
 	if meta.Status == store.InvocationStatusRunning && semanticStatus == string(runnerstatus.StatusWorking) {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusWorking,
@@ -138,7 +148,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 9. Running
+	// 10. Running
 	if meta.Status == store.InvocationStatusRunning {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusRunning,
@@ -147,7 +157,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 10. Finished
+	// 11. Finished
 	if meta.Status == store.InvocationStatusFinished {
 		return DerivedStatus{
 			DisplayStatus:  DisplayStatusFinished,
@@ -156,7 +166,7 @@ func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatu
 		}
 	}
 
-	// 11. Starting (default)
+	// 12. Starting (default)
 	return DerivedStatus{
 		DisplayStatus:  DisplayStatusStarting,
 		AttentionFlags: flags,
