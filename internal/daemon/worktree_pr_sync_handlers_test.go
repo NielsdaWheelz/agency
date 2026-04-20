@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
 
 	fakeRunner := testutil.NewFakeCommandRunner()
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
-		Stdout:   "?? .agency/report.md\n?? .agency/state/runner_status.json\n M README.md\n",
+		Stdout:   "?? .agency/state/runner_status.json\n?? .agency/tmp/pr_body.md\n M README.md\n",
 		ExitCode: 0,
 	}
 
@@ -31,7 +32,7 @@ func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
 	assert.Equal(t, " M README.md", status)
 
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
-		Stdout:   "?? .agency/report.md\n?? .agency/state/runner_status.json\n",
+		Stdout:   "?? .agency/state/runner_status.json\n?? .agency/tmp/pr_body.md\n",
 		ExitCode: 0,
 	}
 
@@ -160,7 +161,7 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 		env.Server.Runner = fakeRunner
 
 		treePath := setupWorktreeMutationReadyState(t, env)
-		reportPath := filepath.Join(treePath, ".agency", "report.md")
+		prBodyPath := filepath.Join(treePath, ".agency", "tmp", "pr_body.md")
 		fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 		fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -173,7 +174,7 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 			Stdout:   `[{"number":88,"url":"https://github.com/test/agent-repo/pull/88","state":"OPEN"}]`,
 			ExitCode: 0,
 		}
-		fakeRunner.Responses["gh pr edit 88 --body-file "+reportPath] = testutil.FakeResponse{ExitCode: 0}
+		fakeRunner.Responses["gh pr edit 88 --body-file "+prBodyPath] = testutil.FakeResponse{ExitCode: 0}
 
 		w := doWorktreeRequestWithBody(
 			t,
@@ -190,5 +191,9 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 		require.True(t, ok, "request_id must be present in success payload")
 		assert.NotEmpty(t, requestID)
 		assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+
+		prBody, err := os.ReadFile(prBodyPath)
+		require.NoError(t, err)
+		assert.Equal(t, "## summary\nready for mutation\n\n## how to test\ngo test ./...\n", string(prBody))
 	})
 }

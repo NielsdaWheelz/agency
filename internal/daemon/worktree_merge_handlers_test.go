@@ -369,11 +369,6 @@ func setupWorktreeMergeReadyState(t *testing.T, env *readTestEnv, verifyScriptBo
 		verifyScriptBody = "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
 	}
 	writeWorktreeMergeScriptsAndConfig(t, workspaceRoot, verifyScriptBody)
-	agencyDir := filepath.Join(workspaceRoot, ".agency")
-	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(
-		"## summary\nmerge-ready report\n\n## how to test\ngo test ./...\n",
-	), 0o644))
 	writeWorktreeMergeRepoRecord(t, env, repoRoot)
 
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, worktreeID, func(meta *store.IntegrationWorktreeMeta) {

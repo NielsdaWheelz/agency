@@ -5,12 +5,15 @@ package landing
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -137,6 +140,15 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		return nil, err
 	}
 
+	if err := s.syncWorktreeRunnerStatus(opts.RepoID, opts.InvocationID, meta.IntegrationWorktreeID); err != nil {
+		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_runner_status_warning", map[string]any{
+			"invocation_id": opts.InvocationID,
+			"warning":       err.Error(),
+		}); emitErr != nil {
+			return nil, emitErr
+		}
+	}
+
 	if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta); err != nil {
 		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_warning", map[string]any{
 			"invocation_id": opts.InvocationID,
@@ -257,4 +269,45 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 	return s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_succeeded", map[string]any{
 		"invocation_id": opts.InvocationID,
 	})
+}
+
+func (s *Service) syncWorktreeRunnerStatus(repoID, invocationID, worktreeID string) error {
+	wtMeta, err := s.store.ReadIntegrationWorktreeMeta(repoID, worktreeID)
+	if err != nil {
+		return err
+	}
+
+	worktreeStatus := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReady,
+		UpdatedAt:     s.clock().UTC().Format(time.RFC3339),
+		Summary:       "Landed invocation " + invocationID,
+		Questions:     []string{},
+		Blockers:      []string{},
+		HowToTest:     "How to test not provided.",
+		Risks:         []string{},
+	}
+
+	invocationStatus, err := runnerstatus.Load(s.store.InvocationDir(repoID, invocationID))
+	if err == nil && invocationStatus != nil {
+		if strings.TrimSpace(invocationStatus.Summary) != "" {
+			worktreeStatus.Summary = strings.TrimSpace(invocationStatus.Summary)
+		}
+		if strings.TrimSpace(invocationStatus.HowToTest) != "" {
+			worktreeStatus.HowToTest = strings.TrimSpace(invocationStatus.HowToTest)
+		}
+		if strings.TrimSpace(invocationStatus.SchemaVersion) == runnerstatus.SchemaVersion && invocationStatus.Validate() == nil {
+			worktreeStatus = *invocationStatus
+		}
+	}
+
+	statusPath := runnerstatus.StatusPath(wtMeta.TreePath)
+	statusDir := filepath.Dir(statusPath)
+	if err := s.fsys.MkdirAll(statusDir, 0o700); err != nil {
+		return err
+	}
+	if err := s.fsys.Chmod(statusDir, 0o700); err != nil {
+		return err
+	}
+	return fs.WriteJSONAtomic(statusPath, worktreeStatus, 0o600)
 }

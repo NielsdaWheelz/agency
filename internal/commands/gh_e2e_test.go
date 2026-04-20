@@ -111,19 +111,19 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 `
 	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "agency.json"), []byte(agencyJSON), 0o644), "write agency.json")
 
-	// Report goes in worktree .agency/ (required location for push command)
-	// Fixed content - same every run
-	reportDir := filepath.Join(worktreePath, ".agency")
-	require.NoError(t, os.MkdirAll(reportDir, 0o755), "mkdir report")
-	report := `# e2e test
-
-## summary
-e2e report: verifying agent pr sync + merge works
-
-## how to test
-This is an automated e2e test - no manual testing required.
-`
-	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(report), 0o644), "write report")
+	// Runner status lives under .agency/state/ and is read locally by PR sync.
+	stateDir := filepath.Join(worktreePath, ".agency", "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755), "mkdir runner status")
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(`{
+  "schema_version": "1.0",
+  "status": "ready",
+  "updated_at": "2026-04-20T00:00:00Z",
+  "summary": "e2e runner status: verifying agent pr sync + merge works",
+  "questions": [],
+  "blockers": [],
+  "how_to_test": "This is an automated e2e test - no manual testing required.",
+  "risks": []
+}`), 0o644), "write runner status")
 
 	// Unique test data under e2e/<runID>/ - this is the only unique-per-run content
 	e2eRunDir := filepath.Join(worktreePath, "e2e", runID)
@@ -132,19 +132,19 @@ This is an automated e2e test - no manual testing required.
 	logContent := fmt.Sprintf("%s %s\n", runID, time.Now().UTC().Format(time.RFC3339))
 	require.NoError(t, os.WriteFile(logPath, []byte(logContent), 0o644), "write e2e log")
 
-	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/report.md"}, exec.RunOpts{
+	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/state/runner_status.json"}, exec.RunOpts{
 		Dir: worktreePath,
 		Env: nonInteractiveEnv(),
 	})
-	require.NoError(t, err, "git check-ignore .agency/report.md")
-	reportIgnored := false
+	require.NoError(t, err, "git check-ignore .agency/state/runner_status.json")
+	runnerStatusIgnored := false
 	switch result.ExitCode {
 	case 0:
-		reportIgnored = true
+		runnerStatusIgnored = true
 	case 1:
-		reportIgnored = false
+		runnerStatusIgnored = false
 	default:
-		require.Fail(t, "git check-ignore .agency/report.md unexpected exit code", "exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
+		require.Fail(t, "git check-ignore .agency/state/runner_status.json unexpected exit code", "exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
 
 	// Add fixed infrastructure files + unique run data
@@ -155,8 +155,8 @@ This is an automated e2e test - no manual testing required.
 		"scripts/agency_archive.sh",
 		fmt.Sprintf("e2e/%s/", runID),
 	}
-	if !reportIgnored {
-		addPaths = append(addPaths, ".agency/report.md")
+	if !runnerStatusIgnored {
+		addPaths = append(addPaths, ".agency/state/runner_status.json")
 	}
 	runCmd(t, ctx, cr, worktreePath, "git", append([]string{"add"}, addPaths...)...)
 	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)

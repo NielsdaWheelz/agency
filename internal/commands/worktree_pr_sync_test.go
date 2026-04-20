@@ -21,10 +21,19 @@ func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-json")
 
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(integrationTree, ".agency", "report.md"), []byte(
-		"## summary\nlanded invocation changes\n\n## how to test\ngo test ./...\n",
-	), 0o644))
+	stateDir := filepath.Join(integrationTree, ".agency", "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(`{
+  "schema_version": "1.0",
+  "status": "ready",
+  "updated_at": "2026-02-05T12:00:00Z",
+  "summary": "landed invocation changes",
+  "questions": [],
+  "blockers": [],
+  "how_to_test": "go test ./...",
+  "risks": []
+}`), 0o644))
+	prBodyPath := filepath.Join(integrationTree, ".agency", "tmp", "pr_body.md")
 
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 	daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
@@ -34,7 +43,7 @@ func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	daemonRunner.Responses["git rev-list --count main..agency/prsync-json-abcd"] = testutil.FakeResponse{Stdout: "1\n", ExitCode: 0}
 	daemonRunner.Responses["git push -u origin agency/prsync-json-abcd"] = testutil.FakeResponse{ExitCode: 0}
 	daemonRunner.Responses["gh pr list --head test:agency/prsync-json-abcd --state all --json number,url,state"] = testutil.FakeResponse{Stdout: "[]", ExitCode: 0}
-	daemonRunner.Responses["gh pr create --base main --head agency/prsync-json-abcd --title [agency] prsync-json --body-file "+filepath.Join(integrationTree, ".agency", "report.md")] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	daemonRunner.Responses["gh pr create --base main --head agency/prsync-json-abcd --title [agency] prsync-json --body-file "+prBodyPath] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 	daemonRunner.Responses["gh pr list --head agency/prsync-json-abcd --state all --json number,url,state"] = testutil.FakeResponse{
 		Stdout:   `[{"number":42,"url":"https://github.com/test/agent-repo/pull/42","state":"OPEN"}]`,
 		ExitCode: 0,
@@ -64,6 +73,10 @@ func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 	_, hasInvocationID := payload["invocation_id"]
 	assert.False(t, hasInvocationID, "worktree pr sync should not return invocation_id")
+
+	prBody, err := os.ReadFile(prBodyPath)
+	require.NoError(t, err)
+	assert.Equal(t, "## summary\nlanded invocation changes\n\n## how to test\ngo test ./...\n", string(prBody))
 }
 
 func TestWorktreePRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
@@ -122,12 +135,6 @@ func TestWorktreePRSync_NonFastForwardReturnsForceWithLeaseHint(t *testing.T) {
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-ff")
 
-	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(integrationTree, ".agency", "report.md"), []byte(
-		"## summary\nfast-forward rejection case\n\n## how to test\ngo test ./...\n",
-	), 0o644))
-
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 	daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 	daemonRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -161,12 +168,8 @@ func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "prsync-fwl")
-
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(integrationTree, ".agency", "report.md"), []byte(
-		"## summary\nforce-with-lease case\n\n## how to test\ngo test ./...\n",
-	), 0o644))
+	prBodyPath := filepath.Join(integrationTree, ".agency", "tmp", "pr_body.md")
 
 	daemonRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 	daemonRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
@@ -179,7 +182,7 @@ func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 		Stdout:   `[{"number":43,"url":"https://github.com/test/agent-repo/pull/43","state":"OPEN"}]`,
 		ExitCode: 0,
 	}
-	daemonRunner.Responses["gh pr edit 43 --body-file "+filepath.Join(integrationTree, ".agency", "report.md")] = testutil.FakeResponse{
+	daemonRunner.Responses["gh pr edit 43 --body-file "+prBodyPath] = testutil.FakeResponse{
 		ExitCode: 0,
 	}
 
@@ -197,6 +200,9 @@ func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, daemonRunner.Calls, "git push --force-with-lease -u origin agency/prsync-fwl-abcd")
+	prBody, readErr := os.ReadFile(prBodyPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "## summary\nSummary not provided.\n\n## how to test\nHow to test not provided.\n", string(prBody))
 }
 
 type ioDiscard struct{}

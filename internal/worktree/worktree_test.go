@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,22 +117,25 @@ func TestCreate_Success(t *testing.T) {
 	tmpDir := filepath.Join(agencyDir, "tmp")
 	assert.DirExists(t, tmpDir, ".agency/tmp/ directory does not exist")
 
-	// Verify report.md exists and has title
-	reportPath := filepath.Join(agencyDir, "report.md")
-	reportContent, err := os.ReadFile(reportPath)
-	require.NoError(t, err, "failed to read report.md")
-
-	assert.True(t, strings.HasPrefix(string(reportContent), "# test-run\n"), "report.md should start with '# test-run\\n', got: %q", string(reportContent)[:min(50, len(reportContent))])
-
-	// Verify report.md references INSTRUCTIONS.md (per S7 spec4)
-	assert.Contains(t, string(reportContent), "runner: read `.agency/INSTRUCTIONS.md` before starting.", "report.md should reference INSTRUCTIONS.md")
-
 	// Verify INSTRUCTIONS.md exists and has expected content
 	instructionsPath := filepath.Join(agencyDir, "INSTRUCTIONS.md")
 	instructionsContent, err := os.ReadFile(instructionsPath)
 	require.NoError(t, err, "failed to read INSTRUCTIONS.md")
 
 	assert.Contains(t, string(instructionsContent), "# Agency Runner Instructions", "INSTRUCTIONS.md should have runner instructions title")
+	assert.Contains(t, string(instructionsContent), ".agency/state/runner_status.json", "INSTRUCTIONS.md should point runners at runner_status.json")
+	assert.NotContains(t, string(instructionsContent), ".agency/report.md", "INSTRUCTIONS.md should not mention report.md")
+
+	// Verify runner_status.json exists and starts in a valid working state.
+	status, err := runnerstatus.Load(result.WorktreePath)
+	require.NoError(t, err, "failed to load runner_status.json")
+	require.NotNil(t, status, "runner_status.json should exist")
+	assert.Equal(t, runnerstatus.StatusWorking, status.Status)
+	assert.NoError(t, status.Validate(), "initial runner status should be valid")
+
+	// Verify report.md is not scaffolded.
+	_, err = os.Stat(filepath.Join(agencyDir, "report.md"))
+	assert.True(t, os.IsNotExist(err), "report.md should not be scaffolded")
 
 	// Verify git worktree list shows the new worktree
 	cmd := exec.Command("git", "-C", resolvedRepoRoot, "worktree", "list")
@@ -220,43 +225,60 @@ func TestCreate_MissingBaseBranch_ReturnsError(t *testing.T) {
 	assert.Equal(t, errors.EWorktreeCreateFailed, code)
 }
 
-func TestScaffoldWorkspaceOnly_ReportNotOverwritten(t *testing.T) {
+func TestScaffoldWorkspaceOnly_DoesNotCreateReport(t *testing.T) {
 	t.Parallel()
-	// Create temp directory (t.TempDir handles cleanup automatically)
 	dir := t.TempDir()
-
 	fsys := fs.NewRealFS()
 
-	// First call creates everything
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir, "First Title"), "first scaffold failed")
+	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "scaffold failed")
 
-	// Verify report.md has first title
-	reportPath := filepath.Join(dir, ".agency", "report.md")
-	content1, err := os.ReadFile(reportPath)
-	require.NoError(t, err, "failed to read report.md")
-	assert.True(t, strings.HasPrefix(string(content1), "# First Title\n"), "report.md should have 'First Title', got: %q", string(content1)[:min(50, len(content1))])
+	_, err := os.Stat(filepath.Join(dir, ".agency", "report.md"))
+	assert.True(t, os.IsNotExist(err), "report.md should not be created")
+}
 
-	// Write a sentinel to report.md
-	sentinel := "# First Title\n\n## SENTINEL\nThis should not be overwritten\n"
-	require.NoError(t, os.WriteFile(reportPath, []byte(sentinel), 0644), "failed to write sentinel")
+func TestScaffoldWorkspaceOnly_RunnerStatusNotOverwritten(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fsys := fs.NewRealFS()
 
-	// Second call should NOT overwrite report.md
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir, "Second Title"), "second scaffold failed")
+	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "first scaffold failed")
 
-	// Verify sentinel is preserved
-	content2, err := os.ReadFile(reportPath)
-	require.NoError(t, err, "failed to read report.md")
-	assert.Equal(t, sentinel, string(content2), "report.md was overwritten")
+	status, err := runnerstatus.Load(dir)
+	require.NoError(t, err, "failed to load initial runner status")
+	require.NotNil(t, status, "runner_status.json should exist after scaffold")
+	assert.Equal(t, runnerstatus.StatusWorking, status.Status)
+
+	custom := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReady,
+		UpdatedAt:     "2026-04-20T18:00:00Z",
+		Summary:       "Finished the task",
+		Questions:     []string{},
+		Blockers:      []string{},
+		HowToTest:     "go test ./internal/worktree",
+		Risks:         []string{"none"},
+	}
+	data, err := json.MarshalIndent(custom, "", "  ")
+	require.NoError(t, err, "failed to marshal custom runner status")
+	data = append(data, '\n')
+	require.NoError(t, os.WriteFile(runnerstatus.StatusPath(dir), data, 0644), "failed to write custom runner status")
+
+	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "second scaffold failed")
+
+	status, err = runnerstatus.Load(dir)
+	require.NoError(t, err, "failed to load runner status after second scaffold")
+	require.NotNil(t, status, "runner_status.json should still exist after second scaffold")
+	assert.Equal(t, custom, *status, "runner_status.json should not be overwritten by scaffold")
 }
 
 func TestScaffoldWorkspaceOnly_InstructionsAlwaysOverwritten(t *testing.T) {
 	t.Parallel()
-	// Per S7 spec4: INSTRUCTIONS.md should be unconditionally overwritten on every run
+	// INSTRUCTIONS.md should be unconditionally overwritten on every run.
 	dir := t.TempDir()
 	fsys := fs.NewRealFS()
 
 	// First call creates INSTRUCTIONS.md
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir, "First Title"), "first scaffold failed")
+	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "first scaffold failed")
 
 	instructionsPath := filepath.Join(dir, ".agency", "INSTRUCTIONS.md")
 	content1, err := os.ReadFile(instructionsPath)
@@ -270,7 +292,7 @@ func TestScaffoldWorkspaceOnly_InstructionsAlwaysOverwritten(t *testing.T) {
 	require.NoError(t, os.WriteFile(instructionsPath, []byte(customContent), 0644), "failed to write custom content")
 
 	// Second call SHOULD overwrite INSTRUCTIONS.md
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir, "Second Title"), "second scaffold failed")
+	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "second scaffold failed")
 
 	content2, err := os.ReadFile(instructionsPath)
 	require.NoError(t, err, "failed to read INSTRUCTIONS.md after second scaffold")
@@ -315,32 +337,6 @@ func TestWorktreePath(t *testing.T) {
 	}
 }
 
-func TestReportTemplate(t *testing.T) {
-	t.Parallel()
-	template := ReportTemplate("My Test Run")
-
-	// Check title line
-	assert.True(t, strings.HasPrefix(template, "# My Test Run\n"), "template should start with '# My Test Run\\n'")
-
-	// Check for instructions reference (per S7 spec4)
-	assert.Contains(t, template, "runner: read `.agency/INSTRUCTIONS.md` before starting.", "template should reference INSTRUCTIONS.md after title")
-
-	// Check required sections exist (updated per constitution)
-	requiredSections := []string{
-		"## summary",
-		"## scope",
-		"## decisions",
-		"## deviations",
-		"## problems encountered",
-		"## how to test",
-		"## check notes",
-		"## follow-ups",
-	}
-	for _, section := range requiredSections {
-		assert.Contains(t, template, section, "template should contain %q", section)
-	}
-}
-
 func TestInstructionsTemplate(t *testing.T) {
 	t.Parallel()
 	template := InstructionsTemplate()
@@ -352,15 +348,16 @@ func TestInstructionsTemplate(t *testing.T) {
 	requiredContent := []string{
 		"Make incremental, focused commits",
 		"Keep commits buildable",
-		"Update `.agency/report.md` before finishing",
-		"`## summary`",
-		"`## how to test`",
+		"Keep `.agency/state/runner_status.json` current while you work",
+		"Set status to `ready` with `summary` and `how_to_test` before finishing",
 		"runner_status.json",
+		"only runner contract",
 		"This file is advisory only",
 	}
 	for _, content := range requiredContent {
 		assert.Contains(t, template, content, "template should contain %q", content)
 	}
+	assert.NotContains(t, template, ".agency/report.md", "template should not mention report.md")
 }
 
 func TestCreate_IgnoreWarning(t *testing.T) {

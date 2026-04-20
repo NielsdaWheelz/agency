@@ -15,7 +15,7 @@ import (
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/render"
-	"github.com/NielsdaWheelz/agency/internal/report"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -23,17 +23,13 @@ const (
 	prSyncEventStarted   = "agency.pr_sync_started"
 	prSyncEventSucceeded = "agency.pr_sync_succeeded"
 	prSyncEventFailed    = "agency.pr_sync_failed"
-
-	prSyncMaxReportBytes = report.MaxPRBodyReportBytes
 )
 
 type prSyncResult struct {
-	Branch            string
-	PRNumber          int
-	PRURL             string
-	PRAction          string
-	ReportSource      string
-	ReportDiagnostics []report.Diagnostic
+	Branch   string
+	PRNumber int
+	PRURL    string
+	PRAction string
 }
 
 type prSyncPR struct {
@@ -82,7 +78,7 @@ func (s *Server) runPRSync(
 		return nil, errors.New(errors.EEmptyDiff, "no commits ahead of base branch; make at least one commit")
 	}
 
-	bodyPath, reportSource, reportDiagnostics, err := prSyncPrepareBody(s.FS, wtMeta.TreePath)
+	bodyPath, err := prSyncPrepareBody(s.FS, wtMeta.TreePath)
 	if err != nil {
 		return nil, err
 	}
@@ -146,12 +142,10 @@ func (s *Server) runPRSync(
 		// Newly created PR already has body from --body-file.
 		if createdNow {
 			return &prSyncResult{
-				Branch:            wtMeta.Branch,
-				PRNumber:          pr.Number,
-				PRURL:             pr.URL,
-				PRAction:          "created",
-				ReportSource:      reportSource,
-				ReportDiagnostics: reportDiagnostics,
+				Branch:   wtMeta.Branch,
+				PRNumber: pr.Number,
+				PRURL:    pr.URL,
+				PRAction: "created",
 			}, nil
 		}
 
@@ -160,12 +154,10 @@ func (s *Server) runPRSync(
 			return nil, err
 		}
 		return &prSyncResult{
-			Branch:            wtMeta.Branch,
-			PRNumber:          pr.Number,
-			PRURL:             pr.URL,
-			PRAction:          "updated",
-			ReportSource:      reportSource,
-			ReportDiagnostics: reportDiagnostics,
+			Branch:   wtMeta.Branch,
+			PRNumber: pr.Number,
+			PRURL:    pr.URL,
+			PRAction: "updated",
 		}, nil
 	}
 
@@ -185,12 +177,10 @@ func (s *Server) runPRSync(
 	}
 
 	return &prSyncResult{
-		Branch:            wtMeta.Branch,
-		PRNumber:          pr.Number,
-		PRURL:             pr.URL,
-		PRAction:          "updated",
-		ReportSource:      reportSource,
-		ReportDiagnostics: reportDiagnostics,
+		Branch:   wtMeta.Branch,
+		PRNumber: pr.Number,
+		PRURL:    pr.URL,
+		PRAction: "updated",
 	}, nil
 }
 
@@ -535,40 +525,39 @@ func prSyncEditPRBody(ctx context.Context, runner exec.CommandRunner, workDir st
 func prSyncPrepareBody(
 	fsys agencyfs.FS,
 	worktreePath string,
-) (bodyPath, reportSource string, diagnostics []report.Diagnostic, err error) {
-	resolution, violation, resolveErr := report.ResolveCanonicalReport(fsys, worktreePath, report.ResolveOptions{
-		MaxBytes: prSyncMaxReportBytes,
-	})
-	if resolveErr != nil {
-		return "", "", nil, errors.Wrap(errors.EInternal, "failed to evaluate report contract", resolveErr)
+) (string, error) {
+	status, err := runnerstatus.Load(worktreePath)
+	if err != nil {
+		status = nil
 	}
 
-	if violation != nil {
-		return "", "", nil, reportViolationToAgencyError(violation)
+	summary := ""
+	howToTest := ""
+	if status != nil && strings.TrimSpace(status.SchemaVersion) == runnerstatus.SchemaVersion {
+		summary = strings.TrimSpace(status.Summary)
+		howToTest = strings.TrimSpace(status.HowToTest)
+	}
+	if summary == "" {
+		summary = "Summary not provided."
+	}
+	if howToTest == "" {
+		howToTest = "How to test not provided."
 	}
 
-	if resolution == nil {
-		return "", "", nil, errors.New(errors.EInternal, "report resolution produced no result")
+	bodyPath := filepath.Join(worktreePath, ".agency", "tmp", "pr_body.md")
+	bodyDir := filepath.Dir(bodyPath)
+	if err := fsys.MkdirAll(bodyDir, 0o700); err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to create PR body directory", err)
+	}
+	if err := fsys.Chmod(bodyDir, 0o700); err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to set PR body directory permissions", err)
 	}
 
-	diags := resolution.Diagnostics
-	switch resolution.Source {
-	case report.SourceJSON:
-		canonicalPath, writeErr := report.WriteCanonicalMarkdownBody(fsys, worktreePath, "pr_sync_report_v2.md", resolution.Model)
-		if writeErr != nil {
-			return "", "", nil, errors.Wrap(errors.EInternal, "failed to materialize report.json body", writeErr)
-		}
-		return canonicalPath, string(resolution.Source), diags, nil
-	case report.SourceMarkdown:
-		reportPath := filepath.Join(worktreePath, ".agency", "report.md")
-		return reportPath, string(resolution.Source), diags, nil
-	default:
-		return "", "", nil, errors.NewWithDetails(
-			errors.EInternal,
-			"unsupported report source",
-			map[string]string{"source": string(resolution.Source)},
-		)
+	content := "## summary\n" + summary + "\n\n## how to test\n" + howToTest + "\n"
+	if err := agencyfs.WriteFileAtomic(fsys, bodyPath, []byte(content), 0o600); err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to write PR body", err)
 	}
+	return bodyPath, nil
 }
 
 func prSyncNonInteractiveEnv() map[string]string {
@@ -660,8 +649,6 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 	case errors.EEmptyDiff:
 		return http.StatusBadRequest
 	case errors.EPRNotOpen:
-		return http.StatusConflict
-	case errors.EReportMissing, errors.EReportMalformed, errors.EReportOversized, errors.EReportSchemaIncompatible, errors.EReportIncomplete:
 		return http.StatusConflict
 	case errors.EGHRepoParseFailed:
 		return http.StatusBadRequest

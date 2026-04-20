@@ -63,7 +63,7 @@ type CreateOpts struct {
 //  2. Compute worktree path from data_dir + repo_id + run_id
 //  3. Create branch + worktree via: git worktree add -b <branch> <path> <base_branch>
 //  4. Create .agency/, .agency/out/, .agency/tmp/ directories
-//  5. Create .agency/report.md if missing (with template)
+//  5. Create .agency/INSTRUCTIONS.md and .agency/state/runner_status.json
 //  6. Check if .agency/ is ignored (best-effort warning)
 //
 // Error codes:
@@ -130,7 +130,7 @@ func Create(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts CreateO
 	}
 
 	// 5. Scaffold workspace directories
-	if err := scaffoldWorkspace(fsys, worktreePath, opts.Name); err != nil {
+	if err := scaffoldWorkspace(fsys, worktreePath); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EWorktreeCreateFailed,
 			"failed to scaffold workspace",
@@ -160,10 +160,10 @@ func WorktreePath(dataDir, repoID, runID string) string {
 	return filepath.Join(dataDir, "repos", repoID, "worktrees", runID)
 }
 
-// scaffoldWorkspace creates the .agency/ directory structure, report.md, INSTRUCTIONS.md, and runner_status.json.
-// This function is idempotent for directories but will not overwrite existing files (except INSTRUCTIONS.md).
+// scaffoldWorkspace creates the .agency/ directory structure, INSTRUCTIONS.md, and runner_status.json.
+// This function is idempotent for directories but will not overwrite existing files except INSTRUCTIONS.md.
 // INSTRUCTIONS.md is unconditionally overwritten on every run per spec.
-func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
+func scaffoldWorkspace(fsys fs.FS, worktreePath string) error {
 	// Create .agency/ directories including state/
 	dirs := []string{
 		filepath.Join(worktreePath, ".agency"),
@@ -183,15 +183,6 @@ func scaffoldWorkspace(fsys fs.FS, worktreePath, name string) error {
 	instructionsContent := InstructionsTemplate()
 	if err := fsys.WriteFile(instructionsPath, []byte(instructionsContent), 0644); err != nil {
 		return fmt.Errorf("failed to create INSTRUCTIONS.md: %w", err)
-	}
-
-	// Create report.md if it doesn't exist
-	reportPath := filepath.Join(worktreePath, ".agency", "report.md")
-	if _, err := fsys.Stat(reportPath); os.IsNotExist(err) {
-		content := ReportTemplate(name)
-		if err := fsys.WriteFile(reportPath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create report.md: %w", err)
-		}
 	}
 
 	// Create runner_status.json with initial "working" status
@@ -243,45 +234,6 @@ func checkIgnored(ctx context.Context, cr exec.CommandRunner, worktreePath strin
 	}
 }
 
-// ReportTemplate returns the report.md template with the given name.
-// The template follows the standard agency report format.
-// Per spec, it includes a reference to INSTRUCTIONS.md right after the title.
-func ReportTemplate(name string) string {
-	return fmt.Sprintf(`# %s
-
-runner: read `+"`"+`.agency/INSTRUCTIONS.md`+"`"+` before starting.
-
-## summary
-- what changed (high level)
-- why (intent)
-
-## scope
-- completed
-- explicitly not done / deferred
-
-## decisions
-- important choices + rationale
-- tradeoffs
-
-## deviations
-- where it diverged from spec + why
-
-## problems encountered
-- failing tests, tricky bugs, constraints
-
-## how to test
-- exact commands
-- expected output
-
-## check notes
-- files to check
-- potential risks
-
-## follow-ups
-- blockers or questions
-`, name)
-}
-
 // InstructionsTemplate returns the INSTRUCTIONS.md content.
 // This file is tool-owned, never committed, and overwritten on each run.
 // It contains short, imperative, checklist-style guidance for runners.
@@ -294,17 +246,12 @@ func InstructionsTemplate() string {
 
 - [ ] Make incremental, focused commits
 - [ ] Keep commits buildable (tests should pass after each commit)
-- [ ] Update ` + "`" + `.agency/report.md` + "`" + ` before finishing
-
-## Report Requirements
-
-Fill in at least these sections in ` + "`" + `.agency/report.md` + "`" + `:
-- [ ] ` + "`" + `## summary` + "`" + ` — describe what changed and why
-- [ ] ` + "`" + `## how to test` + "`" + ` — provide exact commands and expected output
+- [ ] Keep ` + "`" + `.agency/state/runner_status.json` + "`" + ` current while you work
+- [ ] Set status to ` + "`" + `ready` + "`" + ` with ` + "`" + `summary` + "`" + ` and ` + "`" + `how_to_test` + "`" + ` before finishing
 
 ## Status Tracking
 
-If supported, record your status in ` + "`" + `.agency/state/runner_status.json` + "`" + `:
+Record your status in ` + "`" + `.agency/state/runner_status.json` + "`" + `:
 - ` + "`" + `working` + "`" + ` — actively making progress (include summary)
 - ` + "`" + `needs_input` + "`" + ` — waiting for user answer (include questions[])
 - ` + "`" + `blocked` + "`" + ` — cannot proceed (include blockers[])
@@ -312,15 +259,16 @@ If supported, record your status in ` + "`" + `.agency/state/runner_status.json`
 
 ## Notes
 
+- ` + "`" + `.agency/state/runner_status.json` + "`" + ` is the only runner contract
 - This file is advisory only; no correctness depends on it
 - Do not commit this file
 - This file is regenerated on every ` + "`" + `agency run` + "`" + `
 `
 }
 
-// ScaffoldWorkspaceOnly scaffolds the .agency/ directories and report.md
+// ScaffoldWorkspaceOnly scaffolds the .agency/ directories, INSTRUCTIONS.md, and runner_status.json
 // without creating a worktree. Useful for testing or recovery scenarios.
 // This is an exported wrapper around scaffoldWorkspace for testing.
-func ScaffoldWorkspaceOnly(fsys fs.FS, worktreePath, name string) error {
-	return scaffoldWorkspace(fsys, worktreePath, name)
+func ScaffoldWorkspaceOnly(fsys fs.FS, worktreePath string) error {
+	return scaffoldWorkspace(fsys, worktreePath)
 }

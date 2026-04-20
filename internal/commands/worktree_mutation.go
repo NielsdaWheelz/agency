@@ -156,8 +156,6 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			envelope.PRNumber = resp.PRNumber
 			envelope.PRURL = resp.PRURL
 			envelope.PRAction = resp.PRAction
-			envelope.ReportSource = resp.ReportSource
-			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -166,9 +164,6 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			}
 			envelope.RequestID = resp.RequestID
 		})
-	}
-	for _, diagnostic := range resp.ReportDiagnostics {
-		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
 	}
 
 	_, _ = fmt.Fprintln(stdout, "PR sync complete")
@@ -313,8 +308,6 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 			envelope.MergeLogPath = resp.MergeLogPath
 			envelope.VerifyLogPath = resp.VerifyLogPath
 			envelope.ArchiveLogPath = resp.ArchiveLogPath
-			envelope.ReportSource = resp.ReportSource
-			envelope.ReportDiagnostics = resp.ReportDiagnostics
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
@@ -323,9 +316,6 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 			}
 			envelope.RequestID = resp.RequestID
 		})
-	}
-	for _, diagnostic := range resp.ReportDiagnostics {
-		_, _ = fmt.Fprintf(stderr, "warning: [%s] %s\n", diagnostic.Code, diagnostic.Message)
 	}
 
 	_, _ = fmt.Fprintln(stdout, "worktree pr merge complete")

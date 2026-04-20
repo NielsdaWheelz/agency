@@ -14,7 +14,6 @@ import (
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
-	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -43,16 +42,14 @@ type normalizedMergeRequest struct {
 }
 
 type mergeResult struct {
-	Branch            string
-	PRNumber          int
-	PRURL             string
-	Strategy          mergeStrategy
-	DeleteBranch      bool
-	MergeLogPath      string
-	ArchiveLogPath    string
-	VerifyLog         string
-	ReportSource      string
-	ReportDiagnostics []report.Diagnostic
+	Branch         string
+	PRNumber       int
+	PRURL          string
+	Strategy       mergeStrategy
+	DeleteBranch   bool
+	MergeLogPath   string
+	ArchiveLogPath string
+	VerifyLog      string
 }
 
 type mergePRView struct {
@@ -435,8 +432,6 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 	case errors.EGHPRMergeFailed, errors.EGHPRViewFailed:
 		return http.StatusConflict
 	case errors.EScriptFailed:
-		return http.StatusConflict
-	case errors.EReportMissing, errors.EReportMalformed, errors.EReportOversized, errors.EReportSchemaIncompatible, errors.EReportIncomplete:
 		return http.StatusConflict
 	case errors.EInvalidArgument, errors.EGHRepoParseFailed, errors.EGhNotInstalled, errors.EGhNotAuthenticated:
 		return http.StatusBadRequest

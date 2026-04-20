@@ -46,14 +46,16 @@ This file is binding for contributors and agents. If a rule is listed under Bind
 
 ## Runner Protocol
 
-Update `.agency/state/runner_status.json` at milestones:
+`.agency/state/runner_status.json` is the only runner contract.
+
+Update it at milestones:
 
 | Status | When | Required Fields |
 |--------|------|-----------------|
 | `working` | Actively making progress | `summary` |
 | `needs_input` | Waiting for user answer | `summary`, `questions[]` |
 | `blocked` | Cannot proceed | `summary`, `blockers[]` |
-| `ready_for_review` | Work complete | `summary`, `how_to_test` |
+| `ready` | Work complete | `summary`, `how_to_test` |
 
 Schema:
 
@@ -70,4 +72,4 @@ Schema:
 }
 ```
 
-Before `ready_for_review`, update `.agency/report.md` with summary, decisions, testing instructions, and risks.
+Before finishing, set status to `ready` and include `summary` and `how_to_test`.

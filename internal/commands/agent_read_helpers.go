@@ -221,9 +221,6 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 	if check.HowToTest != "" {
 		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", check.HowToTest)
 	}
-	if check.ReportSource != "" {
-		_, _ = fmt.Fprintf(w, "report_source:        %s\n", check.ReportSource)
-	}
 
 	_, _ = fmt.Fprintf(w, "\nBlocking reasons:\n")
 	if len(check.BlockingReasons) == 0 {
@@ -234,13 +231,6 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 			if strings.TrimSpace(reason.Hint) != "" {
 				_, _ = fmt.Fprintf(w, "      hint: %s\n", reason.Hint)
 			}
-		}
-	}
-
-	if len(check.ReportDiagnostics) > 0 {
-		_, _ = fmt.Fprintf(w, "\nReport diagnostics:\n")
-		for _, diagnostic := range check.ReportDiagnostics {
-			_, _ = fmt.Fprintf(w, "  - [%s] %s\n", diagnostic.Code, diagnostic.Message)
 		}
 	}
 

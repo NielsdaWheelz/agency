@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
@@ -133,11 +134,20 @@ func setupWorktreeMutationReadyState(t *testing.T, env *readTestEnv) string {
 	t.Helper()
 
 	treePath := filepath.Join(t.TempDir(), "integration-tree")
-	agencyDir := filepath.Join(treePath, ".agency")
-	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(
-		"## summary\nready for mutation\n\n## how to test\ngo test ./...\n",
-	), 0o644))
+	stateDir := filepath.Join(treePath, ".agency", "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	statusBytes, err := json.Marshal(runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		Status:        runnerstatus.StatusReady,
+		UpdatedAt:     "2026-02-05T12:00:00Z",
+		Summary:       "ready for mutation",
+		HowToTest:     "go test ./...",
+		Questions:     []string{},
+		Blockers:      []string{},
+		Risks:         []string{},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), statusBytes, 0o644))
 
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
 		meta.TreePath = treePath

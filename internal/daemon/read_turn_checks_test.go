@@ -504,14 +504,7 @@ func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
 	integrationTree := filepath.Join(t.TempDir(), "checks-ready-integration-tree")
-	agencyDir := filepath.Join(integrationTree, ".agency")
-	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(`## summary
-ready summary
-
-## how to test
-go test ./...
-`), 0o644))
+	require.NoError(t, os.MkdirAll(integrationTree, 0o755))
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
 		meta.TreePath = integrationTree
 	}))
@@ -590,11 +583,11 @@ func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCle
 	assert.Equal(t, "invocation-owned runner status", data["runner_summary"])
 }
 
-func TestHandleGetInvocationCheck_HeadlessStrictReportViolationBlocksReadiness(t *testing.T) {
+func TestHandleGetInvocationCheck_HeadlessDoesNotRequireWorktreeReport(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	sandboxPath := filepath.Join(t.TempDir(), "checks-ready-sandbox-with-missing-report")
+	sandboxPath := filepath.Join(t.TempDir(), "checks-ready-sandbox-without-worktree-status")
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
@@ -631,12 +624,13 @@ func TestHandleGetInvocationCheck_HeadlessStrictReportViolationBlocksReadiness(t
 
 	var data map[string]any
 	decodeData(t, resp, &data)
-	assert.Equal(t, "blocked", data["readiness"])
-	assert.Equal(t, false, data["ready"])
-	assert.Contains(t, blockingReasonCodes(data), "report_missing")
+	assert.Equal(t, "ready", data["readiness"])
+	assert.Equal(t, true, data["ready"])
+	assert.Equal(t, "ready", data["runner_status"])
+	assert.NotContains(t, blockingReasonCodes(data), "report_missing")
 }
 
-func TestHandleGetInvocationCheck_HeadlessIncludesReportSourceAndDiagnostics(t *testing.T) {
+func TestHandleGetInvocationCheck_HeadlessOmitsReportMetadata(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -655,19 +649,7 @@ func TestHandleGetInvocationCheck_HeadlessIncludesReportSourceAndDiagnostics(t *
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
 	integrationTree := filepath.Join(t.TempDir(), "integration-tree-report-source")
-	agencyDir := filepath.Join(integrationTree, ".agency")
-	require.NoError(t, os.MkdirAll(agencyDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.json"), []byte(`{
-  "schema_version": "1.0",
-  "summary": "json summary",
-  "how_to_test": "go test ./..."
-}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(agencyDir, "report.md"), []byte(`## summary
-markdown summary
-
-## how to test
-go test ./internal/...
-`), 0o644))
+	require.NoError(t, os.MkdirAll(integrationTree, 0o755))
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
 		meta.TreePath = integrationTree
 	}))
@@ -691,14 +673,6 @@ go test ./internal/...
 	decodeData(t, resp, &data)
 	assert.Equal(t, "ready", data["readiness"])
 	assert.Equal(t, true, data["ready"])
-	assert.Equal(t, "report_json", data["report_source"])
-
-	rawDiagnostics, ok := data["report_diagnostics"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, rawDiagnostics)
-	firstDiagnostic, ok := rawDiagnostics[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "report_conflict_json_precedence", firstDiagnostic["code"])
 }
 
 func TestHandleGetInvocationCheck_AmbiguousInvocationRefReturnsConflict(t *testing.T) {

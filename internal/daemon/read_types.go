@@ -262,25 +262,23 @@ type InvocationCheckNavigation struct {
 
 // InvocationCheckData is the data payload for GET /invocations/{id}/check.
 type InvocationCheckData struct {
-	InvocationID      string                    `json:"invocation_id"`
-	RepoID            string                    `json:"repo_id"`
-	Ready             bool                      `json:"ready"`
-	Readiness         string                    `json:"readiness"` // "ready" or "blocked"
-	PRSyncEligible    bool                      `json:"pr_sync_eligible"`
-	ReportSource      string                    `json:"report_source,omitempty"`
-	Status            string                    `json:"status"`
-	DisplayStatus     string                    `json:"display_status"`
-	SemanticStatus    string                    `json:"semantic_status,omitempty"`
-	LandingStatus     string                    `json:"landing_status,omitempty"`
-	RunnerStatus      string                    `json:"runner_status,omitempty"`
-	RunnerSummary     string                    `json:"runner_summary,omitempty"`
-	StatusSummary     string                    `json:"status_summary,omitempty"`
-	LatestActivity    *InvocationLatestActivity `json:"latest_activity,omitempty"`
-	RunnerUpdatedAt   string                    `json:"runner_updated_at,omitempty"`
-	HowToTest         string                    `json:"how_to_test,omitempty"`
-	ReportDiagnostics []ReportDiagnostic        `json:"report_diagnostics,omitempty"`
-	BlockingReasons   []InvocationCheckReason   `json:"blocking_reasons"`
-	Navigation        InvocationCheckNavigation `json:"navigation"`
+	InvocationID    string                    `json:"invocation_id"`
+	RepoID          string                    `json:"repo_id"`
+	Ready           bool                      `json:"ready"`
+	Readiness       string                    `json:"readiness"` // "ready" or "blocked"
+	PRSyncEligible  bool                      `json:"pr_sync_eligible"`
+	Status          string                    `json:"status"`
+	DisplayStatus   string                    `json:"display_status"`
+	SemanticStatus  string                    `json:"semantic_status,omitempty"`
+	LandingStatus   string                    `json:"landing_status,omitempty"`
+	RunnerStatus    string                    `json:"runner_status,omitempty"`
+	RunnerSummary   string                    `json:"runner_summary,omitempty"`
+	StatusSummary   string                    `json:"status_summary,omitempty"`
+	LatestActivity  *InvocationLatestActivity `json:"latest_activity,omitempty"`
+	RunnerUpdatedAt string                    `json:"runner_updated_at,omitempty"`
+	HowToTest       string                    `json:"how_to_test,omitempty"`
+	BlockingReasons []InvocationCheckReason   `json:"blocking_reasons"`
+	Navigation      InvocationCheckNavigation `json:"navigation"`
 }
 
 // InvocationLogsOffsetData is the data payload for GET /invocations/{id}/logs.

@@ -1543,6 +1543,15 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	_, err = os.Stat(invocationRunnerStatusPath)
 	require.NoError(t, err, "invocation-owned runner status should survive landing cleanup")
 
+	worktreeRunnerStatusPath := runnerstatus.StatusPath(treePath)
+	worktreeRunnerStatusBytes, err := os.ReadFile(worktreeRunnerStatusPath)
+	require.NoError(t, err, "integration worktree runner status should be refreshed after landing")
+	var mirroredStatus runnerstatus.RunnerStatus
+	require.NoError(t, json.Unmarshal(worktreeRunnerStatusBytes, &mirroredStatus))
+	assert.Equal(t, landStatus.Status, mirroredStatus.Status)
+	assert.Equal(t, landStatus.Summary, mirroredStatus.Summary)
+	assert.Equal(t, landStatus.HowToTest, mirroredStatus.HowToTest)
+
 	logsResp, err := env.Client.GetInvocationLogsOffset(ctx, startResp.InvocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{})
 	require.NoError(t, err, "logs API should still work after landing cleanup")
 	logBytes, err := base64.StdEncoding.DecodeString(logsResp.Data.DataB64)

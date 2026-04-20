@@ -11,10 +11,12 @@ import (
 const ClaudeMDFileName = "CLAUDE.md"
 
 // ClaudeMDTemplate is the content of CLAUDE.md that instructs runners
-// on how to communicate status via .agency/state/runner_status.json.
+// to use .agency/state/runner_status.json as the only runner contract.
 const ClaudeMDTemplate = `# Agency Runner Protocol
 
-Update ` + "`" + `.agency/state/runner_status.json` + "`" + ` at milestones:
+` + "`" + `.agency/state/runner_status.json` + "`" + ` is the only runner contract.
+
+Update it at milestones:
 
 | Status | When | Required Fields |
 |--------|------|-----------------|
@@ -38,7 +40,7 @@ Schema:
 }
 ` + "```" + `
 
-Before ` + "`" + `ready` + "`" + `, update ` + "`" + `.agency/report.md` + "`" + ` with summary, decisions, testing instructions, and risks.
+Before finishing, set status to ` + "`" + `ready` + "`" + ` and include ` + "`" + `summary` + "`" + ` and ` + "`" + `how_to_test` + "`" + `.
 `
 
 // WriteClaudeMD writes the CLAUDE.md file to the repo root if it doesn't exist.
