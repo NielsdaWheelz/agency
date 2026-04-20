@@ -25,6 +25,7 @@ func TestAgentStart_HelpExplainsRepoAndWorktreeInference(t *testing.T) {
 	assert.Contains(t, stdout, "Use --repo to target a registered repo from any cwd")
 	assert.Contains(t, stdout, "agency agent start my-feature --repo agency")
 	assert.Contains(t, stdout, "Omitting the worktree ref only works when cwd is already inside")
+	assert.Contains(t, stdout, "If --agency-config is relative, it is resolved from the current directory")
 	assert.Contains(t, stdout, "worktree you want to use")
 	assert.NotContains(t, stdout, "--worktree")
 	assert.NotContains(t, stdout, "defaults to current integration worktree")

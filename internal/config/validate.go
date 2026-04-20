@@ -13,6 +13,9 @@ import (
 // Returns E_INVALID_AGENCY_JSON for schema/required-field errors.
 func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	// Validate version
+	if cfg.Version == 1 {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 2")
+	}
 	if cfg.Version != 2 {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 2")
 	}

@@ -22,6 +22,8 @@ type PrintOptions struct {
 
 // Context key whitelist (default mode, in order per spec)
 var defaultContextKeys = []string{
+	"path",
+	"source",
 	"op",
 	"run_id",
 	"repo",
@@ -38,6 +40,8 @@ var defaultContextKeys = []string{
 
 // Additional context keys for verbose mode
 var verboseContextKeys = []string{
+	"path",
+	"source",
 	"op",
 	"run_id",
 	"repo_id",

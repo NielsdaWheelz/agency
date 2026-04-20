@@ -103,6 +103,28 @@ func TestFormatContextKeysInOrder(t *testing.T) {
 	assert.True(t, exitCodeIdx < logIdx, "exit_code should come before log")
 }
 
+func TestFormatShowsPathAndSourceByDefault(t *testing.T) {
+	t.Parallel()
+
+	err := NewWithDetails(EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 2", map[string]string{
+		"path":   "/repo/agency.json",
+		"source": "repo",
+		"hint":   "fix /repo/agency.json, or regenerate it",
+	})
+
+	output := Format(err, PrintOptions{})
+
+	pathIdx := strings.Index(output, "path: /repo/agency.json")
+	sourceIdx := strings.Index(output, "source: repo")
+	hintIdx := strings.Index(output, "hint: fix /repo/agency.json, or regenerate it")
+
+	assert.NotEqual(t, -1, pathIdx, "path should appear in default output")
+	assert.NotEqual(t, -1, sourceIdx, "source should appear in default output")
+	assert.NotEqual(t, -1, hintIdx, "hint should appear in output")
+	assert.True(t, pathIdx < sourceIdx, "path should come before source")
+	assert.True(t, sourceIdx < hintIdx, "source should come before hint")
+}
+
 // TestFormatUnknownKeysHiddenByDefault verifies unknown keys are hidden without --verbose.
 func TestFormatUnknownKeysHiddenByDefault(t *testing.T) {
 	t.Parallel()

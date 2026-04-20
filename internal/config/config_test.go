@@ -142,6 +142,66 @@ func TestResolveAgencyConfig_ExplicitOverridesRepo(t *testing.T) {
 	assert.Equal(t, "/custom/custom/archive.sh", resolved.Config.Scripts.Archive.Path)
 }
 
+func TestResolveAgencyConfig_InvalidRepoDoesNotFallBackToLocal(t *testing.T) {
+	t.Parallel()
+	repoData, err := os.ReadFile("testdata/wrong_version.json")
+	require.NoError(t, err, "failed to read invalid repo fixture")
+	localData, err := os.ReadFile("testdata/valid_min.json")
+	require.NoError(t, err, "failed to read valid local fixture")
+
+	stub := newStubFS()
+	stub.files["/repo/agency.json"] = repoData
+	stub.files["/config/repos/repo-1/agency.json"] = localData
+
+	_, err = ResolveAgencyConfig(stub, "/repo", "/config", "repo-1", "")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, "/repo/agency.json", ae.Details["path"])
+	assert.Equal(t, "repo", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "agency init --path /repo --repo-config --force")
+}
+
+func TestResolveAgencyConfig_InvalidLocalIncludesPathSourceAndHint(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/wrong_version.json")
+	require.NoError(t, err, "failed to read invalid local fixture")
+
+	stub := newStubFS()
+	stub.files["/config/repos/repo-1/agency.json"] = data
+
+	_, err = ResolveAgencyConfig(stub, "/repo", "/config", "repo-1", "")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, "/config/repos/repo-1/agency.json", ae.Details["path"])
+	assert.Equal(t, "local", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "agency init --path /repo --force")
+}
+
+func TestResolveAgencyConfig_InvalidExplicitIncludesPathSourceAndHint(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/wrong_version.json")
+	require.NoError(t, err, "failed to read invalid explicit fixture")
+
+	stub := newStubFS()
+	stub.files["/custom/agency.json"] = data
+
+	_, err = ResolveAgencyConfig(stub, "/repo", "/config", "repo-1", "/custom/agency.json")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, "/custom/agency.json", ae.Details["path"])
+	assert.Equal(t, "explicit", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "--agency-config")
+}
+
 func TestLoadAgencyConfig_WrongTypes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -216,7 +276,8 @@ func TestValidateAgencyConfig_WrongVersion(t *testing.T) {
 
 	_, err = ValidateAgencyConfig(cfg)
 	require.Error(t, err, "expected validation error")
-	assert.Contains(t, err.Error(), "version must be 2")
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "version 1 is not supported")
 }
 
 func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {

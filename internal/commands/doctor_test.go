@@ -272,6 +272,44 @@ func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
 	assert.Contains(t, output, "script_archive: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh"))
 }
 
+func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
+	t.Parallel()
+	repoRoot := setupTestRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
+  "version": 1,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh"
+    }
+  }
+}`), 0o644))
+
+	dataDir := t.TempDir()
+	configDir := t.TempDir()
+	writeUserConfig(t, configDir)
+
+	m := newDoctorRunner(repoRoot)
+	fsys := fs.NewRealFS()
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+	assert.Empty(t, stdout.String())
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(repoRoot, "agency.json"), ae.Details["path"])
+	assert.Equal(t, "repo", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+repoRoot+" --repo-config --force")
+}
+
 func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)

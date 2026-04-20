@@ -39,6 +39,9 @@ Headed mode is the default. It creates the sandbox, starts the runner in tmux,
 and attaches unless you pass --detached. Headless mode runs through the daemon
 and requires exactly one prompt source: --prompt or --prompt-file.
 
+If --agency-config is relative, it is resolved from the current directory
+before loading.
+
 Examples:
   agency agent start my-feature --repo agency
   agency agent start my-feature --repo agency --runner codex

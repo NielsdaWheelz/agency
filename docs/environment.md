@@ -20,4 +20,5 @@ This document covers config paths, directory overrides, and precedence.
 - User config is loaded from `AGENCY_CONFIG_DIR/config.json`.
 - Repo config resolution order is: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `AGENCY_CONFIG_DIR`.
 - `agency agent start` uses that repo config order for repo-scoped `runner_defaults`.
+- If `--agency-config` is relative, `agency agent start` and `agency doctor` resolve it from the current directory before loading.
 - Relative script paths resolve from the directory that contains the selected `agency.json`.

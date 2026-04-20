@@ -1156,6 +1156,41 @@ func TestAgentStart_ExplicitMissingAgencyConfigFails(t *testing.T) {
 	assert.Equal(t, errors.ENoAgencyJSON, errors.GetCode(err))
 }
 
+func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-invalid-agency-config", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(`{
+  "version": 1,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh"
+    }
+  }
+}`), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-invalid-agency-config",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(env.RepoDir, "agency.json"), ae.Details["path"])
+	assert.Equal(t, "repo", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+env.RepoDir+" --repo-config --force")
+}
+
 func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
 
