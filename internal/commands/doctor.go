@@ -83,11 +83,44 @@ type DoctorOpts struct {
 // Doctor implements the `agency doctor` command.
 // Validates repo, tools, config, and scripts without mutating on-disk state.
 func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts DoctorOpts, stdout, stderr io.Writer) error {
-	// 1. Discover repo root (use --path if provided, otherwise CWD)
 	targetPath := cwd
 	if opts.Path != "" {
 		targetPath = opts.Path
 	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+	}
+	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	if opts.DataDirOverride != "" {
+		dirs.DataDir = opts.DataDirOverride
+	}
+	if opts.ConfigDirOverride != "" {
+		dirs.ConfigDir = opts.ConfigDirOverride
+	}
+	if repoID, ok := agencyManagedTreeRepoID(targetPath, dirs.DataDir); ok {
+		ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+		if err != nil {
+			return err
+		}
+		repo, err := ns.client.GetRepo(ctx, repoID)
+		if err != nil {
+			return err
+		}
+		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
+			return errors.NewWithDetails(
+				errors.ERepoRootInaccessible,
+				"repo preferred_root is not accessible",
+				map[string]string{
+					"repo": repoID,
+					"hint": "re-register this repo from an accessible checkout, then re-run doctor",
+				},
+			)
+		}
+		targetPath = repo.Data.PreferredRoot
+	}
+
 	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)
 	if err != nil {
 		if opts.Path != "" {
@@ -100,32 +133,15 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// 2. Resolve directories
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	if opts.DataDirOverride != "" {
-		dirs.DataDir = opts.DataDirOverride
-	}
-	if opts.ConfigDirOverride != "" {
-		dirs.ConfigDir = opts.ConfigDirOverride
-	}
-
-	// 3. Load and validate user config
 	userCfg, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
 	if err != nil {
 		return err
 	}
 
-	// 4. Get origin info
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 
-	// 5. Derive repo identity
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 
-	// 6. Load and validate agency config
 	agencyConfigPath := opts.AgencyConfigPath
 	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
 		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
@@ -157,7 +173,6 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// 9. Resolve runner/editor commands
 	resolvedRunnerCmd, err := config.ResolveRunnerCmd(cr, fsys, dirs.ConfigDir, userCfg, userCfg.Defaults.Runner)
 	if err != nil {
 		return err
@@ -214,7 +229,6 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// Build report
 	report := DoctorReport{
 		RepoRoot:                   repoRoot.Path,
 		AgencyDataDir:              dirs.DataDir,
@@ -246,7 +260,6 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		ScriptArchive:              scriptArchive,
 	}
 
-	// 10. Write output
 	writeDoctorOutput(stdout, report)
 
 	return nil

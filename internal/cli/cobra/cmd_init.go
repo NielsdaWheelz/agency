@@ -26,7 +26,8 @@ func newInitCmd() *cobra.Command {
 By default, init writes local per-repo config under AGENCY_CONFIG_DIR and does
 not modify the repository checkout. Use --repo-config when you want shareable
 repo files in the checkout itself: agency.json, scripts, .gitignore, and
-CLAUDE.md.
+CLAUDE.md. Repo-shared writes must target the original repo checkout, not an
+agency-managed worktree or sandbox.
 
 This command requires user config from "agency config init". If --path is
 omitted, the current directory must be inside the repository you want to

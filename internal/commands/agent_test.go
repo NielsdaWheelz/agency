@@ -1188,7 +1188,7 @@ func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(env.RepoDir, "agency.json"), ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path "+env.RepoDir+" --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(env.RepoDir)+" --repo-config --force")
 }
 
 func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {

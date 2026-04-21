@@ -93,7 +93,7 @@ type WorktreePRMergeRequest struct {
 	// NoDeleteBranch preserves the remote branch after merge.
 	NoDeleteBranch bool `json:"no_delete_branch,omitempty"`
 
-	// AgencyConfigPath is an optional exact agency config file to use for verify/archive.
+	// AgencyConfigPath is an optional exact agency config file to use instead of canonical repo config.
 	AgencyConfigPath string `json:"agency_config_path,omitempty"`
 }
 

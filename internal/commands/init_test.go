@@ -267,6 +267,39 @@ func TestInit_NotInRepo(t *testing.T) {
 	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
 }
 
+func TestInit_RepoConfigRejectsAgencyManagedTrees(t *testing.T) {
+	dataDir := t.TempDir()
+	configDir := t.TempDir()
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+
+	tests := []struct {
+		name string
+		kind string
+		id   string
+	}{
+		{name: "integration worktree", kind: "integration_worktrees", id: "wt-1"},
+		{name: "sandbox", kind: "sandboxes", id: "inv-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := filepath.Join(dataDir, "repos", "repo-1", tt.kind, tt.id, "tree")
+			require.NoError(t, os.MkdirAll(repoRoot, 0o755), "failed to create managed tree")
+
+			cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+			fsys := fs.NewRealFS()
+			ctx := context.Background()
+			var stdout, stderr bytes.Buffer
+
+			err := Init(ctx, cr, fsys, repoRoot, InitOpts{RepoConfig: true, ConfigDirOverride: configDir}, &stdout, &stderr)
+			require.Error(t, err)
+			assert.Equal(t, errors.EUnsafeRepoRoot, errors.GetCode(err))
+			assert.Empty(t, stdout.String())
+			assert.NoFileExists(t, filepath.Join(repoRoot, "agency.json"))
+		})
+	}
+}
+
 func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)

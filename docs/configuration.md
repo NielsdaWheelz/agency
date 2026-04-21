@@ -11,9 +11,9 @@ For file locations and precedence, see [environment.md](environment.md).
 1. Run `agency config init`.
 2. Edit `config.json` only if you need different runner defaults or command mappings.
 3. Register a repo with `agency repo add /path/to/repo`.
-4. Run `agency init --path /path/to/repo` for local per-repo config, or `agency init --path /path/to/repo --repo-config` for shareable repo files.
+4. Run `agency init --path /path/to/repo` for local per-repo config, or `agency init --path /path/to/repo --repo-config` for the shareable repo file at the registered repo canonical root.
 
-`agency config init` owns user config. `agency init` owns repo config and repo scripts only.
+`agency config init` owns user config. `agency init` owns repo config and repo scripts only. Integration worktrees and sandboxes do not own repo-shared config.
 
 ## User Config: `config.json`
 
@@ -73,6 +73,9 @@ Not supported in version `2`:
 - Timeouts use Go duration strings such as `10m` or `1h`.
 - Timeout values must stay within `1m` to `24h`.
 - Relative script paths resolve from the directory that contains the selected `agency.json`.
+- Repo-shared `agency.json` lives at the registered repo canonical root: `PreferredRoot`, else `RepoRootLastSeen`.
+- Integration worktrees and sandboxes are execution surfaces only and do not own repo-shared `agency.json`.
+- Repo-shared writes must target the canonical repo root, not an agency-managed worktree.
 - `runner_defaults` is optional and follows the same typed rules as user config.
 - Unknown fields and wrong types are rejected.
 
@@ -106,4 +109,5 @@ Not supported in version `2`:
 
 - `config.json` owns global defaults and explicit runner and editor command mappings.
 - `agency.json` owns repo scripts and optional repo-scoped runner defaults.
+- Repo-shared `agency.json` belongs to the registered repo canonical root, not to integration worktrees or sandboxes.
 - Use repo-scoped runner defaults when a repo needs different model or effort settings from your user defaults.

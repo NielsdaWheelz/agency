@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
@@ -22,11 +23,16 @@ import (
 func setupTestRepo(t *testing.T) string {
 	t.Helper()
 
-	tmpDir := t.TempDir()
+	return setupTestRepoAt(t, t.TempDir())
+}
 
-	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755), "failed to create .git dir")
+func setupTestRepoAt(t *testing.T, root string) string {
+	t.Helper()
 
-	scriptsDir := filepath.Join(tmpDir, "scripts")
+	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create repo root")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755), "failed to create .git dir")
+
+	scriptsDir := filepath.Join(root, "scripts")
 	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "failed to create scripts dir")
 
 	// Create agency.json
@@ -47,7 +53,7 @@ func setupTestRepo(t *testing.T) string {
     }
   }
 }`
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0o644), "failed to write agency.json")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "agency.json"), []byte(agencyJSON), 0o644), "failed to write agency.json")
 
 	stubScript := "#!/usr/bin/env bash\nexit 0\n"
 	scripts := []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"}
@@ -56,7 +62,11 @@ func setupTestRepo(t *testing.T) string {
 		require.NoError(t, os.WriteFile(path, []byte(stubScript), 0o755), "failed to write script %s", script)
 	}
 
-	return tmpDir
+	return root
+}
+
+func shellQuoteForTest(s string) string {
+	return core.ShellEscapePosix(s)
 }
 
 func writeUserConfig(t *testing.T, configDir string) {
@@ -272,6 +282,36 @@ func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
 	assert.Contains(t, output, "script_archive: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh"))
 }
 
+func TestDoctor_ManagedWorktreeUsesCanonicalRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	canonicalRepoRoot, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "doctor-managed")
+	worktreeRoot := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
+	setupTestRepoAt(t, canonicalRepoRoot)
+	writeLocalAgencyConfig(t, filepath.Join(worktreeRoot, "agency.json"))
+
+	configDir := t.TempDir()
+	writeUserConfig(t, configDir)
+
+	m := newDoctorRunner(canonicalRepoRoot)
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, worktreeRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "repo_root: "+canonicalRepoRoot)
+	assert.Contains(t, output, "agency_json_path: "+filepath.Join(canonicalRepoRoot, "agency.json"))
+	assert.Contains(t, output, "agency_json_source: repo")
+	assert.Contains(t, output, "defaults_runner_model: user-opus")
+	assert.Contains(t, output, "defaults_runner_model_source: user")
+	assert.Contains(t, output, "script_setup: "+filepath.Join(canonicalRepoRoot, "scripts", "agency_setup.sh"))
+	assert.Contains(t, output, "script_verify: "+filepath.Join(canonicalRepoRoot, "scripts", "agency_verify.sh"))
+	assert.Contains(t, output, "script_archive: "+filepath.Join(canonicalRepoRoot, "scripts", "agency_archive.sh"))
+	assert.NotContains(t, output, filepath.Join(worktreeRoot, "agency.json"))
+	assert.NotContains(t, output, "defaults_runner_model: local-opus")
+}
+
 func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
@@ -307,7 +347,7 @@ func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(repoRoot, "agency.json"), ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path "+repoRoot+" --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(repoRoot)+" --repo-config --force")
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {

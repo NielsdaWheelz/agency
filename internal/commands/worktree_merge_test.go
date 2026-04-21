@@ -83,9 +83,9 @@ func TestWorktreePRMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 	t.Parallel()
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json")
-
 	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+
+	writeWorktreeMergeScriptsAndConfig(t, repoDir)
 	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch := "agency/merge-json-abcd"
@@ -108,9 +108,9 @@ func TestWorktreePRMerge_JSONSuccessIncludesIdentityFields(t *testing.T) {
 		Stdout:   `{"state":"MERGED"}`,
 		ExitCode: 0,
 	}
-	archiveScript := filepath.Join(integrationTree, "scripts", "archive.sh")
-	daemonRunner.Responses[archiveScript] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
 	canonicalRepoDir := canonicalPathForTest(t, repoDir)
+	archiveScript := filepath.Join(canonicalRepoDir, "scripts", "archive.sh")
+	daemonRunner.Responses[archiveScript] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
 	daemonRunner.Responses["git -C "+canonicalRepoDir+" worktree remove --force "+integrationTree] = testutil.FakeResponse{
 		ExitCode: 0,
 	}
@@ -155,8 +155,7 @@ func TestWorktreePRMerge_JSONFailureIncludesDaemonRequestID(t *testing.T) {
 
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "merge-json-failure")
 
-	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+	writeWorktreeMergeScriptsAndConfig(t, repoDir)
 	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch := "agency/merge-json-failure-abcd"

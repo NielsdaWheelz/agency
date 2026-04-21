@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -45,6 +46,10 @@ func (s *stubFS) CreateTemp(dir, pattern string) (string, io.WriteCloser, error)
 
 // Verify stubFS implements fs.FS interface (compile-time check)
 var _ fs.FS = (*stubFS)(nil)
+
+func shellQuoteForTest(s string) string {
+	return core.ShellEscapePosix(s)
+}
 
 func TestLoadAgencyConfig_MissingFile(t *testing.T) {
 	t.Parallel()
@@ -161,7 +166,7 @@ func TestResolveAgencyConfig_InvalidRepoDoesNotFallBackToLocal(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "/repo/agency.json", ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path /repo --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest("/repo")+" --repo-config --force")
 }
 
 func TestResolveAgencyConfig_InvalidLocalIncludesPathSourceAndHint(t *testing.T) {
@@ -180,7 +185,29 @@ func TestResolveAgencyConfig_InvalidLocalIncludesPathSourceAndHint(t *testing.T)
 	require.True(t, ok)
 	assert.Equal(t, "/config/repos/repo-1/agency.json", ae.Details["path"])
 	assert.Equal(t, "local", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path /repo --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest("/repo")+" --force")
+}
+
+func TestResolveAgencyConfig_InvalidRepoHintShellQuotesRepoRoot(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := "/tmp/repo with spaces/it's quoted"
+	repoData, err := os.ReadFile("testdata/wrong_version.json")
+	require.NoError(t, err, "failed to read invalid repo fixture")
+	localData, err := os.ReadFile("testdata/valid_min.json")
+	require.NoError(t, err, "failed to read valid local fixture")
+
+	stub := newStubFS()
+	stub.files[filepath.Join(repoRoot, "agency.json")] = repoData
+	stub.files["/config/repos/repo-1/agency.json"] = localData
+
+	_, err = ResolveAgencyConfig(stub, repoRoot, "/config", "repo-1", "")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(repoRoot)+" --repo-config --force")
 }
 
 func TestResolveAgencyConfig_InvalidExplicitIncludesPathSourceAndHint(t *testing.T) {

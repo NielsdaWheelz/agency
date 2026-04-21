@@ -1,7 +1,7 @@
 package mergeflow
 
 import (
-	"context"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -10,7 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -95,26 +94,67 @@ func MergeEnvDeterministic(baseEnv []string, overlays ...map[string]string) []st
 	return result
 }
 
-// ResolveRepoRoot resolves repository root from repo record first, then git.
-func ResolveRepoRoot(ctx context.Context, cr exec.CommandRunner, st *store.Store, repoID, workspaceRoot string) (string, error) {
-	if st != nil && strings.TrimSpace(repoID) != "" {
-		repoRecord, exists, err := st.LoadRepoRecord(repoID)
-		if err == nil && exists {
-			root := strings.TrimSpace(repoRecord.PreferredRoot)
-			if root == "" {
-				root = strings.TrimSpace(repoRecord.RepoRootLastSeen)
-			}
-			if root != "" {
-				return canonicalizePath(root), nil
-			}
-		}
+// ResolveRepoRoot resolves the canonical repo root from the stored repo record.
+func ResolveRepoRoot(st *store.Store, repoID, workspaceRoot string) (string, error) {
+	if st == nil || strings.TrimSpace(repoID) == "" {
+		return "", errors.NewWithDetails(
+			errors.ERepoRootInaccessible,
+			"repo root is not available for merge",
+			map[string]string{
+				"repo_id":        strings.TrimSpace(repoID),
+				"workspace_root": canonicalizePath(workspaceRoot),
+				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
+			},
+		)
 	}
 
-	root, err := git.GetRepoRoot(ctx, cr, workspaceRoot)
+	repoRecord, exists, err := st.LoadRepoRecord(repoID)
 	if err != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to resolve repository root", err)
+		return "", errors.Wrap(errors.EInternal, "failed to load repo record", err)
 	}
-	return canonicalizePath(root.Path), nil
+	if !exists {
+		return "", errors.NewWithDetails(
+			errors.ERepoRootInaccessible,
+			"repo root is not available for merge",
+			map[string]string{
+				"repo_id":        repoID,
+				"workspace_root": canonicalizePath(workspaceRoot),
+				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
+			},
+		)
+	}
+
+	root := strings.TrimSpace(repoRecord.PreferredRoot)
+	if root == "" {
+		root = strings.TrimSpace(repoRecord.RepoRootLastSeen)
+	}
+	if root == "" {
+		return "", errors.NewWithDetails(
+			errors.ERepoRootInaccessible,
+			"repo root is not available for merge",
+			map[string]string{
+				"repo_id":        repoID,
+				"workspace_root": canonicalizePath(workspaceRoot),
+				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
+			},
+		)
+	}
+
+	root = canonicalizePath(root)
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return "", errors.NewWithDetails(
+			errors.ERepoRootInaccessible,
+			"repo root is not accessible for merge",
+			map[string]string{
+				"repo_id":        repoID,
+				"repo_root":      root,
+				"workspace_root": canonicalizePath(workspaceRoot),
+				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
+			},
+		)
+	}
+	return root, nil
 }
 
 // canonicalizePath normalizes path comparisons to abs-clean-resolved path.

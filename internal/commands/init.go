@@ -70,6 +70,15 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	if opts.ConfigDirOverride != "" {
 		dirs.ConfigDir = opts.ConfigDirOverride
 	}
+	if opts.RepoConfig && cwdInsideAgencyManagedTree(repoRoot.Path, dirs.DataDir) {
+		return errors.NewWithDetails(
+			errors.EUnsafeRepoRoot,
+			"repo_root is inside an agency-managed worktree",
+			map[string]string{
+				"hint": "re-run against the original repo checkout, not an integration worktree or sandbox",
+			},
+		)
+	}
 
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)

@@ -162,7 +162,7 @@ func TestHandleWorktreeMerge_BlocksArchiveCleanupRemoveWithDeadline(t *testing.T
 	}
 
 	require.True(t, runner.SawDeadline(), "expected merge cleanup git worktree remove context to carry a deadline")
-	assert.Contains(t, runner.Calls, filepath.Join(workspaceRoot, "scripts", "archive.sh"))
+	assert.Contains(t, runner.Calls, filepath.Join(canonicalRepoRoot, "scripts", "archive.sh"))
 	assert.Contains(t, runner.Calls, removeCmd)
 
 	runner.Release()

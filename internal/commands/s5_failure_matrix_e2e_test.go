@@ -261,8 +261,7 @@ func setupS5E2EMergeReadyInvocation(
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys = setupAgentTestEnvShort(t, worktreeName)
 	invocationID = ""
 
-	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+	writeWorktreeMergeScriptsAndConfig(t, repoDir)
 	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch = "agency/" + worktreeName + "-abcd"

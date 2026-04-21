@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -19,7 +20,7 @@ func LocalAgencyConfigPath(configDir, repoID string) string {
 	return filepath.Join(configDir, "repos", repoID, "agency.json")
 }
 
-func ResolveAgencyConfig(filesystem fs.FS, repoRoot, configDir, repoID, explicitPath string) (ResolvedAgencyConfig, error) {
+func ResolveAgencyConfig(filesystem fs.FS, repoConfigRoot, configDir, repoID, explicitPath string) (ResolvedAgencyConfig, error) {
 	if explicitPath != "" {
 		cfg, err := loadAgencyConfigPath(filesystem, explicitPath)
 		if err != nil {
@@ -27,24 +28,24 @@ func ResolveAgencyConfig(filesystem fs.FS, repoRoot, configDir, repoID, explicit
 				return ResolvedAgencyConfig{}, errors.New(errors.ENoAgencyJSON, "agency config not found: "+explicitPath)
 			}
 			if errors.GetCode(err) == errors.EInvalidAgencyJSON {
-				return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoRoot, explicitPath, "explicit")
+				return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoConfigRoot, explicitPath, "explicit")
 			}
 			if errors.GetCode(err) != "" {
 				return ResolvedAgencyConfig{}, err
 			}
 			return ResolvedAgencyConfig{}, errors.Wrap(errors.ENoAgencyJSON, "failed to read agency config", err)
 		}
-		return validateResolvedAgencyConfig(cfg, repoRoot, explicitPath, "explicit")
+		return validateResolvedAgencyConfig(cfg, repoConfigRoot, explicitPath, "explicit")
 	}
 
-	repoPath := filepath.Join(repoRoot, "agency.json")
+	repoPath := filepath.Join(repoConfigRoot, "agency.json")
 	cfg, err := loadAgencyConfigPath(filesystem, repoPath)
 	if err == nil {
-		return validateResolvedAgencyConfig(cfg, repoRoot, repoPath, "repo")
+		return validateResolvedAgencyConfig(cfg, repoConfigRoot, repoPath, "repo")
 	}
 	if !os.IsNotExist(err) {
 		if errors.GetCode(err) == errors.EInvalidAgencyJSON {
-			return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoRoot, repoPath, "repo")
+			return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoConfigRoot, repoPath, "repo")
 		}
 		if errors.GetCode(err) != "" {
 			return ResolvedAgencyConfig{}, err
@@ -55,11 +56,11 @@ func ResolveAgencyConfig(filesystem fs.FS, repoRoot, configDir, repoID, explicit
 	localPath := LocalAgencyConfigPath(configDir, repoID)
 	cfg, err = loadAgencyConfigPath(filesystem, localPath)
 	if err == nil {
-		return validateResolvedAgencyConfig(cfg, repoRoot, localPath, "local")
+		return validateResolvedAgencyConfig(cfg, repoConfigRoot, localPath, "local")
 	}
 	if !os.IsNotExist(err) {
 		if errors.GetCode(err) == errors.EInvalidAgencyJSON {
-			return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoRoot, localPath, "local")
+			return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoConfigRoot, localPath, "local")
 		}
 		if errors.GetCode(err) != "" {
 			return ResolvedAgencyConfig{}, err
@@ -97,7 +98,7 @@ func validateResolvedAgencyConfig(cfg AgencyConfig, repoRoot, path, source strin
 	}, nil
 }
 
-func invalidResolvedAgencyConfigError(err error, repoRoot, path, source string) error {
+func invalidResolvedAgencyConfigError(err error, repoConfigRoot, path, source string) error {
 	ae, ok := errors.AsAgencyError(err)
 	if !ok || ae.Code != errors.EInvalidAgencyJSON {
 		return err
@@ -109,9 +110,9 @@ func invalidResolvedAgencyConfigError(err error, repoRoot, path, source string) 
 	}
 	switch source {
 	case "repo":
-		details["hint"] = "fix " + path + ", or regenerate it with `agency init --path " + repoRoot + " --repo-config --force`"
+		details["hint"] = "fix " + path + ", or regenerate it with `agency init --path " + core.ShellEscapePosix(repoConfigRoot) + " --repo-config --force`"
 	case "local":
-		details["hint"] = "fix " + path + ", or regenerate it with `agency init --path " + repoRoot + " --force`"
+		details["hint"] = "fix " + path + ", or regenerate it with `agency init --path " + core.ShellEscapePosix(repoConfigRoot) + " --force`"
 	case "explicit":
 		details["hint"] = "fix " + path + ", or re-run with a different `--agency-config` file"
 	}

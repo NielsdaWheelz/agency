@@ -238,6 +238,10 @@ func (s *Server) runWorktreeMerge(
 	mergeLogPath := filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
 	alreadyMerged := strings.EqualFold(strings.TrimSpace(pr.State), "MERGED")
 	var verifyLogPath string
+	agencyJSON, err := config.ResolveAgencyConfig(s.FS, repoRoot, s.ConfigDir, record.RepoID, req.AgencyConfigPath)
+	if err != nil {
+		return nil, err
+	}
 
 	if alreadyMerged {
 		skippedCommand := fmt.Sprintf("gh pr merge %d -R %s --%s (skipped: already merged)", pr.Number, ghRepo, req.Strategy)
@@ -271,7 +275,7 @@ func (s *Server) runWorktreeMerge(
 			)
 		}
 
-		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr, req.AgencyConfigPath)
+		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr, repoRoot, agencyJSON.Config)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +341,7 @@ func (s *Server) runWorktreeMerge(
 		}
 	}
 
-	archiveLogPath, err := s.runWorktreeArchive(ctx, record, pr, repoRoot, req.AgencyConfigPath)
+	archiveLogPath, err := s.runWorktreeArchive(ctx, record, pr, repoRoot, agencyJSON.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -354,16 +358,17 @@ func (s *Server) runWorktreeMerge(
 	}, nil
 }
 
-func (s *Server) runWorktreeMergeVerify(ctx context.Context, record *store.IntegrationWorktreeRecord, pr *mergePRView, agencyConfigPath string) (string, error) {
+func (s *Server) runWorktreeMergeVerify(
+	ctx context.Context,
+	record *store.IntegrationWorktreeRecord,
+	pr *mergePRView,
+	repoRoot string,
+	agencyJSON config.AgencyConfig,
+) (string, error) {
 	if record == nil || record.Meta == nil {
 		return "", errors.New(errors.EInternal, "worktree metadata missing")
 	}
 	wtMeta := record.Meta
-
-	agencyJSON, err := config.ResolveAgencyConfig(s.FS, wtMeta.TreePath, s.ConfigDir, record.RepoID, agencyConfigPath)
-	if err != nil {
-		return "", err
-	}
 
 	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
 	logsDir := s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
@@ -371,19 +376,14 @@ func (s *Server) runWorktreeMergeVerify(ctx context.Context, record *store.Integ
 	verifyRecordPath := filepath.Join(worktreeDir, "verify_record.json")
 	verifyJSONPath := filepath.Join(wtMeta.TreePath, ".agency", "out", "verify.json")
 
-	repoRoot, err := s.resolveMergeRepoRoot(ctx, record.RepoID, wtMeta.TreePath)
-	if err != nil {
-		return "", err
-	}
-
 	env := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr)
 	runCfg := verify.RunConfig{
 		RepoID:         record.RepoID,
 		RunID:          record.WorktreeID,
 		WorkDir:        wtMeta.TreePath,
-		Script:         agencyJSON.Config.Scripts.Verify.Path,
+		Script:         agencyJSON.Scripts.Verify.Path,
 		Env:            env,
-		Timeout:        agencyJSON.Config.Scripts.Verify.Timeout,
+		Timeout:        agencyJSON.Scripts.Verify.Timeout,
 		LogPath:        verifyLogPath,
 		VerifyJSONPath: verifyJSONPath,
 		RecordPath:     verifyRecordPath,
@@ -429,7 +429,7 @@ func (s *Server) runWorktreeArchive(
 	record *store.IntegrationWorktreeRecord,
 	pr *mergePRView,
 	repoRoot string,
-	agencyConfigPath string,
+	agencyJSON config.AgencyConfig,
 ) (string, error) {
 	if record == nil || record.Meta == nil {
 		return "", errors.New(errors.EInternal, "worktree metadata missing")
@@ -467,11 +467,6 @@ func (s *Server) runWorktreeArchive(
 		return archiveLogPath, nil
 	}
 
-	agencyJSON, err := config.ResolveAgencyConfig(s.FS, wtMeta.TreePath, s.ConfigDir, record.RepoID, agencyConfigPath)
-	if err != nil {
-		return "", err
-	}
-
 	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
 	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr)
 	env := make(map[string]string, len(envList))
@@ -482,8 +477,8 @@ func (s *Server) runWorktreeArchive(
 		}
 	}
 
-	archiveCmd := agencyJSON.Config.Scripts.Archive.Path
-	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Config.Scripts.Archive.Timeout)
+	archiveCmd := agencyJSON.Scripts.Archive.Path
+	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Scripts.Archive.Timeout)
 	defer cancel()
 	result, runErr := s.Runner.Run(runCtx, archiveCmd, nil, exec.RunOpts{
 		Dir: wtMeta.TreePath,

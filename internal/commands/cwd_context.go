@@ -48,37 +48,49 @@ func findPresentWorktreeContainingCWD(ctx context.Context, client *daemonclient.
 	return daemon.WorktreeDTO{}, false, nil
 }
 
-func cwdInsideAgencyManagedTree(cwd, dataDir string) bool {
-	if strings.TrimSpace(cwd) == "" || strings.TrimSpace(dataDir) == "" {
-		return false
+func agencyManagedTreeRepoID(path, dataDir string) (string, bool) {
+	if strings.TrimSpace(path) == "" || strings.TrimSpace(dataDir) == "" {
+		return "", false
 	}
 
-	cwdPath, err := filepath.Abs(cwd)
+	cleanPath, err := filepath.Abs(path)
 	if err != nil {
-		return false
+		return "", false
 	}
-	cwdPath, err = filepath.EvalSymlinks(cwdPath)
+	cleanPath, err = filepath.EvalSymlinks(cleanPath)
 	if err != nil {
-		return false
-	}
-
-	dataPath, err := filepath.Abs(dataDir)
-	if err != nil {
-		return false
-	}
-	dataPath, err = filepath.EvalSymlinks(dataPath)
-	if err != nil {
-		return false
+		return "", false
 	}
 
-	reposDir := filepath.Join(dataPath, "repos")
-	rel, err := filepath.Rel(reposDir, cwdPath)
+	cleanDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return "", false
+	}
+	cleanDataDir, err = filepath.EvalSymlinks(cleanDataDir)
+	if err != nil {
+		return "", false
+	}
+
+	reposDir := filepath.Join(cleanDataDir, "repos")
+	rel, err := filepath.Rel(reposDir, cleanPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return false
+		return "", false
 	}
 
 	parts := strings.Split(rel, string(filepath.Separator))
-	return len(parts) >= 4 &&
-		(parts[1] == "integration_worktrees" || parts[1] == "sandboxes") &&
-		parts[3] == "tree"
+	if len(parts) < 4 || strings.TrimSpace(parts[0]) == "" {
+		return "", false
+	}
+	if parts[1] != "integration_worktrees" && parts[1] != "sandboxes" {
+		return "", false
+	}
+	if parts[3] != "tree" {
+		return "", false
+	}
+	return parts[0], true
+}
+
+func cwdInsideAgencyManagedTree(cwd, dataDir string) bool {
+	_, ok := agencyManagedTreeRepoID(cwd, dataDir)
+	return ok
 }

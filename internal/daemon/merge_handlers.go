@@ -322,7 +322,8 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 }
 
 func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot string) (string, error) {
-	return mergeflow.ResolveRepoRoot(ctx, s.Runner, s.Store, repoID, workspaceRoot)
+	_ = ctx
+	return mergeflow.ResolveRepoRoot(s.Store, repoID, workspaceRoot)
 }
 
 func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string) (string, string, error) {
