@@ -47,7 +47,8 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 			if !matchesWorktreeState(r.Meta.State, params.State) {
 				continue
 			}
-			allWorktrees = append(allWorktrees, WorktreeMetaToDTO(r.Meta))
+			mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(r.Meta.RepoID, r.Meta.WorktreeID)
+			allWorktrees = append(allWorktrees, WorktreeMetaToDTO(r.Meta, mergeMeta))
 		}
 	}
 
@@ -87,7 +88,45 @@ func (s *Server) handleGetWorktree(w http.ResponseWriter, r *http.Request, workt
 		return
 	}
 
-	s.writeAPIResponse(w, requestID, WorktreeMetaToDTO(record.Meta))
+	mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
+	s.writeAPIResponse(w, requestID, WorktreeMetaToDTO(record.Meta, mergeMeta))
+}
+
+// handleGetWorktreeMerge handles GET /worktrees/{ref}/pr/merge.
+func (s *Server) handleGetWorktreeMerge(w http.ResponseWriter, r *http.Request, worktreeRef string) {
+	requestID := getOrCreateRequestID(r)
+
+	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
+	if repoID == "" {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_id query parameter is required", "pass ?repo_id=<repo_id>", nil)
+		return
+	}
+
+	record, resolveErr := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
+	if resolveErr != nil {
+		s.writeReadResolveError(w, requestID, resolveErr, "use 'agency worktree ls' to list available worktrees", errors.EWorktreeIDAmbiguous)
+		return
+	}
+	if record.Broken || record.Meta == nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree", nil)
+		return
+	}
+
+	mergeMeta, err := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EStoreCorrupt
+		}
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
+		return
+	}
+	if mergeMeta == nil {
+		s.writeAPIError(w, http.StatusNotFound, requestID, string(errors.EWorktreeMergeNotFound), "worktree does not have durable merge state", "start merge with 'agency worktree <worktree-ref> pr merge'", nil)
+		return
+	}
+
+	s.writeAPIResponse(w, requestID, WorktreeMergeMetaToDTO(mergeMeta))
 }
 
 // resolveWorktreeRefForRepo resolves a worktree reference within a specific repo.

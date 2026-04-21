@@ -273,6 +273,109 @@ func TestReadIntegrationWorktreeMeta_UnsupportedSchemaVersionReturnsStoreCorrupt
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
+func TestNewIntegrationWorktreeMergeMeta(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 20, 19, 0, 0, 0, time.UTC)
+	meta := NewIntegrationWorktreeMergeMeta(
+		"repo-1",
+		"wt-1",
+		"20260420190000-a1b2",
+		"req-123",
+		"squash",
+		true,
+		"/tmp/agency.json",
+		now,
+	)
+
+	assert.Equal(t, SchemaVersion, meta.SchemaVersion)
+	assert.Equal(t, WorktreeMergeStatusRunning, meta.Status)
+	assert.Equal(t, WorktreeMergeStagePreflight, meta.Stage)
+	assert.Equal(t, "2026-04-20T19:00:00Z", meta.StartedAt)
+	assert.Equal(t, "2026-04-20T19:00:00Z", meta.UpdatedAt)
+	assert.Equal(t, "/tmp/agency.json", meta.AgencyConfigPath)
+}
+
+func TestWriteReadAndUpdateIntegrationWorktreeMerge(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "repo-1"
+	worktreeID := "wt-1"
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
+	require.NoError(t, err)
+
+	meta := NewIntegrationWorktreeMergeMeta(
+		repoID,
+		worktreeID,
+		"20260420190000-a1b2",
+		"req-123",
+		"squash",
+		true,
+		"",
+		time.Date(2026, 4, 20, 19, 0, 0, 0, time.UTC),
+	)
+	meta.Branch = "agency/example-a1b2"
+	meta.PRNumber = 42
+	meta.PRURL = "https://example.test/pr/42"
+	meta.VerifyLogPath = "/tmp/verify.log"
+
+	require.NoError(t, st.WriteIntegrationWorktreeMerge(repoID, worktreeID, meta))
+
+	read, err := st.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	require.NoError(t, err)
+	require.NotNil(t, read)
+	assert.Equal(t, meta.AttemptID, read.AttemptID)
+	assert.Equal(t, meta.PRNumber, read.PRNumber)
+	assert.Equal(t, meta.VerifyLogPath, read.VerifyLogPath)
+
+	err = st.UpdateIntegrationWorktreeMerge(repoID, worktreeID, func(m *IntegrationWorktreeMergeMeta) {
+		m.Status = WorktreeMergeStatusSucceeded
+		m.Stage = WorktreeMergeStageCompleted
+		m.FinishedAt = "2026-04-20T19:01:00Z"
+	})
+	require.NoError(t, err)
+
+	read, err = st.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	require.NoError(t, err)
+	require.NotNil(t, read)
+	assert.Equal(t, WorktreeMergeStatusSucceeded, read.Status)
+	assert.Equal(t, WorktreeMergeStageCompleted, read.Stage)
+	assert.Equal(t, "2026-04-20T19:01:00Z", read.FinishedAt)
+}
+
+func TestReadIntegrationWorktreeMerge_NotFoundReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	meta, err := st.ReadIntegrationWorktreeMerge("repo-1", "wt-1")
+	require.NoError(t, err)
+	assert.Nil(t, meta)
+}
+
+func TestReadIntegrationWorktreeMerge_CorruptReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "repo-1"
+	worktreeID := "wt-1"
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
+	require.NoError(t, err)
+
+	mergePath := st.IntegrationWorktreeMergePath(repoID, worktreeID)
+	require.NoError(t, os.WriteFile(mergePath, []byte("{invalid"), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
 // TestLoad_WorktreeNotFound verifies that reading a non-existent meta.json
 // returns E_WORKTREE_NOT_FOUND.
 func TestLoad_WorktreeNotFound(t *testing.T) {

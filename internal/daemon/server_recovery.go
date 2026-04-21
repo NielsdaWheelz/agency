@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
@@ -29,6 +30,9 @@ func (s *Server) runRecoveryScan() error {
 	for repoID := range index.Repos {
 		if err := s.recoverRepoInvocations(repoID); err != nil {
 			return fmt.Errorf("recover repo %s: %w", repoID, err)
+		}
+		if err := s.recoverRepoWorktreeMerges(repoID); err != nil {
+			return fmt.Errorf("recover repo worktree merges %s: %w", repoID, err)
 		}
 	}
 	return nil
@@ -200,6 +204,42 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 			meta.LifecycleOwner = ""
 		})
 	}
+}
+
+func (s *Server) recoverRepoWorktreeMerges(repoID string) error {
+	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+	if err != nil {
+		return err
+	}
+
+	now := s.Clock().UTC().Format(time.RFC3339)
+	for _, r := range records {
+		if r.Broken || r.Meta == nil {
+			continue
+		}
+
+		mergeMeta, err := s.Store.ReadIntegrationWorktreeMerge(repoID, r.WorktreeID)
+		if err != nil || mergeMeta == nil {
+			continue
+		}
+		if mergeMeta.Status != store.WorktreeMergeStatusRunning {
+			continue
+		}
+
+		_ = s.Store.UpdateIntegrationWorktreeMerge(repoID, r.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+			m.Status = store.WorktreeMergeStatusFailed
+			m.UpdatedAt = now
+			m.FinishedAt = now
+			m.ErrorCode = string(errors.EWorktreeMergeInterrupted)
+			m.ErrorMessage = "merge attempt lost daemon supervision before reaching a terminal state"
+			m.Hint = "rerun 'agency worktree <worktree-ref> pr merge' to resume from durable state"
+		})
+		_ = s.appendWorktreeEvent(repoID, r.WorktreeID, mergeEventFailed, map[string]any{
+			"error_code": string(errors.EWorktreeMergeInterrupted),
+			"message":    "merge attempt lost daemon supervision before reaching a terminal state",
+		})
+	}
+	return nil
 }
 
 func WritePidFile(pidPath string) error {

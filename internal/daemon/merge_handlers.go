@@ -412,11 +412,15 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 		return http.StatusNotFound
 	case errors.EWorktreeIDAmbiguous:
 		return http.StatusConflict
+	case errors.EWorktreeMergeNotFound:
+		return http.StatusNotFound
 	case errors.EInvocationNotFound, errors.ENoPR:
 		return http.StatusNotFound
 	case errors.EInvocationIDAmbiguous:
 		return http.StatusConflict
 	case errors.ERepoLocked:
+		return http.StatusConflict
+	case errors.EWorktreeMergeActive:
 		return http.StatusConflict
 	case errors.EWorktreeHasUnresolvedInvocations:
 		return http.StatusConflict
@@ -427,6 +431,8 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 	case errors.EArchiveFailed:
 		return http.StatusConflict
 	case errors.EDirtyWorktree:
+		return http.StatusConflict
+	case errors.EWorktreeMergeInterrupted:
 		return http.StatusConflict
 	case errors.EPRNotOpen, errors.EPRDraft, errors.EPRMismatch, errors.EPRNotMergeable, errors.EPRMergeabilityUnknown:
 		return http.StatusConflict

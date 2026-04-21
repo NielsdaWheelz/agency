@@ -516,10 +516,10 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "pr merge with GET should fail",
+			name:       "pr merge with GET routes to merge read handler",
 			method:     http.MethodGet,
 			path:       "/worktrees/test-id/pr/merge",
-			wantStatus: http.StatusMethodNotAllowed,
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "rebase with GET should fail",

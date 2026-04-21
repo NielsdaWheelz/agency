@@ -66,11 +66,14 @@ type Server struct {
 	// startedAt is when the daemon started.
 	startedAt time.Time
 
-	// mu protects the processes map.
+	// mu protects the processes and activeMerges maps.
 	mu sync.RWMutex
 
 	// processes maps invocation_id -> supervised process state (headless and headed).
 	processes map[string]*SupervisedProcess
+
+	// activeMerges maps "<repo_id>/<worktree_id>" -> accepted worktree merge attempt.
+	activeMerges map[string]*WorktreeMergeProcess
 
 	// idempotencyMu protects the idempotency map.
 	idempotencyMu sync.RWMutex
@@ -133,6 +136,7 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		PIDChecker:              IsPIDAlive,
 		InstanceID:              uuid.New().String(),
 		processes:               make(map[string]*SupervisedProcess),
+		activeMerges:            make(map[string]*WorktreeMergeProcess),
 		idempotency:             make(map[string]IdempotencyEntry),
 		headedIdempotency:       make(map[string]HeadedIdempotencyEntry),
 		worktreeIdempotency:     make(map[string]WorktreeIdempotencyEntry),
@@ -203,6 +207,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.flushLastOutputAt(proc)
 		}
 		s.mu.RUnlock()
+		s.cancelActiveWorktreeMerges(ctx)
 
 		if s.server != nil {
 			err = s.server.Shutdown(ctx)

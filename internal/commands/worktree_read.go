@@ -68,7 +68,11 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		if wt.State == "archived" {
 			state = " [archived]"
 		}
-		_, _ = fmt.Fprintf(stdout, "%s  %s  %s%s\n", wt.WorktreeID, wt.Name, wt.Branch, state)
+		merge := ""
+		if wt.Merge != nil && wt.Merge.StatusSummary != "" {
+			merge = " [merge: " + wt.Merge.StatusSummary + "]"
+		}
+		_, _ = fmt.Fprintf(stdout, "%s  %s  %s%s%s\n", wt.WorktreeID, wt.Name, wt.Branch, state, merge)
 	}
 
 	return nil
@@ -117,5 +121,18 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	_, _ = fmt.Fprintf(stdout, "state:         %s\n", wt.State)
 	_, _ = fmt.Fprintf(stdout, "created_at:    %s\n", wt.CreatedAt)
 	_, _ = fmt.Fprintf(stdout, "tree_path:     %s\n", wt.TreePath)
+	if wt.Merge != nil {
+		_, _ = fmt.Fprintf(stdout, "merge_state:   %s\n", wt.Merge.State)
+		_, _ = fmt.Fprintf(stdout, "merge_stage:   %s\n", wt.Merge.Stage)
+		if wt.Merge.StatusSummary != "" {
+			_, _ = fmt.Fprintf(stdout, "merge_status:  %s\n", wt.Merge.StatusSummary)
+		}
+		if wt.Merge.PRURL != "" {
+			_, _ = fmt.Fprintf(stdout, "merge_pr_url:  %s\n", wt.Merge.PRURL)
+		}
+		if wt.Merge.ErrorCode != "" {
+			_, _ = fmt.Fprintf(stdout, "merge_error:   %s\n", wt.Merge.ErrorCode)
+		}
+	}
 	return nil
 }

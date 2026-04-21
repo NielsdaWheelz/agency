@@ -173,12 +173,13 @@ func TestHandleWorktreeMerge_BlocksArchiveCleanupRemoveWithDeadline(t *testing.T
 		t.Fatal("worktree merge handler did not return after releasing blocked remove")
 	}
 
-	require.Equal(t, http.StatusConflict, w.Code)
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
 
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.OK)
-	assert.Equal(t, string(errors.EArchiveFailed), resp.ErrorCode)
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusFailed
+	})
+	assert.Equal(t, store.WorktreeMergeStageArchive, mergeMeta.Stage)
+	assert.Equal(t, string(errors.EArchiveFailed), mergeMeta.ErrorCode)
 }
 
 type worktreeRmTimeoutEnv struct {

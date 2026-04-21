@@ -640,6 +640,8 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 		return http.StatusConflict
 	case errors.ERepoLocked:
 		return http.StatusConflict
+	case errors.EWorktreeMergeActive:
+		return http.StatusConflict
 	case errors.EDirtyWorktree:
 		return http.StatusConflict
 	case errors.EGitPushFailed:

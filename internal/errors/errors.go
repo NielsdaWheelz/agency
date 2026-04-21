@@ -83,19 +83,22 @@ const (
 	EWorkspaceArchived Code = "E_WORKSPACE_ARCHIVED" // run exists but worktree missing or archived; cannot verify
 
 	// Slice 6 merge + archive error codes
-	EArchiveFailed         Code = "E_ARCHIVE_FAILED"          // archive step failed (script failure and/or deletion failure)
-	EAborted               Code = "E_ABORTED"                 // user declined confirmation / wrong confirmation token
-	ENotInteractive        Code = "E_NOT_INTERACTIVE"         // command requires an interactive TTY
-	EGitFetchFailed        Code = "E_GIT_FETCH_FAILED"        // git fetch failed
-	ERemoteOutOfDate       Code = "E_REMOTE_OUT_OF_DATE"      // local head sha != origin/<branch> sha
-	EPRDraft               Code = "E_PR_DRAFT"                // PR is a draft
-	EPRMismatch            Code = "E_PR_MISMATCH"             // resolved PR does not match expected branch
-	EGHRepoParseFailed     Code = "E_GH_REPO_PARSE_FAILED"    // failed to parse owner/repo from origin
-	EPRMergeabilityUnknown Code = "E_PR_MERGEABILITY_UNKNOWN" // gh reports mergeable as UNKNOWN after retries
-	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
-	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
-	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the branch or worktree
-	ERebaseConflict        Code = "E_REBASE_CONFLICT"         // git rebase encountered conflicts during worktree rebase
+	EArchiveFailed            Code = "E_ARCHIVE_FAILED"             // archive step failed (script failure and/or deletion failure)
+	EAborted                  Code = "E_ABORTED"                    // user declined confirmation / wrong confirmation token
+	ENotInteractive           Code = "E_NOT_INTERACTIVE"            // command requires an interactive TTY
+	EGitFetchFailed           Code = "E_GIT_FETCH_FAILED"           // git fetch failed
+	ERemoteOutOfDate          Code = "E_REMOTE_OUT_OF_DATE"         // local head sha != origin/<branch> sha
+	EPRDraft                  Code = "E_PR_DRAFT"                   // PR is a draft
+	EPRMismatch               Code = "E_PR_MISMATCH"                // resolved PR does not match expected branch
+	EGHRepoParseFailed        Code = "E_GH_REPO_PARSE_FAILED"       // failed to parse owner/repo from origin
+	EPRMergeabilityUnknown    Code = "E_PR_MERGEABILITY_UNKNOWN"    // gh reports mergeable as UNKNOWN after retries
+	EGHPRMergeFailed          Code = "E_GH_PR_MERGE_FAILED"         // gh merge failed or merge state could not be confirmed
+	EPRNotMergeable           Code = "E_PR_NOT_MERGEABLE"           // PR cannot be merged (conflicts or checks failing)
+	ENoPR                     Code = "E_NO_PR"                      // no PR exists for the branch or worktree
+	ERebaseConflict           Code = "E_REBASE_CONFLICT"            // git rebase encountered conflicts during worktree rebase
+	EWorktreeMergeNotFound    Code = "E_WORKTREE_MERGE_NOT_FOUND"   // worktree exists but no durable merge state exists yet
+	EWorktreeMergeActive      Code = "E_WORKTREE_MERGE_ACTIVE"      // another merge attempt already owns this worktree
+	EWorktreeMergeInterrupted Code = "E_WORKTREE_MERGE_INTERRUPTED" // merge attempt was interrupted before reaching a terminal step
 
 	// Name validation error codes
 	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run

@@ -62,15 +62,45 @@ type InvalidQueryArgumentDetails struct {
 
 // WorktreeDTO is the canonical DTO for integration worktree responses.
 type WorktreeDTO struct {
-	WorktreeID string `json:"worktree_id"`
-	Name       string `json:"name"`
-	RepoID     string `json:"repo_id"`
-	Branch     string `json:"branch"`
-	BaseBranch string `json:"base_branch"`
-	TreePath   string `json:"tree_path"`
-	State      string `json:"state"` // "present" or "archived"
-	CreatedAt  string `json:"created_at"`
-	LastUsedAt string `json:"last_used_at,omitempty"`
+	WorktreeID string            `json:"worktree_id"`
+	Name       string            `json:"name"`
+	RepoID     string            `json:"repo_id"`
+	Branch     string            `json:"branch"`
+	BaseBranch string            `json:"base_branch"`
+	TreePath   string            `json:"tree_path"`
+	State      string            `json:"state"` // "present" or "archived"
+	CreatedAt  string            `json:"created_at"`
+	LastUsedAt string            `json:"last_used_at,omitempty"`
+	Merge      *WorktreeMergeDTO `json:"merge,omitempty"`
+}
+
+// WorktreeMergeDTO is the canonical daemon read shape for durable worktree merge state.
+type WorktreeMergeDTO struct {
+	AttemptID string `json:"attempt_id"`
+	RequestID string `json:"request_id,omitempty"`
+
+	State         string `json:"state"` // running, succeeded, failed
+	Stage         string `json:"stage"` // preflight, verify, merge, archive, completed
+	StatusSummary string `json:"status_summary,omitempty"`
+
+	Strategy     string `json:"strategy"`
+	DeleteBranch bool   `json:"delete_branch"`
+
+	Branch   string `json:"branch,omitempty"`
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+
+	MergeLogPath   string `json:"merge_log_path,omitempty"`
+	VerifyLogPath  string `json:"verify_log_path,omitempty"`
+	ArchiveLogPath string `json:"archive_log_path,omitempty"`
+
+	StartedAt  string `json:"started_at"`
+	UpdatedAt  string `json:"updated_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	Hint         string `json:"hint,omitempty"`
 }
 
 // ----- InvocationDTO -----

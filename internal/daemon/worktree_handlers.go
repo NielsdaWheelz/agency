@@ -234,6 +234,15 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
+	if err := s.ensureWorktreeMergeInactive(repoID, record.WorktreeID, "remove the worktree"); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EWorktreeMergeActive
+		}
+		s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
+		return
+	}
+
 	unresolved, err := s.unresolvedInvocationsForWorktree(repoID, record.WorktreeID)
 	if err != nil {
 		code := errors.GetCode(err)

@@ -8,12 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
+
+const worktreeMergePollInterval = 500 * time.Millisecond
 
 // WorktreeRmOpts holds options for the worktree rm command.
 type WorktreeRmOpts struct {
@@ -296,37 +300,109 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		))
 	}
 
+	merge, err := waitForWorktreeMergeTerminal(ctx, ns.client, opts.WorktreeRef, repoCtx.RepoID, func(update string) {
+		if opts.JSON || strings.TrimSpace(update) == "" {
+			return
+		}
+		_, _ = fmt.Fprintln(stderr, update)
+	})
+	if err != nil {
+		return fail(err)
+	}
+
+	requestID := resp.RequestID
+	if strings.TrimSpace(merge.RequestID) != "" {
+		requestID = strings.TrimSpace(merge.RequestID)
+	}
+	if merge.State == "failed" {
+		code := errors.EInternal
+		if strings.TrimSpace(merge.ErrorCode) != "" {
+			code = errors.Code(strings.TrimSpace(merge.ErrorCode))
+		}
+		message := strings.TrimSpace(merge.ErrorMessage)
+		if message == "" {
+			message = "merge failed"
+		}
+		return fail(errors.NewWithDetails(
+			code,
+			message,
+			map[string]string{
+				"hint":       strings.TrimSpace(merge.Hint),
+				"request_id": requestID,
+			},
+		))
+	}
+
 	if opts.JSON {
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
 			envelope.RepoID = resp.RepoID
 			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.Branch = resp.Branch
-			envelope.PRNumber = resp.PRNumber
-			envelope.PRURL = resp.PRURL
-			envelope.Strategy = resp.Strategy
-			envelope.DeleteBranch = resp.DeleteBranch
-			envelope.MergeLogPath = resp.MergeLogPath
-			envelope.VerifyLogPath = resp.VerifyLogPath
-			envelope.ArchiveLogPath = resp.ArchiveLogPath
+			envelope.Branch = merge.Branch
+			envelope.PRNumber = merge.PRNumber
+			envelope.PRURL = merge.PRURL
+			envelope.Strategy = merge.Strategy
+			envelope.DeleteBranch = merge.DeleteBranch
+			envelope.MergeLogPath = merge.MergeLogPath
+			envelope.VerifyLogPath = merge.VerifyLogPath
+			envelope.ArchiveLogPath = merge.ArchiveLogPath
 			if resp.APIVersion > 0 {
 				envelope.APIVersion = resp.APIVersion
 			}
 			if resp.BuildVersion != "" {
 				envelope.BuildVersion = resp.BuildVersion
 			}
-			envelope.RequestID = resp.RequestID
+			envelope.RequestID = requestID
 		})
 	}
 
 	_, _ = fmt.Fprintln(stdout, "worktree pr merge complete")
 	_, _ = fmt.Fprintf(stdout, "  worktree_id:     %s\n", resp.IntegrationWorktreeID)
-	_, _ = fmt.Fprintf(stdout, "  branch:          %s\n", resp.Branch)
-	_, _ = fmt.Fprintf(stdout, "  strategy:        %s\n", resp.Strategy)
-	_, _ = fmt.Fprintf(stdout, "  pr_url:          %s\n", resp.PRURL)
-	_, _ = fmt.Fprintf(stdout, "  merge_log:       %s\n", resp.MergeLogPath)
-	_, _ = fmt.Fprintf(stdout, "  archive_log:     %s\n", resp.ArchiveLogPath)
+	_, _ = fmt.Fprintf(stdout, "  branch:          %s\n", merge.Branch)
+	_, _ = fmt.Fprintf(stdout, "  strategy:        %s\n", merge.Strategy)
+	_, _ = fmt.Fprintf(stdout, "  pr_url:          %s\n", merge.PRURL)
+	_, _ = fmt.Fprintf(stdout, "  merge_log:       %s\n", merge.MergeLogPath)
+	_, _ = fmt.Fprintf(stdout, "  archive_log:     %s\n", merge.ArchiveLogPath)
 	_, _ = fmt.Fprintln(stdout, "  state:           archived")
 	return nil
+}
+
+func waitForWorktreeMergeTerminal(
+	ctx context.Context,
+	client *daemonclient.Client,
+	worktreeRef string,
+	repoID string,
+	onUpdate func(string),
+) (*daemon.WorktreeMergeDTO, error) {
+	lastStage := ""
+	lastState := ""
+	lastSummary := ""
+
+	for {
+		result, err := client.GetWorktreeMerge(ctx, worktreeRef, repoID)
+		if err != nil {
+			return nil, err
+		}
+		merge := result.Data
+
+		summary := strings.TrimSpace(merge.StatusSummary)
+		if onUpdate != nil && (merge.Stage != lastStage || merge.State != lastState || summary != lastSummary) && summary != "" {
+			onUpdate("merge: " + summary)
+		}
+		lastStage = merge.Stage
+		lastState = merge.State
+		lastSummary = summary
+
+		switch merge.State {
+		case "succeeded", "failed":
+			return &merge, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(worktreeMergePollInterval):
+		}
+	}
 }
 
 // WorktreeRebaseOpts holds options for the worktree rebase command.

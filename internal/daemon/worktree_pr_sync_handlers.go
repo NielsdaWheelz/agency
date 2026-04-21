@@ -65,6 +65,15 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	}
 	defer func() { _ = unlock() }()
 
+	if err := s.ensureWorktreeMergeInactive(record.RepoID, record.WorktreeID, "run pr sync"); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EWorktreeMergeActive
+		}
+		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
+		return
+	}
+
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventStarted, map[string]any{
 		"allow_dirty":      req.AllowDirty,
 		"force_with_lease": req.ForceWithLease,

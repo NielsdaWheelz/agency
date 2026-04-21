@@ -13,7 +13,7 @@ import (
 )
 
 // APIVersion is the current API version. Incremented on breaking changes.
-const APIVersion = 1
+const APIVersion = 2
 
 // MaxPromptSize is the maximum allowed prompt size in bytes (256 KB).
 const MaxPromptSize = 256 * 1024
@@ -57,6 +57,25 @@ type HeadedIdempotencyEntry struct {
 	TmuxSession  string
 	SandboxPath  string
 	CreatedAt    int64 // Unix timestamp
+}
+
+// WorktreeMergeProcess holds runtime state for one accepted worktree merge attempt.
+type WorktreeMergeProcess struct {
+	RepoID     string
+	WorktreeID string
+	AttemptID  string
+	RequestID  string
+	Request    normalizedMergeRequest
+
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{}
+	doneOnce sync.Once
+}
+
+// CloseDone safely closes the done channel for a worktree merge attempt.
+func (p *WorktreeMergeProcess) CloseDone() {
+	p.doneOnce.Do(func() { close(p.done) })
 }
 
 // SupervisedProcess holds runtime state for a supervised process (headless or headed).

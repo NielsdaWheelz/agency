@@ -198,6 +198,16 @@ func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktre
 		return nil, false
 	}
 
+	if err := s.ensureWorktreeMergeInactive(repoIdentity.RepoID, wtRecord.WorktreeID, "start an invocation"); err != nil {
+		_ = unlockRepo()
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EWorktreeMergeActive
+		}
+		writeErr(http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
+		return nil, false
+	}
+
 	return &controlPlaneStartResolved{
 		repoRoot:     repoRoot,
 		repoIdentity: repoIdentity,

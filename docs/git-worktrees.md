@@ -11,6 +11,8 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - An invocation sandbox is an isolated per-invocation tree derived from one integration worktree.
 - Integration worktrees and sandboxes are execution surfaces only; repo-shared config belongs to the registered repo canonical root.
 - Final PR progression uses `agency worktree <worktree-ref> pr sync` and `agency worktree <worktree-ref> pr merge`.
+- `agency worktree <worktree-ref> pr merge` is a daemon-owned durable lifecycle for verify, PR merge, and archive cleanup.
+- Worktree PR merge state must be persisted per integration worktree so daemon restart can resume execution or explain the last known outcome.
 - Successful worktree PR merge archives the worktree record and removes the tree directory.
 - Archived worktrees stay discoverable through `agency worktree ls --all`, but targeted lookup by name or id prefix only considers present worktrees.
 - Archived worktrees must be addressed by exact `worktree_id`.
@@ -33,6 +35,9 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - Sandboxes are disposable execution surfaces.
 - Merge, verify, and archive flows must resolve repo-shared config from the canonical repo root, not from the integration worktree tree path.
 - Repo-shared writes must not target agency-managed integration worktrees or sandboxes.
+- Request acceptance for `agency worktree <worktree-ref> pr merge` is distinct from later verify, merge, and archive completion.
+- Merge status should be read explicitly from daemon-owned durable worktree state after acceptance, reconnect, or restart.
+- Transport disconnects and client-side cancellation must not become merge cancellation after the daemon accepts the work.
 - Landing and discard flows must preserve enough durable state to explain the outcome after restart.
 - Agency-owned `.agency/` files are generated state and must not count as user dirty work.
 - Archive scripts must be safe to rerun because `agency worktree <worktree-ref> pr merge` may resume cleanup after the PR is already merged.

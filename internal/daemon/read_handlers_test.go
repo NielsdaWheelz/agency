@@ -190,6 +190,37 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	}
 }
 
+func writeReadTestWorktreeMerge(t *testing.T, env *readTestEnv, worktreeID string, mutate func(*store.IntegrationWorktreeMergeMeta)) *store.IntegrationWorktreeMergeMeta {
+	t.Helper()
+
+	worktreeMeta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
+	require.NoError(t, err)
+	require.NotNil(t, worktreeMeta)
+
+	mergeMeta := store.NewIntegrationWorktreeMergeMeta(
+		env.RepoID,
+		worktreeID,
+		"merge-attempt-"+worktreeID,
+		"merge-request-"+worktreeID,
+		"squash",
+		true,
+		"",
+		env.Server.Clock(),
+	)
+	mergeMeta.Branch = worktreeMeta.Branch
+	mergeMeta.PRNumber = 77
+	mergeMeta.PRURL = "https://github.com/test/agent-repo/pull/77"
+	mergeMeta.MergeLogPath = filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "merge.log")
+	mergeMeta.VerifyLogPath = filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "verify.log")
+	mergeMeta.ArchiveLogPath = filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "archive.log")
+	if mutate != nil {
+		mutate(mergeMeta)
+	}
+
+	require.NoError(t, env.Store.WriteIntegrationWorktreeMerge(env.RepoID, worktreeID, mergeMeta))
+	return mergeMeta
+}
+
 // doWorktreeRequest makes a request to the worktrees handler.
 func (env *readTestEnv) doWorktreeRequest(t *testing.T, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -278,6 +309,7 @@ func decodeData(t *testing.T, resp APIResponse, target interface{}) {
 func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
+	writeReadTestWorktreeMerge(t, env, "wt-1", nil)
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID)
 
@@ -295,6 +327,10 @@ func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	assert.Len(t, data.Worktrees, 1)
 	assert.Equal(t, "wt-1", data.Worktrees[0].WorktreeID)
 	assert.Equal(t, "alpha", data.Worktrees[0].Name)
+	require.NotNil(t, data.Worktrees[0].Merge)
+	assert.Equal(t, "running", data.Worktrees[0].Merge.State)
+	assert.Equal(t, "preflight", data.Worktrees[0].Merge.Stage)
+	assert.Equal(t, "preparing merge", data.Worktrees[0].Merge.StatusSummary)
 }
 
 func TestHandleListWorktrees_StateFilter(t *testing.T) {
@@ -345,6 +381,7 @@ func TestHandleListWorktrees_UnknownRepoReturnsNotFound(t *testing.T) {
 func TestHandleGetWorktree_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
+	writeReadTestWorktreeMerge(t, env, "wt-1", nil)
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1?repo_id="+env.RepoID)
 
@@ -359,6 +396,22 @@ func TestHandleGetWorktree_HappyPath(t *testing.T) {
 	assert.Equal(t, "wt-1", dto.WorktreeID)
 	assert.Equal(t, "alpha", dto.Name)
 	assert.Equal(t, "present", dto.State)
+	require.NotNil(t, dto.Merge)
+	assert.Equal(t, "merge-attempt-wt-1", dto.Merge.AttemptID)
+	assert.Equal(t, "merge-request-wt-1", dto.Merge.RequestID)
+	assert.Equal(t, "running", dto.Merge.State)
+	assert.Equal(t, "preflight", dto.Merge.Stage)
+	assert.Equal(t, "preparing merge", dto.Merge.StatusSummary)
+	assert.Equal(t, "squash", dto.Merge.Strategy)
+	assert.True(t, dto.Merge.DeleteBranch)
+	assert.Equal(t, "agency/alpha", dto.Merge.Branch)
+	assert.Equal(t, 77, dto.Merge.PRNumber)
+	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", dto.Merge.PRURL)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "merge.log"), dto.Merge.MergeLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "verify.log"), dto.Merge.VerifyLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "archive.log"), dto.Merge.ArchiveLogPath)
+	assert.Equal(t, "2026-02-05T12:00:00Z", dto.Merge.StartedAt)
+	assert.Equal(t, "2026-02-05T12:00:00Z", dto.Merge.UpdatedAt)
 }
 
 func TestHandleGetWorktree_ByName(t *testing.T) {
@@ -384,6 +437,75 @@ func TestHandleGetWorktree_RequiresRepoID(t *testing.T) {
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha")
 
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo_id query parameter is required")
+}
+
+func TestHandleGetWorktreeMerge_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+	writeReadTestWorktreeMerge(t, env, "wt-1", func(meta *store.IntegrationWorktreeMergeMeta) {
+		meta.Status = store.WorktreeMergeStatusFailed
+		meta.Stage = store.WorktreeMergeStageArchive
+		meta.UpdatedAt = "2026-02-05T12:05:00Z"
+		meta.FinishedAt = "2026-02-05T12:05:00Z"
+		meta.ErrorCode = string(errors.EArchiveFailed)
+		meta.ErrorMessage = "git worktree remove timed out after archive cleanup"
+		meta.Hint = "inspect archive.log and retry merge cleanup"
+	})
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1/pr/merge?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var dto WorktreeMergeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "merge-attempt-wt-1", dto.AttemptID)
+	assert.Equal(t, "merge-request-wt-1", dto.RequestID)
+	assert.Equal(t, "failed", dto.State)
+	assert.Equal(t, "archive", dto.Stage)
+	assert.Equal(t, "merge failed during archive cleanup", dto.StatusSummary)
+	assert.Equal(t, "squash", dto.Strategy)
+	assert.True(t, dto.DeleteBranch)
+	assert.Equal(t, "agency/alpha", dto.Branch)
+	assert.Equal(t, 77, dto.PRNumber)
+	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", dto.PRURL)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "merge.log"), dto.MergeLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "verify.log"), dto.VerifyLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "archive.log"), dto.ArchiveLogPath)
+	assert.Equal(t, "2026-02-05T12:00:00Z", dto.StartedAt)
+	assert.Equal(t, "2026-02-05T12:05:00Z", dto.UpdatedAt)
+	assert.Equal(t, "2026-02-05T12:05:00Z", dto.FinishedAt)
+	assert.Equal(t, string(errors.EArchiveFailed), dto.ErrorCode)
+	assert.Equal(t, "git worktree remove timed out after archive cleanup", dto.ErrorMessage)
+	assert.Equal(t, "inspect archive.log and retry merge cleanup", dto.Hint)
+}
+
+func TestHandleGetWorktreeMerge_NotFound(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1/pr/merge?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EWorktreeMergeNotFound), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "does not have durable merge state")
+}
+
+func TestHandleGetWorktreeMerge_RequiresRepoID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1/pr/merge")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	resp := decodeAPIResponse(t, w)

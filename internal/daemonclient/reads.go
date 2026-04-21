@@ -55,6 +55,20 @@ func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*d
 	return decodeResult[daemon.WorktreeDTO](apiResp)
 }
 
+// GetWorktreeMerge gets durable merge state for one worktree.
+func (c *Client) GetWorktreeMerge(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.WorktreeMergeDTO], error) {
+	u := fmt.Sprintf("%s/worktrees/%s/pr/merge", daemonBaseURL, url.PathEscape(ref))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResult[daemon.WorktreeMergeDTO](apiResp)
+}
+
 // ListInvocationsOpts holds options for listing invocations.
 type ListInvocationsOpts struct {
 	RepoID      string // optional, filter by canonical repo_id

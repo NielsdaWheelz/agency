@@ -67,6 +67,15 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 	}
 	defer func() { _ = unlock() }()
 
+	if err := s.ensureWorktreeMergeInactive(record.RepoID, record.WorktreeID, "rebase the worktree"); err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EWorktreeMergeActive
+		}
+		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
+		return
+	}
+
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventStarted, map[string]any{
 		"branch":      record.Meta.Branch,
 		"base_branch": record.Meta.BaseBranch,
@@ -213,7 +222,7 @@ func worktreeRebaseHTTPStatusForCode(code errors.Code) int {
 	switch code {
 	case errors.EWorktreeNotFound:
 		return http.StatusNotFound
-	case errors.EWorktreeIDAmbiguous, errors.ERepoLocked:
+	case errors.EWorktreeIDAmbiguous, errors.ERepoLocked, errors.EWorktreeMergeActive:
 		return http.StatusConflict
 	case errors.EDirtyWorktree, errors.ERebaseConflict:
 		return http.StatusConflict

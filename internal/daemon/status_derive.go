@@ -148,8 +148,8 @@ func InvocationMetaToDTO(
 	}
 }
 
-// WorktreeMetaToDTO converts an IntegrationWorktreeMeta to a WorktreeDTO.
-func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta) WorktreeDTO {
+// WorktreeMetaToDTO converts an IntegrationWorktreeMeta and optional merge state to a WorktreeDTO.
+func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta, mergeMeta *store.IntegrationWorktreeMergeMeta) WorktreeDTO {
 	return WorktreeDTO{
 		WorktreeID: meta.WorktreeID,
 		Name:       meta.Name,
@@ -160,5 +160,73 @@ func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta) WorktreeDTO {
 		State:      string(meta.State),
 		CreatedAt:  meta.CreatedAt,
 		LastUsedAt: meta.LastUsedAt,
+		Merge:      WorktreeMergeMetaToDTO(mergeMeta),
 	}
+}
+
+// WorktreeMergeMetaToDTO converts durable merge state to the canonical daemon read shape.
+func WorktreeMergeMetaToDTO(meta *store.IntegrationWorktreeMergeMeta) *WorktreeMergeDTO {
+	if meta == nil {
+		return nil
+	}
+	return &WorktreeMergeDTO{
+		AttemptID:      meta.AttemptID,
+		RequestID:      meta.RequestID,
+		State:          string(meta.Status),
+		Stage:          string(meta.Stage),
+		StatusSummary:  worktreeMergeStatusSummary(meta),
+		Strategy:       meta.Strategy,
+		DeleteBranch:   meta.DeleteBranch,
+		Branch:         meta.Branch,
+		PRNumber:       meta.PRNumber,
+		PRURL:          meta.PRURL,
+		MergeLogPath:   meta.MergeLogPath,
+		VerifyLogPath:  meta.VerifyLogPath,
+		ArchiveLogPath: meta.ArchiveLogPath,
+		StartedAt:      meta.StartedAt,
+		UpdatedAt:      meta.UpdatedAt,
+		FinishedAt:     meta.FinishedAt,
+		ErrorCode:      meta.ErrorCode,
+		ErrorMessage:   meta.ErrorMessage,
+		Hint:           meta.Hint,
+	}
+}
+
+func worktreeMergeStatusSummary(meta *store.IntegrationWorktreeMergeMeta) string {
+	if meta == nil {
+		return ""
+	}
+
+	switch meta.Status {
+	case store.WorktreeMergeStatusRunning:
+		switch meta.Stage {
+		case store.WorktreeMergeStagePreflight:
+			return "preparing merge"
+		case store.WorktreeMergeStageVerify:
+			return "running verify"
+		case store.WorktreeMergeStageMerge:
+			return "merging pull request"
+		case store.WorktreeMergeStageArchive:
+			return "archiving worktree"
+		case store.WorktreeMergeStageCompleted:
+			return "finishing merge"
+		}
+	case store.WorktreeMergeStatusSucceeded:
+		return "merge complete"
+	case store.WorktreeMergeStatusFailed:
+		switch meta.Stage {
+		case store.WorktreeMergeStageVerify:
+			return "merge failed during verify"
+		case store.WorktreeMergeStageMerge:
+			return "merge failed during pull request merge"
+		case store.WorktreeMergeStageArchive:
+			return "merge failed during archive cleanup"
+		case store.WorktreeMergeStageCompleted:
+			return "merge failed"
+		default:
+			return "merge failed before completion"
+		}
+	}
+
+	return ""
 }

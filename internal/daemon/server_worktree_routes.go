@@ -66,10 +66,14 @@ func (s *Server) handleWorktreePRRoute(w http.ResponseWriter, r *http.Request, w
 		}
 		s.handleWorktreePRSync(w, r, worktreeRef)
 	case "merge":
-		if !s.requireMethod(w, r, http.MethodPost) {
-			return
+		switch r.Method {
+		case http.MethodGet:
+			s.handleGetWorktreeMerge(w, r, worktreeRef)
+		case http.MethodPost:
+			s.handleWorktreePRMerge(w, r, worktreeRef)
+		default:
+			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
 		}
-		s.handleWorktreePRMerge(w, r, worktreeRef)
 	default:
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown pr action: "+subAction, "")
 	}

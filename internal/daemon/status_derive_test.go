@@ -233,8 +233,24 @@ func TestWorktreeMetaToDTO(t *testing.T) {
 		LastUsedAt:    "2026-02-05T11:00:00Z",
 		State:         store.WorktreeStatePresent,
 	}
+	mergeMeta := store.NewIntegrationWorktreeMergeMeta(
+		"repo-xyz",
+		"wt-789",
+		"merge-attempt-1",
+		"req-merge-1",
+		"squash",
+		true,
+		"",
+		fixedNow,
+	)
+	mergeMeta.Branch = "agency/my-feature"
+	mergeMeta.PRNumber = 77
+	mergeMeta.PRURL = "https://github.com/example/repo/pull/77"
+	mergeMeta.MergeLogPath = "/tmp/logs/wt-789/merge.log"
+	mergeMeta.VerifyLogPath = "/tmp/logs/wt-789/verify.log"
+	mergeMeta.ArchiveLogPath = "/tmp/logs/wt-789/archive.log"
 
-	dto := daemon.WorktreeMetaToDTO(meta)
+	dto := daemon.WorktreeMetaToDTO(meta, mergeMeta)
 
 	assert.Equal(t, "wt-789", dto.WorktreeID)
 	assert.Equal(t, "my-feature", dto.Name)
@@ -245,4 +261,41 @@ func TestWorktreeMetaToDTO(t *testing.T) {
 	assert.Equal(t, "present", dto.State)
 	assert.Equal(t, "2026-02-05T10:00:00Z", dto.CreatedAt)
 	assert.Equal(t, "2026-02-05T11:00:00Z", dto.LastUsedAt)
+	require.NotNil(t, dto.Merge)
+	assert.Equal(t, "merge-attempt-1", dto.Merge.AttemptID)
+	assert.Equal(t, "req-merge-1", dto.Merge.RequestID)
+	assert.Equal(t, "running", dto.Merge.State)
+	assert.Equal(t, "preflight", dto.Merge.Stage)
+	assert.Equal(t, "preparing merge", dto.Merge.StatusSummary)
+	assert.Equal(t, "squash", dto.Merge.Strategy)
+	assert.True(t, dto.Merge.DeleteBranch)
+	assert.Equal(t, "agency/my-feature", dto.Merge.Branch)
+	assert.Equal(t, 77, dto.Merge.PRNumber)
+	assert.Equal(t, "https://github.com/example/repo/pull/77", dto.Merge.PRURL)
+	assert.Equal(t, "/tmp/logs/wt-789/merge.log", dto.Merge.MergeLogPath)
+	assert.Equal(t, "/tmp/logs/wt-789/verify.log", dto.Merge.VerifyLogPath)
+	assert.Equal(t, "/tmp/logs/wt-789/archive.log", dto.Merge.ArchiveLogPath)
+	assert.Equal(t, fixedNow.Format(time.RFC3339), dto.Merge.StartedAt)
+	assert.Equal(t, fixedNow.Format(time.RFC3339), dto.Merge.UpdatedAt)
+}
+
+func TestWorktreeMetaToDTO_WithoutMergeMeta(t *testing.T) {
+	t.Parallel()
+
+	meta := &store.IntegrationWorktreeMeta{
+		SchemaVersion: "1.0",
+		WorktreeID:    "wt-789",
+		Name:          "my-feature",
+		RepoID:        "repo-xyz",
+		Branch:        "agency/my-feature",
+		BaseBranch:    "main",
+		TreePath:      "/tmp/worktrees/my-feature",
+		CreatedAt:     "2026-02-05T10:00:00Z",
+		LastUsedAt:    "2026-02-05T11:00:00Z",
+		State:         store.WorktreeStatePresent,
+	}
+
+	dto := daemon.WorktreeMetaToDTO(meta, nil)
+
+	assert.Nil(t, dto.Merge)
 }

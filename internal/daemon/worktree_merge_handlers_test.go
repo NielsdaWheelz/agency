@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,21 +83,25 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	resp := requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "merge.log"), resp.Merge.MergeLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "verify.log"), resp.Merge.VerifyLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "archive.log"), resp.Merge.ArchiveLogPath)
 
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.True(t, resp.OK)
-	assert.Equal(t, "wt-1", resp.IntegrationWorktreeID)
-	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "merge.log"), resp.MergeLogPath)
-	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "verify.log"), resp.VerifyLogPath)
-	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "archive.log"), resp.ArchiveLogPath)
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+	})
+	assert.Equal(t, store.WorktreeMergeStageCompleted, mergeMeta.Stage)
+	assert.Equal(t, resp.Merge.AttemptID, mergeMeta.AttemptID)
+	assert.Equal(t, resp.Merge.MergeLogPath, mergeMeta.MergeLogPath)
+	assert.Equal(t, resp.Merge.VerifyLogPath, mergeMeta.VerifyLogPath)
+	assert.Equal(t, resp.Merge.ArchiveLogPath, mergeMeta.ArchiveLogPath)
 
-	mergeInfo, err := os.Stat(resp.MergeLogPath)
+	mergeInfo, err := os.Stat(resp.Merge.MergeLogPath)
 	require.NoError(t, err)
-	verifyInfo, err := os.Stat(resp.VerifyLogPath)
+	verifyInfo, err := os.Stat(resp.Merge.VerifyLogPath)
 	require.NoError(t, err)
-	archiveInfo, err := os.Stat(resp.ArchiveLogPath)
+	archiveInfo, err := os.Stat(resp.Merge.ArchiveLogPath)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), mergeInfo.Mode().Perm())
 	assert.Equal(t, os.FileMode(0o600), verifyInfo.Mode().Perm())
@@ -134,11 +139,10 @@ func TestHandleWorktreeMerge_UsesLocalAgencyConfigWhenCanonicalRepoHasNone(t *te
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.True(t, resp.OK)
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+	requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+	})
 	require.Contains(t, fakeRunner.Calls, localArchiveScript)
 	assert.NotContains(t, fakeRunner.Calls, filepath.Join(workspaceRoot, "scripts", "archive.sh"))
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
@@ -165,11 +169,10 @@ func TestHandleWorktreeMerge_UsesCanonicalRepoConfigInsteadOfWorktreeConfig(t *t
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.True(t, resp.OK)
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+	requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+	})
 
 	verifySourcePath := filepath.Join(workspaceRoot, ".agency", "out", "verify-source.txt")
 	verifySourceBytes, err := os.ReadFile(verifySourcePath)
@@ -201,11 +204,10 @@ func TestHandleWorktreeMerge_UsesRepoRootLastSeenWhenPreferredRootEmpty(t *testi
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.True(t, resp.OK)
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+	requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+	})
 
 	verifySourcePath := filepath.Join(workspaceRoot, ".agency", "out", "verify-source.txt")
 	verifySourceBytes, err := os.ReadFile(verifySourcePath)
@@ -236,13 +238,13 @@ func TestHandleWorktreeMerge_InvalidExplicitAgencyConfigFailsWithoutFallback(t *
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(fmt.Sprintf(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true,"agency_config_path":%q}`, explicitConfigPath)),
 	)
-	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
 
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.OK)
-	assert.Equal(t, string(errors.EInvalidAgencyJSON), resp.ErrorCode)
-	assert.Contains(t, resp.Hint, "--agency-config")
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusFailed
+	})
+	assert.Equal(t, string(errors.EInvalidAgencyJSON), mergeMeta.ErrorCode)
+	assert.Contains(t, mergeMeta.Hint, "--agency-config")
 	assert.NotContains(t, fakeRunner.Calls, "gh pr merge 77 -R test/agent-repo --squash --delete-branch")
 	assert.NotContains(t, fakeRunner.Calls, filepath.Join(canonicalRepoRoot, "scripts", "archive.sh"))
 }
@@ -317,14 +319,65 @@ func TestHandleWorktreeMerge_AllowsLandedOrDiscardedInvocations(t *testing.T) {
 				"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 				[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 			)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-			var resp WorktreePRMergeResponse
-			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-			assert.True(t, resp.OK)
+			requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+			requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+				return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+			})
 			assert.Contains(t, fakeRunner.Calls, "gh pr merge 77 -R test/agent-repo --squash --delete-branch")
 		})
 	}
+}
+
+func TestHandleWorktreeMerge_AttachesToActiveMergeWithSameOptions(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+	setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+
+	removeCmd := "git -C " + canonicalRepoRoot + " worktree remove --force " + workspaceRoot
+	runner := newBlockingFakeRunner(removeCmd)
+	runner.Responses = fakeRunner.Responses
+	env.Server.Runner = runner
+	t.Cleanup(runner.Release)
+
+	started := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	startedResp := requireStartedWorktreeMergeResponse(t, started, env.RepoID, worktreeID)
+
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("expected first merge attempt to reach archive cleanup")
+	}
+
+	attached := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	attachedResp := requireAttachedWorktreeMergeResponse(t, attached, env.RepoID, worktreeID)
+	assert.Equal(t, startedResp.Merge.AttemptID, attachedResp.Merge.AttemptID)
+	assert.Equal(t, startedResp.RequestID, attachedResp.Merge.RequestID)
+
+	runner.Release()
+
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusFailed
+	})
+	assert.Equal(t, store.WorktreeMergeStageArchive, mergeMeta.Stage)
+	assert.Equal(t, string(errors.EArchiveFailed), mergeMeta.ErrorCode)
 }
 
 func TestHandleWorktreeMerge_BlocksOnBrokenInvocationRecord(t *testing.T) {
@@ -380,12 +433,13 @@ func TestHandleWorktreeMerge_ResumesArchiveWhenPRAlreadyMerged(t *testing.T) {
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	resp := requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
 
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.True(t, resp.OK)
-	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "archive.log"), resp.ArchiveLogPath)
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+	})
+	assert.Equal(t, store.WorktreeMergeStageCompleted, mergeMeta.Stage)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "archive.log"), resp.Merge.ArchiveLogPath)
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
 	require.NoError(t, err)
 	assert.Equal(t, store.WorktreeStateArchived, meta.State)
@@ -416,12 +470,13 @@ func TestHandleWorktreeMerge_FailsWhenArchiveCleanupRemoveFails(t *testing.T) {
 		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
 		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 	)
-	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
 
-	var resp WorktreePRMergeResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.OK)
-	assert.Equal(t, string(errors.EArchiveFailed), resp.ErrorCode)
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusFailed
+	})
+	assert.Equal(t, store.WorktreeMergeStageArchive, mergeMeta.Stage)
+	assert.Equal(t, string(errors.EArchiveFailed), mergeMeta.ErrorCode)
 
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
 	require.NoError(t, err)
@@ -436,6 +491,67 @@ func canonicalTestPath(t *testing.T, path string) string {
 		canonical = resolved
 	}
 	return canonical
+}
+
+func decodeWorktreePRMergeResponse(t *testing.T, w *httptest.ResponseRecorder) WorktreePRMergeResponse {
+	t.Helper()
+
+	var resp WorktreePRMergeResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	return resp
+}
+
+func requireStartedWorktreeMergeResponse(t *testing.T, w *httptest.ResponseRecorder, repoID, worktreeID string) WorktreePRMergeResponse {
+	t.Helper()
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	resp := decodeWorktreePRMergeResponse(t, w)
+	require.True(t, resp.OK)
+	assert.Equal(t, "started", resp.Action)
+	assert.Equal(t, repoID, resp.RepoID)
+	assert.Equal(t, worktreeID, resp.IntegrationWorktreeID)
+	require.NotNil(t, resp.Merge)
+	assert.Equal(t, string(store.WorktreeMergeStatusRunning), resp.Merge.State)
+	assert.Equal(t, string(store.WorktreeMergeStagePreflight), resp.Merge.Stage)
+	assert.Equal(t, "preparing merge", resp.Merge.StatusSummary)
+	assert.Equal(t, resp.RequestID, resp.Merge.RequestID)
+	return resp
+}
+
+func requireAttachedWorktreeMergeResponse(t *testing.T, w *httptest.ResponseRecorder, repoID, worktreeID string) WorktreePRMergeResponse {
+	t.Helper()
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	resp := decodeWorktreePRMergeResponse(t, w)
+	require.True(t, resp.OK)
+	assert.Equal(t, "attached", resp.Action)
+	assert.Equal(t, repoID, resp.RepoID)
+	assert.Equal(t, worktreeID, resp.IntegrationWorktreeID)
+	require.NotNil(t, resp.Merge)
+	assert.Equal(t, string(store.WorktreeMergeStatusRunning), resp.Merge.State)
+	return resp
+}
+
+func requireEventuallyWorktreeMergeMeta(
+	t *testing.T,
+	env *readTestEnv,
+	worktreeID string,
+	predicate func(*store.IntegrationWorktreeMergeMeta) bool,
+) *store.IntegrationWorktreeMergeMeta {
+	t.Helper()
+
+	var meta *store.IntegrationWorktreeMergeMeta
+	var readErr error
+	require.Eventually(t, func() bool {
+		meta, readErr = env.Store.ReadIntegrationWorktreeMerge(env.RepoID, worktreeID)
+		if readErr != nil {
+			return false
+		}
+		return predicate(meta)
+	}, 2*time.Second, 10*time.Millisecond)
+	require.NoError(t, readErr)
+	require.NotNil(t, meta)
+	return meta
 }
 
 func TestEnsureWorktreeVerifyLogPermissions_AllowsMissingOnRunnerFailurePath(t *testing.T) {

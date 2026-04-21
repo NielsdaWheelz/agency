@@ -11,3 +11,5 @@ This document covers polling rules.
 - If polling is unavoidable, keep cadence and termination rules together.
 - UI refresh polling is acceptable in `watch` because it is a read-only view over daemon state.
 - Mutation flows should not depend on unbounded polling for correctness.
+- `worktree pr merge` correctness must not depend on holding a POST open or on transport-local polling state.
+- If a client polls for worktree merge progress, it should poll explicit daemon status reads backed by durable merge state.
