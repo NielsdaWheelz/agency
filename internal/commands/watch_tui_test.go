@@ -22,6 +22,7 @@ import (
 func TestAgentHistory_InteractiveAttachRunsAfterWatchExit(t *testing.T) {
 	env := setupAgentNavEnv(t, "history-attach", store.RunnerModeHeaded)
 	sessionName := tmux.SessionName(env.InvocationID)
+	env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
 
 	shimDir := t.TempDir()
 	recordFile := filepath.Join(shimDir, "record.txt")
@@ -33,7 +34,6 @@ func TestAgentHistory_InteractiveAttachRunsAfterWatchExit(t *testing.T) {
 	t.Setenv("TMUX", "")
 
 	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["tmux has-session -t "+sessionName] = testutil.FakeResponse{ExitCode: 0}
 
 	var stdout, stderr bytes.Buffer
 	err := AgentHistory(context.Background(), cr, fs.NewRealFS(), "", AgentHistoryOpts{

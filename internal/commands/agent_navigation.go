@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"golang.org/x/term"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // AgentPathOpts holds options for the agent path command.
@@ -174,13 +174,18 @@ type AgentAttachOpts struct {
 	RepoRef       string
 
 	IsInteractive   func() bool
-	TmuxClient      tmux.Client
 	TmuxAttachFn    func(sessionName string) error
 	DataDirOverride string
 }
 
-// AgentAttach attaches to a running headed invocation via daemon-first resolution.
-// Headed-only: headless invocations return E_INVOCATION_INVALID_MODE.
+// AgentClientsOpts holds options for the agent clients command.
+type AgentClientsOpts struct {
+	InvocationRef   string
+	RepoRef         string
+	DataDirOverride string
+}
+
+// AgentAttach attaches to a live headed invocation via daemon-authored session facts.
 func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentAttachOpts, stdout, stderr io.Writer) error {
 	isInteractive := opts.IsInteractive
 	if isInteractive == nil {
@@ -210,53 +215,98 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		return err
 	}
 
-	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
+	session, err := ns.client.GetInvocationSession(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
 		return translateNavigationError(err, "invocation")
 	}
-	if invocation.Data.Mode != "headed" {
-		return errors.NewWithDetails(
-			errors.EInvocationInvalidMode,
-			"invocation is headless; attach is only supported for headed invocations",
-			map[string]string{
-				"invocation_id": invocation.Data.InvocationID,
-				"mode":          invocation.Data.Mode,
-				"hint":          "use history, transcript, or logs to inspect headless invocations",
-			},
-		)
-	}
-
-	sessionName := invocation.Data.TmuxSession
-	if sessionName == "" {
-		sessionName = tmux.SessionName(invocation.Data.InvocationID)
-	}
-
-	tmuxClient := opts.TmuxClient
-	if tmuxClient == nil {
-		tmuxClient = tmux.NewExecClient(cr)
-	}
-
-	exists, checkErr := tmuxClient.HasSession(ctx, sessionName)
-	if checkErr != nil {
-		_, _ = fmt.Fprintf(stderr, "warning: could not check tmux session status: %v\n", checkErr)
-	}
-	if !exists {
+	if session.Data.SessionStatus != "live" {
+		invocationID := strings.TrimSpace(session.Data.InvocationID)
+		if invocationID == "" {
+			invocationID = strings.TrimSpace(opts.InvocationRef)
+		}
 		return errors.NewWithDetails(
 			errors.ESessionEnded,
 			"tmux session not found",
 			map[string]string{
-				"session_name":  sessionName,
-				"invocation_id": invocation.Data.InvocationID,
-				"hint":          "session ended; use history, transcript, logs, or open to inspect the invocation",
+				"session_name":  strings.TrimSpace(session.Data.TmuxSession),
+				"invocation_id": invocationID,
+				"hint":          "session ended; use history, transcript, logs, or recreate to inspect the invocation",
 			},
 		)
+	}
+	if strings.TrimSpace(session.Data.TmuxSession) == "" {
+		return errors.New(errors.EInternal, "daemon session read did not include a tmux session name")
 	}
 
 	attachFn := opts.TmuxAttachFn
 	if attachFn == nil {
 		attachFn = realTmuxAttach
 	}
-	return attachFn(sessionName)
+	return attachFn(session.Data.TmuxSession)
+}
+
+// AgentClients prints the currently connected tmux clients for a headed invocation session.
+func AgentClients(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentClientsOpts, stdout, stderr io.Writer) error {
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+	if err != nil {
+		return err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoRef:       opts.RepoRef,
+		AllowAllRepos: false,
+		CmdName:       "agent clients",
+	})
+	if err != nil {
+		return err
+	}
+
+	session, err := ns.client.GetInvocationSession(ctx, opts.InvocationRef, repoCtx.RepoID)
+	if err != nil {
+		return translateNavigationError(err, "invocation")
+	}
+	if session.Data.SessionStatus != "live" {
+		invocationID := strings.TrimSpace(session.Data.InvocationID)
+		if invocationID == "" {
+			invocationID = strings.TrimSpace(opts.InvocationRef)
+		}
+		return errors.NewWithDetails(
+			errors.ESessionEnded,
+			"tmux session not found",
+			map[string]string{
+				"session_name":  strings.TrimSpace(session.Data.TmuxSession),
+				"invocation_id": invocationID,
+				"hint":          "session ended; use 'agency agent <invocation-ref> recreate' to start a new headed session in the same sandbox",
+			},
+		)
+	}
+	_, _ = fmt.Fprintf(stdout, "invocation: %s\n", session.Data.InvocationID)
+	_, _ = fmt.Fprintf(stdout, "repo: %s\n", session.Data.RepoID)
+	_, _ = fmt.Fprintf(stdout, "tmux session: %s\n", session.Data.TmuxSession)
+	_, _ = fmt.Fprintf(stdout, "connected clients: %d\n", session.Data.ClientCount)
+	if len(session.Data.ConnectedClients) == 0 {
+		_, _ = fmt.Fprintln(stdout, "(no connected clients)")
+		return nil
+	}
+	for _, client := range session.Data.ConnectedClients {
+		line := strings.TrimSpace(client.TTY)
+		if line == "" {
+			line = "<unknown tty>"
+		}
+		if client.Name != "" {
+			line += " (" + client.Name + ")"
+		}
+		if client.PID > 0 {
+			line += " pid=" + strconv.Itoa(client.PID)
+		}
+		if client.ReadOnly {
+			line += " read-only"
+		} else {
+			line += " read-write"
+		}
+		_, _ = fmt.Fprintln(stdout, line)
+	}
+	return nil
 }
 
 func translateNavigationError(err error, targetKind string) error {

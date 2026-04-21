@@ -252,6 +252,7 @@ type agentNavTestEnv struct {
 	WorktreeID   string
 	InvocationID string
 	SandboxPath  string
+	Tmux         *testutil.FakeTmuxClient
 }
 
 // setupAgentNavEnv creates a test environment with a daemon, one integration
@@ -352,6 +353,8 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	configDir := filepath.Join(dataTmp, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0755))
 	srv := daemon.NewServer(st, cr, fsys, configDir)
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv.TmuxClient = fakeTmux
 
 	socketPath := st.DaemonSocketPath()
 	listener, listenErr := net.Listen("unix", socketPath)
@@ -381,6 +384,7 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		WorktreeID:   wtID,
 		InvocationID: invID,
 		SandboxPath:  sandboxTreeDir,
+		Tmux:         fakeTmux,
 	}
 }
 
@@ -1356,6 +1360,7 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 
 func TestAgentRecreate_Headed_DetachedPrintsCanonicalAttachCommand(t *testing.T) {
 	env := setupAgentNavEnv(t, "recreate-detached", store.RunnerModeHeaded)
+	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
 
 	var stdout, stderr bytes.Buffer
 	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
@@ -1375,6 +1380,7 @@ func TestAgentRecreate_Headed_DetachedPrintsCanonicalAttachCommand(t *testing.T)
 
 func TestAgentRecreate_Headed_AttachFailureWarnsWithCanonicalAttachCommand(t *testing.T) {
 	env := setupAgentNavEnv(t, "recreate-attach-fail", store.RunnerModeHeaded)
+	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
 
 	var attachedSession string
 	var stdout, stderr bytes.Buffer
@@ -1495,9 +1501,7 @@ func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
 			meta.TmuxSession = storedSession
 		}))
-
-		fakeTmux := testutil.NewFakeTmuxClient()
-		fakeTmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
+		env.Tmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
 
 		var attachCalled bool
 		var attachedSession string
@@ -1508,7 +1512,6 @@ func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 				InvocationRef:   env.InvocationID,
 				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
-				TmuxClient:      fakeTmux,
 				DataDirOverride: env.DataDir,
 				TmuxAttachFn: func(sess string) error {
 					attachCalled = true
@@ -1529,9 +1532,8 @@ func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 			meta.TmuxSession = ""
 		}))
 
-		fakeTmux := testutil.NewFakeTmuxClient()
 		fallbackSession := tmux.SessionName(env.InvocationID)
-		fakeTmux.Sessions[fallbackSession] = testutil.FakeTmuxSession{Name: fallbackSession}
+		env.Tmux.Sessions[fallbackSession] = testutil.FakeTmuxSession{Name: fallbackSession}
 
 		var attachCalled bool
 		var attachedSession string
@@ -1542,7 +1544,6 @@ func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
 				InvocationRef:   env.InvocationID,
 				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
-				TmuxClient:      fakeTmux,
 				DataDirOverride: env.DataDir,
 				TmuxAttachFn: func(sess string) error {
 					attachCalled = true
@@ -1561,9 +1562,7 @@ func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
 	t.Run("outside tmux uses attach-session", func(t *testing.T) {
 		env := setupAgentNavEnv(t, "attach-outside-tmux", store.RunnerModeHeaded)
 		sessionName := tmux.SessionName(env.InvocationID)
-
-		fakeTmux := testutil.NewFakeTmuxClient()
-		fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+		env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
 
 		shimDir := t.TempDir()
 		recordFile := filepath.Join(shimDir, "record.txt")
@@ -1580,7 +1579,6 @@ func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
 				InvocationRef:   env.InvocationID,
 				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
-				TmuxClient:      fakeTmux,
 				DataDirOverride: env.DataDir,
 			}, &stdout, &stderr)
 		require.NoError(t, err)
@@ -1592,9 +1590,7 @@ func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
 	t.Run("inside tmux uses switch-client", func(t *testing.T) {
 		env := setupAgentNavEnv(t, "attach-inside-tmux", store.RunnerModeHeaded)
 		sessionName := tmux.SessionName(env.InvocationID)
-
-		fakeTmux := testutil.NewFakeTmuxClient()
-		fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+		env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
 
 		shimDir := t.TempDir()
 		recordFile := filepath.Join(shimDir, "record.txt")
@@ -1611,7 +1607,6 @@ func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
 				InvocationRef:   env.InvocationID,
 				RepoRef:         env.RepoID,
 				IsInteractive:   func() bool { return true },
-				TmuxClient:      fakeTmux,
 				DataDirOverride: env.DataDir,
 			}, &stdout, &stderr)
 		require.NoError(t, err)
@@ -1619,6 +1614,56 @@ func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
 		_, args := readShimRecord(t, recordFile)
 		assert.Equal(t, "switch-client -t "+sessionName, args)
 	})
+}
+
+func TestAgentAttach_MissingSessionReturnsESessionEnded(t *testing.T) {
+	env := setupAgentNavEnv(t, "attach-missing", store.RunnerModeHeaded)
+
+	var attachCalled bool
+	var stdout, stderr bytes.Buffer
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			IsInteractive:   func() bool { return true },
+			DataDirOverride: env.DataDir,
+			TmuxAttachFn: func(string) error {
+				attachCalled = true
+				return nil
+			},
+		}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
+	assert.False(t, attachCalled, "tmux attach must NOT be called for a missing session")
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Contains(t, ae.Details["hint"], "recreate")
+}
+
+func TestAgentClients_PrintsDaemonSessionFacts(t *testing.T) {
+	env := setupAgentNavEnv(t, "clients-live", store.RunnerModeHeaded)
+	sessionName := tmux.SessionName(env.InvocationID)
+	env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{
+		Name: sessionName,
+		Clients: []tmux.AttachedClient{
+			{Name: "client-1", TTY: "/dev/ttys001", PID: 101, ReadOnly: false},
+			{Name: "client-2", TTY: "/dev/ttys002", PID: 202, ReadOnly: true},
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentClients(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentClientsOpts{
+		InvocationRef:   env.InvocationID,
+		RepoRef:         env.RepoID,
+		DataDirOverride: env.DataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "invocation: "+env.InvocationID)
+	assert.Contains(t, stdout.String(), "tmux session: "+sessionName)
+	assert.Contains(t, stdout.String(), "connected clients: 2")
+	assert.Contains(t, stdout.String(), "/dev/ttys001 (client-1) pid=101 read-write")
+	assert.Contains(t, stdout.String(), "/dev/ttys002 (client-2) pid=202 read-only")
 }
 
 func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
@@ -1848,15 +1893,12 @@ func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	var attachCalled bool
-	fakeTmux := testutil.NewFakeTmuxClient()
-
 	var stdout, stderr bytes.Buffer
 	attachErr := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentAttachOpts{
 			InvocationRef:   "20260201000000",
 			RepoRef:         repoID,
 			IsInteractive:   func() bool { return true },
-			TmuxClient:      fakeTmux,
 			DataDirOverride: dataTmp,
 			TmuxAttachFn: func(sess string) error {
 				attachCalled = true
@@ -2015,7 +2057,6 @@ func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.
 func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 	env := setupAgentNavEnv(t, "headless-attach", store.RunnerModeHeadless)
 
-	fakeTmux := testutil.NewFakeTmuxClient()
 	var attachCalled bool
 
 	var stdout, stderr bytes.Buffer
@@ -2024,7 +2065,6 @@ func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 			InvocationRef:   env.InvocationID,
 			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return true },
-			TmuxClient:      fakeTmux,
 			DataDirOverride: env.DataDir,
 			TmuxAttachFn: func(sess string) error {
 				attachCalled = true
@@ -2038,7 +2078,7 @@ func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
-	assert.Contains(t, ae.Details["hint"], "logs",
+	assert.Contains(t, ae.Details["hint"], "history",
 		"error hint should suggest alternative for headless")
 }
 
@@ -2094,7 +2134,6 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 						InvocationRef:   ref,
 						RepoRef:         env.RepoID,
 						IsInteractive:   func() bool { return true },
-						TmuxClient:      testutil.NewFakeTmuxClient(),
 						DataDirOverride: env.DataDir,
 						TmuxAttachFn:    func(string) error { return nil },
 					}, &stdout, &stderr)

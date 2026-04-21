@@ -100,6 +100,12 @@ func TestRequestIDContractMatrix_InvocationMutationAndCheckEndpoints(t *testing.
 			path:   "/invocations/inv-1/check?repo_id=" + env.RepoID,
 			body:   nil,
 		},
+		{
+			name:   "session",
+			method: http.MethodGet,
+			path:   "/invocations/inv-2/session?repo_id=" + env.RepoID,
+			body:   nil,
+		},
 	}
 
 	for _, tc := range testCases {

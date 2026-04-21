@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/NielsdaWheelz/agency/internal/tmux"
@@ -9,9 +10,10 @@ import (
 
 // FakeTmuxSession tracks a session created via NewSession.
 type FakeTmuxSession struct {
-	Name string
-	CWD  string
-	Argv []string
+	Name    string
+	CWD     string
+	Argv    []string
+	Clients []tmux.AttachedClient
 }
 
 // FakeTmuxNewSessionCall records the arguments of a NewSession call.
@@ -49,11 +51,16 @@ type FakeTmuxClient struct {
 	CaptureErr     error
 	CaptureOutput  string
 	PipePaneErr    error
+	ListClientsErr error
 
 	// HasSessionFunc, when non-nil, overrides the default HasSession logic.
 	// Useful for tests that need sequential/conditional results (e.g. race-condition tests).
 	// Called with the lock held — callers must not re-acquire Mu.
 	HasSessionFunc func(name string) (bool, error)
+
+	// ListAttachedClientsFunc, when non-nil, overrides the default ListAttachedClients logic.
+	// Called with the lock held — callers must not re-acquire Mu.
+	ListAttachedClientsFunc func(name string) ([]tmux.AttachedClient, error)
 
 	// Call tracking — read these after the method under test returns.
 	NewSessionCalls  []FakeTmuxNewSessionCall
@@ -62,6 +69,7 @@ type FakeTmuxClient struct {
 	HasSessionCalls  []string
 	CaptureCalls     []string
 	PipePaneCalls    []FakeTmuxPipePaneCall
+	ListClientsCalls []string
 }
 
 // NewFakeTmuxClient creates a ready-to-use FakeTmuxClient.
@@ -141,4 +149,24 @@ func (f *FakeTmuxClient) PipePane(_ context.Context, target, logPath string) err
 		return f.PipePaneErr
 	}
 	return nil
+}
+
+// ListAttachedClients implements tmux.Client.
+func (f *FakeTmuxClient) ListAttachedClients(_ context.Context, name string) ([]tmux.AttachedClient, error) {
+	f.Mu.Lock()
+	defer f.Mu.Unlock()
+	f.ListClientsCalls = append(f.ListClientsCalls, name)
+	if f.ListAttachedClientsFunc != nil {
+		return f.ListAttachedClientsFunc(name)
+	}
+	if f.ListClientsErr != nil {
+		return nil, f.ListClientsErr
+	}
+	session, ok := f.Sessions[name]
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", name)
+	}
+	clients := make([]tmux.AttachedClient, len(session.Clients))
+	copy(clients, session.Clients)
+	return clients, nil
 }

@@ -99,6 +99,11 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetInvocationCheck(w, r, invocationRef)
+	case "session":
+		if !s.requireMethod(w, r, http.MethodGet) {
+			return
+		}
+		s.handleGetInvocationSession(w, r, invocationRef)
 	case "followup":
 		if !s.requireMethod(w, r, http.MethodPost) {
 			return

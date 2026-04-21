@@ -28,6 +28,8 @@ Use:
                            to show one invocation
   agency agent <invocation-ref> history
                            to inspect one invocation
+  agency agent <invocation-ref> clients
+                           to inspect headed tmux clients
   agency agent <invocation-ref> land
                            to apply sandbox changes back to integration`,
 		Args:               cobra.ArbitraryArgs,
@@ -47,7 +49,7 @@ Use:
 				return errors.New(errors.EUsage, "use 'agency agent start' or 'agency agent start --worktree <worktree-ref>'")
 			case "ls":
 				return errors.New(errors.EUsage, "use 'agency agent ls'")
-			case "show", "check", "diff", "history", "open", "path", "shell", "attach", "stop", "kill", "land", "discard", "followup", "recreate", "restore", "logs", "checkpoint", "restart":
+			case "show", "check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore", "logs", "checkpoint", "restart":
 				return errors.New(errors.EUsage, "unknown command \""+args[0]+"\" for \"agency agent\"")
 			}
 
@@ -74,6 +76,8 @@ Use:
 				return runNestedCommand(cmd, newAgentShellCmd(), args)
 			case args[1] == "attach":
 				return runNestedCommand(cmd, newAgentAttachCmd(), args)
+			case args[1] == "clients":
+				return runNestedCommand(cmd, newAgentClientsCmd(), args)
 			case args[1] == "stop":
 				return runNestedCommand(cmd, newAgentStopCmd(), args)
 			case args[1] == "kill":
@@ -89,7 +93,7 @@ Use:
 			case args[1] == "restore":
 				return runNestedCommand(cmd, newAgentRestoreCmd(), args)
 			default:
-				return errors.New(errors.EUsage, "use 'agency agent <invocation-ref>' or 'agency agent <invocation-ref> <show|check|diff|history|open|path|shell|attach|stop|kill|land|discard|followup|recreate|restore>'")
+				return errors.New(errors.EUsage, "use 'agency agent <invocation-ref>' or 'agency agent <invocation-ref> <show|check|diff|history|open|path|shell|attach|clients|stop|kill|land|discard|followup|recreate|restore>'")
 			}
 		},
 	}
@@ -129,7 +133,7 @@ Use:
 			if args[0] == "start" || args[0] == "ls" {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
-			values := []string{"show", "check", "diff", "history", "open", "path", "shell", "attach", "stop", "kill", "land", "discard", "followup", "recreate", "restore"}
+			values := []string{"show", "check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore"}
 			candidates := make([]string, 0, len(values))
 			for _, value := range values {
 				if toComplete != "" && !strings.HasPrefix(value, toComplete) {

@@ -12,6 +12,8 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 - The runtime should expose workspace, history, transcript, and logs pages over the same read model.
 - `agency agent <invocation-ref> history` is the canonical invocation inspection surface for turns, checkpoints, transcripts, and logs.
 - `agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations, not a parallel inspection workflow.
+- `agency agent <invocation-ref> attach` and `agency watch` must use the same daemon-authored headed-session facts instead of local tmux/session heuristics.
+- `agency watch` may show headed session status, tmux session name, attach command, recreate availability, and connected tmux clients for the selected invocation, but it still remains a read-model over daemon state.
 - `agency agent <invocation-ref> history logs` is the raw log subcommand of that same inspection surface, not a separate top-level workflow.
 - Headed interactive log viewing should prefer live terminal output; daemon-backed transcript/log pages remain the inspection surface.
 - The runtime should present one canonical invocation `state`: `starting`, `running`, `waiting`, `stopping`, `succeeded`, or `failed`.

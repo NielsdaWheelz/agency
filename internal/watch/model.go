@@ -93,6 +93,13 @@ type transcriptLoadedMsg struct {
 	err     error
 }
 
+type sessionLoadedMsg struct {
+	invocationID string
+	repoID       string
+	session      InvocationSession
+	err          error
+}
+
 type actionResultMsg struct {
 	kind         actionKind
 	invocationID string
@@ -104,11 +111,12 @@ type actionResultMsg struct {
 }
 
 type model struct {
-	ctx      context.Context
-	client   *daemonclient.Client
-	interval time.Duration
-	page     watchPage
-	backPage watchPage
+	ctx           context.Context
+	client        *daemonclient.Client
+	interval      time.Duration
+	sessionLoader InvocationSessionLoader
+	page          watchPage
+	backPage      watchPage
 
 	width  int
 	height int
@@ -139,6 +147,12 @@ type model struct {
 	logsScroll  int
 	logsLoading bool
 	logsError   string
+
+	selectedSession           InvocationSession
+	selectedSessionLoading    bool
+	selectedSessionError      string
+	selectedSessionInvocation string
+	selectedSessionRepo       string
 
 	actionRunning     bool
 	lastActionMessage string
@@ -185,10 +199,22 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 		page = watchPage(opts.InitialPage)
 	}
 
+	sessionLoader := opts.SessionLoader
+	if sessionLoader == nil && client != nil {
+		sessionLoader = func(ctx context.Context, invocationID, repoID string) (InvocationSession, error) {
+			result, err := client.GetInvocationSession(ctx, invocationID, repoID)
+			if err != nil {
+				return InvocationSession{}, err
+			}
+			return invocationSessionFromDTO(result.Data), nil
+		}
+	}
+
 	return model{
 		ctx:                  ctx,
 		client:               client,
 		interval:             interval,
+		sessionLoader:        sessionLoader,
 		page:                 page,
 		backPage:             pageWorkspace,
 		selectedInvocationID: strings.TrimSpace(opts.InvocationID),
@@ -214,10 +240,10 @@ func (m model) Init() tea.Cmd {
 		return tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
 	case pageHistory:
 		if len(m.historyTurns) > 0 {
-			return nil
+			return m.loadSelectedSessionForSelectionCmd()
 		}
 		m.historyLoading = true
-		return m.loadHistoryCmd()
+		return batchCmds(m.loadHistoryCmd(), m.loadSelectedSessionForSelectionCmd())
 	case pageTranscript:
 		if strings.TrimSpace(m.transcriptContent) != "" {
 			return nil
@@ -258,7 +284,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.snapshot = msg.snapshot
 		m.workspaceError = ""
 		m.reconcileSelection()
-		return m, nil
+		return m, m.refreshSelectedSessionCmd()
 
 	case historyLoadedMsg:
 		m.historyLoading = false
@@ -292,6 +318,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logsContent = msg.content
 		m.logsError = ""
 		m.logsScroll = clamp(m.logsScroll, 0, m.maxLogsScroll())
+		return m, nil
+
+	case sessionLoadedMsg:
+		if strings.TrimSpace(m.selectedInvocationID) != strings.TrimSpace(msg.invocationID) ||
+			strings.TrimSpace(m.selectedRepoID) != strings.TrimSpace(msg.repoID) {
+			return m, nil
+		}
+		m.selectedSessionLoading = false
+		m.selectedSessionInvocation = msg.invocationID
+		m.selectedSessionRepo = msg.repoID
+		if msg.err != nil {
+			m.selectedSession = InvocationSession{}
+			m.selectedSessionError = msg.err.Error()
+			return m, nil
+		}
+		m.selectedSession = msg.session
+		m.selectedSessionError = ""
 		return m, nil
 
 	case actionResultMsg:
@@ -387,10 +430,10 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadWorkspaceSnapshotCmd()
 	case isUpKey(msg):
 		m.moveSelection(-1)
-		return m, nil
+		return m, m.loadSelectedSessionForSelectionCmd()
 	case isDownKey(msg):
 		m.moveSelection(1)
-		return m, nil
+		return m, m.loadSelectedSessionForSelectionCmd()
 	case isTopKey(msg):
 		if len(m.snapshot.Invocations) > 0 {
 			m.selectedIndex = 0
@@ -399,7 +442,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedMode = m.snapshot.Invocations[0].Mode
 			m.selectedStatus = m.snapshot.Invocations[0].State
 		}
-		return m, nil
+		return m, m.loadSelectedSessionForSelectionCmd()
 	case isBottomKey(msg):
 		if len(m.snapshot.Invocations) > 0 {
 			m.selectedIndex = len(m.snapshot.Invocations) - 1
@@ -408,7 +451,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
 			m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].State
 		}
-		return m, nil
+		return m, m.loadSelectedSessionForSelectionCmd()
 	case msg.Text == "h":
 		if strings.TrimSpace(m.selectedInvocationID) == "" {
 			m.lastActionError = true
@@ -649,10 +692,80 @@ func (m *model) loadLogsCmd() tea.Cmd {
 	}
 }
 
+func (m *model) loadSelectedSessionCmd(invocationID, repoID string) tea.Cmd {
+	ctx := m.ctx
+	loader := m.sessionLoader
+	if loader == nil || strings.TrimSpace(invocationID) == "" || strings.TrimSpace(repoID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		session, err := loader(ctx, invocationID, repoID)
+		return sessionLoadedMsg{
+			invocationID: invocationID,
+			repoID:       repoID,
+			session:      session,
+			err:          err,
+		}
+	}
+}
+
+func (m *model) clearSelectedSession() {
+	m.selectedSession = InvocationSession{}
+	m.selectedSessionLoading = false
+	m.selectedSessionError = ""
+	m.selectedSessionInvocation = ""
+	m.selectedSessionRepo = ""
+}
+
+func (m *model) beginSelectedSessionLoad(invocationID, repoID string) tea.Cmd {
+	m.selectedSession = InvocationSession{}
+	m.selectedSessionError = ""
+	m.selectedSessionLoading = true
+	m.selectedSessionInvocation = invocationID
+	m.selectedSessionRepo = repoID
+	return m.loadSelectedSessionCmd(invocationID, repoID)
+}
+
+func (m *model) loadSelectedSessionForSelectionCmd() tea.Cmd {
+	selected, ok := m.selectedInvocation()
+	if !ok || m.sessionLoader == nil || strings.TrimSpace(selected.Mode) != "headed" {
+		m.clearSelectedSession()
+		return nil
+	}
+	if m.selectedSessionInvocation == selected.InvocationID &&
+		m.selectedSessionRepo == selected.RepoID &&
+		(m.selectedSessionLoading || m.selectedSession.Status != "" || m.selectedSessionError != "") {
+		return nil
+	}
+	return m.beginSelectedSessionLoad(selected.InvocationID, selected.RepoID)
+}
+
+func (m *model) refreshSelectedSessionCmd() tea.Cmd {
+	selected, ok := m.selectedInvocation()
+	if !ok || strings.TrimSpace(selected.Mode) != "headed" {
+		m.clearSelectedSession()
+		return nil
+	}
+	return m.beginSelectedSessionLoad(selected.InvocationID, selected.RepoID)
+}
+
 func tickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return refreshTickMsg(t)
 	})
+}
+
+func batchCmds(cmds ...tea.Cmd) tea.Cmd {
+	filtered := make([]tea.Cmd, 0, len(cmds))
+	for _, cmd := range cmds {
+		if cmd != nil {
+			filtered = append(filtered, cmd)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return tea.Batch(filtered...)
 }
 
 func (m model) openActionMenu() (tea.Model, tea.Cmd) {
@@ -813,7 +926,17 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 			)
 			return m, nil
 		}
-		if selected.FinishedAt != "" {
+		if m.selectedSessionLoading {
+			m.lastActionError = true
+			m.lastActionMessage = "attach unavailable: session facts are still loading"
+			return m, nil
+		}
+		if strings.TrimSpace(m.selectedSessionError) != "" {
+			m.lastActionError = true
+			m.lastActionMessage = "attach unavailable: " + m.selectedSessionError
+			return m, nil
+		}
+		if !m.selectedSession.IsLive() {
 			m.lastActionError = true
 			m.lastActionMessage = formatActionError(
 				kind,
@@ -822,7 +945,8 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 					"tmux session not found",
 					map[string]string{
 						"invocation_id": invocationID,
-						"hint":          "session ended; use history, transcript, logs, or open to inspect the invocation",
+						"session_name":  strings.TrimSpace(m.selectedSession.TmuxSession),
+						"hint":          "session ended; use recreate, history, transcript, logs, or open to inspect the invocation",
 					},
 				),
 				invocationID,
@@ -1059,6 +1183,13 @@ func (m model) selectedCheck() (daemon.InvocationCheckData, bool) {
 	return check, ok
 }
 
+func (m model) selectedSessionCanRecreate() bool {
+	if m.selectedSessionLoading || strings.TrimSpace(m.selectedSessionError) != "" {
+		return false
+	}
+	return m.selectedSession.RecreateAvailable
+}
+
 func (m model) canStartAction(kind actionKind) bool {
 	selected, ok := m.selectedInvocation()
 	if !ok && kind != actionAttach {
@@ -1068,16 +1199,15 @@ func (m model) canStartAction(kind actionKind) bool {
 	switch kind {
 	case actionAttach:
 		mode := strings.TrimSpace(m.selectedMode)
-		status := strings.TrimSpace(m.selectedStatus)
 		if ok {
 			mode = firstNonEmpty(selected.Mode, mode)
-			status = firstNonEmpty(selected.State, status)
 		}
 		return mode == "headed" &&
 			strings.TrimSpace(m.selectedInvocationID) != "" &&
 			strings.TrimSpace(m.selectedRepoID) != "" &&
-			selected.FinishedAt == "" &&
-			status != ""
+			m.selectedSession.IsLive() &&
+			!m.selectedSessionLoading &&
+			strings.TrimSpace(m.selectedSessionError) == ""
 	case actionOpen:
 		return m.open != nil
 	case actionStop:
@@ -1094,7 +1224,7 @@ func (m model) canStartAction(kind actionKind) bool {
 			selected.FinishedAt == "" &&
 			(selected.State == "running" || selected.State == "waiting")
 	case actionRecreate:
-		return m.recreate != nil && selected.Mode == "headed"
+		return m.recreate != nil && selected.Mode == "headed" && m.selectedSessionCanRecreate()
 	case actionPRSync:
 		if m.prSync == nil || strings.TrimSpace(selected.WorktreeID) == "" {
 			return false
@@ -1213,7 +1343,7 @@ func formatActionError(kind actionKind, err error, invocationID, worktreeID, tur
 	target := actionTarget(kind, invocationID, worktreeID, turnID)
 	code := agencyerrors.GetCode(err)
 	if code == agencyerrors.ESessionEnded {
-		hint := "session ended; use history, transcript, logs, or open to inspect the invocation"
+		hint := "session ended; use recreate, history, transcript, logs, or open to inspect the invocation"
 		if ae, ok := agencyerrors.AsAgencyError(err); ok {
 			if resolvedHint := strings.TrimSpace(ae.Details["hint"]); resolvedHint != "" {
 				hint = resolvedHint

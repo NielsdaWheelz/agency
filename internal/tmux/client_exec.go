@@ -3,8 +3,10 @@
 package tmux
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -136,6 +138,64 @@ func (c *ExecClient) PipePane(ctx context.Context, target, logPath string) error
 		return c.formatError("pipe-pane", result.ExitCode, result.Stderr)
 	}
 	return nil
+}
+
+// ListAttachedClients implements Client.ListAttachedClients.
+// Uses: tmux list-clients -t <name> -F "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}"
+func (c *ExecClient) ListAttachedClients(ctx context.Context, name string) ([]AttachedClient, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("tmux list-clients: session name is required")
+	}
+
+	const format = "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}"
+	result, err := c.runner.Run(ctx, "tmux", []string{"list-clients", "-t", name, "-F", format}, exec.RunOpts{})
+	if err != nil {
+		return nil, err
+	}
+	if result.ExitCode != 0 {
+		return nil, c.formatError("list-clients", result.ExitCode, result.Stderr)
+	}
+
+	trimmed := strings.TrimSpace(result.Stdout)
+	if trimmed == "" {
+		return []AttachedClient{}, nil
+	}
+
+	clients := make([]AttachedClient, 0, strings.Count(trimmed, "\n")+1)
+	scanner := bufio.NewScanner(strings.NewReader(trimmed))
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) != 4 {
+			return nil, fmt.Errorf("tmux list-clients: malformed client row %q", line)
+		}
+
+		pid, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return nil, fmt.Errorf("tmux list-clients: invalid client pid %q: %w", parts[2], err)
+		}
+
+		var readOnly bool
+		switch parts[3] {
+		case "0":
+			readOnly = false
+		case "1":
+			readOnly = true
+		default:
+			return nil, fmt.Errorf("tmux list-clients: invalid read-only value %q", parts[3])
+		}
+
+		clients = append(clients, AttachedClient{
+			Name:     parts[0],
+			TTY:      parts[1],
+			PID:      pid,
+			ReadOnly: readOnly,
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("tmux list-clients: %w", err)
+	}
+	return clients, nil
 }
 
 func shellQuote(s string) string {

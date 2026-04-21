@@ -131,6 +131,7 @@ short alias parity for high-traffic s6 navigation/progression surfaces:
 That runtime exposes workspace, history, transcript, and logs pages over the same daemon-backed read model.
 `agency agent <invocation-ref> history` is the canonical inspection surface for invocation turns, checkpoints, transcripts, and logs.
 `agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations; it is not a parallel inspection workflow.
+For headed invocations, `watch` and `attach` use the same daemon-backed session read, and `agency agent <invocation-ref> clients` prints the live tmux clients for that session.
 For headed interactive logs, prefer the live terminal output; use history/transcript/logs pages for daemon-backed inspection and replay.
 Invocation state uses one canonical vocabulary: `starting`, `running`, `waiting`, `stopping`, `succeeded`, `failed`.
 `waiting` covers both done-and-idle and waiting-for-user cases.

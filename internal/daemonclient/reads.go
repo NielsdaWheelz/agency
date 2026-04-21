@@ -123,6 +123,20 @@ func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (
 	return decodeResult[daemon.InvocationDTO](apiResp)
 }
 
+// GetInvocationSession gets headed tmux session facts for an invocation via the daemon.
+func (c *Client) GetInvocationSession(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationSessionData], error) {
+	u := fmt.Sprintf("%s/invocations/%s/session", daemonBaseURL, url.PathEscape(ref))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResult[daemon.InvocationSessionData](apiResp)
+}
+
 // GetInvocationDiffOpts holds options for getting invocation diff.
 type GetInvocationDiffOpts struct {
 	IncludePatch       bool   // default true

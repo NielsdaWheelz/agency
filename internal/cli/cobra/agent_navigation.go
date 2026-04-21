@@ -161,3 +161,40 @@ Examples:
 	registerRepoFlagCompletion(cmd)
 	return cmd
 }
+
+func newAgentClientsCmd() *cobra.Command {
+	var repoRef string
+
+	cmd := &cobra.Command{
+		Use:   "<invocation-ref> clients",
+		Short: "List connected tmux clients",
+		Long: `List the currently connected tmux clients for a live headed invocation.
+
+Examples:
+  agency agent 20260131 clients
+  agency agent 20260131 clients --repo agency`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 && args[1] == "clients" {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.AgentClients(ctx, cr, fsys, cwd, commands.AgentClientsOpts{
+				InvocationRef: args[0],
+				RepoRef:       repoRef,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+	cmd.GroupID = "inspect"
+
+	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
+	setInvocationArgCompletion(cmd, "all")
+	registerRepoFlagCompletion(cmd)
+	return cmd
+}

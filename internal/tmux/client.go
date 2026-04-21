@@ -12,6 +12,14 @@ const (
 	KeyCtrlC Key = "C-c"
 )
 
+// AttachedClient describes one tmux client attached to a session.
+type AttachedClient struct {
+	Name     string
+	TTY      string
+	PID      int
+	ReadOnly bool
+}
+
 // Note: SessionName(id string) string is defined in capture.go
 // Format: agency_<id>
 // This is the canonical naming function for tmux sessions.
@@ -47,4 +55,7 @@ type Client interface {
 
 	// PipePane appends future pane output to logPath.
 	PipePane(ctx context.Context, target, logPath string) error
+
+	// ListAttachedClients returns the currently attached tmux clients.
+	ListAttachedClients(ctx context.Context, name string) ([]AttachedClient, error)
 }

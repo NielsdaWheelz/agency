@@ -24,6 +24,7 @@ This directory is the canonical home for repository documentation.
 - [overrides.md](overrides.md): explicit CLI and config override rules
 - [errors.md](errors.md): stable error-code and corruption rules
 - [concurrency.md](concurrency.md): repo locks and mutation ordering
+- [invocation-sessions.md](invocation-sessions.md): headed-invocation session-manager cutover target state
 - [modules/index.md](modules/index.md): subsystem-owned docs
 - [testing.md](testing.md): testing standards, layers, fixtures, and e2e rules
 

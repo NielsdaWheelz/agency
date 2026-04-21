@@ -180,6 +180,7 @@ func (m model) renderDetailsPanel(width int) string {
 		lines = append(lines, "Reason:     "+selected.Reason)
 	}
 	lines = append(lines, "Latest:     "+latest)
+	lines = append(lines, m.renderSessionDetailLines(width, selected)...)
 	lines = append(lines, "")
 	lines = append(lines, m.renderActionPanel(width)...)
 	return truncateLines(lines, width)
@@ -272,6 +273,64 @@ func (m model) renderTransientActionPanel(width int) []string {
 	}
 	lines := m.renderActionPanel(width)
 	lines = append(lines, "")
+	return lines
+}
+
+func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO) []string {
+	lines := make([]string, 0, 12)
+	if strings.TrimSpace(selected.Mode) != "headed" {
+		lines = append(lines, "Session:     n/a (headless)")
+		return lines
+	}
+
+	switch {
+	case m.sessionLoader == nil:
+		lines = append(lines, "Session:     unavailable")
+	case m.selectedSessionLoading:
+		lines = append(lines, "Session:     loading...")
+	case strings.TrimSpace(m.selectedSessionError) != "":
+		lines = append(lines, "Session:     error")
+		lines = append(lines, "Session err: "+truncateWithEllipsis(m.selectedSessionError, max(1, width-13)))
+	default:
+		status := strings.TrimSpace(m.selectedSession.Status)
+		if status == "" {
+			status = "unknown"
+		}
+		lines = append(lines, "Session:     "+status)
+		if sessionName := strings.TrimSpace(m.selectedSession.TmuxSession); sessionName != "" {
+			lines = append(lines, "Tmux:        "+sessionName)
+		}
+		lines = append(lines, fmt.Sprintf("Clients:     %d", m.selectedSession.ConnectedClientCount()))
+		if attachCommand := strings.TrimSpace(m.selectedSession.AttachCommand); attachCommand != "" {
+			lines = append(lines, "Attach:      "+attachCommand)
+		}
+		recreate := "no"
+		if m.selectedSessionCanRecreate() {
+			recreate = "yes"
+		}
+		lines = append(lines, "Recreate:    "+recreate)
+		if hint := strings.TrimSpace(m.selectedSession.Hint); hint != "" && m.selectedSession.IsMissing() {
+			lines = append(lines, "Hint:        "+truncateWithEllipsis(hint, max(1, width-13)))
+		}
+		if len(m.selectedSession.Clients) > 0 {
+			lines = append(lines, "Connected:")
+			for idx, client := range m.selectedSession.Clients {
+				if idx == 5 {
+					lines = append(lines, fmt.Sprintf("  ... %d more", len(m.selectedSession.Clients)-idx))
+					break
+				}
+				label := strings.TrimSpace(client.Name)
+				if label == "" {
+					label = fmt.Sprintf("client %d", idx+1)
+				}
+				if client.ReadOnly {
+					label += " (read-only)"
+				}
+				lines = append(lines, "  - "+label)
+			}
+		}
+	}
+
 	return lines
 }
 

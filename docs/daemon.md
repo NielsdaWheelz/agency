@@ -18,3 +18,4 @@ This document covers daemon ownership, lifecycle, and mutation rules.
 - Accepted worktree merge lifecycles continue independently of the transport connection; disconnects do not cancel accepted work.
 - Clients should use explicit merge-status reads instead of inferring worktree merge completion from the POST lifecycle.
 - Headed recreate is daemon-owned: it preserves the invocation id and sandbox, and recreates only tmux/session supervision state.
+- Headed session presence and connected-client facts are daemon read surfaces, not command-local tmux heuristics.

@@ -108,6 +108,14 @@ func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
 	}
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
+	m.selectedSession = InvocationSession{
+		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		Status:       "live",
+		TmuxSession:  "agency_inv-1",
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, cmd)
@@ -120,6 +128,40 @@ func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
 	assert.Equal(t, "repo-1", repoID)
 	assert.False(t, nextModel.actionRunning)
 	assert.Empty(t, nextModel.lastActionMessage)
+}
+
+func TestModel_ActionAttach_MissingSessionOpensActionsAndAllowsRecreate(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{
+		Recreate: func(context.Context, string, string) (string, error) {
+			return "", nil
+		},
+	})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", State: string(runnerstatus.StateRunning)},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+	m.selectedSession = InvocationSession{
+		InvocationID:      "inv-1",
+		RepoID:            "repo-1",
+		Status:            "missing",
+		TmuxSession:       "agency_inv-1",
+		RecreateAvailable: true,
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+
+	assert.True(t, nextModel.actionMenuOpen)
+	assert.False(t, nextModel.canStartAction(actionAttach))
+	assert.True(t, nextModel.canStartAction(actionRecreate))
 }
 
 func TestModel_ActionAttach_HeadlessInvocationStaysInTUI(t *testing.T) {
@@ -315,6 +357,58 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	assert.Contains(t, view.Content, "kill invocation")
 	assert.Contains(t, view.Content, "open")
 	assert.NotContains(t, view.Content, "IDs:")
+}
+
+func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{
+		Recreate: func(context.Context, string, string) (string, error) { return "", nil },
+		SessionLoader: func(context.Context, string, string) (InvocationSession, error) {
+			return InvocationSession{}, nil
+		},
+	})
+	m.width = 180
+	m.height = 28
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
+		Invocations: []daemon.InvocationDTO{
+			{
+				InvocationID:   "inv-1",
+				InvocationName: "headed auth",
+				RepoID:         "repo-1",
+				Runner:         "codex",
+				Mode:           "headed",
+				State:          string(runnerstatus.StateRunning),
+			},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+	m.selectedSession = InvocationSession{
+		InvocationID:      "inv-1",
+		RepoID:            "repo-1",
+		Status:            "missing",
+		TmuxSession:       "agency_inv-1",
+		ClientCount:       2,
+		AttachCommand:     "agency agent inv-1 attach --repo repo-1",
+		RecreateAvailable: true,
+		Hint:              "use recreate to start a new headed session in the same sandbox",
+		Clients: []InvocationSessionClient{
+			{Name: "tty1"},
+			{Name: "tty2", ReadOnly: true},
+		},
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
+
+	content := m.View().Content
+	assert.Contains(t, content, "Session:     missing")
+	assert.Contains(t, content, "Tmux:        agency_inv-1")
+	assert.Contains(t, content, "Clients:     2")
+	assert.Contains(t, content, "Attach:      agency agent inv-1 attach --repo repo-1")
+	assert.Contains(t, content, "Recreate:    yes")
+	assert.Contains(t, content, "tty2 (read-only)")
 }
 
 func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {

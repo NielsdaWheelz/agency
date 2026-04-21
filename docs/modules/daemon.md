@@ -12,4 +12,5 @@ This document covers `internal/daemon` and its owned subpackages.
 - Durable state must be sufficient for restart recovery without relying on process-local memory.
 - The durable `worktree pr merge` lifecycle belongs here, including request acceptance, persisted merge state, execution, archive cleanup, and restart recovery.
 - Explicit worktree merge-status reads belong in daemon read surfaces, not in transport-local state or Cobra glue.
+- Headed invocation session reads also belong here, including tmux session presence and connected tmux clients.
 - Transport disconnects do not cancel accepted daemon-owned worktree merge lifecycles.

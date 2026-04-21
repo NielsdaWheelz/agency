@@ -477,6 +477,104 @@ func TestExecClient_PipePane(t *testing.T) {
 	}
 }
 
+func TestExecClient_ListAttachedClients(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		session   string
+		responses []fakeResponse
+		want      []AttachedClient
+		wantErr   bool
+		wantArgs  []string
+	}{
+		{
+			name:    "list success",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{
+					Result: exec.CmdResult{
+						ExitCode: 0,
+						Stdout: strings.Join([]string{
+							"client-1\t/dev/ttys001\t101\t0",
+							"client-2\t/dev/ttys002\t202\t1",
+						}, "\n"),
+					},
+				},
+			},
+			want: []AttachedClient{
+				{Name: "client-1", TTY: "/dev/ttys001", PID: 101, ReadOnly: false},
+				{Name: "client-2", TTY: "/dev/ttys002", PID: 202, ReadOnly: true},
+			},
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+		{
+			name:    "no attached clients",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0, Stdout: ""}},
+			},
+			want: []AttachedClient{},
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+		{
+			name:    "missing session",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 1, Stderr: "can't find session: agency_abc"}},
+			},
+			wantErr: true,
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+		{
+			name:    "malformed pid",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0, Stdout: "client-1\t/dev/ttys001\tnot-a-pid\t0"}},
+			},
+			wantErr: true,
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := newFakeRunner(tt.responses...)
+			client := NewExecClient(runner)
+
+			got, err := client.ListAttachedClients(context.Background(), tt.session)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, got)
+
+			require.Len(t, runner.calls, 1)
+			call := runner.calls[0]
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
+		})
+	}
+}
+
 func TestExecClient_ErrorFormatting(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

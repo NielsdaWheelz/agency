@@ -165,6 +165,14 @@ func TestHistoryPageAttach_QuitsAndDefersAttach(t *testing.T) {
 	m.selectedRepoID = "repo-1"
 	m.selectedMode = "headed"
 	m.selectedStatus = "running"
+	m.selectedSession = InvocationSession{
+		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		Status:       "live",
+		TmuxSession:  "agency_inv-1",
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
 
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "a"})
 	require.NotNil(t, cmd)

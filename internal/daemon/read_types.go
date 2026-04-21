@@ -400,6 +400,28 @@ type InvocationCheckData struct {
 	Navigation      InvocationCheckNavigation `json:"navigation"`
 }
 
+// InvocationSessionClient describes one tmux client attached to a headed invocation.
+type InvocationSessionClient struct {
+	Name     string `json:"name,omitempty"`
+	TTY      string `json:"tty,omitempty"`
+	PID      int    `json:"pid,omitempty"`
+	ReadOnly bool   `json:"read_only"`
+}
+
+// InvocationSessionData is the data payload for GET /invocations/{id}/session.
+type InvocationSessionData struct {
+	InvocationID string `json:"invocation_id"`
+	RepoID       string `json:"repo_id"`
+
+	SessionStatus    string                    `json:"session_status"` // live, missing
+	TmuxSession      string                    `json:"tmux_session"`
+	ClientCount      int                       `json:"client_count"`
+	ConnectedClients []InvocationSessionClient `json:"connected_clients"`
+
+	AttachCommand     string `json:"attach_command,omitempty"`
+	RecreateAvailable bool   `json:"recreate_available"`
+}
+
 // InvocationLogsOffsetData is the data payload for GET /invocations/{id}/logs.
 type InvocationLogsOffsetData struct {
 	Kind       string `json:"kind"` // raw, stderr, stream, hooks, terminal

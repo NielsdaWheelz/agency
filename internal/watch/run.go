@@ -15,23 +15,24 @@ import (
 
 // RunOptions controls watch runtime behavior.
 type RunOptions struct {
-	InitialPage  InitialPage
-	InvocationID string
-	RepoID       string
-	Interval     time.Duration
-	Input        io.Reader
-	Output       io.Writer
-	Open         func(context.Context, string, string) (string, error)
-	Stop         func(context.Context, string, string) (string, error)
-	Kill         func(context.Context, string, string) (string, error)
-	Land         func(context.Context, string, string) (string, error)
-	Discard      func(context.Context, string, string) (string, error)
-	Recreate     func(context.Context, string, string) (string, error)
-	Followup     func(context.Context, string, string, string) (string, error)
-	PRSync       func(context.Context, string, string) (string, error)
-	PRMerge      func(context.Context, string, string) (string, error)
-	Rebase       func(context.Context, string, string) (string, error)
-	Restore      func(context.Context, string, string, string) (string, error)
+	InitialPage   InitialPage
+	InvocationID  string
+	RepoID        string
+	Interval      time.Duration
+	SessionLoader InvocationSessionLoader
+	Input         io.Reader
+	Output        io.Writer
+	Open          func(context.Context, string, string) (string, error)
+	Stop          func(context.Context, string, string) (string, error)
+	Kill          func(context.Context, string, string) (string, error)
+	Land          func(context.Context, string, string) (string, error)
+	Discard       func(context.Context, string, string) (string, error)
+	Recreate      func(context.Context, string, string) (string, error)
+	Followup      func(context.Context, string, string, string) (string, error)
+	PRSync        func(context.Context, string, string) (string, error)
+	PRMerge       func(context.Context, string, string) (string, error)
+	Rebase        func(context.Context, string, string) (string, error)
+	Restore       func(context.Context, string, string, string) (string, error)
 }
 
 type RunResult struct {

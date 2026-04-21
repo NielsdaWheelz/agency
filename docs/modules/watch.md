@@ -19,8 +19,10 @@ This document covers `internal/watch`.
 - Human-readable labels such as invocation names, worktree names, and repo labels should be primary in the UI; canonical ids stay visible but secondary.
 - Page headers should make the current agent, worktree, and repo obvious before showing transcript, logs, or history content.
 - The workspace detail pane should prefer a small set of high-signal fields: context, state, reason, latest activity, actions, and ids.
+- For headed invocations, the workspace detail pane may also show daemon-authored session facts: session status, tmux session name, connected tmux clients, attach command, and recreate availability.
 - Action handling should stay explicit and local to the runtime; avoid generic menu or command frameworks when a direct key/action flow is sufficient.
 - History, transcript, and log views should be read-model pages over canonical daemon reads, not parallel UI stacks.
 - `agency agent <invocation-ref> history` remains the canonical inspection surface; `attach` is only a thin tmux handoff for running headed invocations.
+- `attach` and `watch` should consume the same daemon headed-session read instead of keeping local attachability heuristics in parallel.
 - Headed interactive logs should prefer live terminal output over reconstructed UI output.
 - Actions should forward into canonical command contracts such as `agency agent <invocation-ref> history`, `agency agent <invocation-ref> attach`, and `agency agent <invocation-ref> restore`.
