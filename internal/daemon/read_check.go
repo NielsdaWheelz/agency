@@ -52,24 +52,27 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		runnerErr,
 		s.Clock(),
 	)
+	timelineEntries := s.collectTimelineEntries(record)
+	activityProjection := s.buildInvocationActivityProjection(record, dto.State, "", timelineEntries)
+	applyInvocationActivityProjection(&dto, activityProjection)
 
 	data := InvocationCheckData{
-		InvocationID:    record.InvocationID,
-		RepoID:          record.RepoID,
+		InvocationID:    dto.InvocationID,
+		RepoID:          dto.RepoID,
 		State:           dto.State,
 		Reason:          dto.Reason,
+		PRSyncEligible:  dto.PRSyncEligible,
 		LandingStatus:   dto.LandingStatus,
 		BlockingReasons: make([]InvocationCheckReason, 0, 8),
 		Navigation: InvocationCheckNavigation{
-			InvocationRef:  record.InvocationID,
-			RepoID:         record.RepoID,
-			HistoryCommand: fmt.Sprintf("agency agent %s history --repo %s", record.InvocationID, record.RepoID),
-			DiffCommand:    fmt.Sprintf("agency agent %s diff --repo %s", record.InvocationID, record.RepoID),
-			PRSyncCommand:  fmt.Sprintf("agency worktree %s pr sync --repo %s", firstNonEmpty(strings.TrimSpace(meta.IntegrationWorktreeID), "<worktree_ref>"), record.RepoID),
+			InvocationRef:  dto.InvocationID,
+			RepoID:         dto.RepoID,
+			HistoryCommand: fmt.Sprintf("agency agent %s history --repo %s", dto.InvocationID, dto.RepoID),
+			DiffCommand:    fmt.Sprintf("agency agent %s diff --repo %s", dto.InvocationID, dto.RepoID),
+			PRSyncCommand:  fmt.Sprintf("agency worktree %s pr sync --repo %s", firstNonEmpty(strings.TrimSpace(meta.IntegrationWorktreeID), "<worktree_ref>"), dto.RepoID),
 		},
 	}
 
-	runnerSummary := ""
 	if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
 		if err := runnerMeta.Validate(); err == nil {
 			data.RunnerState = string(runnerMeta.State)
@@ -77,28 +80,22 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 			data.RunnerSummary = runnerMeta.Summary
 			data.RunnerUpdatedAt = runnerMeta.UpdatedAt
 			data.HowToTest = runnerMeta.HowToTest
-			runnerSummary = runnerMeta.Summary
 		}
 	}
-
-	timelineEntries := s.collectTimelineEntries(record)
-	activityProjection := s.buildInvocationActivityProjection(record, data.State, runnerSummary, timelineEntries)
-	data.StatusSummary = activityProjection.StatusSummary
-	data.LatestActivity = activityProjection.LatestActivity
 	if strings.TrimSpace(data.RunnerSummary) == "" {
-		data.RunnerSummary = activityProjection.StatusSummary
+		data.RunnerSummary = dto.StatusSummary
 	}
-	if activityProjection.Navigation != nil {
-		if strings.TrimSpace(activityProjection.Navigation.HistoryCommand) != "" {
-			data.Navigation.HistoryCommand = activityProjection.Navigation.HistoryCommand
+	if dto.Navigation != nil {
+		if strings.TrimSpace(dto.Navigation.HistoryCommand) != "" {
+			data.Navigation.HistoryCommand = dto.Navigation.HistoryCommand
 		}
-		if strings.TrimSpace(activityProjection.Navigation.DiffCommand) != "" {
-			data.Navigation.DiffCommand = activityProjection.Navigation.DiffCommand
+		if strings.TrimSpace(dto.Navigation.DiffCommand) != "" {
+			data.Navigation.DiffCommand = dto.Navigation.DiffCommand
 		}
-		if strings.TrimSpace(activityProjection.Navigation.AttachCommand) != "" {
-			data.Navigation.AttachCommand = activityProjection.Navigation.AttachCommand
+		if strings.TrimSpace(dto.Navigation.AttachCommand) != "" {
+			data.Navigation.AttachCommand = dto.Navigation.AttachCommand
 		}
-		data.Navigation.LatestTurnID = activityProjection.Navigation.LatestTurnID
+		data.Navigation.LatestTurnID = dto.Navigation.LatestTurnID
 	}
 
 	switch meta.Status {
@@ -215,8 +212,6 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 			})
 		}
 	}
-
-	data.PRSyncEligible = len(data.BlockingReasons) == 0
 	return data
 }
 

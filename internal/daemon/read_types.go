@@ -1,10 +1,7 @@
 // Package daemon implements the agency daemon supervisor.
 package daemon
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
 // ----- Response Envelope -----
 
@@ -67,7 +64,6 @@ type InvalidQueryArgumentDetails struct {
 type WorktreeDTO struct {
 	WorktreeID   string            `json:"worktree_id"`
 	WorktreeName string            `json:"worktree_name"`
-	Name         string            `json:"-"`
 	RepoID       string            `json:"repo_id"`
 	RepoName     string            `json:"repo_name"`
 	Branch       string            `json:"branch"`
@@ -77,80 +73,6 @@ type WorktreeDTO struct {
 	CreatedAt    string            `json:"created_at"`
 	LastUsedAt   string            `json:"last_used_at,omitempty"`
 	Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
-}
-
-func (dto WorktreeDTO) MarshalJSON() ([]byte, error) {
-	worktreeName := strings.TrimSpace(dto.WorktreeName)
-	if worktreeName == "" {
-		worktreeName = strings.TrimSpace(dto.Name)
-	}
-
-	return json.Marshal(struct {
-		WorktreeID   string            `json:"worktree_id"`
-		WorktreeName string            `json:"worktree_name"`
-		RepoID       string            `json:"repo_id"`
-		RepoName     string            `json:"repo_name"`
-		Branch       string            `json:"branch"`
-		BaseBranch   string            `json:"base_branch"`
-		TreePath     string            `json:"tree_path"`
-		State        string            `json:"state"`
-		CreatedAt    string            `json:"created_at"`
-		LastUsedAt   string            `json:"last_used_at,omitempty"`
-		Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
-	}{
-		WorktreeID:   dto.WorktreeID,
-		WorktreeName: worktreeName,
-		RepoID:       dto.RepoID,
-		RepoName:     strings.TrimSpace(dto.RepoName),
-		Branch:       dto.Branch,
-		BaseBranch:   dto.BaseBranch,
-		TreePath:     dto.TreePath,
-		State:        dto.State,
-		CreatedAt:    dto.CreatedAt,
-		LastUsedAt:   dto.LastUsedAt,
-		Merge:        dto.Merge,
-	})
-}
-
-func (dto *WorktreeDTO) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		WorktreeID   string            `json:"worktree_id"`
-		WorktreeName string            `json:"worktree_name"`
-		Name         string            `json:"name"`
-		RepoID       string            `json:"repo_id"`
-		RepoName     string            `json:"repo_name"`
-		Branch       string            `json:"branch"`
-		BaseBranch   string            `json:"base_branch"`
-		TreePath     string            `json:"tree_path"`
-		State        string            `json:"state"`
-		CreatedAt    string            `json:"created_at"`
-		LastUsedAt   string            `json:"last_used_at,omitempty"`
-		Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	worktreeName := strings.TrimSpace(raw.WorktreeName)
-	if worktreeName == "" {
-		worktreeName = strings.TrimSpace(raw.Name)
-	}
-
-	*dto = WorktreeDTO{
-		WorktreeID:   raw.WorktreeID,
-		WorktreeName: worktreeName,
-		Name:         worktreeName,
-		RepoID:       raw.RepoID,
-		RepoName:     strings.TrimSpace(raw.RepoName),
-		Branch:       raw.Branch,
-		BaseBranch:   raw.BaseBranch,
-		TreePath:     raw.TreePath,
-		State:        raw.State,
-		CreatedAt:    raw.CreatedAt,
-		LastUsedAt:   raw.LastUsedAt,
-		Merge:        raw.Merge,
-	}
-	return nil
 }
 
 // WorktreeMergeDTO is the canonical daemon read shape for durable worktree merge state.
@@ -223,6 +145,9 @@ type InvocationDTO struct {
 	// Landing status
 	LandingStatus string `json:"landing_status,omitempty"` // pending, landed, discarded
 
+	// Workspace/list/show policy projection.
+	PRSyncEligible bool `json:"pr_sync_eligible"`
+
 	AttentionFlags []string `json:"attention_flags"` // daemon-derived flags
 	SortKey        int      `json:"sort_key"`        // daemon-derived priority for rendering
 
@@ -237,7 +162,7 @@ type InvocationDTO struct {
 }
 
 // InvocationLatestActivity summarizes the latest meaningful invocation activity.
-// Shared across list/watch/show/check surfaces.
+// Shared across list/watch/show surfaces.
 type InvocationLatestActivity struct {
 	TurnID    string `json:"turn_id,omitempty"`
 	Kind      string `json:"kind,omitempty"`
@@ -392,8 +317,6 @@ type InvocationCheckData struct {
 	RunnerState     string                    `json:"runner_state,omitempty"`
 	RunnerReason    string                    `json:"runner_reason,omitempty"`
 	RunnerSummary   string                    `json:"runner_summary,omitempty"`
-	StatusSummary   string                    `json:"status_summary,omitempty"`
-	LatestActivity  *InvocationLatestActivity `json:"latest_activity,omitempty"`
 	RunnerUpdatedAt string                    `json:"runner_updated_at,omitempty"`
 	HowToTest       string                    `json:"how_to_test,omitempty"`
 	BlockingReasons []InvocationCheckReason   `json:"blocking_reasons"`

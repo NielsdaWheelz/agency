@@ -50,8 +50,6 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 			}
 			mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(r.Meta.RepoID, r.Meta.WorktreeID)
 			dto := WorktreeMetaToDTO(r.Meta, mergeMeta)
-			dto.WorktreeName = strings.TrimSpace(r.Meta.Name)
-			dto.Name = dto.WorktreeName
 			dto.RepoName = repoName
 			allWorktrees = append(allWorktrees, dto)
 		}
@@ -95,8 +93,6 @@ func (s *Server) handleGetWorktree(w http.ResponseWriter, r *http.Request, workt
 
 	mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
 	dto := WorktreeMetaToDTO(record.Meta, mergeMeta)
-	dto.WorktreeName = strings.TrimSpace(record.Meta.Name)
-	dto.Name = dto.WorktreeName
 	dto.RepoName = s.repoName(record.Meta.RepoID)
 	s.writeAPIResponse(w, requestID, dto)
 }

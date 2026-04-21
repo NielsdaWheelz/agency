@@ -103,7 +103,7 @@ func (m model) renderTranscript() string {
 		))
 	}
 	lines = append(lines, "")
-	lines = append(lines, warningStyle.Render("j/k move • a attach • x actions • l logs • r refresh • b back • q quit"))
+	lines = append(lines, warningStyle.Render("j/k move • a attach • d review • x actions • l logs • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
 }
 

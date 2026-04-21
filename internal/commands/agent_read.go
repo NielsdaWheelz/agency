@@ -363,9 +363,6 @@ type AgentHistoryLogsOpts struct {
 	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
 	SleepFn func(time.Duration)
 
-	// MaxIterations limits follow iterations for testing. 0 = unlimited.
-	MaxIterations int
-
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
 }
@@ -433,7 +430,6 @@ func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cw
 	}
 
 	// Follow mode: poll for new data
-	iterations := 0
 	for {
 		// Check context cancellation before sleeping
 		select {
@@ -469,12 +465,5 @@ func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cw
 		}
 
 		offset = result.Data.NextOffset
-
-		iterations++
-		if opts.MaxIterations > 0 && iterations >= opts.MaxIterations {
-			break
-		}
 	}
-
-	return nil
 }

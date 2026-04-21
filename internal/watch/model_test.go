@@ -288,7 +288,8 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	m.width = 240
 	m.height = 28
 	m.snapshot = Snapshot{
-		Repos: []daemon.RepoDTO{{RepoID: repoID, RepoKey: "github.com/acme/one"}},
+		Repos:     []daemon.RepoDTO{{RepoID: repoID, RepoKey: "github.com/acme/one"}},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: worktreeID, WorktreeName: "feature-auth"}},
 		Invocations: []daemon.InvocationDTO{
 			{
 				InvocationID:   invocationID,
@@ -297,17 +298,9 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 				WorktreeID:     worktreeID,
 				Runner:         "claude-code",
 				Mode:           "headless",
-				State:          string(runnerstatus.StateRunning),
-				LandingStatus:  "landed",
-			},
-		},
-		Worktrees: []daemon.WorktreeDTO{{WorktreeID: worktreeID, Name: "feature-auth"}},
-		Checks: map[string]daemon.InvocationCheckData{
-			invocationID: {
-				InvocationID:   invocationID,
 				State:          string(runnerstatus.StateWaiting),
-				PRSyncEligible: false,
-				RunnerState:    string(runnerstatus.StateWaiting),
+				LandingStatus:  "landed",
+				PRSyncEligible: true,
 				StatusSummary:  "waiting on api contract",
 				LatestActivity: &daemon.InvocationLatestActivity{
 					TurnID:        "stream:1",
@@ -324,7 +317,7 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 					CheckpointChangedPaths: []string{"internal/watch/model.go", "internal/watch/model_test.go"},
 					CheckpointChangedCount: 2,
 				},
-				Navigation: daemon.InvocationCheckNavigation{
+				Navigation: &daemon.InvocationActivityNavigation{
 					HistoryCommand: "agency agent " + invocationID + " history --repo " + repoID,
 					DiffCommand:    "agency agent " + invocationID + " diff --repo " + repoID + " --turn stream:1",
 					LatestTurnID:   "stream:1",

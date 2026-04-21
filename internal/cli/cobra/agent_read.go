@@ -63,8 +63,9 @@ func newAgentShowCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "<invocation-ref> [show]",
-		Short: "Show details of an invocation",
+		Use:     "<invocation-ref>",
+		Aliases: []string{"_show"},
+		Short:   "Show details of an invocation",
 		Long: `Show details of an agent invocation.
 
 Pass --repo when cwd does not already identify the repo. The invocation
@@ -72,18 +73,9 @@ argument should be the invocation id or an unambiguous id prefix.
 
 Examples:
   agency agent 20260131
-  agency agent 20260131 show
   agency agent 20260131 --json
-  agency agent 20260131 show --repo agency`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 {
-				return nil
-			}
-			if len(args) == 2 && args[1] == "show" {
-				return nil
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+  agency agent 20260131 --repo agency`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -114,8 +106,9 @@ func newAgentDiffCmd() *cobra.Command {
 	var turnRange string
 
 	cmd := &cobra.Command{
-		Use:   "<invocation-ref> diff",
-		Short: "Show invocation changes",
+		Use:     "<invocation-ref> diff",
+		Aliases: []string{"_diff"},
+		Short:   "Show invocation changes",
 		Long: `Show invocation changes from base_commit to the sandbox tip.
 
 This compares the sandbox against its recorded base commit. It includes sandbox
@@ -129,12 +122,7 @@ Examples:
   agency agent my-invocation diff --repo agency
   agency agent 20260131 diff --turn inv_event:2:agency.followup_prompt
   agency agent 20260131 diff --turn-range stream:4..stream:9 --json`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "diff" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
@@ -170,8 +158,9 @@ func newAgentHistoryCmd() *cobra.Command {
 	var cursor string
 
 	cmd := &cobra.Command{
-		Use:   "<invocation-ref> history",
-		Short: "Show unified invocation timeline",
+		Use:     "<invocation-ref> history",
+		Aliases: []string{"_history"},
+		Short:   "Show unified invocation timeline",
 		Long: `Show the unified timeline for one invocation.
 
 This is the canonical inspection surface for a single invocation.
@@ -189,12 +178,7 @@ Examples:
   agency agent 20260131 history --last
   agency agent 20260131 history --limit 200 --json
   agency agent 20260131 history logs --kind stream`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "history" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -212,7 +196,7 @@ Examples:
 		},
 	}
 	cmd.GroupID = "inspect"
-	cmd.AddCommand(newAgentHistoryLogsCmd())
+	cmd.AddCommand(newAgentHistoryLogsHelpCmd())
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref: name, owner/repo, repo key, id, or prefix")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
@@ -231,11 +215,11 @@ func newAgentHistoryLogsCmd() *cobra.Command {
 	var kind string
 	var follow bool
 	var offset int64
-	var maxIterations int
 
 	cmd := &cobra.Command{
-		Use:   "<invocation-ref> history logs",
-		Short: "View raw invocation logs",
+		Use:     "<invocation-ref> history logs",
+		Aliases: []string{"_history_logs"},
+		Short:   "View raw invocation logs",
 		Long: `Stream raw invocation log files for one invocation.
 
 This is the raw log subcommand of the canonical history surface. Use it when
@@ -246,12 +230,7 @@ Examples:
   agency agent 20260131 history logs --repo agency --kind stderr
   agency agent 20260131 history logs --kind stream --follow
   agency agent 20260131 history logs --offset 1024`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 3 && args[1] == "history" && args[2] == "logs" {
-				return nil
-			}
-			return cobra.ExactArgs(3)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -264,7 +243,6 @@ Examples:
 				Kind:          kind,
 				Follow:        follow,
 				Offset:        offset,
-				MaxIterations: maxIterations,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -273,7 +251,6 @@ Examples:
 	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream, hooks, terminal)")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
-	cmd.Flags().IntVar(&maxIterations, "max-iterations", 0, "Limit follow iterations for testing")
 	setInvocationArgCompletion(cmd, "all")
 	registerRepoFlagCompletion(cmd)
 	registerLogKindFlagCompletion(cmd)
@@ -286,8 +263,9 @@ func newAgentCheckCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "<invocation-ref> check",
-		Short: "Show invocation state",
+		Use:     "<invocation-ref> check",
+		Aliases: []string{"_check"},
+		Short:   "Show invocation state",
 		Long: `Show the daemon's canonical state view for one invocation.
 
 This is the canonical machine-friendly surface for deciding whether an
@@ -298,12 +276,7 @@ Examples:
   agency agent 20260131 check
   agency agent 20260131 check --repo agency
   agency agent 20260131 check --json`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "check" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -324,5 +297,20 @@ Examples:
 	setInvocationArgCompletion(cmd, "all")
 	registerRepoFlagCompletion(cmd)
 
+	return cmd
+}
+
+func newAgentHistoryLogsHelpCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "logs",
+		Short: "View raw invocation logs",
+		Long: `Stream raw invocation log files for one invocation.
+
+This is the raw log subcommand of the canonical history surface. Use it when
+you want byte-for-byte runner logs instead of the structured history timeline.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
 	return cmd
 }

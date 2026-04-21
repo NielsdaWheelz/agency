@@ -19,7 +19,7 @@ func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlan
 	opts.ClientRequestID = uuid.New().String()
 
 	var result daemon.ControlPlaneStartResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, daemonBaseURL+"/invocations/start_headless", opts, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, daemonBaseURL+"/invocations/start_headless", opts, &result); err != nil {
 		return nil, err
 	}
 
@@ -32,7 +32,7 @@ func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts ControlPlaneS
 	opts.ClientRequestID = uuid.New().String()
 
 	var result daemon.ControlPlaneStartHeadedResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, daemonBaseURL+"/invocations/start_headed", opts, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, daemonBaseURL+"/invocations/start_headed", opts, &result); err != nil {
 		return nil, err
 	}
 
@@ -74,7 +74,7 @@ func (c *Client) SubmitFollowUp(ctx context.Context, invocationRef, repoID strin
 	}
 
 	var result daemon.ControlPlaneFollowUpResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -83,7 +83,7 @@ func (c *Client) SubmitFollowUp(ctx context.Context, invocationRef, repoID strin
 // Stop sends a graceful stop signal to an invocation.
 func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon.InvocationActionResponse, error) {
 	var result daemon.InvocationActionResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/stop?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), nil, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/stop?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -93,7 +93,7 @@ func (c *Client) Stop(ctx context.Context, repoID, invocationID string) (*daemon
 // Kill forcefully terminates an invocation.
 func (c *Client) Kill(ctx context.Context, repoID, invocationID string) (*daemon.InvocationActionResponse, error) {
 	var result daemon.InvocationActionResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/kill?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), nil, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/kill?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), nil, &result); err != nil {
 		return nil, err
 	}
 

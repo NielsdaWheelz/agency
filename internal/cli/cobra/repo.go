@@ -30,46 +30,18 @@ Use:
   agency repo ls
   agency repo agency
   agency repo agency rm --yes`,
-		Args:               cobra.ArbitraryArgs,
-		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				_ = cmd.Help()
-				return errors.New(errors.EUsage, "specify 'add', 'ls', or a repo ref")
-			}
-
-			if args[0] == "--help" || args[0] == "-h" {
-				return cmd.Help()
-			}
-
-			switch args[0] {
-			case "add":
-				return errors.New(errors.EUsage, "use 'agency repo add [path]'")
-			case "ls":
-				return errors.New(errors.EUsage, "use 'agency repo ls'")
-			case "show", "rm":
-				return errors.New(errors.EUsage, "unknown command \""+args[0]+"\" for \"agency repo\"")
-			}
-
-			switch {
-			case len(args) == 1:
-				return runNestedCommand(cmd, newRepoShowCmd(), args)
-			case strings.HasPrefix(args[1], "-"):
-				return runNestedCommand(cmd, newRepoShowCmd(), args)
-			case len(args) == 2 && args[1] == "show":
-				return runNestedCommand(cmd, newRepoShowCmd(), args)
-			case len(args) >= 2 && args[1] == "rm":
-				return runNestedCommand(cmd, newRepoRmCmd(), args)
-			default:
-				return errors.New(errors.EUsage, "use 'agency repo <repo-ref>' or 'agency repo <repo-ref> rm --yes'")
-			}
+			_ = cmd.Help()
+			return errors.New(errors.EUsage, "specify 'add', 'ls', or a repo ref")
 		},
 	}
 
-	cmd.AddCommand(
-		newRepoAddCmd(),
-		newRepoLSCmd(),
-	)
+	showCmd := newRepoShowCmd()
+	showCmd.Hidden = true
+	rmCmd := newRepoRmCmd()
+	rmCmd.Hidden = true
+
+	cmd.AddCommand(newRepoAddCmd(), newRepoLSCmd(), showCmd, rmCmd)
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		switch len(args) {
@@ -81,7 +53,7 @@ Use:
 			if args[0] == "add" || args[0] == "ls" {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
-			values := []string{"show", "rm"}
+			values := []string{"rm"}
 			candidates := make([]string, 0, len(values))
 			for _, value := range values {
 				if toComplete != "" && !strings.HasPrefix(value, toComplete) {
@@ -169,27 +141,19 @@ func newRepoShowCmd() *cobra.Command {
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "<repo-ref> [show]",
-		Short: "Show details of a registered repository",
+		Use:     "<repo-ref>",
+		Aliases: []string{"_show"},
+		Short:   "Show details of a registered repository",
 		Long: `Show the canonical record for one registered repository.
 
 Accepted repo refs include a short name, owner/repo, repo key, repo_id, or a
 unique prefix.`,
 		Example: `  agency repo agency
-  agency repo agency show
   agency repo NielsdaWheelz/agency
   agency repo github:NielsdaWheelz/agency
   agency repo 769749d
   agency repo agency --json`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 {
-				return nil
-			}
-			if len(args) == 2 && args[1] == "show" {
-				return nil
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
 			if err != nil {
@@ -213,20 +177,16 @@ func newRepoRmCmd() *cobra.Command {
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
-		Use:   "<repo-ref> rm",
-		Short: "Remove a registered repository",
+		Use:     "<repo-ref> rm",
+		Aliases: []string{"_rm"},
+		Short:   "Remove a registered repository",
 		Long: `Remove one repository from the daemon's registry.
 
 This removes the registry entry only. It does not delete any checkout, branch,
 or worktree on disk.`,
 		Example: `  agency repo agency rm --yes
   agency repo 769749d77af0806f rm --yes --json`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "rm" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
 			if err != nil {

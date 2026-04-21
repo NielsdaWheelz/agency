@@ -65,9 +65,6 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	for _, wt := range result.Data.Worktrees {
 		worktreeName := wt.WorktreeName
-		if worktreeName == "" {
-			worktreeName = wt.Name
-		}
 		worktreeLabel := wt.WorktreeID
 		if worktreeName != "" {
 			worktreeLabel = worktreeName + " (" + wt.WorktreeID + ")"
@@ -130,9 +127,6 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 
 	wt := &result.Data
 	worktreeName := wt.WorktreeName
-	if worktreeName == "" {
-		worktreeName = wt.Name
-	}
 	worktreeLabel := wt.WorktreeID
 	if worktreeName != "" {
 		worktreeLabel = worktreeName + " (" + wt.WorktreeID + ")"

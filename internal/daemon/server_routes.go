@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
@@ -92,10 +91,20 @@ func (s *Server) terminateAllInvocations() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	type runningInvocation struct {
+		id   string
+		proc *SupervisedProcess
+	}
+	s.mu.RLock()
+	running := make([]runningInvocation, 0, len(s.processes))
 	for id, proc := range s.processes {
+		running = append(running, runningInvocation{id: id, proc: proc})
+	}
+	s.mu.RUnlock()
+
+	for _, entry := range running {
+		id := entry.id
+		proc := entry.proc
 		proc.exitReason.Store("killed")
 		proc.failureReason.Store("killed")
 
@@ -103,23 +112,13 @@ func (s *Server) terminateAllInvocations() {
 			if proc.TmuxSession != "" {
 				_ = s.TmuxClient.KillSession(ctx, proc.TmuxSession)
 			}
-			proc.CloseDone()
-
-			now := s.Clock().UTC().Format(time.RFC3339)
-			_ = s.Store.UpdateInvocationMeta(proc.RepoID, id, func(meta *store.InvocationMeta) {
-				meta.Status = store.InvocationStatusFailed
-				meta.ExitReason = "killed"
-				meta.FailureReason = "killed"
-				meta.FinishedAt = now
-				meta.LifecycleOwner = ""
-			})
-
-			delete(s.processes, id)
+			s.failInvocationKilled(proc.RepoID, id)
+			s.clearInvocationProcess(id)
 			continue
 		}
 
 		if proc.PGID <= 0 {
-			delete(s.processes, id)
+			s.clearInvocationProcess(id)
 			continue
 		}
 
@@ -127,21 +126,13 @@ func (s *Server) terminateAllInvocations() {
 
 		select {
 		case <-proc.done:
+			s.clearInvocationProcess(id)
 			continue
 		case <-time.After(5 * time.Second):
 			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
 		}
 
-		now := s.Clock().UTC().Format(time.RFC3339)
-		_ = s.Store.UpdateInvocationMeta(proc.RepoID, id, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "killed"
-			meta.FailureReason = "killed"
-			meta.FinishedAt = now
-			meta.PID = nil
-			meta.LifecycleOwner = ""
-		})
-
-		delete(s.processes, id)
+		s.failInvocationKilled(proc.RepoID, id)
+		s.clearInvocationProcess(id)
 	}
 }

@@ -142,7 +142,7 @@ func ContextUse(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		RepoID:       repo.Data.RepoID,
 		RepoName:     repoDisplayName(repo.Data),
 		WorktreeID:   worktree.Data.WorktreeID,
-		WorktreeName: worktree.Data.Name,
+		WorktreeName: worktree.Data.WorktreeName,
 		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := config.SaveCurrentContext(fsys, ns.dirs.ConfigDir, current); err != nil {
@@ -236,7 +236,7 @@ func loadValidatedCurrentContext(ctx context.Context, client *daemonclient.Clien
 		)
 	}
 
-	worktreeName := strings.TrimSpace(worktree.Data.Name)
+	worktreeName := strings.TrimSpace(worktree.Data.WorktreeName)
 	if worktreeName == "" {
 		worktreeName = current.WorktreeName
 	}

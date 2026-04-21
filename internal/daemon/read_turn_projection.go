@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -333,54 +334,7 @@ func isMeaningfulTimelineKind(kind string) bool {
 }
 
 func summarizeTimelineEntryDTO(entry TimelineEntryDTO) string {
-	switch entry.Kind {
-	case "message":
-		if text := strings.TrimSpace(timelineDataString(entry.Data, "text")); text != "" {
-			return truncateActivitySummary(text)
-		}
-		if role := strings.TrimSpace(timelineDataString(entry.Data, "role")); role == "user" {
-			return "user message"
-		}
-		return "assistant message"
-	case "prompt_seed":
-		if text := strings.TrimSpace(timelineDataString(entry.Data, "text")); text != "" {
-			return truncateActivitySummary(text)
-		}
-		return "prompt"
-	case "followup_prompt":
-		if text := strings.TrimSpace(timelineDataString(entry.Data, "text")); text != "" {
-			return truncateActivitySummary(text)
-		}
-		return "follow-up prompt"
-	case "tool_use":
-		if cmd := strings.TrimSpace(timelineDataString(entry.Data, "command")); cmd != "" {
-			return truncateActivitySummary(cmd)
-		}
-		if name := strings.TrimSpace(timelineDataString(entry.Data, "name")); name != "" {
-			return "tool: " + name
-		}
-		return "tool activity"
-	default:
-		if text := strings.TrimSpace(timelineDataString(entry.Data, "text")); text != "" {
-			return truncateActivitySummary(text)
-		}
-		return truncateActivitySummary(strings.TrimSpace(strings.ReplaceAll(entry.Kind, "_", " ")))
-	}
-}
-
-func timelineDataString(data map[string]interface{}, key string) string {
-	if data == nil {
-		return ""
-	}
-	raw, ok := data[key]
-	if !ok {
-		return ""
-	}
-	value, ok := raw.(string)
-	if !ok {
-		return ""
-	}
-	return value
+	return truncateActivitySummary(render.TimelineEntrySummary(entry.Kind, render.DecodeTimelinePayload(entry.Data)))
 }
 
 func applyInvocationActivityProjection(dto *InvocationDTO, projection invocationActivityProjection) {

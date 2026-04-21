@@ -10,8 +10,9 @@ func newWorktreePathCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "<worktree-ref> path",
-		Short: "Output worktree path for scripting",
+		Use:     "<worktree-ref> path",
+		Aliases: []string{"_path"},
+		Short:   "Output worktree path for scripting",
 		Long: `Output the tree path of an integration worktree.
 
 This prints only the path, so it is suitable for scripting:
@@ -20,12 +21,7 @@ This prints only the path, so it is suitable for scripting:
 Examples:
   agency worktree my-feature path
   agency worktree my-feature path --repo agency`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "path" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -50,20 +46,16 @@ func newWorktreeOpenCmd() *cobra.Command {
 	var editor string
 
 	cmd := &cobra.Command{
-		Use:   "<worktree-ref> open",
-		Short: "Open worktree in editor",
+		Use:     "<worktree-ref> open",
+		Aliases: []string{"_open"},
+		Short:   "Open worktree in editor",
 		Long: `Open an integration worktree in the configured editor.
 
 Examples:
   agency worktree my-feature open
   agency worktree my-feature open --repo agency
   agency worktree my-feature open --editor cursor`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "open" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
@@ -89,8 +81,9 @@ func newWorktreeShellCmd() *cobra.Command {
 	var repoRef string
 
 	cmd := &cobra.Command{
-		Use:   "<worktree-ref> shell",
-		Short: "Open shell in worktree",
+		Use:     "<worktree-ref> shell",
+		Aliases: []string{"_shell"},
+		Short:   "Open shell in worktree",
 		Long: `Open a shell in an integration worktree.
 
 Spawns $SHELL (or /bin/sh) with the worktree as the working directory.
@@ -99,12 +92,7 @@ Exiting the shell returns control to agency.
 Examples:
   agency worktree my-feature shell
   agency worktree my-feature shell --repo agency`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[1] == "shell" {
-				return nil
-			}
-			return cobra.ExactArgs(2)(cmd, args)
-		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {

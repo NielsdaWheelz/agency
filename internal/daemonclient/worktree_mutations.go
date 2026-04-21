@@ -12,7 +12,7 @@ import (
 // WorktreeCreate creates an integration worktree via the daemon.
 func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*daemon.WorktreeCreateResponse, error) {
 	var result daemon.WorktreeCreateResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, daemonBaseURL+"/worktrees/create", opts, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, daemonBaseURL+"/worktrees/create", opts, &result); err != nil {
 		return nil, err
 	}
 
@@ -23,7 +23,7 @@ func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*
 func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, force bool) (*daemon.WorktreeRmResponse, error) {
 	req := daemon.WorktreeRmRequest{Force: force}
 	var result daemon.WorktreeRmResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/worktrees/%s/rm?repo_id=%s", daemonBaseURL, url.PathEscape(worktreeRef), url.QueryEscape(repoID)), req, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/worktrees/%s/rm?repo_id=%s", daemonBaseURL, url.PathEscape(worktreeRef), url.QueryEscape(repoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -34,7 +34,7 @@ func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, for
 func (c *Client) CheckpointApply(ctx context.Context, repoID, invocationID string, checkpointID int) (*daemon.CheckpointApplyResponse, error) {
 	req := daemon.CheckpointApplyRequest{CheckpointID: checkpointID}
 	var result daemon.CheckpointApplyResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/checkpoints/apply?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), req, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/checkpoints/apply?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -48,7 +48,7 @@ func (c *Client) RecreateHeaded(ctx context.Context, invocationRef, repoID strin
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 	var result daemon.ControlPlaneStartHeadedResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -70,7 +70,7 @@ func (c *Client) Land(ctx context.Context, opts LandOpts) (*daemon.LandResponse,
 		RequireBase: opts.RequireBase,
 	}
 	var result daemon.LandResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/land?repo_id=%s", daemonBaseURL, url.PathEscape(opts.InvocationID), url.QueryEscape(opts.RepoID)), req, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/land?repo_id=%s", daemonBaseURL, url.PathEscape(opts.InvocationID), url.QueryEscape(opts.RepoID)), req, &result); err != nil {
 		return nil, err
 	}
 
@@ -80,7 +80,7 @@ func (c *Client) Land(ctx context.Context, opts LandOpts) (*daemon.LandResponse,
 // Discard discards a sandbox without landing via daemon.
 func (c *Client) Discard(ctx context.Context, repoID, invocationID string) (*daemon.DiscardResponse, error) {
 	var result daemon.DiscardResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/discard?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), nil, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/discard?repo_id=%s", daemonBaseURL, url.PathEscape(invocationID), url.QueryEscape(repoID)), nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -94,7 +94,7 @@ func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string,
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 	var result daemon.WorktreePRSyncResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -107,7 +107,7 @@ func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 	var result daemon.WorktreePRMergeResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, u, opts, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -120,7 +120,7 @@ func (c *Client) WorktreeRebase(ctx context.Context, worktreeRef, repoID string)
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 	var result daemon.WorktreeRebaseResponse
-	if err := c.doJSONRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

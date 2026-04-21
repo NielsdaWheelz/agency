@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
@@ -150,27 +148,22 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID)
 
-	now := s.Clock().UTC().Format(time.RFC3339)
-	daemonPID := os.Getpid()
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
 	envKeys := sortedEnvKeys(req.Env)
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
 
-	_ = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusRunning
-		m.Runner = req.Runner
-		m.PID = &pid
-		m.PGID = &pgid
-		m.DaemonPID = &daemonPID
-		m.DaemonInstanceID = s.InstanceID
-		m.ClaimedAt = now
-		m.LifecycleOwner = "daemon"
-		m.PromptPath = s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
-		m.PromptSHA256 = promptSHA
-		m.RunnerArgs = runnerArgs
-		m.CustomEnvKeys = envKeys
-	})
+	s.claimHeadlessInvocationStart(
+		repoIdentity.RepoID,
+		createResult.InvocationID,
+		req.Runner,
+		pid,
+		pgid,
+		s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID),
+		promptSHA,
+		runnerArgs,
+		envKeys,
+	)
 
 	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)

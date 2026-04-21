@@ -185,14 +185,6 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return err
 	}
 
-	if !result.OK {
-		return errors.NewWithDetails(
-			errors.Code(result.ErrorCode),
-			result.Message,
-			map[string]string{"hint": result.Hint},
-		)
-	}
-
 	// Output result
 	_, _ = fmt.Fprintf(stdout, "Created integration worktree '%s'\n", opts.Name)
 	_, _ = fmt.Fprintf(stdout, "  worktree_id: %s\n", result.WorktreeID)

@@ -333,14 +333,7 @@ func createFollowUpRelay(runner string) (*os.File, relay.FollowUpRelay, error) {
 }
 
 func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string) {
-	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(repoID, result.InvocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusFailed
-		m.ExitReason = "start_failed"
-		m.FailureReason = failureReason
-		m.FinishedAt = now
-		m.Flags.NeedsAttention = true
-	})
+	s.failInvocationStart(repoID, result.InvocationID, failureReason, true)
 
 	args := []string{"-C", repoRoot, "worktree", "remove", "--force", result.SandboxPath}
 	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
@@ -410,44 +403,16 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 			if len(queuedResumePrompts) > 1 {
 				s.enqueueFollowUpPrompts(proc.InvocationID, queuedResumePrompts[1:])
 			}
-			now := s.Clock().UTC().Format(time.RFC3339)
-			daemonPID := os.Getpid()
-			_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
-				meta.Status = store.InvocationStatusRunning
-				meta.PID = &pid
-				meta.PGID = &pgid
-				meta.DaemonPID = &daemonPID
-				meta.DaemonInstanceID = s.InstanceID
-				meta.ClaimedAt = now
-				meta.ExitReason = ""
-				meta.FailureReason = ""
-				meta.ExitCode = nil
-				meta.FinishedAt = ""
-				meta.LifecycleOwner = "daemon"
-				meta.Flags.NeedsAttention = false
-			})
+			s.claimHeadlessInvocationResume(proc.RepoID, proc.InvocationID, pid, pgid)
 			return
 		}
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
-	if err := s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
-		meta.Status = status
-		meta.ExitReason = exitReason
-		meta.FailureReason = failureReason
-		meta.ExitCode = &exitCode
-		meta.FinishedAt = now
-		meta.PID = nil
-		meta.LifecycleOwner = ""
-	}); err != nil {
+	if err := s.writeInvocationProcessExit(proc.RepoID, proc.InvocationID, status, exitReason, failureReason, exitCode); err != nil {
 		s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "meta_update_on_exit_failed", err.Error(), nil)
 	}
 
-	s.mu.Lock()
-	if current, ok := s.processes[proc.InvocationID]; ok && current == proc {
-		delete(s.processes, proc.InvocationID)
-	}
-	s.mu.Unlock()
+	s.clearInvocationProcessIfCurrent(proc.InvocationID, proc)
 }
 
 func (s *Server) enqueueFollowUpPrompts(invocationID string, prompts []string) {

@@ -32,80 +32,85 @@ Use:
                            to inspect headed tmux clients
   agency agent <invocation-ref> land
                            to apply sandbox changes back to integration`,
-		Args:               cobra.ArbitraryArgs,
-		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				_ = cmd.Help()
-				return errors.New(errors.EUsage, "specify 'start', 'ls', or an invocation ref")
+			if len(args) > 0 {
+				switch args[0] {
+				case "start":
+					return errors.New(errors.EUsage, "use 'agency agent start' or 'agency agent start --worktree <worktree-ref>'")
+				case "ls":
+					return errors.New(errors.EUsage, "use 'agency agent ls'")
+				case "show", "check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore", "logs", "checkpoint", "restart":
+					return errors.New(errors.EUsage, "unknown command \""+args[0]+"\" for \"agency agent\"")
+				}
 			}
-
-			if args[0] == "--help" || args[0] == "-h" {
-				return cmd.Help()
-			}
-
-			switch args[0] {
-			case "start":
-				return errors.New(errors.EUsage, "use 'agency agent start' or 'agency agent start --worktree <worktree-ref>'")
-			case "ls":
-				return errors.New(errors.EUsage, "use 'agency agent ls'")
-			case "show", "check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore", "logs", "checkpoint", "restart":
-				return errors.New(errors.EUsage, "unknown command \""+args[0]+"\" for \"agency agent\"")
-			}
-
-			switch {
-			case len(args) == 1:
-				return runNestedCommand(cmd, newAgentShowCmd(), args)
-			case strings.HasPrefix(args[1], "-"):
-				return runNestedCommand(cmd, newAgentShowCmd(), args)
-			case args[1] == "show":
-				return runNestedCommand(cmd, newAgentShowCmd(), args)
-			case args[1] == "check":
-				return runNestedCommand(cmd, newAgentCheckCmd(), args)
-			case args[1] == "diff":
-				return runNestedCommand(cmd, newAgentDiffCmd(), args)
-			case args[1] == "history" && len(args) >= 3 && args[2] == "logs":
-				return runNestedCommand(cmd, newAgentHistoryLogsCmd(), args)
-			case args[1] == "history":
-				return runNestedCommand(cmd, newAgentHistoryCmd(), args)
-			case args[1] == "open":
-				return runNestedCommand(cmd, newAgentOpenCmd(), args)
-			case args[1] == "path":
-				return runNestedCommand(cmd, newAgentPathCmd(), args)
-			case args[1] == "shell":
-				return runNestedCommand(cmd, newAgentShellCmd(), args)
-			case args[1] == "attach":
-				return runNestedCommand(cmd, newAgentAttachCmd(), args)
-			case args[1] == "clients":
-				return runNestedCommand(cmd, newAgentClientsCmd(), args)
-			case args[1] == "stop":
-				return runNestedCommand(cmd, newAgentStopCmd(), args)
-			case args[1] == "kill":
-				return runNestedCommand(cmd, newAgentKillCmd(), args)
-			case args[1] == "land":
-				return runNestedCommand(cmd, newAgentLandCmd(), args)
-			case args[1] == "discard":
-				return runNestedCommand(cmd, newAgentDiscardCmd(), args)
-			case args[1] == "followup":
-				return runNestedCommand(cmd, newAgentFollowupCmd(), args)
-			case args[1] == "recreate":
-				return runNestedCommand(cmd, newAgentRecreateCmd(), args)
-			case args[1] == "restore":
-				return runNestedCommand(cmd, newAgentRestoreCmd(), args)
-			default:
-				return errors.New(errors.EUsage, "use 'agency agent <invocation-ref>' or 'agency agent <invocation-ref> <show|check|diff|history|open|path|shell|attach|clients|stop|kill|land|discard|followup|recreate|restore>'")
-			}
+			_ = cmd.Help()
+			return errors.New(errors.EUsage, "specify 'start', 'ls', or an invocation ref")
 		},
 	}
 
 	cmd.AddGroup(
 		&cobra.Group{ID: "run", Title: "Run"},
 		&cobra.Group{ID: "inspect", Title: "Inspect"},
+		&cobra.Group{ID: "navigate", Title: "Navigate"},
+		&cobra.Group{ID: "finish", Title: "Finish"},
+		&cobra.Group{ID: "recover", Title: "Recover"},
 	)
+
+	showCmd := newAgentShowCmd()
+	showCmd.Hidden = true
+	checkCmd := newAgentCheckCmd()
+	checkCmd.Hidden = true
+	diffCmd := newAgentDiffCmd()
+	diffCmd.Hidden = true
+	historyCmd := newAgentHistoryCmd()
+	historyCmd.Hidden = true
+	historyLogsCmd := newAgentHistoryLogsCmd()
+	historyLogsCmd.Hidden = true
+	openCmd := newAgentOpenCmd()
+	openCmd.Hidden = true
+	pathCmd := newAgentPathCmd()
+	pathCmd.Hidden = true
+	shellCmd := newAgentShellCmd()
+	shellCmd.Hidden = true
+	attachCmd := newAgentAttachCmd()
+	attachCmd.Hidden = true
+	clientsCmd := newAgentClientsCmd()
+	clientsCmd.Hidden = true
+	stopCmd := newAgentStopCmd()
+	stopCmd.Hidden = true
+	killCmd := newAgentKillCmd()
+	killCmd.Hidden = true
+	landCmd := newAgentLandCmd()
+	landCmd.Hidden = true
+	discardCmd := newAgentDiscardCmd()
+	discardCmd.Hidden = true
+	followupCmd := newAgentFollowupCmd()
+	followupCmd.Hidden = true
+	recreateCmd := newAgentRecreateCmd()
+	recreateCmd.Hidden = true
+	restoreCmd := newAgentRestoreCmd()
+	restoreCmd.Hidden = true
 
 	cmd.AddCommand(
 		newAgentStartCmd(),
 		newAgentLSCmd(),
+		showCmd,
+		checkCmd,
+		diffCmd,
+		historyCmd,
+		historyLogsCmd,
+		openCmd,
+		pathCmd,
+		shellCmd,
+		attachCmd,
+		clientsCmd,
+		stopCmd,
+		killCmd,
+		landCmd,
+		discardCmd,
+		followupCmd,
+		recreateCmd,
+		restoreCmd,
 	)
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -133,7 +138,7 @@ Use:
 			if args[0] == "start" || args[0] == "ls" {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
-			values := []string{"show", "check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore"}
+			values := []string{"check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore"}
 			candidates := make([]string, 0, len(values))
 			for _, value := range values {
 				if toComplete != "" && !strings.HasPrefix(value, toComplete) {

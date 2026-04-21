@@ -5,7 +5,6 @@ package invocation
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -448,13 +447,6 @@ type ResolveOpts struct {
 
 	// WorktreeFilter limits resolution to a specific worktree ID.
 	WorktreeFilter string
-}
-
-// HasSandboxMarker checks if a directory contains the SANDBOX_MARKER file.
-func HasSandboxMarker(path string) bool {
-	markerPath := filepath.Join(path, ".agency", SandboxMarkerFileName)
-	_, err := os.Stat(markerPath)
-	return err == nil
 }
 
 // checkNameUniqueness checks if an invocation name is already used by an active invocation.

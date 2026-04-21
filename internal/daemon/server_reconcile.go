@@ -95,32 +95,11 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 	case store.InvocationStatusStarting:
 		s.reconcileHeadedStarting(repoID, r.InvocationID, r.Meta, now)
 	case store.InvocationStatusRunning:
-		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFinished
-			meta.ExitReason = "exited"
-			meta.FinishedAt = now
-			meta.LifecycleOwner = ""
-		})
-		s.mu.Lock()
-		if proc, ok := s.processes[r.InvocationID]; ok {
-			proc.CloseDone()
-			delete(s.processes, r.InvocationID)
-		}
-		s.mu.Unlock()
+		s.finishInvocationExited(repoID, r.InvocationID)
+		s.clearInvocationProcess(r.InvocationID)
 	case store.InvocationStatusStopping:
-		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "stopped"
-			meta.FailureReason = "stopped"
-			meta.FinishedAt = now
-			meta.LifecycleOwner = ""
-		})
-		s.mu.Lock()
-		if proc, ok := s.processes[r.InvocationID]; ok {
-			proc.CloseDone()
-			delete(s.processes, r.InvocationID)
-		}
-		s.mu.Unlock()
+		s.failInvocationStopped(repoID, r.InvocationID, "stopped")
+		s.clearInvocationProcess(r.InvocationID)
 	}
 }
 
@@ -141,27 +120,12 @@ func (s *Server) reconcileHeadlessInvocation(repoID string, r store.InvocationRe
 		return
 	}
 
-	_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-		if meta.Status == store.InvocationStatusStopping {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "stopped"
-			meta.FailureReason = "stopped"
-			meta.FinishedAt = now
-			meta.PID = nil
-			meta.LifecycleOwner = ""
-			return
-		}
-		if meta.Status != store.InvocationStatusRunning {
-			return
-		}
-		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = "unknown"
-		meta.FailureReason = "runner_pid_dead"
-		meta.FinishedAt = now
-		meta.PID = nil
-		meta.Flags.NeedsAttention = true
-		meta.LifecycleOwner = ""
-	})
+	_ = now
+	if r.Meta.Status == store.InvocationStatusStopping {
+		s.failInvocationStopped(repoID, r.InvocationID, "stopped")
+		return
+	}
+	s.failInvocationUnknown(repoID, r.InvocationID, "runner_pid_dead", false)
 }
 
 func (s *Server) reconcileHeadedStarting(repoID, invocationID string, meta *store.InvocationMeta, now string) {
@@ -174,21 +138,10 @@ func (s *Server) reconcileHeadedStarting(repoID, invocationID string, meta *stor
 		return
 	}
 
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusFailed
-		m.ExitReason = "start_failed"
-		m.FailureReason = "tmux_session_missing"
-		m.FinishedAt = now
-		m.LifecycleOwner = ""
-	})
+	s.failInvocationStart(repoID, invocationID, "tmux_session_missing", false)
 	delete(s.headedStartingTickCount, invocationID)
 
-	s.mu.Lock()
-	if proc, ok := s.processes[invocationID]; ok {
-		proc.CloseDone()
-		delete(s.processes, invocationID)
-	}
-	s.mu.Unlock()
+	s.clearInvocationProcess(invocationID)
 }
 
 func (s *Server) cleanupHeadedStartingTracking(invocationID string) {

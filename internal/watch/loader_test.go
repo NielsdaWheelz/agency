@@ -16,7 +16,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 func startFakeDaemon(t *testing.T, handler http.Handler) string {
@@ -47,18 +46,7 @@ func writeDaemonOK(t *testing.T, w http.ResponseWriter, data any) {
 	}))
 }
 
-func writeDaemonError(t *testing.T, w http.ResponseWriter, code agencyerrors.Code, message string) {
-	t.Helper()
-	w.Header().Set("Content-Type", "application/json")
-	require.NoError(t, json.NewEncoder(w).Encode(daemon.APIResponse{
-		OK:         false,
-		APIVersion: daemon.APIVersion,
-		ErrorCode:  string(code),
-		Message:    message,
-	}))
-}
-
-func TestLoadWorkspaceSnapshot_DrainsPaginationAndCollectsChecks(t *testing.T) {
+func TestLoadWorkspaceSnapshot_DrainsPagination(t *testing.T) {
 	t.Parallel()
 
 	client := daemonclient.NewClient(startFakeDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,15 +58,15 @@ func TestLoadWorkspaceSnapshot_DrainsPaginationAndCollectsChecks(t *testing.T) {
 		case r.URL.Path == "/worktrees" && r.URL.Query().Get("cursor") == "":
 			writeDaemonOK(t, w, daemon.ListWorktreesData{
 				Worktrees: []daemon.WorktreeDTO{
-					{WorktreeID: "wt-1", RepoID: "repo-1", Name: "alpha"},
-					{WorktreeID: "wt-2", RepoID: "repo-1", Name: "beta"},
+					{WorktreeID: "wt-1", RepoID: "repo-1", WorktreeName: "alpha"},
+					{WorktreeID: "wt-2", RepoID: "repo-1", WorktreeName: "beta"},
 				},
 				NextCursor: "wt-next-1",
 			})
 		case r.URL.Path == "/worktrees" && r.URL.Query().Get("cursor") == "wt-next-1":
 			writeDaemonOK(t, w, daemon.ListWorktreesData{
 				Worktrees: []daemon.WorktreeDTO{
-					{WorktreeID: "wt-3", RepoID: "repo-1", Name: "gamma"},
+					{WorktreeID: "wt-3", RepoID: "repo-1", WorktreeName: "gamma"},
 				},
 			})
 		case r.URL.Path == "/invocations" && r.URL.Query().Get("cursor") == "":
@@ -94,10 +82,6 @@ func TestLoadWorkspaceSnapshot_DrainsPaginationAndCollectsChecks(t *testing.T) {
 					{InvocationID: "inv-2", RepoID: "repo-1", WorktreeID: "wt-2", SortKey: daemon.SortKeyWaiting},
 				},
 			})
-		case r.URL.Path == "/invocations/inv-1/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-1", State: string(runnerstatus.StateRunning)})
-		case r.URL.Path == "/invocations/inv-2/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-2", State: string(runnerstatus.StateWaiting)})
 		default:
 			http.NotFound(w, r)
 		}
@@ -109,10 +93,6 @@ func TestLoadWorkspaceSnapshot_DrainsPaginationAndCollectsChecks(t *testing.T) {
 	require.Len(t, snapshot.Repos, 1)
 	require.Len(t, snapshot.Worktrees, 3)
 	require.Len(t, snapshot.Invocations, 2)
-	require.Len(t, snapshot.Checks, 2)
-	assert.Equal(t, string(runnerstatus.StateRunning), snapshot.Checks["inv-1"].State)
-	assert.Equal(t, string(runnerstatus.StateWaiting), snapshot.Checks["inv-2"].State)
-	assert.Empty(t, snapshot.Warnings)
 }
 
 func TestLoadWorkspaceSnapshot_CursorMustAdvance(t *testing.T) {
@@ -150,45 +130,6 @@ func TestLoadWorkspaceSnapshot_CursorMustAdvance(t *testing.T) {
 	assert.Contains(t, ae.Msg, "worktree pagination cursor did not advance")
 }
 
-func TestLoadWorkspaceSnapshot_CheckReadFailuresAreRecoverable(t *testing.T) {
-	t.Parallel()
-
-	client := daemonclient.NewClient(startFakeDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos":
-			writeDaemonOK(t, w, daemon.ListReposData{
-				Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
-			})
-		case "/worktrees":
-			writeDaemonOK(t, w, daemon.ListWorktreesData{
-				Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1", Name: "alpha"}},
-			})
-		case "/invocations":
-			writeDaemonOK(t, w, daemon.ListInvocationsData{
-				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-good", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeySucceeded},
-					{InvocationID: "inv-bad", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyWaiting},
-				},
-			})
-		case "/invocations/inv-good/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-good", State: string(runnerstatus.StateSucceeded)})
-		case "/invocations/inv-bad/check":
-			writeDaemonError(t, w, agencyerrors.EInternal, "temporary daemon timeout")
-		default:
-			http.NotFound(w, r)
-		}
-	})))
-
-	snapshot, err := loadWorkspaceSnapshot(context.Background(), client)
-	require.NoError(t, err)
-
-	assert.Contains(t, snapshot.Checks, "inv-good")
-	assert.NotContains(t, snapshot.Checks, "inv-bad")
-	require.Len(t, snapshot.Warnings, 1)
-	assert.Contains(t, snapshot.Warnings[0], "inv-bad")
-	assert.Contains(t, snapshot.Warnings[0], "temporary daemon timeout")
-}
-
 func TestLoadWorkspaceSnapshot_SortsBySortKeyThenStartedAt(t *testing.T) {
 	t.Parallel()
 
@@ -208,12 +149,6 @@ func TestLoadWorkspaceSnapshot_SortsBySortKeyThenStartedAt(t *testing.T) {
 					{InvocationID: "inv-3", RepoID: "repo-1", SortKey: daemon.SortKeySucceeded, StartedAt: "2026-02-05T10:00:00Z"},
 				},
 			})
-		case "/invocations/inv-1/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-1", State: string(runnerstatus.StateWaiting)})
-		case "/invocations/inv-2/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-2", State: string(runnerstatus.StateSucceeded)})
-		case "/invocations/inv-3/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-3", State: string(runnerstatus.StateSucceeded)})
 		default:
 			http.NotFound(w, r)
 		}

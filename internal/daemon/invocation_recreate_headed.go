@@ -93,24 +93,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 	if exists {
-		now := s.Clock().UTC().Format(time.RFC3339)
-		daemonPID := os.Getpid()
-		if err := s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
-			m.Status = store.InvocationStatusRunning
-			m.TmuxSession = sessionName
-			m.DaemonPID = &daemonPID
-			m.DaemonInstanceID = s.InstanceID
-			m.ClaimedAt = now
-			m.LifecycleOwner = "daemon"
-			m.FinishedAt = ""
-			m.ExitReason = ""
-			m.FailureReason = ""
-			m.ExitCode = nil
-			m.StopRequestedAt = ""
-			m.OrphanedAt = ""
-			m.Flags.NeedsAttention = false
-			m.Flags.Orphaned = false
-		}); err != nil {
+		if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, meta.Runner, sessionName, append([]string(nil), meta.RunnerArgs...)); err != nil {
 			s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
 			return
 		}
@@ -227,29 +210,8 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
-	daemonPID := os.Getpid()
 	runnerArgs := append([]string(nil), meta.RunnerArgs...)
-	if err := s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
-		m.Status = store.InvocationStatusRunning
-		m.Runner = canonicalRunner
-		m.RunnerArgs = runnerArgs
-		m.TmuxSession = sessionName
-		m.PID = nil
-		m.PGID = nil
-		m.DaemonPID = &daemonPID
-		m.DaemonInstanceID = s.InstanceID
-		m.ClaimedAt = now
-		m.LifecycleOwner = "daemon"
-		m.FinishedAt = ""
-		m.ExitReason = ""
-		m.FailureReason = ""
-		m.ExitCode = nil
-		m.StopRequestedAt = ""
-		m.OrphanedAt = ""
-		m.Flags.NeedsAttention = false
-		m.Flags.Orphaned = false
-	}); err != nil {
+	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
 		return
@@ -334,27 +296,12 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		"tmux_session": sessionName,
 	}, invocationevents.AppendOptions{}); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
-		_ = s.Store.UpdateInvocationMeta(record.RepoID, record.InvocationID, func(m *store.InvocationMeta) {
-			m.Status = store.InvocationStatusFailed
-			m.ExitReason = "start_failed"
-			m.FailureReason = "event_append_failed"
-			m.FinishedAt = s.Clock().UTC().Format(time.RFC3339)
-			m.DaemonPID = nil
-			m.DaemonInstanceID = ""
-			m.ClaimedAt = ""
-			m.LifecycleOwner = ""
-			m.Flags.NeedsAttention = true
-		})
+		s.failInvocationStart(record.RepoID, record.InvocationID, "event_append_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to append recreate event: "+err.Error(), "", "", requestID)
 		return
 	}
 
-	s.mu.Lock()
-	if current, ok := s.processes[record.InvocationID]; ok {
-		current.CloseDone()
-	}
-	s.processes[record.InvocationID] = proc
-	s.mu.Unlock()
+	s.replaceInvocationProcess(record.InvocationID, proc)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 

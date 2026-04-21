@@ -608,22 +608,17 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	require.NoError(t, err)
 	var check daemon.InvocationCheckData
 	require.NoError(t, json.Unmarshal(checkJSON.Bytes(), &check))
-	require.NotNil(t, check.LatestActivity)
 
 	assert.Equal(t, listed.State, shown.State)
 	assert.Equal(t, shown.State, check.State)
 	assert.Equal(t, string(runnerstatus.StateRunning), check.RunnerState)
 
 	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
-	assert.Equal(t, shown.StatusSummary, check.StatusSummary)
-	assert.Equal(t, "waiting on api contract", check.StatusSummary)
+	assert.Equal(t, shown.StatusSummary, check.RunnerSummary)
+	assert.Equal(t, "waiting on api contract", check.RunnerSummary)
 
 	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
-	assert.Equal(t, shown.LatestActivity.TurnID, check.LatestActivity.TurnID)
 	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
-	assert.Equal(t, shown.LatestActivity.Summary, check.LatestActivity.Summary)
-	assert.Equal(t, "stream:1", check.LatestActivity.TurnID)
-	assert.Equal(t, "latest activity summary", check.LatestActivity.Summary)
 
 	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
 	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
@@ -708,40 +703,33 @@ func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T)
 	assert.Contains(t, output, "attach_command:         agency agent inv-1 attach --repo repo-1")
 }
 
-func TestWriteAgentCheckHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+func TestWriteAgentCheckHumanFromDTO_IncludesRunnerMetadata(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
 	check := &daemon.InvocationCheckData{
-		InvocationID: "inv-1",
-		RepoID:       "repo-1",
-		State:        string(runnerstatus.StateRunning),
+		InvocationID:    "inv-1",
+		RepoID:          "repo-1",
+		State:           string(runnerstatus.StateRunning),
+		RunnerState:     string(runnerstatus.StateWaiting),
+		RunnerReason:    "awaiting_user_input",
+		RunnerSummary:   "needs your answer",
+		RunnerUpdatedAt: "2026-02-05T12:00:00Z",
+		HowToTest:       "run go test ./...",
 		Navigation: daemon.InvocationCheckNavigation{
 			HistoryCommand: "agency agent inv-1 history --repo repo-1",
-		},
-		LatestActivity: &daemon.InvocationLatestActivity{
-			TurnID:                 "stream:9",
-			Kind:                   "assistant",
-			Summary:                "applied migration",
-			ToolCallCount:          1,
-			ToolCalls:              []daemon.InvocationActivityToolCall{{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1}},
-			CheckpointID:           4,
-			Restorable:             true,
-			CheckpointDescription:  "checkpoint after migration",
-			CheckpointDiffstat:     "2 files changed, 10 insertions(+), 2 deletions(-)",
-			CheckpointChangedPaths: []string{"internal/apply.go", "internal/apply_test.go"},
-			CheckpointChangedCount: 2,
+			AttachCommand:  "agency agent inv-1 attach --repo repo-1",
 		},
 	}
 	err := writeAgentCheckHumanFromDTO(&out, check)
 	require.NoError(t, err)
 	output := out.String()
-	assert.Contains(t, output, "latest_activity:      [assistant] applied migration (tools=1, checkpoint=4)")
-	assert.Contains(t, output, "latest_activity_tool: ▶ Bash go test ./... (exit=1)")
-	assert.Contains(t, output, "latest_activity_checkpoint: 4")
-	assert.Contains(t, output, "latest_activity_checkpoint_description: checkpoint after migration")
-	assert.Contains(t, output, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
-	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
+	assert.Contains(t, output, "runner_state:         waiting")
+	assert.Contains(t, output, "runner_reason:        awaiting_user_input")
+	assert.Contains(t, output, "runner_summary:       needs your answer")
+	assert.Contains(t, output, "runner_updated_at:    2026-02-05T12:00:00Z")
+	assert.Contains(t, output, "how_to_test:          run go test ./...")
+	assert.Contains(t, output, "attach_command:      agency agent inv-1 attach --repo repo-1")
 }
 
 func TestWriteAgentCheckHumanFromDTO_RendersSucceededState(t *testing.T) {
@@ -2423,6 +2411,7 @@ func TestAgentHistoryLogs_FollowMode(t *testing.T) {
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	appendCalls := 0
 	sleepFn := func(d time.Duration) {
 		appendCalls++
@@ -2433,14 +2422,15 @@ func TestAgentHistoryLogs_FollowMode(t *testing.T) {
 				_, _ = f.WriteString("line2\n")
 				_ = f.Close()
 			}
+			return
 		}
+		cancel()
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistoryLogs(context.Background(), cr2, fsys, repoDir, AgentHistoryLogsOpts{
+	err := AgentHistoryLogs(ctx, cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
-		MaxIterations:   2,
 		SleepFn:         sleepFn,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)

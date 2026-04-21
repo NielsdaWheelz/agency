@@ -76,7 +76,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 	worktreeRef := strings.TrimSpace(opts.WorktreeRef)
 	repoRef := strings.TrimSpace(opts.RepoRef)
@@ -404,35 +404,31 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		return err
 	}
 
-	if !resp.OK {
-		return errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		)
-	}
-
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
-			envelope.RepoID = resp.RepoID
-			envelope.RepoName = resp.RepoName
-			envelope.WorktreeID = resp.WorktreeID
-			envelope.WorktreeName = resp.WorktreeName
-			envelope.SandboxPath = resp.SandboxPath
-			envelope.TmuxSession = resp.TmuxSession
-			envelope.DaemonInstanceID = resp.DaemonInstanceID
-			envelope.AlreadyRunning = resp.AlreadyRunning
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID     string           `json:"invocation_id,omitempty"`
+			RepoID           string           `json:"repo_id,omitempty"`
+			RepoName         string           `json:"repo_name,omitempty"`
+			WorktreeID       string           `json:"worktree_id,omitempty"`
+			WorktreeName     string           `json:"worktree_name,omitempty"`
+			SandboxPath      string           `json:"sandbox_path,omitempty"`
+			TmuxSession      string           `json:"tmux_session,omitempty"`
+			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
+			AlreadyRunning   bool             `json:"already_running,omitempty"`
+			LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
+		}{
+			commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
+			InvocationID:     resp.InvocationID,
+			RepoID:           resp.RepoID,
+			RepoName:         resp.RepoName,
+			WorktreeID:       resp.WorktreeID,
+			WorktreeName:     resp.WorktreeName,
+			SandboxPath:      resp.SandboxPath,
+			TmuxSession:      resp.TmuxSession,
+			DaemonInstanceID: resp.DaemonInstanceID,
+			AlreadyRunning:   resp.AlreadyRunning,
+			LogPaths:         resp.LogPaths,
 		})
 	}
 
@@ -496,36 +492,33 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 		return err
 	}
 
-	if !resp.OK {
-		return errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		)
-	}
-
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
-			envelope.RepoID = resp.RepoID
-			envelope.RepoName = resp.RepoName
-			envelope.WorktreeID = resp.WorktreeID
-			envelope.WorktreeName = resp.WorktreeName
-			envelope.SandboxPath = resp.SandboxPath
-			envelope.PID = resp.PID
-			envelope.PGID = resp.PGID
-			envelope.DaemonInstanceID = resp.DaemonInstanceID
-			envelope.AlreadyRunning = resp.AlreadyRunning
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID     string           `json:"invocation_id,omitempty"`
+			RepoID           string           `json:"repo_id,omitempty"`
+			RepoName         string           `json:"repo_name,omitempty"`
+			WorktreeID       string           `json:"worktree_id,omitempty"`
+			WorktreeName     string           `json:"worktree_name,omitempty"`
+			SandboxPath      string           `json:"sandbox_path,omitempty"`
+			PID              int              `json:"pid,omitempty"`
+			PGID             int              `json:"pgid,omitempty"`
+			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
+			AlreadyRunning   bool             `json:"already_running,omitempty"`
+			LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
+		}{
+			commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
+			InvocationID:     resp.InvocationID,
+			RepoID:           resp.RepoID,
+			RepoName:         resp.RepoName,
+			WorktreeID:       resp.WorktreeID,
+			WorktreeName:     resp.WorktreeName,
+			SandboxPath:      resp.SandboxPath,
+			PID:              resp.PID,
+			PGID:             resp.PGID,
+			DaemonInstanceID: resp.DaemonInstanceID,
+			AlreadyRunning:   resp.AlreadyRunning,
+			LogPaths:         resp.LogPaths,
 		})
 	}
 

@@ -61,12 +61,7 @@ func (m model) renderWorkspace() string {
 	if m.workspaceError != "" {
 		lines = append(lines, errorStyle.Render("refresh error: "+truncateWithEllipsis(m.workspaceError, width-4)+" (auto-retrying)"))
 	}
-	if len(m.snapshot.Warnings) > 0 {
-		lines = append(lines, warningStyle.Render(
-			fmt.Sprintf("warnings: %d (first: %s)", len(m.snapshot.Warnings), truncateWithEllipsis(m.snapshot.Warnings[0], width-20)),
-		))
-	}
-	lines = append(lines, warningStyle.Render("j/k move • enter default • x actions • h history • l logs • o open • p pr sync • r refresh • q quit"))
+	lines = append(lines, warningStyle.Render("j/k move • enter default • d review • x actions • h history • l logs • o open • p pr sync • r refresh • q quit"))
 	return strings.Join(lines, "\n")
 }
 
@@ -261,6 +256,7 @@ func (m model) renderActionPanel(width int) []string {
 		} else {
 			lines = append(lines, "  enter open actions")
 		}
+		lines = append(lines, "  d review diff")
 		lines = append(lines, "  x more actions")
 		lines = append(lines, "  h history • l logs")
 	}
@@ -343,10 +339,6 @@ func (m model) selectedActionTarget() string {
 }
 
 func (m model) invocationState(inv daemon.InvocationDTO) string {
-	check, ok := m.snapshot.Checks[inv.InvocationID]
-	if ok && strings.TrimSpace(check.State) != "" {
-		return check.State
-	}
 	if strings.TrimSpace(inv.State) != "" {
 		return inv.State
 	}
@@ -354,15 +346,6 @@ func (m model) invocationState(inv daemon.InvocationDTO) string {
 }
 
 func (m model) latestSummary(inv daemon.InvocationDTO) string {
-	check, ok := m.snapshot.Checks[inv.InvocationID]
-	if ok {
-		if latest := latestSummaryFromActivity(check.LatestActivity); latest != "" {
-			return latest
-		}
-		if summary := strings.TrimSpace(check.StatusSummary); summary != "" {
-			return summary
-		}
-	}
 	if latest := latestSummaryFromActivity(inv.LatestActivity); latest != "" {
 		return latest
 	}
@@ -410,9 +393,6 @@ func (m model) worktreeDisplay(worktreeID string) string {
 			continue
 		}
 		name := strings.TrimSpace(wt.WorktreeName)
-		if name == "" {
-			name = strings.TrimSpace(wt.Name)
-		}
 		if name == "" {
 			return worktreeID
 		}

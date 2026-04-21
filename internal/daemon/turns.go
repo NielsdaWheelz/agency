@@ -1,10 +1,10 @@
 package daemon
 
 import (
-	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
 // TurnKind classifies a conversation turn for display purposes.
@@ -80,7 +80,9 @@ func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheck
 	for _, entry := range entries {
 		switch entry.Kind {
 		case "checkpoint_event":
-			if cpID := extractCheckpointID(entry.Data); cpID > 0 {
+			payload := render.DecodeTimelinePayload(entry.Data)
+			if payload.HasCheckpointID && payload.CheckpointID > 0 {
+				cpID := payload.CheckpointID
 				if cp, ok := checkpointSet[cpID]; ok {
 					latestCheckpointID = cpID
 					latestCheckpoint = cp
@@ -94,32 +96,35 @@ func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheck
 		case "session_start", "final", "error", "raw_log_coverage", "invocation_event", "usage", "status":
 			continue
 		case "parse_error":
+			payload := render.DecodeTimelinePayload(entry.Data)
 			turns = appendDiagnosticTurn(
 				turns,
 				entry,
-				parseErrorSummary(entry.Data),
+				payload.ParseErrorSummary(),
 				latestCheckpointID,
 				latestCheckpoint,
 			)
 			continue
 		case "unknown":
+			payload := render.DecodeTimelinePayload(entry.Data)
 			turns = appendDiagnosticTurn(
 				turns,
 				entry,
-				unknownRunnerEventSummary(entry.Data),
+				payload.UnknownRunnerEventSummary(),
 				latestCheckpointID,
 				latestCheckpoint,
 			)
 			continue
 		case "tool_use":
 			if len(turns) > 0 && turns[len(turns)-1].Kind == TurnAssistant {
+				payload := render.DecodeTimelinePayload(entry.Data)
 				tc := ToolCall{
-					ID:      dataString(entry.Data, "tool_id"),
-					Name:    dataString(entry.Data, "name"),
-					Command: dataString(entry.Data, "command"),
+					ID:      payload.ToolID,
+					Name:    payload.Name,
+					Command: payload.Command,
 				}
-				if exitCode, ok := dataFloat(entry.Data, "exit_code"); ok {
-					tc.ExitCode = int(exitCode)
+				if payload.HasExitCode {
+					tc.ExitCode = payload.ExitCode
 					tc.HasExit = true
 				}
 				lastTurn := &turns[len(turns)-1]
@@ -165,9 +170,9 @@ func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheck
 			}
 			continue
 		case "message":
-			role := dataString(entry.Data, "role")
-			if role == "user" {
-				if strings.EqualFold(strings.TrimSpace(dataString(entry.Data, "message_family")), "prompt") {
+			payload := render.DecodeTimelinePayload(entry.Data)
+			if payload.Role == "user" {
+				if strings.EqualFold(strings.TrimSpace(payload.MessageFamily), "prompt") {
 					kind := TurnFollowup
 					if len(turns) == 0 {
 						kind = TurnPrompt
@@ -176,14 +181,14 @@ func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheck
 						turns,
 						entry,
 						kind,
-						promptLikeMessageSummary(entry.Data),
+						payload.PromptLikeSummary(),
 						latestCheckpointID,
 						latestCheckpoint,
 					)
 				}
 				continue
 			}
-			if role != "assistant" {
+			if payload.Role != "assistant" {
 				continue
 			}
 			turns = append(turns, Turn{
@@ -191,35 +196,38 @@ func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheck
 				Kind:           TurnAssistant,
 				Timestamp:      entry.Timestamp,
 				ShortTimestamp: shortTimestamp(entry.Timestamp),
-				Summary:        assistantMessageSummary(entry.Data),
+				Summary:        payload.AssistantSummary(),
 			})
 			applyCheckpointMetadata(&turns[len(turns)-1], latestCheckpointID, latestCheckpoint)
 			continue
 		case "prompt_seed":
+			payload := render.DecodeTimelinePayload(entry.Data)
 			turns = appendPromptLikeTurn(
 				turns,
 				entry,
 				TurnPrompt,
-				strings.TrimSpace(dataString(entry.Data, "text")),
+				payload.PromptLikeSummary(),
 				latestCheckpointID,
 				latestCheckpoint,
 			)
 			continue
 		case "followup_prompt":
+			payload := render.DecodeTimelinePayload(entry.Data)
 			turns = appendPromptLikeTurn(
 				turns,
 				entry,
 				TurnFollowup,
-				strings.TrimSpace(dataString(entry.Data, "text")),
+				payload.PromptLikeSummary(),
 				latestCheckpointID,
 				latestCheckpoint,
 			)
 			continue
 		default:
+			payload := render.DecodeTimelinePayload(entry.Data)
 			turns = appendDiagnosticTurn(
 				turns,
 				entry,
-				unrecognizedTimelineEventSummary(entry.Kind, entry.Data),
+				payload.UnrecognizedEventSummary(entry.Kind),
 				latestCheckpointID,
 				latestCheckpoint,
 			)
@@ -290,19 +298,6 @@ func appendDiagnosticTurn(
 	return turns
 }
 
-func promptLikeMessageSummary(data map[string]interface{}) string {
-	if text := strings.TrimSpace(dataString(data, "text")); text != "" {
-		return text
-	}
-	textHints, _ := summaryHintsFromContentBlocks(data)
-	for _, hint := range textHints {
-		if trimmed := strings.TrimSpace(hint); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
 func promptSummaryEqual(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
@@ -329,22 +324,7 @@ func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint TurnCheckp
 }
 
 func shouldEnrichTurnSummary(summary string) bool {
-	trimmed := strings.TrimSpace(summary)
-	if trimmed == "" {
-		return true
-	}
-	lower := strings.ToLower(trimmed)
-	prefixes := []string{"done", "completed", "complete", "finished", "ok", "okay"}
-	for _, prefix := range prefixes {
-		if lower == prefix ||
-			strings.HasPrefix(lower, prefix+".") ||
-			strings.HasPrefix(lower, prefix+" ") ||
-			strings.HasPrefix(lower, prefix+" -") ||
-			strings.HasPrefix(lower, prefix+" (") {
-			return true
-		}
-	}
-	return false
+	return render.ShouldEnrichActivitySummary(summary)
 }
 
 func enrichTurnSummary(summary string, checkpoint TurnCheckpointRef) string {
@@ -370,169 +350,6 @@ func shortTimestamp(ts string) string {
 	return t.Format("15:04:05")
 }
 
-func assistantMessageSummary(data map[string]interface{}) string {
-	base := strings.TrimSpace(dataString(data, "text"))
-	textHints, toolHints := summaryHintsFromContentBlocks(data)
-	toolNames := normalizeSummaryHints(append(dataStringSlice(data, "tool_names"), toolHints...))
-	if base == "" && len(textHints) > 0 {
-		base = textHints[0]
-	}
-	if shouldEnrichTurnSummary(base) && len(toolNames) > 0 {
-		toolSummary := "tools: " + strings.Join(toolNames, ", ")
-		if base == "" {
-			return toolSummary
-		}
-		return base + " (" + toolSummary + ")"
-	}
-	return base
-}
-
-func summaryHintsFromContentBlocks(data map[string]interface{}) ([]string, []string) {
-	if data == nil {
-		return nil, nil
-	}
-	rawBlocks, ok := data["content_blocks"]
-	if !ok {
-		return nil, nil
-	}
-
-	var blocks []interface{}
-	switch typed := rawBlocks.(type) {
-	case []interface{}:
-		blocks = typed
-	case []map[string]interface{}:
-		blocks = make([]interface{}, 0, len(typed))
-		for _, block := range typed {
-			blocks = append(blocks, block)
-		}
-	default:
-		return nil, nil
-	}
-
-	textHints := make([]string, 0, len(blocks))
-	toolHints := make([]string, 0, len(blocks))
-	for _, rawBlock := range blocks {
-		block, ok := rawBlock.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		switch strings.TrimSpace(dataString(block, "type")) {
-		case "text":
-			if txt := strings.TrimSpace(dataString(block, "text")); txt != "" {
-				textHints = append(textHints, txt)
-			}
-		case "tool_use":
-			if toolName := strings.TrimSpace(dataString(block, "name")); toolName != "" {
-				toolHints = append(toolHints, toolName)
-			}
-		}
-	}
-	return textHints, toolHints
-}
-
-func dataStringSlice(data map[string]interface{}, key string) []string {
-	if data == nil {
-		return nil
-	}
-	raw, ok := data[key]
-	if !ok {
-		return nil
-	}
-	switch values := raw.(type) {
-	case []string:
-		out := make([]string, 0, len(values))
-		for _, value := range values {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				out = append(out, trimmed)
-			}
-		}
-		return out
-	case []interface{}:
-		out := make([]string, 0, len(values))
-		for _, value := range values {
-			if str, ok := value.(string); ok {
-				if trimmed := strings.TrimSpace(str); trimmed != "" {
-					out = append(out, trimmed)
-				}
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func normalizeSummaryHints(hints []string) []string {
-	if len(hints) == 0 {
-		return nil
-	}
-	const maxHints = 4
-	seen := make(map[string]struct{}, len(hints))
-	out := make([]string, 0, maxHints)
-	for _, hint := range hints {
-		trimmed := strings.TrimSpace(hint)
-		if trimmed == "" {
-			continue
-		}
-		lower := strings.ToLower(trimmed)
-		if _, exists := seen[lower]; exists {
-			continue
-		}
-		seen[lower] = struct{}{}
-		out = append(out, trimmed)
-		if len(out) >= maxHints {
-			break
-		}
-	}
-	return out
-}
-
-func dataString(data map[string]interface{}, key string) string {
-	if data == nil {
-		return ""
-	}
-	if v, ok := data[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func dataFloat(data map[string]interface{}, key string) (float64, bool) {
-	if data == nil {
-		return 0, false
-	}
-	v, ok := data[key]
-	if !ok {
-		return 0, false
-	}
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case json.Number:
-		f, err := n.Float64()
-		if err != nil {
-			return 0, false
-		}
-		return f, true
-	default:
-		return 0, false
-	}
-}
-
-func extractCheckpointID(data map[string]interface{}) int {
-	f, ok := dataFloat(data, "checkpoint_id")
-	if !ok || f <= 0 {
-		return 0
-	}
-	return int(f)
-}
-
 func sameToolIdentity(a, b ToolCall) bool {
 	aID := strings.TrimSpace(a.ID)
 	bID := strings.TrimSpace(b.ID)
@@ -547,48 +364,4 @@ func sameToolIdentity(a, b ToolCall) bool {
 	aName := strings.TrimSpace(a.Name)
 	bName := strings.TrimSpace(b.Name)
 	return aName != "" && aName == bName
-}
-
-func parseErrorSummary(data map[string]interface{}) string {
-	reason := strings.TrimSpace(dataString(data, "reason"))
-	if reason == "" {
-		reason = "unknown"
-	}
-	summary := "parse error: " + strings.ReplaceAll(reason, "_", " ")
-	if line, ok := dataFloat(data, "line"); ok && line > 0 {
-		summary = fmt.Sprintf("%s (line %d)", summary, int(line))
-	}
-	if detail := strings.TrimSpace(dataString(data, "error")); detail != "" {
-		summary += " - " + detail
-	}
-	return summary
-}
-
-func unknownRunnerEventSummary(data map[string]interface{}) string {
-	summary := "unknown runner event"
-	if eventType := strings.TrimSpace(dataString(data, "runner_event_type")); eventType != "" {
-		summary += ": " + eventType
-	}
-	if reason := strings.TrimSpace(dataString(data, "reason")); reason != "" {
-		summary += " (" + strings.ReplaceAll(reason, "_", " ") + ")"
-	}
-	if detail := strings.TrimSpace(dataString(data, "error")); detail != "" {
-		summary += " - " + detail
-	}
-	return summary
-}
-
-func unrecognizedTimelineEventSummary(kind string, data map[string]interface{}) string {
-	normalizedKind := strings.TrimSpace(strings.ReplaceAll(kind, "_", " "))
-	if normalizedKind == "" {
-		normalizedKind = "unknown"
-	}
-	summary := "unrecognized timeline event: " + normalizedKind
-	if reason := strings.TrimSpace(dataString(data, "reason")); reason != "" {
-		summary += " (" + strings.ReplaceAll(reason, "_", " ") + ")"
-	}
-	if text := strings.TrimSpace(dataString(data, "text")); text != "" {
-		summary += " - " + text
-	}
-	return summary
 }

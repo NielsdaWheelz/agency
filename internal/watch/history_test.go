@@ -84,7 +84,7 @@ func TestHistoryPage_ViewContainsTurnDataAndHelp(t *testing.T) {
 			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
 		},
 		Worktrees: []daemon.WorktreeDTO{
-			{WorktreeID: "wt-1", RepoID: "repo-1", Name: "feature-auth"},
+			{WorktreeID: "wt-1", RepoID: "repo-1", WorktreeName: "feature-auth"},
 		},
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", Runner: "codex", Mode: "headed"},
@@ -164,7 +164,6 @@ func TestHistoryPageAttach_QuitsAndDefersAttach(t *testing.T) {
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
 	m.selectedMode = "headed"
-	m.selectedStatus = "running"
 	m.selectedSession = InvocationSession{
 		InvocationID: "inv-1",
 		RepoID:       "repo-1",

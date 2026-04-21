@@ -27,7 +27,7 @@ func executeCmd(args ...string) (string, string, error) {
 	rootCmd := NewRootCmd()
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(&stderr)
-	rootCmd.SetArgs(args)
+	rootCmd.SetArgs(rewriteTargetFirstArgs(args))
 	err := rootCmd.Execute()
 	return stdout.String(), stderr.String(), err
 }

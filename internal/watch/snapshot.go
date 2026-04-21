@@ -2,7 +2,6 @@ package watch
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -18,8 +17,6 @@ type Snapshot struct {
 	Repos       []daemon.RepoDTO
 	Worktrees   []daemon.WorktreeDTO
 	Invocations []daemon.InvocationDTO
-	Checks      map[string]daemon.InvocationCheckData
-	Warnings    []string
 	UpdatedAt   time.Time
 }
 
@@ -43,14 +40,10 @@ func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client) (Sn
 		return Snapshot{}, err
 	}
 
-	checks, warnings := loadWorkspaceChecks(ctx, client, invocations)
-
 	return Snapshot{
 		Repos:       reposResult.Data.Repos,
 		Worktrees:   worktrees,
 		Invocations: invocations,
-		Checks:      checks,
-		Warnings:    warnings,
 		UpdatedAt:   time.Now().UTC(),
 	}, nil
 }
@@ -115,20 +108,4 @@ func loadAllWorkspaceInvocations(ctx context.Context, client *daemonclient.Clien
 	})
 
 	return invocations, nil
-}
-
-func loadWorkspaceChecks(ctx context.Context, client *daemonclient.Client, invocations []daemon.InvocationDTO) (map[string]daemon.InvocationCheckData, []string) {
-	checks := make(map[string]daemon.InvocationCheckData, len(invocations))
-	warnings := make([]string, 0)
-
-	for _, inv := range invocations {
-		result, err := client.GetInvocationCheck(ctx, inv.InvocationID, inv.RepoID)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("check refresh failed for %s: %v", inv.InvocationID, err))
-			continue
-		}
-		checks[inv.InvocationID] = result.Data
-	}
-
-	return checks, warnings
 }

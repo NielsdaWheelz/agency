@@ -4,9 +4,19 @@ import (
 	"net/http"
 	"strings"
 
+	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
+
+func apiErrorMessage(err error) string {
+	if ae, ok := agencyerrors.AsAgencyError(err); ok {
+		if msg := strings.TrimSpace(ae.Msg); msg != "" {
+			return msg
+		}
+	}
+	return err.Error()
+}
 
 func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
 	s.writeJSON(w, status, ControlPlaneStartResponse{

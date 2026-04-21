@@ -330,7 +330,6 @@ func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	assert.Len(t, data.Worktrees, 1)
 	assert.Equal(t, "wt-1", data.Worktrees[0].WorktreeID)
 	assert.Equal(t, "alpha", data.Worktrees[0].WorktreeName)
-	assert.Equal(t, "alpha", data.Worktrees[0].Name)
 	assert.Equal(t, env.RepoID, data.Worktrees[0].RepoName)
 	require.NotNil(t, data.Worktrees[0].Merge)
 	assert.Equal(t, "running", data.Worktrees[0].Merge.State)
@@ -403,7 +402,6 @@ func TestHandleGetWorktree_HappyPath(t *testing.T) {
 
 	assert.Equal(t, "wt-1", dto.WorktreeID)
 	assert.Equal(t, "alpha", dto.WorktreeName)
-	assert.Equal(t, "alpha", dto.Name)
 	assert.Equal(t, env.RepoID, dto.RepoName)
 	assert.Equal(t, "present", dto.State)
 	require.NotNil(t, dto.Merge)
@@ -757,11 +755,8 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	require.True(t, checkResp.OK)
 	var check InvocationCheckData
 	decodeData(t, checkResp, &check)
-	require.NotNil(t, check.LatestActivity)
 	assert.Equal(t, shown.State, check.State)
-	assert.Equal(t, shown.StatusSummary, check.StatusSummary)
-	assert.Equal(t, shown.LatestActivity.TurnID, check.LatestActivity.TurnID)
-	assert.Equal(t, shown.LatestActivity.Summary, check.LatestActivity.Summary)
+	assert.Equal(t, shown.StatusSummary, check.RunnerSummary)
 	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
 	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
 	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)

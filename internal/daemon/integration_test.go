@@ -48,6 +48,17 @@ func logPathFieldValue(t *testing.T, logPaths any, fieldName string) string {
 	return field.String()
 }
 
+func decodeDaemonActionError[T any](t *testing.T, err error) *T {
+	t.Helper()
+
+	dae, ok := daemonclient.AsDaemonActionError(err)
+	require.True(t, ok, "expected daemon action error, got %v", err)
+
+	var resp T
+	require.NoError(t, dae.DecodeResponse(&resp))
+	return &resp
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle Tests
 // ---------------------------------------------------------------------------
@@ -911,7 +922,7 @@ func TestDaemonNameCollision(t *testing.T) {
 	require.True(t, resp1.OK, "first start failed: %s - %s", resp1.ErrorCode, resp1.Message)
 
 	// Second invocation with same name should fail.
-	resp2, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+	_, err = env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
 		RepoRoot:       repoRoot,
 		WorktreeRef:    "name-test",
 		Runner:         "claude-code",
@@ -919,12 +930,8 @@ func TestDaemonNameCollision(t *testing.T) {
 		InvocationName: "my-agent",
 		Env:            map[string]string{"FAKE_RUNNER_MODE": "sleep"},
 	})
-	require.NoError(t, err, "second start")
-	if resp2.OK {
-		// Clean up the accidental second invocation.
-		_, _ = env.Client.Kill(ctx, resp2.RepoID, resp2.InvocationID)
-		require.Fail(t, "expected second start to fail due to name collision")
-	}
+	require.Error(t, err, "second start")
+	resp2 := decodeDaemonActionError[daemon.ControlPlaneStartResponse](t, err)
 	assert.Equal(t, "E_INVOCATION_NAME_EXISTS", resp2.ErrorCode)
 
 	// Clean up.
@@ -1040,13 +1047,13 @@ func TestDaemonWorktreeRemoveWithUnresolvedInvocation(t *testing.T) {
 	startResp := startTestInvocation(t, env.Client, repoRoot, "unresolved-rm-test", "sleep")
 
 	// Remove without force should fail.
-	rmResp, err := env.Client.WorktreeRm(ctx, repoID, wtID, false)
-	require.NoError(t, err, "worktree rm")
-	require.False(t, rmResp.OK, "expected rm to fail with unresolved invocation")
-	assert.Equal(t, "E_WORKTREE_HAS_UNRESOLVED_INVOCATIONS", rmResp.ErrorCode)
+	_, err := env.Client.WorktreeRm(ctx, repoID, wtID, false)
+	require.Error(t, err, "worktree rm")
+	rmErrResp := decodeDaemonActionError[daemon.WorktreeRmResponse](t, err)
+	assert.Equal(t, "E_WORKTREE_HAS_UNRESOLVED_INVOCATIONS", rmErrResp.ErrorCode)
 
 	// Remove with force should succeed.
-	rmResp, err = env.Client.WorktreeRm(ctx, repoID, wtID, true)
+	rmResp, err := env.Client.WorktreeRm(ctx, repoID, wtID, true)
 	require.NoError(t, err, "worktree rm force")
 	assert.True(t, rmResp.OK, "worktree rm force failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
@@ -1076,14 +1083,14 @@ func TestDaemonWorktreeNameUniqueness(t *testing.T) {
 	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "unique-name")
 
 	// Second create with same name but different key should fail.
-	resp2, err := env.Client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+	_, err := env.Client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
 		RepoRoot:       repoRoot,
 		Name:           "unique-name",
 		BaseBranch:     "main",
 		IdempotencyKey: "different-key",
 	})
-	require.NoError(t, err, "second create")
-	require.False(t, resp2.OK, "expected second create to fail due to name collision")
+	require.Error(t, err, "second create")
+	resp2 := decodeDaemonActionError[daemon.WorktreeCreateResponse](t, err)
 	assert.Equal(t, "E_NAME_EXISTS", resp2.ErrorCode)
 }
 
@@ -1162,10 +1169,9 @@ func TestDaemonCheckpointApplyWhileRunning(t *testing.T) {
 	startResp := startTestInvocation(t, env.Client, repoRoot, "cp-running", "sleep")
 
 	// Attempt checkpoint apply while invocation is still running.
-	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 1)
-	require.NoError(t, err, "CheckpointApply returned transport error")
-
-	assert.False(t, resp.OK, "expected OK=false for checkpoint apply while running")
+	_, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 1)
+	require.Error(t, err, "CheckpointApply should fail while running")
+	resp := decodeDaemonActionError[daemon.CheckpointApplyResponse](t, err)
 	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
 
 	// Clean up: kill the invocation.
@@ -1193,10 +1199,9 @@ func TestDaemonCheckpointApplyNotFound(t *testing.T) {
 	waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 10*time.Second)
 
 	// Apply non-existent checkpoint.
-	resp, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 999)
-	require.NoError(t, err, "CheckpointApply returned transport error")
-
-	assert.False(t, resp.OK, "expected OK=false for non-existent checkpoint")
+	_, err := env.Client.CheckpointApply(ctx, startResp.RepoID, startResp.InvocationID, 999)
+	require.Error(t, err, "CheckpointApply should fail for missing checkpoint")
+	resp := decodeDaemonActionError[daemon.CheckpointApplyResponse](t, err)
 	assert.Equal(t, "E_CHECKPOINT_NOT_FOUND", resp.ErrorCode)
 }
 
@@ -1645,13 +1650,12 @@ func TestDaemonLandConflict(t *testing.T) {
 	gitExec(t, treePath, "commit", "-m", "integration modifies README")
 
 	// Attempt to land — should conflict.
-	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+	_, err := env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
 		InvocationID: startResp.InvocationID,
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp.OK)
+	require.Error(t, err)
+	resp := decodeDaemonActionError[daemon.LandResponse](t, err)
 	assert.Equal(t, "E_LAND_CONFLICT", resp.ErrorCode)
 	assert.NotEmpty(t, resp.ConflictFiles)
 	assert.Contains(t, resp.ConflictFiles, "README.md")
@@ -1682,13 +1686,12 @@ func TestDaemonLandNothingToLand(t *testing.T) {
 	// Land without any changes — no commits, clean tree.
 	// The daemon writes .agency/SANDBOX_MARKER at invocation startup, but
 	// isSandboxDirty excludes .agency/ so it should not count as dirty.
-	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+	_, err := env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
 		InvocationID: startResp.InvocationID,
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp.OK)
+	require.Error(t, err)
+	resp := decodeDaemonActionError[daemon.LandResponse](t, err)
 	assert.Equal(t, "E_LAND_NOTHING_TO_LAND", resp.ErrorCode)
 }
 
@@ -1710,14 +1713,13 @@ func TestDaemonLandApplyRequired(t *testing.T) {
 	sandboxPath := startResp.SandboxPath
 	require.NoError(t, os.WriteFile(filepath.Join(sandboxPath, "dirty-file.txt"), []byte("dirty\n"), 0o644))
 
-	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+	_, err := env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
 		InvocationID: startResp.InvocationID,
 		// Apply: false (default)
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp.OK)
+	require.Error(t, err)
+	resp := decodeDaemonActionError[daemon.LandResponse](t, err)
 	assert.Equal(t, "E_LAND_APPLY_REQUIRED", resp.ErrorCode)
 	assert.Contains(t, resp.Hint, "apply")
 }
@@ -1736,13 +1738,12 @@ func TestDaemonLandWhileRunning(t *testing.T) {
 	// Start a sleep invocation (stays running).
 	startResp := startTestInvocation(t, env.Client, repoRoot, "land-running", "sleep")
 
-	resp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+	_, err := env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       startResp.RepoID,
 		InvocationID: startResp.InvocationID,
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp.OK)
+	require.Error(t, err)
+	resp := decodeDaemonActionError[daemon.LandResponse](t, err)
 	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
 
 	// Clean up.
@@ -1778,13 +1779,12 @@ func TestDaemonLandAlreadyLanded(t *testing.T) {
 	require.True(t, resp1.OK, "first land should succeed: %s - %s", resp1.ErrorCode, resp1.Message)
 
 	// Second land should fail.
-	resp2, err := env.Client.Land(ctx, daemonclient.LandOpts{
+	_, err = env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
 		InvocationID: startResp.InvocationID,
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp2.OK)
+	require.Error(t, err)
+	resp2 := decodeDaemonActionError[daemon.LandResponse](t, err)
 	assert.Equal(t, "E_LAND_ALREADY_LANDED", resp2.ErrorCode)
 }
 
@@ -1808,13 +1808,12 @@ func TestDaemonLandAlreadyDiscarded(t *testing.T) {
 	require.True(t, discardResp.OK, "discard should succeed: %s - %s", discardResp.ErrorCode, discardResp.Message)
 
 	// Then try to land.
-	landResp, err := env.Client.Land(ctx, daemonclient.LandOpts{
+	_, err = env.Client.Land(ctx, daemonclient.LandOpts{
 		RepoID:       repoID,
 		InvocationID: startResp.InvocationID,
 	})
-	require.NoError(t, err)
-
-	assert.False(t, landResp.OK)
+	require.Error(t, err)
+	landResp := decodeDaemonActionError[daemon.LandResponse](t, err)
 	assert.Equal(t, "E_LAND_ALREADY_DISCARDED", landResp.ErrorCode)
 }
 
@@ -1973,10 +1972,9 @@ func TestDaemonDiscardAlreadyLanded(t *testing.T) {
 	require.True(t, landResp.OK)
 
 	// Try to discard after landing.
-	discardResp, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
-	require.NoError(t, err)
-
-	assert.False(t, discardResp.OK)
+	_, err = env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.Error(t, err)
+	discardResp := decodeDaemonActionError[daemon.DiscardResponse](t, err)
 	assert.Equal(t, "E_LAND_ALREADY_LANDED", discardResp.ErrorCode)
 }
 
@@ -2000,10 +1998,9 @@ func TestDaemonDiscardAlreadyDiscarded(t *testing.T) {
 	require.True(t, resp1.OK)
 
 	// Second discard should fail.
-	resp2, err := env.Client.Discard(ctx, repoID, startResp.InvocationID)
-	require.NoError(t, err)
-
-	assert.False(t, resp2.OK)
+	_, err = env.Client.Discard(ctx, repoID, startResp.InvocationID)
+	require.Error(t, err)
+	resp2 := decodeDaemonActionError[daemon.DiscardResponse](t, err)
 	assert.Equal(t, "E_LAND_ALREADY_DISCARDED", resp2.ErrorCode)
 }
 
@@ -2317,14 +2314,13 @@ func TestDaemonHeadedStartTmuxSessionExists(t *testing.T) {
 	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-exists")
 
 	ctx := context.Background()
-	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+	_, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: "headed-exists",
 		Runner:      "claude-code",
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp.OK)
+	require.Error(t, err)
+	resp := decodeDaemonActionError[daemon.ControlPlaneStartHeadedResponse](t, err)
 	assert.Equal(t, "E_TMUX_SESSION_EXISTS", resp.ErrorCode)
 
 	fakeTmux.Mu.Lock()
@@ -2347,14 +2343,13 @@ func TestDaemonHeadedStartTmuxCreationFails(t *testing.T) {
 	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-fail")
 
 	ctx := context.Background()
-	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+	_, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: "headed-fail",
 		Runner:      "claude-code",
 	})
-	require.NoError(t, err)
-
-	assert.False(t, resp.OK)
+	require.Error(t, err)
+	resp := decodeDaemonActionError[daemon.ControlPlaneStartHeadedResponse](t, err)
 	assert.Equal(t, "E_INVOCATION_START_FAILED", resp.ErrorCode)
 }
 

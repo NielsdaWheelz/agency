@@ -12,14 +12,12 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // AgentStopOpts holds options for the agent stop command.
 type AgentStopOpts struct {
 	InvocationRef string
 	RepoRef       string
-	TmuxClient    tmux.Client
 	JSON          bool
 }
 
@@ -29,7 +27,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
@@ -51,31 +49,17 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
-
 	invocationID := resp.InvocationID
 	if invocationID == "" {
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = invocationID
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID string `json:"invocation_id,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			InvocationID:    invocationID,
 		})
 	}
 
@@ -89,7 +73,6 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 type AgentKillOpts struct {
 	InvocationRef string
 	RepoRef       string
-	TmuxClient    tmux.Client
 	JSON          bool
 }
 
@@ -99,7 +82,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
@@ -121,31 +104,17 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
-
 	invocationID := resp.InvocationID
 	if invocationID == "" {
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = invocationID
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID string `json:"invocation_id,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			InvocationID:    invocationID,
 		})
 	}
 
@@ -169,7 +138,7 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
@@ -193,25 +162,22 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		RequireBase:  opts.RequireBase,
 	})
 	if err != nil {
-		return fail(err)
-	}
-
-	if !resp.OK {
-		hint := resp.Hint
-		if !opts.JSON && resp.ErrorCode == string(errors.ELandConflict) && len(resp.ConflictFiles) > 0 {
-			_, _ = fmt.Fprintf(stderr, "Conflicting files:\n")
-			for _, f := range resp.ConflictFiles {
-				_, _ = fmt.Fprintf(stderr, "  - %s\n", f)
+		if !opts.JSON {
+			var landErr *daemon.LandResponse
+			if dae, ok := daemonclient.AsDaemonActionError(err); ok {
+				landErr = &daemon.LandResponse{}
+				if decodeErr := dae.DecodeResponse(landErr); decodeErr != nil {
+					landErr = nil
+				}
+			}
+			if landErr != nil && len(landErr.ConflictFiles) > 0 && errors.GetCode(err) == errors.ELandConflict {
+				_, _ = fmt.Fprintf(stderr, "Conflicting files:\n")
+				for _, f := range landErr.ConflictFiles {
+					_, _ = fmt.Fprintf(stderr, "  - %s\n", f)
+				}
 			}
 		}
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       hint,
-				"request_id": resp.RequestID,
-			},
-		))
+		return fail(err)
 	}
 
 	invocationID := resp.InvocationID
@@ -219,19 +185,20 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = invocationID
-			envelope.AppliedMode = resp.AppliedMode
-			envelope.IntegrationHeadBefore = resp.IntegrationHeadBefore
-			envelope.IntegrationHeadAfter = resp.IntegrationHeadAfter
-			envelope.CommitsLanded = resp.CommitsLanded
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID          string             `json:"invocation_id,omitempty"`
+			AppliedMode           daemon.LandingMode `json:"applied_mode,omitempty"`
+			IntegrationHeadBefore string             `json:"integration_head_before,omitempty"`
+			IntegrationHeadAfter  string             `json:"integration_head_after,omitempty"`
+			CommitsLanded         int                `json:"commits_landed,omitempty"`
+		}{
+			commandJSONBase:       newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			InvocationID:          invocationID,
+			AppliedMode:           resp.AppliedMode,
+			IntegrationHeadBefore: resp.IntegrationHeadBefore,
+			IntegrationHeadAfter:  resp.IntegrationHeadAfter,
+			CommitsLanded:         resp.CommitsLanded,
 		})
 	}
 
@@ -257,7 +224,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
@@ -279,31 +246,17 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return fail(err)
 	}
 
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
-
 	invocationID := resp.InvocationID
 	if invocationID == "" {
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = invocationID
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID string `json:"invocation_id,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			InvocationID:    invocationID,
 		})
 	}
 
@@ -329,7 +282,7 @@ func AgentFollowup(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	prompt, err := resolveBoundedPromptInput(
@@ -363,29 +316,20 @@ func AgentFollowup(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	if err != nil {
 		return fail(err)
 	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
-			envelope.TimelineEntryID = resp.TimelineEntry
-			envelope.AlreadyApplied = resp.AlreadyApplied
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID   string `json:"invocation_id,omitempty"`
+			TimelineEntry  string `json:"timeline_entry_id,omitempty"`
+			AlreadyApplied bool   `json:"already_applied,omitempty"`
+			DeliveryMode   string `json:"delivery_mode,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
+			InvocationID:    resp.InvocationID,
+			TimelineEntry:   resp.TimelineEntry,
+			AlreadyApplied:  resp.AlreadyApplied,
+			DeliveryMode:    resp.DeliveryMode,
 		})
 	}
 
@@ -417,7 +361,7 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 	if !opts.JSON && !opts.Detached {
 		isInteractive := opts.IsInteractive
@@ -456,36 +400,32 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	if err != nil {
 		return fail(err)
 	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = resp.InvocationID
-			envelope.RepoID = resp.RepoID
-			envelope.RepoName = resp.RepoName
-			envelope.WorktreeID = resp.WorktreeID
-			envelope.WorktreeName = resp.WorktreeName
-			envelope.SandboxPath = resp.SandboxPath
-			envelope.TmuxSession = resp.TmuxSession
-			envelope.DaemonInstanceID = resp.DaemonInstanceID
-			envelope.AlreadyRunning = resp.AlreadyRunning
-			envelope.LogPaths = resp.LogPaths
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID     string           `json:"invocation_id,omitempty"`
+			RepoID           string           `json:"repo_id,omitempty"`
+			RepoName         string           `json:"repo_name,omitempty"`
+			WorktreeID       string           `json:"worktree_id,omitempty"`
+			WorktreeName     string           `json:"worktree_name,omitempty"`
+			SandboxPath      string           `json:"sandbox_path,omitempty"`
+			TmuxSession      string           `json:"tmux_session,omitempty"`
+			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
+			AlreadyRunning   bool             `json:"already_running,omitempty"`
+			LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
+		}{
+			commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
+			InvocationID:     resp.InvocationID,
+			RepoID:           resp.RepoID,
+			RepoName:         resp.RepoName,
+			WorktreeID:       resp.WorktreeID,
+			WorktreeName:     resp.WorktreeName,
+			SandboxPath:      resp.SandboxPath,
+			TmuxSession:      resp.TmuxSession,
+			DaemonInstanceID: resp.DaemonInstanceID,
+			AlreadyRunning:   resp.AlreadyRunning,
+			LogPaths:         resp.LogPaths,
 		})
 	}
 
@@ -538,7 +478,7 @@ func AgentRestore(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 	if fsys == nil {
 		fsys = fs.NewRealFS()
@@ -636,30 +576,20 @@ func AgentRestore(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return fail(errors.Wrap(errors.EInternal, "checkpoint restore request failed", err))
 	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"request_id": resp.RequestID,
-				"hint":       resp.Hint,
-			},
-		))
-	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.InvocationID = invocationResult.Data.InvocationID
-			envelope.CheckpointID = resp.CheckpointID
-			envelope.SnapshotCommit = resp.SnapshotCommit
-			envelope.RestoredAt = resp.RestoredAt
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			InvocationID   string `json:"invocation_id,omitempty"`
+			CheckpointID   int    `json:"checkpoint_id,omitempty"`
+			SnapshotCommit string `json:"snapshot_commit,omitempty"`
+			RestoredAt     string `json:"restored_at,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			InvocationID:    invocationResult.Data.InvocationID,
+			CheckpointID:    resp.CheckpointID,
+			SnapshotCommit:  resp.SnapshotCommit,
+			RestoredAt:      resp.RestoredAt,
 		})
 	}
 

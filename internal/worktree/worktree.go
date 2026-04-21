@@ -15,6 +15,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
+	"github.com/NielsdaWheelz/agency/internal/scaffold"
 )
 
 // Warning represents a non-fatal warning emitted during worktree operations.
@@ -238,37 +239,5 @@ func checkIgnored(ctx context.Context, cr exec.CommandRunner, worktreePath strin
 // This file is tool-owned, never committed, and overwritten on each run.
 // It contains short, imperative, checklist-style guidance for runners.
 func InstructionsTemplate() string {
-	return `# Agency Runner Instructions
-
-**Read this before starting work.**
-
-## Workflow
-
-- [ ] Make incremental, focused commits
-- [ ] Keep commits buildable (tests should pass after each commit)
-- [ ] Keep ` + "`" + `.agency/state/runner_status.json` + "`" + ` current while you work
-- [ ] Set status to ` + "`" + `ready` + "`" + ` with ` + "`" + `summary` + "`" + ` and ` + "`" + `how_to_test` + "`" + ` before finishing
-
-## Status Tracking
-
-Record your status in ` + "`" + `.agency/state/runner_status.json` + "`" + `:
-- ` + "`" + `working` + "`" + ` — actively making progress (include summary)
-- ` + "`" + `needs_input` + "`" + ` — waiting for user answer (include questions[])
-- ` + "`" + `blocked` + "`" + ` — cannot proceed (include blockers[])
-- ` + "`" + `ready` + "`" + ` — work complete (include how_to_test)
-
-## Notes
-
-- ` + "`" + `.agency/state/runner_status.json` + "`" + ` is the only runner contract
-- This file is advisory only; no correctness depends on it
-- Do not commit this file
-- This file is regenerated on every ` + "`" + `agency run` + "`" + `
-`
-}
-
-// ScaffoldWorkspaceOnly scaffolds the .agency/ directories, INSTRUCTIONS.md, and runner_status.json
-// without creating a worktree. Useful for testing or recovery scenarios.
-// This is an exported wrapper around scaffoldWorkspace for testing.
-func ScaffoldWorkspaceOnly(fsys fs.FS, worktreePath string) error {
-	return scaffoldWorkspace(fsys, worktreePath)
+	return scaffold.ClaudeMDTemplate
 }

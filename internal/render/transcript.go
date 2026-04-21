@@ -58,33 +58,33 @@ func WriteTranscript(w io.Writer, entries []TranscriptEntry, opts TranscriptOpts
 }
 
 func renderEntry(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+	payload := DecodeTimelinePayload(entry.Data)
 	switch entry.Kind {
 	case "session_start":
-		return renderSessionStart(w, entry, opts)
+		return renderSessionStart(w, entry, payload, opts)
 	case "prompt_seed":
-		return renderPromptSeed(w, entry, opts)
+		return renderPromptSeed(w, payload, opts)
 	case "message":
-		role := entryString(entry.Data, "role")
-		if role == "assistant" {
-			return renderAssistantMessage(w, entry, opts)
+		if payload.Role == "assistant" {
+			return renderAssistantMessage(w, payload, opts)
 		}
-		return renderUserMessage(w, entry, opts)
+		return renderUserMessage(w, payload, opts)
 	case "tool_use":
-		return renderToolUse(w, entry, opts)
+		return renderToolUse(w, payload, opts)
 	case "followup_prompt":
-		return renderFollowupPrompt(w, entry, opts)
+		return renderFollowupPrompt(w, payload, opts)
 	case "final":
-		return renderFinal(w, entry, opts)
+		return renderFinal(w, payload, opts)
 	case "usage":
-		return renderUsage(w, entry, opts)
+		return renderUsage(w, payload, opts)
 	case "error":
-		return renderError(w, entry, opts)
+		return renderError(w, payload, opts)
 	case "parse_error":
-		return renderParseError(w, entry, opts)
+		return renderParseError(w, payload, opts)
 	case "unknown":
-		return renderUnknown(w, entry, opts)
+		return renderUnknown(w, payload, opts)
 	case "checkpoint_event", "invocation_event":
-		return renderEvent(w, entry, opts)
+		return renderEvent(w, entry.Kind, payload, opts)
 	case "raw_log_coverage":
 		return nil // omit
 	default:
@@ -92,18 +92,16 @@ func renderEntry(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 	}
 }
 
-func renderSessionStart(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	model := entryString(entry.Data, "model")
-	cwd := entryString(entry.Data, "cwd")
+func renderSessionStart(w io.Writer, entry TranscriptEntry, payload TimelinePayload, opts TranscriptOpts) error {
 	var parts []string
 	if entry.Timestamp != "" {
 		parts = append(parts, entry.Timestamp)
 	}
-	if model != "" {
-		parts = append(parts, "model="+model)
+	if payload.Model != "" {
+		parts = append(parts, "model="+payload.Model)
 	}
-	if cwd != "" {
-		parts = append(parts, "cwd="+cwd)
+	if payload.CWD != "" {
+		parts = append(parts, "cwd="+payload.CWD)
 	}
 	line := "Session started"
 	if len(parts) > 0 {
@@ -113,19 +111,18 @@ func renderSessionStart(w io.Writer, entry TranscriptEntry, opts TranscriptOpts)
 	return err
 }
 
-func renderPromptSeed(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+func renderPromptSeed(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
 	_, err := fmt.Fprintln(w, opts.style(ansiDim, "── Prompt ──"))
 	if err != nil {
 		return err
 	}
-	text := entryString(entry.Data, "text")
-	if text != "" {
+	if text := payload.PromptLikeSummary(); text != "" {
 		_, err = fmt.Fprintln(w, indentText(text, "  "))
 	}
 	return err
 }
 
-func renderAssistantMessage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+func renderAssistantMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
 	_, err := fmt.Fprintln(w)
 	if err != nil {
 		return err
@@ -136,19 +133,18 @@ func renderAssistantMessage(w io.Writer, entry TranscriptEntry, opts TranscriptO
 	}
 
 	// Prefer content_blocks if available
-	if blocks := entryContentBlocks(entry.Data); len(blocks) > 0 {
-		for _, block := range blocks {
-			blockType, _ := block["type"].(string)
-			switch blockType {
+	if len(payload.Blocks) > 0 {
+		for _, block := range payload.Blocks {
+			switch block.Type {
 			case "text":
-				if text, ok := block["text"].(string); ok && text != "" {
+				if text := block.Text; text != "" {
 					_, err = fmt.Fprintln(w, text)
 					if err != nil {
 						return err
 					}
 				}
 			case "tool_use":
-				name, _ := block["name"].(string)
+				name := block.Name
 				if name == "" {
 					name = "unknown"
 				}
@@ -156,7 +152,7 @@ func renderAssistantMessage(w io.Writer, entry TranscriptEntry, opts TranscriptO
 				if err != nil {
 					return err
 				}
-				if input, ok := block["input"]; ok {
+				if input := block.Input; input != nil {
 					if opts.ExpandToolPayloads {
 						if err := renderJSONIndented(w, input, "  "); err != nil {
 							return err
@@ -174,15 +170,14 @@ func renderAssistantMessage(w io.Writer, entry TranscriptEntry, opts TranscriptO
 	}
 
 	// Fallback to text field
-	text := entryString(entry.Data, "text")
-	if text != "" {
+	if text := payload.Text; text != "" {
 		_, err = fmt.Fprintln(w, text)
 	}
 	return err
 }
 
-func renderUserMessage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	if !isToolResultMessage(entry.Data) {
+func renderUserMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+	if !payload.IsToolResultMessage() {
 		_, err := fmt.Fprintln(w)
 		if err != nil {
 			return err
@@ -191,27 +186,26 @@ func renderUserMessage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) 
 		if err != nil {
 			return err
 		}
-		text := promptMessageText(entry.Data)
-		if text != "" {
+		if text := payload.PromptMessageText(); text != "" {
 			_, err = fmt.Fprintln(w, text)
 		}
 		return err
 	}
 
 	// Prefer content_blocks
-	if blocks := entryContentBlocks(entry.Data); len(blocks) > 0 {
+	if len(payload.Blocks) > 0 {
 		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
 		if err != nil {
 			return err
 		}
-		for _, block := range blocks {
-			if content, ok := block["content"].(string); ok && content != "" {
+		for _, block := range payload.Blocks {
+			if content := block.Content; content != "" {
 				_, err = fmt.Fprintln(w, indentText(content, "  "))
 				if err != nil {
 					return err
 				}
 			}
-			if text, ok := block["text"].(string); ok && text != "" {
+			if text := block.Text; text != "" {
 				_, err = fmt.Fprintln(w, indentText(text, "  "))
 				if err != nil {
 					return err
@@ -222,8 +216,7 @@ func renderUserMessage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) 
 	}
 
 	// Fallback
-	text := entryString(entry.Data, "text")
-	if text != "" {
+	if text := payload.Text; text != "" {
 		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
 		if err != nil {
 			return err
@@ -234,25 +227,21 @@ func renderUserMessage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) 
 	return nil
 }
 
-func renderToolUse(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	name := entryString(entry.Data, "name")
-	command := entryString(entry.Data, "command")
-
+func renderToolUse(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
 	label := "▶"
-	if name != "" {
-		label += " " + name
+	if payload.Name != "" {
+		label += " " + payload.Name
 	}
-	if command != "" {
-		label += " " + command
+	if payload.Command != "" {
+		label += " " + payload.Command
 	}
 
 	// Color exit code
-	if exitCode, ok := entryFloat(entry.Data, "exit_code"); ok {
-		ec := int(exitCode)
-		if ec == 0 {
-			label += " " + opts.style(ansiGreen, fmt.Sprintf("(exit=%d)", ec))
+	if payload.HasExitCode {
+		if payload.ExitCode == 0 {
+			label += " " + opts.style(ansiGreen, fmt.Sprintf("(exit=%d)", payload.ExitCode))
 		} else {
-			label += " " + opts.style(ansiRed, fmt.Sprintf("(exit=%d)", ec))
+			label += " " + opts.style(ansiRed, fmt.Sprintf("(exit=%d)", payload.ExitCode))
 		}
 	}
 
@@ -260,7 +249,7 @@ func renderToolUse(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) erro
 	return err
 }
 
-func renderFollowupPrompt(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+func renderFollowupPrompt(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
 	_, err := fmt.Fprintln(w)
 	if err != nil {
 		return err
@@ -269,18 +258,17 @@ func renderFollowupPrompt(w io.Writer, entry TranscriptEntry, opts TranscriptOpt
 	if err != nil {
 		return err
 	}
-	text := entryString(entry.Data, "text")
-	if text != "" {
+	if text := payload.PromptLikeSummary(); text != "" {
 		_, err = fmt.Fprintln(w, text)
 	}
 	return err
 }
 
-func renderFinal(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+func renderFinal(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
 	var parts []string
 
-	if durationMS, ok := entryFloat(entry.Data, "duration_ms"); ok {
-		secs := durationMS / 1000.0
+	if payload.HasDurationMS {
+		secs := payload.DurationMS / 1000.0
 		if secs >= 60 {
 			parts = append(parts, fmt.Sprintf("%.1fm", secs/60.0))
 		} else {
@@ -288,19 +276,15 @@ func renderFinal(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 		}
 	}
 
-	if costUSD, ok := entryFloat(entry.Data, "cost_usd"); ok {
-		parts = append(parts, fmt.Sprintf("$%.4f", costUSD))
+	if payload.HasCostUSD {
+		parts = append(parts, fmt.Sprintf("$%.4f", payload.CostUSD))
 	}
 
-	if usage, ok := entry.Data["usage"]; ok {
-		if usageMap, ok := usage.(map[string]interface{}); ok {
-			if v, ok := entryFloat(usageMap, "input_tokens"); ok {
-				parts = append(parts, fmt.Sprintf("in=%d", int64(v)))
-			}
-			if v, ok := entryFloat(usageMap, "output_tokens"); ok {
-				parts = append(parts, fmt.Sprintf("out=%d", int64(v)))
-			}
-		}
+	if payload.Usage.HasInputTokens {
+		parts = append(parts, fmt.Sprintf("in=%d", payload.Usage.InputTokens))
+	}
+	if payload.Usage.HasOutputTokens {
+		parts = append(parts, fmt.Sprintf("out=%d", payload.Usage.OutputTokens))
 	}
 
 	line := "Done"
@@ -312,13 +296,13 @@ func renderFinal(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 	return err
 }
 
-func renderUsage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
+func renderUsage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
 	var parts []string
-	if in, ok := entryFloat(entry.Data, "input_tokens"); ok {
-		parts = append(parts, fmt.Sprintf("in=%d", int64(in)))
+	if payload.HasInputTokens {
+		parts = append(parts, fmt.Sprintf("in=%d", payload.InputTokens))
 	}
-	if out, ok := entryFloat(entry.Data, "output_tokens"); ok {
-		parts = append(parts, fmt.Sprintf("out=%d", int64(out)))
+	if payload.HasOutputTokens {
+		parts = append(parts, fmt.Sprintf("out=%d", payload.OutputTokens))
 	}
 	if len(parts) == 0 {
 		return nil
@@ -327,8 +311,8 @@ func renderUsage(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 	return err
 }
 
-func renderError(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	msg := entryString(entry.Data, "message")
+func renderError(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+	msg := payload.Message
 	if msg == "" {
 		msg = "unknown error"
 	}
@@ -336,22 +320,22 @@ func renderError(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 	return err
 }
 
-func renderParseError(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	reason := strings.TrimSpace(entryString(entry.Data, "reason"))
+func renderParseError(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+	reason := strings.TrimSpace(payload.Reason)
 	if reason == "" {
 		reason = "unclassified"
 	}
 	line := "Parse diagnostic: " + reason
-	if count, ok := entryFloat(entry.Data, "parse_error_count"); ok && int(count) > 0 {
-		line += fmt.Sprintf(" (count=%d)", int(count))
+	if payload.HasParseErrorCount && payload.ParseErrorCount > 0 {
+		line += fmt.Sprintf(" (count=%d)", payload.ParseErrorCount)
 	}
 	_, err := fmt.Fprintln(w, opts.style(ansiDim, line))
 	return err
 }
 
-func renderUnknown(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	eventType := strings.TrimSpace(entryString(entry.Data, "runner_event_type"))
-	reason := strings.TrimSpace(entryString(entry.Data, "reason"))
+func renderUnknown(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+	eventType := strings.TrimSpace(payload.RunnerEventType)
+	reason := strings.TrimSpace(payload.Reason)
 	line := "Unknown runner event"
 	if eventType != "" {
 		line += ": " + eventType
@@ -363,78 +347,16 @@ func renderUnknown(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) erro
 	return err
 }
 
-func renderEvent(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error {
-	kind := entryString(entry.Data, "event_kind")
+func renderEvent(w io.Writer, entryKind string, payload TimelinePayload, opts TranscriptOpts) error {
+	kind := payload.EventKind
 	if kind == "" {
-		kind = entry.Kind
+		kind = entryKind
 	}
 	_, err := fmt.Fprintln(w, opts.style(ansiDim, "["+kind+"]"))
 	return err
 }
 
 // Helper functions
-
-func entryString(data map[string]interface{}, key string) string {
-	if data == nil {
-		return ""
-	}
-	if v, ok := data[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func entryFloat(data map[string]interface{}, key string) (float64, bool) {
-	if data == nil {
-		return 0, false
-	}
-	v, ok := data[key]
-	if !ok {
-		return 0, false
-	}
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case json.Number:
-		f, err := n.Float64()
-		if err != nil {
-			return 0, false
-		}
-		return f, true
-	default:
-		return 0, false
-	}
-}
-
-func entryContentBlocks(data map[string]interface{}) []map[string]interface{} {
-	if data == nil {
-		return nil
-	}
-	v, ok := data["content_blocks"]
-	if !ok {
-		return nil
-	}
-	if blocks, ok := v.([]map[string]interface{}); ok {
-		return blocks
-	}
-	// After JSON round-trip, may be []interface{}
-	if arr, ok := v.([]interface{}); ok {
-		result := make([]map[string]interface{}, 0, len(arr))
-		for _, item := range arr {
-			if m, ok := item.(map[string]interface{}); ok {
-				result = append(result, m)
-			}
-		}
-		return result
-	}
-	return nil
-}
 
 func indentText(text, prefix string) string {
 	lines := strings.Split(text, "\n")
@@ -459,46 +381,4 @@ func renderJSONIndented(w io.Writer, v interface{}, prefix string) error {
 		_, err = fmt.Fprintln(w, prefix+string(data))
 	}
 	return err
-}
-
-func isToolResultMessage(data map[string]interface{}) bool {
-	family := strings.ToLower(strings.TrimSpace(entryString(data, "message_family")))
-	switch family {
-	case "prompt":
-		return false
-	case "tool_result":
-		return true
-	}
-
-	for _, block := range entryContentBlocks(data) {
-		if strings.EqualFold(strings.TrimSpace(entryString(block, "type")), "tool_result") {
-			return true
-		}
-	}
-	return false
-}
-
-func promptMessageText(data map[string]interface{}) string {
-	if text := strings.TrimSpace(entryString(data, "text")); text != "" {
-		return text
-	}
-	blocks := entryContentBlocks(data)
-	if len(blocks) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		blockType := strings.TrimSpace(entryString(block, "type"))
-		if blockType != "" && blockType != "text" {
-			continue
-		}
-		if text := strings.TrimSpace(entryString(block, "text")); text != "" {
-			parts = append(parts, text)
-			continue
-		}
-		if content := strings.TrimSpace(entryString(block, "content")); content != "" {
-			parts = append(parts, content)
-		}
-	}
-	return strings.Join(parts, "\n")
 }

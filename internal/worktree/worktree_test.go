@@ -13,6 +13,7 @@ import (
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
+	"github.com/NielsdaWheelz/agency/internal/scaffold"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,8 +123,9 @@ func TestCreate_Success(t *testing.T) {
 	instructionsContent, err := os.ReadFile(instructionsPath)
 	require.NoError(t, err, "failed to read INSTRUCTIONS.md")
 
-	assert.Contains(t, string(instructionsContent), "# Agency Runner Instructions", "INSTRUCTIONS.md should have runner instructions title")
+	assert.Contains(t, string(instructionsContent), "# Agency Runner Protocol", "INSTRUCTIONS.md should have the canonical runner protocol title")
 	assert.Contains(t, string(instructionsContent), ".agency/state/runner_status.json", "INSTRUCTIONS.md should point runners at runner_status.json")
+	assert.Contains(t, string(instructionsContent), `"schema_version": "2.0"`, "INSTRUCTIONS.md should describe the v2 runner status schema")
 	assert.NotContains(t, string(instructionsContent), ".agency/report.md", "INSTRUCTIONS.md should not mention report.md")
 
 	// Verify runner_status.json exists and starts in a valid working state.
@@ -225,23 +227,23 @@ func TestCreate_MissingBaseBranch_ReturnsError(t *testing.T) {
 	assert.Equal(t, errors.EWorktreeCreateFailed, code)
 }
 
-func TestScaffoldWorkspaceOnly_DoesNotCreateReport(t *testing.T) {
+func TestScaffoldWorkspace_DoesNotCreateReport(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	fsys := fs.NewRealFS()
 
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "scaffold failed")
+	require.NoError(t, scaffoldWorkspace(fsys, dir), "scaffold failed")
 
 	_, err := os.Stat(filepath.Join(dir, ".agency", "report.md"))
 	assert.True(t, os.IsNotExist(err), "report.md should not be created")
 }
 
-func TestScaffoldWorkspaceOnly_RunnerStatusNotOverwritten(t *testing.T) {
+func TestScaffoldWorkspace_RunnerStatusNotOverwritten(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	fsys := fs.NewRealFS()
 
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "first scaffold failed")
+	require.NoError(t, scaffoldWorkspace(fsys, dir), "first scaffold failed")
 
 	status, err := runnerstatus.Load(dir)
 	require.NoError(t, err, "failed to load initial runner status")
@@ -262,7 +264,7 @@ func TestScaffoldWorkspaceOnly_RunnerStatusNotOverwritten(t *testing.T) {
 	data = append(data, '\n')
 	require.NoError(t, os.WriteFile(runnerstatus.StatusPath(dir), data, 0644), "failed to write custom runner status")
 
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "second scaffold failed")
+	require.NoError(t, scaffoldWorkspace(fsys, dir), "second scaffold failed")
 
 	status, err = runnerstatus.Load(dir)
 	require.NoError(t, err, "failed to load runner status after second scaffold")
@@ -270,34 +272,34 @@ func TestScaffoldWorkspaceOnly_RunnerStatusNotOverwritten(t *testing.T) {
 	assert.Equal(t, custom, *status, "runner_status.json should not be overwritten by scaffold")
 }
 
-func TestScaffoldWorkspaceOnly_InstructionsAlwaysOverwritten(t *testing.T) {
+func TestScaffoldWorkspace_InstructionsAlwaysOverwritten(t *testing.T) {
 	t.Parallel()
 	// INSTRUCTIONS.md should be unconditionally overwritten on every run.
 	dir := t.TempDir()
 	fsys := fs.NewRealFS()
 
 	// First call creates INSTRUCTIONS.md
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "first scaffold failed")
+	require.NoError(t, scaffoldWorkspace(fsys, dir), "first scaffold failed")
 
 	instructionsPath := filepath.Join(dir, ".agency", "INSTRUCTIONS.md")
 	content1, err := os.ReadFile(instructionsPath)
 	require.NoError(t, err, "failed to read INSTRUCTIONS.md")
 
 	// Verify initial content
-	assert.Contains(t, string(content1), "# Agency Runner Instructions", "INSTRUCTIONS.md should have standard content")
+	assert.Contains(t, string(content1), "# Agency Runner Protocol", "INSTRUCTIONS.md should have the canonical protocol content")
 
 	// Write custom content to INSTRUCTIONS.md
 	customContent := "# Custom Instructions\nThis should be overwritten.\n"
 	require.NoError(t, os.WriteFile(instructionsPath, []byte(customContent), 0644), "failed to write custom content")
 
 	// Second call SHOULD overwrite INSTRUCTIONS.md
-	require.NoError(t, ScaffoldWorkspaceOnly(fsys, dir), "second scaffold failed")
+	require.NoError(t, scaffoldWorkspace(fsys, dir), "second scaffold failed")
 
 	content2, err := os.ReadFile(instructionsPath)
 	require.NoError(t, err, "failed to read INSTRUCTIONS.md after second scaffold")
 
 	// Verify INSTRUCTIONS.md was overwritten with standard content
-	assert.Contains(t, string(content2), "# Agency Runner Instructions", "INSTRUCTIONS.md should be overwritten with standard content")
+	assert.Contains(t, string(content2), "# Agency Runner Protocol", "INSTRUCTIONS.md should be overwritten with the canonical protocol content")
 	assert.NotContains(t, string(content2), "Custom Instructions", "INSTRUCTIONS.md should NOT contain custom content after second scaffold")
 }
 
@@ -340,22 +342,16 @@ func TestInstructionsTemplate(t *testing.T) {
 	t.Parallel()
 	template := InstructionsTemplate()
 
-	// Check title
-	assert.Contains(t, template, "# Agency Runner Instructions", "template should have Agency Runner Instructions title")
-
-	// Check required content per spec
-	requiredContent := []string{
-		"Make incremental, focused commits",
-		"Keep commits buildable",
-		"Keep `.agency/state/runner_status.json` current while you work",
-		"Set status to `ready` with `summary` and `how_to_test` before finishing",
-		"runner_status.json",
-		"only runner contract",
-		"This file is advisory only",
-	}
-	for _, content := range requiredContent {
-		assert.Contains(t, template, content, "template should contain %q", content)
-	}
+	assert.Equal(t, scaffold.ClaudeMDTemplate, template, "INSTRUCTIONS.md should reuse the canonical runner protocol text")
+	assert.Contains(t, template, "# Agency Runner Protocol", "template should have the canonical runner protocol title")
+	assert.Contains(t, template, "`running`", "template should describe the running state")
+	assert.Contains(t, template, "`waiting`", "template should describe the waiting state")
+	assert.Contains(t, template, "`succeeded`", "template should describe the succeeded state")
+	assert.Contains(t, template, "`failed`", "template should describe the failed state")
+	assert.Contains(t, template, `"schema_version": "2.0"`, "template should describe the v2 status schema")
+	assert.Contains(t, template, "`ready` is removed. Use `succeeded`.", "template should explain the hard-cutover vocabulary removal")
+	assert.Contains(t, template, "`needs_input` is removed. Use `waiting`.", "template should explain the waiting vocabulary change")
+	assert.Contains(t, template, "`working` is removed. Use `running`.", "template should explain the running vocabulary change")
 	assert.NotContains(t, template, ".agency/report.md", "template should not mention report.md")
 }
 

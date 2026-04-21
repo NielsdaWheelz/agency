@@ -115,7 +115,7 @@ func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAd
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	client, err := ensureDaemonClient(ctx, fsys, "")
@@ -137,11 +137,16 @@ func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAd
 	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.RequestID = result.RequestID
-			envelope.RepoID = result.Data.RepoID
-			envelope.RepoKey = result.Data.RepoKey
-			envelope.PreferredRoot = result.Data.PreferredRoot
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID        string `json:"repo_id,omitempty"`
+			RepoKey       string `json:"repo_key,omitempty"`
+			PreferredRoot string `json:"preferred_root,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(0, "", "", result.RequestID),
+			RepoID:          result.Data.RepoID,
+			RepoKey:         result.Data.RepoKey,
+			PreferredRoot:   result.Data.PreferredRoot,
 		})
 	}
 
@@ -287,7 +292,7 @@ func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmO
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	if strings.TrimSpace(opts.RepoRef) == "" {
@@ -339,11 +344,16 @@ func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmO
 	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.RequestID = result.RequestID
-			envelope.RepoID = result.Data.RepoID
-			envelope.RepoKey = result.Data.RepoKey
-			envelope.RemovedFromIndex = result.Data.RemovedFromIndex
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID           string `json:"repo_id,omitempty"`
+			RepoKey          string `json:"repo_key,omitempty"`
+			RemovedFromIndex bool   `json:"removed_from_index,omitempty"`
+		}{
+			commandJSONBase:  newCommandJSONSuccess(0, "", "", result.RequestID),
+			RepoID:           result.Data.RepoID,
+			RepoKey:          result.Data.RepoKey,
+			RemovedFromIndex: result.Data.RemovedFromIndex,
 		})
 	}
 

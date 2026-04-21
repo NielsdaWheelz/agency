@@ -141,6 +141,7 @@ func InvocationMetaToDTO(
 		ExitReason:     meta.ExitReason,
 		ExitCode:       meta.ExitCode,
 		LandingStatus:  string(meta.LandingStatus),
+		PRSyncEligible: invocationPRSyncEligible(state, meta.LandingStatus),
 		AttentionFlags: flags,
 		SortKey:        sortKey,
 		SandboxPath:    meta.SandboxPath,
@@ -151,16 +152,38 @@ func InvocationMetaToDTO(
 // WorktreeMetaToDTO converts an IntegrationWorktreeMeta and optional merge state to a WorktreeDTO.
 func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta, mergeMeta *store.IntegrationWorktreeMergeMeta) WorktreeDTO {
 	return WorktreeDTO{
-		WorktreeID: meta.WorktreeID,
-		Name:       meta.Name,
-		RepoID:     meta.RepoID,
-		Branch:     meta.Branch,
-		BaseBranch: meta.BaseBranch,
-		TreePath:   meta.TreePath,
-		State:      string(meta.State),
-		CreatedAt:  meta.CreatedAt,
-		LastUsedAt: meta.LastUsedAt,
-		Merge:      WorktreeMergeMetaToDTO(mergeMeta),
+		WorktreeID:   meta.WorktreeID,
+		WorktreeName: strings.TrimSpace(meta.Name),
+		RepoID:       meta.RepoID,
+		Branch:       meta.Branch,
+		BaseBranch:   meta.BaseBranch,
+		TreePath:     meta.TreePath,
+		State:        string(meta.State),
+		CreatedAt:    meta.CreatedAt,
+		LastUsedAt:   meta.LastUsedAt,
+		Merge:        WorktreeMergeMetaToDTO(mergeMeta),
+	}
+}
+
+func invocationPRSyncEligible(state InvocationState, landingStatus store.LandingStatus) bool {
+	switch landingStatus {
+	case store.LandingStatusLanded:
+		return true
+	case store.LandingStatusPending, store.LandingStatusDiscarded:
+		return false
+	}
+
+	switch state {
+	case InvocationStateSucceeded:
+		return true
+	case InvocationStateStarting,
+		InvocationStateRunning,
+		InvocationStateWaiting,
+		InvocationStateStopping,
+		InvocationStateFailed:
+		return false
+	default:
+		return false
 	}
 }
 

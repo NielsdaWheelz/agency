@@ -9,6 +9,8 @@ import (
 )
 
 func newContextCmd() *cobra.Command {
+	var jsonOut bool
+
 	cmd := &cobra.Command{
 		Use:   "context",
 		Short: "Show or change the active repo/worktree context",
@@ -20,57 +22,9 @@ to work from any cwd without repeating --repo and --worktree.
 
 Use:
   agency context           to show the active context
-  agency context show      to show the active context explicitly
   agency context use <worktree-ref>
                            to set the active context
   agency context unset     to clear the active context`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-			if err != nil {
-				return err
-			}
-			return commands.ContextShow(ctx, cr, fsys, cwd, commands.ContextShowOpts{}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
-	}
-	cmd.GroupID = "workflow"
-
-	cmd.AddCommand(
-		newContextShowCmd(),
-		newContextUseCmd(),
-		newContextUnsetCmd(),
-	)
-
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) > 0 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		values := []string{"show", "use", "unset"}
-		candidates := make([]string, 0, len(values))
-		for _, value := range values {
-			if toComplete != "" && !strings.HasPrefix(value, toComplete) {
-				continue
-			}
-			candidates = append(candidates, value)
-		}
-		return candidates, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	return cmd
-}
-
-func newContextShowCmd() *cobra.Command {
-	var jsonOut bool
-
-	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show the active repo/worktree context",
-		Long: `Show the active repo/worktree context explicitly.
-
-The no-subcommand form "agency context" is the canonical default show surface.`,
-		Example: `  agency context
-  agency context show`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
@@ -82,7 +36,26 @@ The no-subcommand form "agency context" is the canonical default show surface.`,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.GroupID = "workflow"
+
+	cmd.AddCommand(newContextUseCmd(), newContextUnsetCmd())
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		values := []string{"use", "unset"}
+		candidates := make([]string, 0, len(values))
+		for _, value := range values {
+			if toComplete != "" && !strings.HasPrefix(value, toComplete) {
+				continue
+			}
+			candidates = append(candidates, value)
+		}
+		return candidates, cobra.ShellCompDirectiveNoFileComp
+	}
 
 	return cmd
 }

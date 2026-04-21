@@ -253,7 +253,7 @@ func TestWorktreeMetaToDTO(t *testing.T) {
 	dto := daemon.WorktreeMetaToDTO(meta, mergeMeta)
 
 	assert.Equal(t, "wt-789", dto.WorktreeID)
-	assert.Equal(t, "my-feature", dto.Name)
+	assert.Equal(t, "my-feature", dto.WorktreeName)
 	assert.Equal(t, "repo-xyz", dto.RepoID)
 	assert.Equal(t, "agency/my-feature", dto.Branch)
 	assert.Equal(t, "main", dto.BaseBranch)

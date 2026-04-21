@@ -213,7 +213,7 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effor
 	return out, nil
 }
 
-type agentMutationEnvelope struct {
+type commandJSONBase struct {
 	OK              bool   `json:"ok"`
 	ErrorCode       string `json:"error_code"`
 	Message         string `json:"message"`
@@ -222,92 +222,54 @@ type agentMutationEnvelope struct {
 	APIVersion      int    `json:"api_version"`
 	BuildVersion    string `json:"build_version"`
 	ClientRequestID string `json:"client_request_id"`
-
-	InvocationID            string             `json:"invocation_id,omitempty"`
-	RepoID                  string             `json:"repo_id,omitempty"`
-	RepoName                string             `json:"repo_name,omitempty"`
-	RepoKey                 string             `json:"repo_key,omitempty"`
-	PreferredRoot           string             `json:"preferred_root,omitempty"`
-	RemovedFromIndex        bool               `json:"removed_from_index,omitempty"`
-	IntegrationWorktreeID   string             `json:"integration_worktree_id,omitempty"`
-	IntegrationWorktreeName string             `json:"integration_worktree_name,omitempty"`
-	WorktreeID              string             `json:"worktree_id,omitempty"`
-	WorktreeName            string             `json:"worktree_name,omitempty"`
-	SandboxPath             string             `json:"sandbox_path,omitempty"`
-	TmuxSession             string             `json:"tmux_session,omitempty"`
-	LogPaths                *daemon.LogPaths   `json:"log_paths,omitempty"`
-	PID                     int                `json:"pid,omitempty"`
-	PGID                    int                `json:"pgid,omitempty"`
-	DaemonInstanceID        string             `json:"daemon_instance_id,omitempty"`
-	AlreadyRunning          bool               `json:"already_running,omitempty"`
-	AlreadyApplied          bool               `json:"already_applied,omitempty"`
-	TimelineEntryID         string             `json:"timeline_entry_id,omitempty"`
-	CheckpointID            int                `json:"checkpoint_id,omitempty"`
-	SnapshotCommit          string             `json:"snapshot_commit,omitempty"`
-	RestoredAt              string             `json:"restored_at,omitempty"`
-	AppliedMode             daemon.LandingMode `json:"applied_mode,omitempty"`
-	IntegrationHeadBefore   string             `json:"integration_head_before,omitempty"`
-	IntegrationHeadAfter    string             `json:"integration_head_after,omitempty"`
-	CommitsLanded           int                `json:"commits_landed,omitempty"`
-	Branch                  string             `json:"branch,omitempty"`
-	PRNumber                int                `json:"pr_number,omitempty"`
-	PRURL                   string             `json:"pr_url,omitempty"`
-	PRAction                string             `json:"pr_action,omitempty"`
-	Strategy                string             `json:"strategy,omitempty"`
-	DeleteBranch            bool               `json:"delete_branch,omitempty"`
-	MergeLogPath            string             `json:"merge_log_path,omitempty"`
-	VerifyLogPath           string             `json:"verify_log_path,omitempty"`
-	ArchiveLogPath          string             `json:"archive_log_path,omitempty"`
 }
 
-func newAgentMutationEnvelope() agentMutationEnvelope {
-	return agentMutationEnvelope{
-		OK:              false,
+func newCommandJSONSuccess(apiVersion int, buildVersion, clientRequestID, requestID string) commandJSONBase {
+	if apiVersion <= 0 {
+		apiVersion = daemon.APIVersion
+	}
+	if buildVersion == "" {
+		buildVersion = version.FullVersion()
+	}
+	return commandJSONBase{
+		OK:              true,
 		ErrorCode:       "",
 		Message:         "",
+		Hint:            "",
+		RequestID:       requestID,
+		APIVersion:      apiVersion,
+		BuildVersion:    buildVersion,
+		ClientRequestID: clientRequestID,
+	}
+}
+
+func writeCommandJSON(w io.Writer, payload any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(payload)
+}
+
+func writeCommandJSONError(w io.Writer, err error) error {
+	code := errors.GetCode(err)
+	if code == "" {
+		code = errors.EInternal
+	}
+	payload := commandJSONBase{
+		OK:              false,
+		ErrorCode:       string(code),
+		Message:         err.Error(),
 		Hint:            "",
 		RequestID:       "",
 		APIVersion:      daemon.APIVersion,
 		BuildVersion:    version.FullVersion(),
 		ClientRequestID: "",
 	}
-}
-
-func writeAgentMutationJSON(w io.Writer, envelope agentMutationEnvelope) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(envelope)
-}
-
-func writeAgentMutationJSONSuccess(w io.Writer, mutate func(*agentMutationEnvelope)) error {
-	envelope := newAgentMutationEnvelope()
-	envelope.OK = true
-	if mutate != nil {
-		mutate(&envelope)
-	}
-	return writeAgentMutationJSON(w, envelope)
-}
-
-func writeAgentMutationJSONError(w io.Writer, err error) error {
-	envelope := newAgentMutationEnvelope()
-	code := errors.GetCode(err)
-	if code == "" {
-		code = errors.EInternal
-	}
-	envelope.ErrorCode = string(code)
-	envelope.Message = err.Error()
 	if ae, ok := errors.AsAgencyError(err); ok {
-		envelope.Message = ae.Msg
+		payload.Message = ae.Msg
 		if ae.Details != nil {
-			envelope.Hint = ae.Details["hint"]
-			envelope.RequestID = ae.Details["request_id"]
+			payload.Hint = ae.Details["hint"]
+			payload.RequestID = ae.Details["request_id"]
 		}
 	}
-	return writeAgentMutationJSON(w, envelope)
-}
-
-// WriteAgentMutationJSONError writes a stable mutation error envelope.
-// Exported for CLI preflight validation paths that occur before command dispatch.
-func WriteAgentMutationJSONError(w io.Writer, err error) error {
-	return writeAgentMutationJSONError(w, err)
+	return writeCommandJSON(w, payload)
 }

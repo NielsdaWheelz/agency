@@ -39,7 +39,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 			code = errors.EInternal
 		}
 		status := prSyncHTTPStatusForCode(code)
-		s.writeWorktreePRSyncError(w, status, requestID, string(code), err.Error(), "use 'agency worktree ls' to list worktrees")
+		s.writeWorktreePRSyncError(w, status, requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Broken || record.Meta == nil {
@@ -51,27 +51,40 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
+	resp, err := s.executeWorktreePRSync(r.Context(), requestID, record, req)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), prSyncHintFromError(err))
+		return
+	}
+	s.writeJSON(w, http.StatusOK, *resp)
+}
+
+func (s *Server) executeWorktreePRSync(
+	ctx context.Context,
+	requestID string,
+	record *store.IntegrationWorktreeRecord,
+	req WorktreePRSyncRequest,
+) (*WorktreePRSyncResponse, error) {
+	if record == nil || record.Meta == nil {
+		return nil, errors.New(errors.EInternal, "worktree metadata missing")
+	}
+
 	unlock, err := s.repoLock.Lock(record.RepoID, "worktree_pr_sync")
 	if err != nil {
-		s.writeWorktreePRSyncError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.ERepoLocked),
+		return nil, errors.NewWithDetails(
+			errors.ERepoLocked,
 			"repository is locked by another operation",
-			"wait for the other operation to complete",
+			map[string]string{"hint": "wait for the other operation to complete"},
 		)
-		return
 	}
 	defer func() { _ = unlock() }()
 
 	if err := s.ensureWorktreeMergeInactive(record.RepoID, record.WorktreeID, "run pr sync"); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EWorktreeMergeActive
-		}
-		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
-		return
+		return nil, err
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventStarted, map[string]any{
@@ -81,34 +94,28 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
-			code = errors.EPersistFailed
+			return nil, errors.New(errors.EPersistFailed, err.Error())
 		}
-		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
-		return
+		return nil, err
 	}
 
-	result, err := s.runWorktreePRSync(r.Context(), record, req)
+	result, err := s.performWorktreePRSync(ctx, record, req)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.EInternal
 		}
-		hint := prSyncHintFromError(err)
-
 		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventFailed, map[string]any{
 			"error_code": string(code),
-			"message":    err.Error(),
+			"message":    apiErrorMessage(err),
 		}); appendErr != nil {
 			appendCode := errors.GetCode(appendErr)
 			if appendCode == "" {
-				appendCode = errors.EPersistFailed
+				return nil, errors.New(errors.EPersistFailed, appendErr.Error())
 			}
-			s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(appendCode), requestID, string(appendCode), appendErr.Error(), "")
-			return
+			return nil, appendErr
 		}
-
-		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), hint)
-		return
+		return nil, err
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventSucceeded, map[string]any{
@@ -119,13 +126,12 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
-			code = errors.EPersistFailed
+			return nil, errors.New(errors.EPersistFailed, err.Error())
 		}
-		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), err.Error(), "")
-		return
+		return nil, err
 	}
 
-	resp := WorktreePRSyncResponse{
+	return &WorktreePRSyncResponse{
 		OK:                    true,
 		APIVersion:            APIVersion,
 		BuildVersion:          version.FullVersion(),
@@ -136,11 +142,10 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		PRNumber:              result.PRNumber,
 		PRURL:                 result.PRURL,
 		PRAction:              result.PRAction,
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	}, nil
 }
 
-func (s *Server) runWorktreePRSync(
+func (s *Server) performWorktreePRSync(
 	ctx context.Context,
 	record *store.IntegrationWorktreeRecord,
 	req WorktreePRSyncRequest,

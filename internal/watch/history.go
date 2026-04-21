@@ -132,7 +132,7 @@ func (m model) renderHistory() string {
 	if len(m.historyTurns) == 0 {
 		lines = append(lines, "no history entries available")
 		lines = append(lines, "")
-		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • x actions • r refresh • b back • q quit"))
+		lines = append(lines, m.renderHistoryHelp("j/k move • enter restore • d review • t transcript • l logs • a attach • x actions • r refresh • b back • q quit"))
 		return strings.Join(lines, "\n")
 	}
 
@@ -142,7 +142,7 @@ func (m model) renderHistory() string {
 		m.renderHistoryTurn(&builder, index, turn, width)
 	}
 	builder.WriteString("\n")
-	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • t transcript • l logs • a attach • x actions • r refresh • b back • q quit"))
+	builder.WriteString(m.renderHistoryHelp("j/k move • enter restore • d review • t transcript • l logs • a attach • x actions • r refresh • b back • q quit"))
 	return builder.String()
 }
 
@@ -238,7 +238,7 @@ func (m model) historyWorktreeLabel(worktreeID string) string {
 		if wt.WorktreeID != worktreeID {
 			continue
 		}
-		label := strings.TrimSpace(wt.Name)
+		label := strings.TrimSpace(wt.WorktreeName)
 		if label != "" {
 			return label
 		}

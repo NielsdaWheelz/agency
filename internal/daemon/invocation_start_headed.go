@@ -143,12 +143,12 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	}
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
 	if err != nil {
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", req.ClientRequestID, requestID)
 		return
 	}
 	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath); err != nil {
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", req.ClientRequestID, requestID)
 		return
 	}
@@ -160,20 +160,20 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 			"session_name": sessionName,
 		})
 	} else if exists {
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusConflict, string(errors.ETmuxSessionExists), "tmux session already exists: "+sessionName, "a tmux session with this name already exists; kill it with 'tmux kill-session -t "+sessionName+"'", req.ClientRequestID, requestID)
 		return
 	}
 
 	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoIdentity.RepoID, createResult.InvocationID, "terminal")
 	if err != nil {
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "", req.ClientRequestID, requestID)
 		return
 	}
 	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create terminal log: "+err.Error(), "", req.ClientRequestID, requestID)
 		return
 	}
@@ -181,7 +181,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	argv := append([]string{runnerCmd}, headedRunnerArgs...)
 	if err := s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv); err != nil {
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", req.ClientRequestID, requestID)
 		return
 	}
@@ -193,31 +193,20 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	} else if scrollback != "" {
 		if err := os.WriteFile(terminalLogPath, []byte(scrollback), 0o600); err != nil {
 			_ = s.TmuxClient.KillSession(ctx, sessionName)
-			s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+			s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to write initial terminal capture: "+err.Error(), "", req.ClientRequestID, requestID)
 			return
 		}
 	}
 	if err := s.TmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
-		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available", req.ClientRequestID, requestID)
 		return
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
-	daemonPID := os.Getpid()
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	err = s.Store.UpdateInvocationMeta(repoIdentity.RepoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusRunning
-		meta.TmuxSession = sessionName
-		meta.DaemonPID = &daemonPID
-		meta.DaemonInstanceID = s.InstanceID
-		meta.ClaimedAt = now
-		meta.LifecycleOwner = "daemon"
-		meta.RunnerArgs = runnerArgs
-	})
-	if err != nil {
+	if err := s.claimHeadedInvocation(repoIdentity.RepoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", req.ClientRequestID, requestID)
 		return
@@ -297,9 +286,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
 		proc.SetResumeSessionID(n.SessionID)
 	})
-	s.mu.Lock()
-	s.processes[createResult.InvocationID] = proc
-	s.mu.Unlock()
+	s.replaceInvocationProcess(createResult.InvocationID, proc)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
@@ -307,14 +294,4 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
-}
-
-func (s *Server) markHeadedInvocationFailed(repoID, invocationID, exitReason string) {
-	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = exitReason
-		meta.FinishedAt = now
-		meta.Flags.NeedsAttention = true
-	})
 }

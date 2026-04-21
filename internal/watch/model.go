@@ -30,6 +30,7 @@ type watchPage string
 const (
 	pageWorkspace  watchPage = "workspace"
 	pageHistory    watchPage = "history"
+	pageReview     watchPage = "review"
 	pageTranscript watchPage = "transcript"
 	pageLogs       watchPage = "logs"
 )
@@ -82,6 +83,16 @@ type historyLoadedMsg struct {
 	err   error
 }
 
+type reviewLoadedMsg struct {
+	invocationID string
+	repoID       string
+	turnID       string
+	diff         daemon.InvocationDiffData
+	check        daemon.InvocationCheckData
+	files        []reviewFile
+	err          error
+}
+
 type logsLoadedMsg struct {
 	kind    string
 	content string
@@ -126,7 +137,6 @@ type model struct {
 	selectedInvocationID string
 	selectedRepoID       string
 	selectedMode         string
-	selectedStatus       string
 
 	workspaceLoading bool
 	workspaceError   string
@@ -136,6 +146,18 @@ type model struct {
 	historySelectedEntryID string
 	historyLoading         bool
 	historyError           string
+
+	reviewTurnID        string
+	reviewDiff          daemon.InvocationDiffData
+	reviewCheck         daemon.InvocationCheckData
+	reviewFiles         []reviewFile
+	reviewSelectedIndex int
+	reviewSelectedKey   string
+	reviewScroll        int
+	reviewLoading       bool
+	reviewError         string
+	reviewFilesFocus    bool
+	reviewReviewed      map[string]bool
 
 	transcriptContent string
 	transcriptScroll  int
@@ -297,6 +319,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reconcileHistorySelection()
 		return m, nil
 
+	case reviewLoadedMsg:
+		if strings.TrimSpace(m.selectedInvocationID) != strings.TrimSpace(msg.invocationID) ||
+			strings.TrimSpace(m.selectedRepoID) != strings.TrimSpace(msg.repoID) ||
+			strings.TrimSpace(m.reviewTurnID) != strings.TrimSpace(msg.turnID) {
+			return m, nil
+		}
+		m.reviewLoading = false
+		if msg.err != nil {
+			m.reviewError = msg.err.Error()
+			return m, nil
+		}
+		m.reviewDiff = msg.diff
+		m.reviewCheck = msg.check
+		m.reviewFiles = msg.files
+		m.reviewError = ""
+		if m.reviewReviewed == nil {
+			m.reviewReviewed = make(map[string]bool)
+		}
+		m.reconcileReviewSelection()
+		m.reviewScroll = clamp(m.reviewScroll, 0, m.maxReviewScroll())
+		return m, nil
+
 	case transcriptLoadedMsg:
 		m.transcriptLoading = false
 		if msg.err != nil {
@@ -360,6 +404,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyLoading = true
 			cmds = append(cmds, m.loadHistoryCmd())
 		}
+		if m.page == pageReview && !m.reviewLoading {
+			m.reviewLoading = true
+			cmds = append(cmds, m.loadReviewCmd())
+		}
 		if !m.workspaceLoading {
 			m.workspaceLoading = true
 			cmds = append(cmds, m.loadWorkspaceSnapshotCmd())
@@ -387,6 +435,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateWorkspaceKey(msg)
 		case pageHistory:
 			return m.updateHistoryKey(msg)
+		case pageReview:
+			return m.updateReviewKey(msg)
 		case pageTranscript:
 			return m.updateTranscriptKey(msg)
 		case pageLogs:
@@ -404,6 +454,8 @@ func (m model) View() tea.View {
 	switch m.page {
 	case pageHistory:
 		content = m.renderHistory()
+	case pageReview:
+		content = m.renderReview()
 	case pageTranscript:
 		content = m.renderTranscript()
 	case pageLogs:
@@ -440,7 +492,6 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
 			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
 			m.selectedMode = m.snapshot.Invocations[0].Mode
-			m.selectedStatus = m.snapshot.Invocations[0].State
 		}
 		return m, m.loadSelectedSessionForSelectionCmd()
 	case isBottomKey(msg):
@@ -449,7 +500,6 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
 			m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
-			m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].State
 		}
 		return m, m.loadSelectedSessionForSelectionCmd()
 	case msg.Text == "h":
@@ -477,6 +527,8 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
+	case msg.Text == "d":
+		return m.openReviewPage("", pageWorkspace)
 	case msg.Text == "x":
 		return m.openActionMenu()
 	case isEnterKey(msg):
@@ -556,10 +608,95 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
+	case msg.Text == "d":
+		turn, ok := m.selectedTurn()
+		if !ok {
+			m.lastActionError = true
+			m.lastActionMessage = "review unavailable: no turn selected"
+			return m, nil
+		}
+		return m.openReviewPage(turn.EntryID, pageHistory)
 	case msg.Text == "x":
 		return m.openActionMenu()
 	case isEnterKey(msg):
 		return m.startRestoreAction()
+	default:
+		return m, nil
+	}
+}
+
+func (m model) updateReviewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isQuitKey(msg):
+		return m, tea.Quit
+	case isBackKey(msg):
+		switch m.backPage {
+		case pageWorkspace:
+			m.page = pageWorkspace
+			if !m.workspaceLoading {
+				m.workspaceLoading = true
+			}
+			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
+		case pageHistory, pageTranscript, pageLogs:
+			m.page = m.backPage
+			return m, nil
+		default:
+			m.page = pageWorkspace
+			if !m.workspaceLoading {
+				m.workspaceLoading = true
+			}
+			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
+		}
+	case isRefreshKey(msg):
+		if m.reviewLoading {
+			return m, nil
+		}
+		m.reviewLoading = true
+		return m, m.loadReviewCmd()
+	case msg.Code == tea.KeyTab:
+		m.reviewFilesFocus = !m.reviewFilesFocus
+		return m, nil
+	case isUpKey(msg):
+		if m.reviewFilesFocus {
+			m.moveReviewSelection(-1)
+			return m, nil
+		}
+		m.reviewScroll = clamp(m.reviewScroll-1, 0, m.maxReviewScroll())
+		return m, nil
+	case isDownKey(msg):
+		if m.reviewFilesFocus {
+			m.moveReviewSelection(1)
+			return m, nil
+		}
+		m.reviewScroll = clamp(m.reviewScroll+1, 0, m.maxReviewScroll())
+		return m, nil
+	case isTopKey(msg):
+		if m.reviewFilesFocus {
+			m.moveReviewSelectionTo(0)
+			return m, nil
+		}
+		m.reviewScroll = 0
+		return m, nil
+	case isBottomKey(msg):
+		if m.reviewFilesFocus {
+			m.moveReviewSelectionTo(len(m.reviewFiles) - 1)
+			return m, nil
+		}
+		m.reviewScroll = m.maxReviewScroll()
+		return m, nil
+	case msg.Text == " ":
+		m.toggleReviewed()
+		return m, nil
+	case msg.Text == "n":
+		m.moveReviewSelectionToNextUnreviewed(1)
+		return m, nil
+	case msg.Text == "N":
+		m.moveReviewSelectionToNextUnreviewed(-1)
+		return m, nil
+	case msg.Text == "a":
+		return m.startInvocationAction(actionAttach)
+	case msg.Text == "x":
+		return m.openActionMenu()
 	default:
 		return m, nil
 	}
@@ -601,6 +738,8 @@ func (m model) updateTranscriptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.logsError = ""
 		m.logsScroll = 0
 		return m, m.loadLogsCmd()
+	case msg.Text == "d":
+		return m.openReviewPage("", pageTranscript)
 	case msg.Text == "x":
 		return m.openActionMenu()
 	default:
@@ -642,6 +781,8 @@ func (m model) updateLogsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case msg.Text == "a":
 		return m.startInvocationAction(actionAttach)
+	case msg.Text == "d":
+		return m.openReviewPage("", pageLogs)
 	case msg.Text == "x":
 		return m.openActionMenu()
 	default:
@@ -666,6 +807,47 @@ func (m *model) loadHistoryCmd() tea.Cmd {
 	return func() tea.Msg {
 		turns, err := loadHistoryTurns(ctx, client, invocationID, repoID)
 		return historyLoadedMsg{turns: turns, err: err}
+	}
+}
+
+func (m *model) loadReviewCmd() tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	invocationID := m.selectedInvocationID
+	repoID := m.selectedRepoID
+	turnID := m.reviewTurnID
+	return func() tea.Msg {
+		diffResult, err := client.GetInvocationDiff(ctx, invocationID, repoID, daemonclient.GetInvocationDiffOpts{
+			IncludePatch:       true,
+			MaxPatchBytes:      5 * 1024 * 1024,
+			IncludeUncommitted: true,
+			TurnID:             turnID,
+		})
+		if err != nil {
+			return reviewLoadedMsg{
+				invocationID: invocationID,
+				repoID:       repoID,
+				turnID:       turnID,
+				err:          err,
+			}
+		}
+		checkResult, err := client.GetInvocationCheck(ctx, invocationID, repoID)
+		if err != nil {
+			return reviewLoadedMsg{
+				invocationID: invocationID,
+				repoID:       repoID,
+				turnID:       turnID,
+				err:          err,
+			}
+		}
+		return reviewLoadedMsg{
+			invocationID: invocationID,
+			repoID:       repoID,
+			turnID:       turnID,
+			diff:         diffResult.Data,
+			check:        checkResult.Data,
+			files:        reviewFilesFromDiff(diffResult.Data),
+		}
 	}
 }
 
@@ -1158,6 +1340,28 @@ func (m model) startRestoreAction() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m model) openReviewPage(turnID string, backPage watchPage) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(m.selectedInvocationID) == "" || strings.TrimSpace(m.selectedRepoID) == "" {
+		m.lastActionError = true
+		m.lastActionMessage = "review unavailable: no invocation selected"
+		return m, nil
+	}
+	m.page = pageReview
+	m.backPage = backPage
+	m.reviewTurnID = strings.TrimSpace(turnID)
+	m.reviewDiff = daemon.InvocationDiffData{}
+	m.reviewCheck = daemon.InvocationCheckData{}
+	m.reviewFiles = nil
+	m.reviewSelectedIndex = 0
+	m.reviewSelectedKey = ""
+	m.reviewScroll = 0
+	m.reviewLoading = true
+	m.reviewError = ""
+	m.reviewFilesFocus = true
+	m.reviewReviewed = make(map[string]bool)
+	return m, m.loadReviewCmd()
+}
+
 func (m model) selectedInvocation() (daemon.InvocationDTO, bool) {
 	if len(m.snapshot.Invocations) == 0 {
 		return daemon.InvocationDTO{}, false
@@ -1174,13 +1378,12 @@ func (m model) selectedTurn() (daemon.Turn, bool) {
 	return m.historyTurns[idx], true
 }
 
-func (m model) selectedCheck() (daemon.InvocationCheckData, bool) {
-	selected, ok := m.selectedInvocation()
-	if !ok {
-		return daemon.InvocationCheckData{}, false
+func (m model) selectedReviewFile() (reviewFile, bool) {
+	if len(m.reviewFiles) == 0 {
+		return reviewFile{}, false
 	}
-	check, ok := m.snapshot.Checks[selected.InvocationID]
-	return check, ok
+	idx := clamp(m.reviewSelectedIndex, 0, len(m.reviewFiles)-1)
+	return m.reviewFiles[idx], true
 }
 
 func (m model) selectedSessionCanRecreate() bool {
@@ -1229,11 +1432,7 @@ func (m model) canStartAction(kind actionKind) bool {
 		if m.prSync == nil || strings.TrimSpace(selected.WorktreeID) == "" {
 			return false
 		}
-		check, ok := m.selectedCheck()
-		if !ok {
-			return true
-		}
-		return check.PRSyncEligible || selected.LandingStatus == "landed"
+		return selected.PRSyncEligible
 	case actionPRMerge:
 		return m.prMerge != nil && strings.TrimSpace(selected.WorktreeID) != ""
 	case actionRebase:
@@ -1258,7 +1457,6 @@ func (m *model) moveSelection(delta int) {
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
 		m.selectedMode = ""
-		m.selectedStatus = ""
 		return
 	}
 	next := clamp(m.selectedIndex+delta, 0, len(m.snapshot.Invocations)-1)
@@ -1266,7 +1464,6 @@ func (m *model) moveSelection(delta int) {
 	m.selectedInvocationID = m.snapshot.Invocations[next].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[next].RepoID
 	m.selectedMode = m.snapshot.Invocations[next].Mode
-	m.selectedStatus = m.snapshot.Invocations[next].State
 }
 
 func (m *model) reconcileSelection() {
@@ -1275,7 +1472,6 @@ func (m *model) reconcileSelection() {
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
 		m.selectedMode = ""
-		m.selectedStatus = ""
 		return
 	}
 
@@ -1285,7 +1481,6 @@ func (m *model) reconcileSelection() {
 				m.selectedIndex = idx
 				m.selectedRepoID = inv.RepoID
 				m.selectedMode = inv.Mode
-				m.selectedStatus = inv.State
 				return
 			}
 		}
@@ -1295,7 +1490,6 @@ func (m *model) reconcileSelection() {
 	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
 	m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
-	m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].State
 }
 
 func (m *model) reconcileHistorySelection() {
@@ -1316,6 +1510,84 @@ func (m *model) reconcileHistorySelection() {
 
 	m.historySelectedIndex = len(m.historyTurns) - 1
 	m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
+}
+
+func (m *model) moveReviewSelection(delta int) {
+	if len(m.reviewFiles) == 0 {
+		m.reviewSelectedIndex = 0
+		m.reviewSelectedKey = ""
+		m.reviewScroll = 0
+		return
+	}
+	next := clamp(m.reviewSelectedIndex+delta, 0, len(m.reviewFiles)-1)
+	m.reviewSelectedIndex = next
+	m.reviewSelectedKey = m.reviewFiles[next].key
+	m.reviewScroll = 0
+}
+
+func (m *model) moveReviewSelectionTo(index int) {
+	if len(m.reviewFiles) == 0 {
+		m.reviewSelectedIndex = 0
+		m.reviewSelectedKey = ""
+		m.reviewScroll = 0
+		return
+	}
+	next := clamp(index, 0, len(m.reviewFiles)-1)
+	m.reviewSelectedIndex = next
+	m.reviewSelectedKey = m.reviewFiles[next].key
+	m.reviewScroll = 0
+}
+
+func (m *model) moveReviewSelectionToNextUnreviewed(delta int) {
+	if len(m.reviewFiles) == 0 || delta == 0 {
+		return
+	}
+	start := clamp(m.reviewSelectedIndex, 0, len(m.reviewFiles)-1)
+	for step := 1; step <= len(m.reviewFiles); step++ {
+		idx := (start + step*delta + len(m.reviewFiles)) % len(m.reviewFiles)
+		if !m.reviewReviewed[m.reviewFiles[idx].key] {
+			m.reviewSelectedIndex = idx
+			m.reviewSelectedKey = m.reviewFiles[idx].key
+			m.reviewScroll = 0
+			return
+		}
+	}
+}
+
+func (m *model) toggleReviewed() {
+	selected, ok := m.selectedReviewFile()
+	if !ok {
+		return
+	}
+	if m.reviewReviewed == nil {
+		m.reviewReviewed = make(map[string]bool)
+	}
+	if m.reviewReviewed[selected.key] {
+		delete(m.reviewReviewed, selected.key)
+		return
+	}
+	m.reviewReviewed[selected.key] = true
+}
+
+func (m *model) reconcileReviewSelection() {
+	if len(m.reviewFiles) == 0 {
+		m.reviewSelectedIndex = 0
+		m.reviewSelectedKey = ""
+		m.reviewScroll = 0
+		return
+	}
+
+	if strings.TrimSpace(m.reviewSelectedKey) != "" {
+		for idx, file := range m.reviewFiles {
+			if file.key == m.reviewSelectedKey {
+				m.reviewSelectedIndex = idx
+				return
+			}
+		}
+	}
+
+	m.reviewSelectedIndex = clamp(m.reviewSelectedIndex, 0, len(m.reviewFiles)-1)
+	m.reviewSelectedKey = m.reviewFiles[m.reviewSelectedIndex].key
 }
 
 func (m model) maxLogsScroll() int {

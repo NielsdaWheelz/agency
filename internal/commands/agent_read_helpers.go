@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -178,13 +177,7 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	}
 	attachCommand := ""
 	if inv.Navigation != nil {
-		navigationValue := reflect.ValueOf(inv.Navigation)
-		if navigationValue.Kind() == reflect.Pointer && !navigationValue.IsNil() {
-			attachField := navigationValue.Elem().FieldByName("AttachCommand")
-			if attachField.IsValid() && attachField.Kind() == reflect.String {
-				attachCommand = strings.TrimSpace(attachField.String())
-			}
-		}
+		attachCommand = strings.TrimSpace(inv.Navigation.AttachCommand)
 		if strings.TrimSpace(inv.Navigation.HistoryCommand) != "" {
 			_, _ = fmt.Fprintf(w, "history_command:        %s\n", inv.Navigation.HistoryCommand)
 		}
@@ -221,9 +214,6 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 	_, _ = fmt.Fprintf(w, "pr_sync_eligible:     %s\n", prSyncEligible)
 	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", check.InvocationID)
 	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", check.RepoID)
-	if check.StatusSummary != "" {
-		_, _ = fmt.Fprintf(w, "status_summary:       %s\n", check.StatusSummary)
-	}
 	if check.LandingStatus != "" {
 		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", check.LandingStatus)
 	}
@@ -239,43 +229,10 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 	if check.RunnerSummary != "" {
 		_, _ = fmt.Fprintf(w, "runner_summary:       %s\n", check.RunnerSummary)
 	}
-	if check.LatestActivity != nil {
-		if strings.TrimSpace(check.LatestActivity.TurnID) != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_turn: %s\n", check.LatestActivity.TurnID)
-		}
-		if strings.TrimSpace(check.LatestActivity.Kind) != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_kind: %s\n", check.LatestActivity.Kind)
-		}
-		if latestLabel := formatLatestActivityLabel(check.LatestActivity); latestLabel != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity:      %s\n", latestLabel)
-		}
-		for _, toolLine := range latestActivityToolSummaries(check.LatestActivity) {
-			_, _ = fmt.Fprintf(w, "latest_activity_tool: %s\n", toolLine)
-		}
-		if check.LatestActivity.CheckpointID > 0 {
-			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint: %d\n", check.LatestActivity.CheckpointID)
-		}
-		if description := strings.TrimSpace(check.LatestActivity.CheckpointDescription); description != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_description: %s\n", description)
-		}
-		if diffstat := strings.TrimSpace(check.LatestActivity.CheckpointDiffstat); diffstat != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_diffstat: %s\n", diffstat)
-		}
-		if pathsSummary := latestActivityCheckpointPathSummary(check.LatestActivity); pathsSummary != "" {
-			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_paths: %s\n", pathsSummary)
-		}
-	}
 	if check.HowToTest != "" {
 		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", check.HowToTest)
 	}
-	attachCommand := ""
-	navigationValue := reflect.ValueOf(check.Navigation)
-	if navigationValue.IsValid() {
-		attachField := navigationValue.FieldByName("AttachCommand")
-		if attachField.IsValid() && attachField.Kind() == reflect.String {
-			attachCommand = strings.TrimSpace(attachField.String())
-		}
-	}
+	attachCommand := strings.TrimSpace(check.Navigation.AttachCommand)
 	if attachCommand != "" {
 		_, _ = fmt.Fprintf(w, "attach_command:      %s\n", attachCommand)
 	}

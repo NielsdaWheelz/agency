@@ -202,7 +202,7 @@ func completeWorktreeRefsForState(cmd *cobra.Command, toComplete string, state s
 
 	candidates := make([]string, 0, len(result.Data.Worktrees))
 	for _, worktree := range result.Data.Worktrees {
-		ref := worktree.Name
+		ref := worktree.WorktreeName
 		if ref == "" {
 			ref = worktree.WorktreeID
 		}

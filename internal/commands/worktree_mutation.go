@@ -85,16 +85,8 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 	}
 
-	result, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, opts.WorktreeRef, opts.Force)
-	if err != nil {
+	if _, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, opts.WorktreeRef, opts.Force); err != nil {
 		return err
-	}
-	if !result.OK {
-		return errors.NewWithDetails(
-			errors.Code(result.ErrorCode),
-			result.Message,
-			map[string]string{"hint": result.Hint},
-		)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Removed integration worktree '%s'\n", opts.WorktreeRef)
@@ -117,7 +109,7 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
@@ -141,32 +133,24 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	if err != nil {
 		return fail(err)
 	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.Branch = resp.Branch
-			envelope.PRNumber = resp.PRNumber
-			envelope.PRURL = resp.PRURL
-			envelope.PRAction = resp.PRAction
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID                string `json:"repo_id,omitempty"`
+			IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
+			Branch                string `json:"branch,omitempty"`
+			PRNumber              int    `json:"pr_number,omitempty"`
+			PRURL                 string `json:"pr_url,omitempty"`
+			PRAction              string `json:"pr_action,omitempty"`
+		}{
+			commandJSONBase:       newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			RepoID:                resp.RepoID,
+			IntegrationWorktreeID: resp.IntegrationWorktreeID,
+			Branch:                resp.Branch,
+			PRNumber:              resp.PRNumber,
+			PRURL:                 resp.PRURL,
+			PRAction:              resp.PRAction,
 		})
 	}
 
@@ -201,7 +185,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	strategyCount := 0
@@ -289,16 +273,6 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	if err != nil {
 		return fail(err)
 	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
 
 	merge, err := waitForWorktreeMergeTerminal(ctx, ns.client, opts.WorktreeRef, repoCtx.RepoID, func(update string) {
 		if opts.JSON || strings.TrimSpace(update) == "" {
@@ -334,24 +308,30 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.Branch = merge.Branch
-			envelope.PRNumber = merge.PRNumber
-			envelope.PRURL = merge.PRURL
-			envelope.Strategy = merge.Strategy
-			envelope.DeleteBranch = merge.DeleteBranch
-			envelope.MergeLogPath = merge.MergeLogPath
-			envelope.VerifyLogPath = merge.VerifyLogPath
-			envelope.ArchiveLogPath = merge.ArchiveLogPath
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = requestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID                string `json:"repo_id,omitempty"`
+			IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
+			Branch                string `json:"branch,omitempty"`
+			PRNumber              int    `json:"pr_number,omitempty"`
+			PRURL                 string `json:"pr_url,omitempty"`
+			Strategy              string `json:"strategy,omitempty"`
+			DeleteBranch          bool   `json:"delete_branch,omitempty"`
+			MergeLogPath          string `json:"merge_log_path,omitempty"`
+			VerifyLogPath         string `json:"verify_log_path,omitempty"`
+			ArchiveLogPath        string `json:"archive_log_path,omitempty"`
+		}{
+			commandJSONBase:       newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", requestID),
+			RepoID:                resp.RepoID,
+			IntegrationWorktreeID: resp.IntegrationWorktreeID,
+			Branch:                merge.Branch,
+			PRNumber:              merge.PRNumber,
+			PRURL:                 merge.PRURL,
+			Strategy:              merge.Strategy,
+			DeleteBranch:          merge.DeleteBranch,
+			MergeLogPath:          merge.MergeLogPath,
+			VerifyLogPath:         merge.VerifyLogPath,
+			ArchiveLogPath:        merge.ArchiveLogPath,
 		})
 	}
 
@@ -419,7 +399,7 @@ func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		if err == nil || !opts.JSON {
 			return err
 		}
-		return writeAgentMutationJSONError(stdout, err)
+		return writeCommandJSONError(stdout, err)
 	}
 
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
@@ -440,29 +420,20 @@ func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	if err != nil {
 		return fail(err)
 	}
-	if !resp.OK {
-		return fail(errors.NewWithDetails(
-			errors.Code(resp.ErrorCode),
-			resp.Message,
-			map[string]string{
-				"hint":       resp.Hint,
-				"request_id": resp.RequestID,
-			},
-		))
-	}
 
 	if opts.JSON {
-		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
-			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.Branch = resp.Branch
-			if resp.APIVersion > 0 {
-				envelope.APIVersion = resp.APIVersion
-			}
-			if resp.BuildVersion != "" {
-				envelope.BuildVersion = resp.BuildVersion
-			}
-			envelope.RequestID = resp.RequestID
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID                string `json:"repo_id,omitempty"`
+			IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
+			Branch                string `json:"branch,omitempty"`
+			BaseBranch            string `json:"base_branch,omitempty"`
+		}{
+			commandJSONBase:       newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
+			RepoID:                resp.RepoID,
+			IntegrationWorktreeID: resp.IntegrationWorktreeID,
+			Branch:                resp.Branch,
+			BaseBranch:            resp.BaseBranch,
 		})
 	}
 

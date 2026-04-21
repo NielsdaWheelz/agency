@@ -47,27 +47,19 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	now := s.Clock().UTC().Format(time.RFC3339)
 	nowTime := s.Clock()
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue
 		}
 		if r.Meta.Mode == store.RunnerModeHeaded {
-			s.recoverHeadedInvocation(ctx, repoID, r, now, nowTime)
+			s.recoverHeadedInvocation(ctx, repoID, r, nowTime)
 			continue
 		}
 		if r.Meta.Status == store.InvocationStatusStarting {
 			startedAt, err := time.Parse(time.RFC3339, r.Meta.StartedAt)
 			if err == nil && nowTime.Sub(startedAt) > 60*time.Second && r.Meta.PID == nil {
-				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-					meta.Status = store.InvocationStatusFailed
-					meta.ExitReason = "start_failed"
-					meta.FailureReason = "start_incomplete"
-					meta.FinishedAt = now
-					meta.Flags.NeedsAttention = true
-					meta.LifecycleOwner = ""
-				})
+				s.failInvocationStart(repoID, r.InvocationID, "start_incomplete", true)
 			}
 			continue
 		}
@@ -77,13 +69,7 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 		}
 		if r.Meta.PID == nil {
 			if r.Meta.Status == store.InvocationStatusStopping {
-				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-					meta.Status = store.InvocationStatusFailed
-					meta.ExitReason = "stopped"
-					meta.FailureReason = "stopped"
-					meta.FinishedAt = now
-					meta.LifecycleOwner = ""
-				})
+				s.failInvocationStopped(repoID, r.InvocationID, "stopped")
 			}
 			continue
 		}
@@ -91,14 +77,7 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 		pid := *r.Meta.PID
 		if r.Meta.Status == store.InvocationStatusStopping {
 			if !s.PIDChecker(pid) {
-				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-					meta.Status = store.InvocationStatusFailed
-					meta.ExitReason = "stopped"
-					meta.FailureReason = "stopped"
-					meta.FinishedAt = now
-					meta.PID = nil
-					meta.LifecycleOwner = ""
-				})
+				s.failInvocationStopped(repoID, r.InvocationID, "stopped")
 				continue
 			}
 
@@ -107,13 +86,7 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 				pgid = pid
 			}
 			if pgid <= 0 {
-				_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-					meta.Status = store.InvocationStatusFailed
-					meta.ExitReason = "stopped"
-					meta.FailureReason = "stopped"
-					meta.FinishedAt = now
-					meta.LifecycleOwner = ""
-				})
+				s.failInvocationStopped(repoID, r.InvocationID, "stopped")
 				continue
 			}
 
@@ -121,30 +94,17 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 			continue
 		}
 		if !s.PIDChecker(pid) {
-			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-				meta.Status = store.InvocationStatusFailed
-				meta.ExitReason = "unknown"
-				meta.FailureReason = "runner_exit_nonzero"
-				meta.FinishedAt = now
-				meta.PID = nil
-				meta.Flags.NeedsAttention = true
-				meta.Flags.Orphaned = true
-				meta.LifecycleOwner = ""
-			})
+			s.failInvocationUnknown(repoID, r.InvocationID, "runner_exit_nonzero", true)
 			continue
 		}
 		if r.Meta.DaemonInstanceID != s.InstanceID {
-			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-				meta.Flags.NeedsAttention = true
-				meta.Flags.Orphaned = true
-				meta.OrphanedAt = now
-			})
+			s.markInvocationOrphaned(repoID, r.InvocationID)
 		}
 	}
 	return nil
 }
 
-func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r store.InvocationRecord, now string, nowTime time.Time) {
+func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r store.InvocationRecord, nowTime time.Time) {
 	if r.Meta.Status != store.InvocationStatusStarting &&
 		r.Meta.Status != store.InvocationStatusRunning &&
 		r.Meta.Status != store.InvocationStatusStopping {
@@ -170,39 +130,16 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 	case store.InvocationStatusStarting:
 		startedAt, parseErr := time.Parse(time.RFC3339, r.Meta.StartedAt)
 		if parseErr != nil {
-			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-				meta.Status = store.InvocationStatusFailed
-				meta.ExitReason = "start_failed"
-				meta.FailureReason = "tmux_session_missing"
-				meta.FinishedAt = now
-				meta.LifecycleOwner = ""
-			})
+			s.failInvocationStart(repoID, r.InvocationID, "tmux_session_missing", false)
 			return
 		}
 		if nowTime.Sub(startedAt) > 30*time.Second {
-			_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-				meta.Status = store.InvocationStatusFailed
-				meta.ExitReason = "start_failed"
-				meta.FailureReason = "tmux_session_missing"
-				meta.FinishedAt = now
-				meta.LifecycleOwner = ""
-			})
+			s.failInvocationStart(repoID, r.InvocationID, "tmux_session_missing", false)
 		}
 	case store.InvocationStatusRunning:
-		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFinished
-			meta.ExitReason = "exited"
-			meta.FinishedAt = now
-			meta.LifecycleOwner = ""
-		})
+		s.finishInvocationExited(repoID, r.InvocationID)
 	case store.InvocationStatusStopping:
-		_ = s.Store.UpdateInvocationMeta(repoID, r.InvocationID, func(meta *store.InvocationMeta) {
-			meta.Status = store.InvocationStatusFailed
-			meta.ExitReason = "stopped"
-			meta.FailureReason = "stopped"
-			meta.FinishedAt = now
-			meta.LifecycleOwner = ""
-		})
+		s.failInvocationStopped(repoID, r.InvocationID, "stopped")
 	}
 }
 
