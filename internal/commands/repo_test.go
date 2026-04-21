@@ -302,6 +302,7 @@ func TestRepoShow_FormatOutput_Accessible(t *testing.T) {
 
 	r := daemon.RepoDTO{
 		RepoID:                  "abc123def456",
+		RepoName:                "repo",
 		RepoKey:                 "github:owner/repo",
 		PreferredRoot:           "/home/user/repo",
 		PreferredRootAccessible: true,
@@ -310,7 +311,7 @@ func TestRepoShow_FormatOutput_Accessible(t *testing.T) {
 	}
 
 	// Exercise the formatting path from RepoShow
-	_, _ = stdout.WriteString("repo_id:        " + r.RepoID + "\n")
+	_, _ = stdout.WriteString("repo:           " + r.RepoName + " (" + r.RepoID + ")\n")
 	_, _ = stdout.WriteString("repo_key:       " + r.RepoKey + "\n")
 	_, _ = stdout.WriteString("preferred_root: " + r.PreferredRoot + "\n")
 	accessible := "yes"
@@ -331,6 +332,7 @@ func TestRepoShow_FormatOutput_Inaccessible(t *testing.T) {
 
 	r := daemon.RepoDTO{
 		RepoID:                  "abc123def456",
+		RepoName:                "repo",
 		PreferredRoot:           "/gone/repo",
 		PreferredRootAccessible: false,
 	}

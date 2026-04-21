@@ -16,7 +16,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -146,8 +145,12 @@ func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAd
 		})
 	}
 
+	repoLabel := result.Data.RepoID
+	if strings.TrimSpace(result.Data.RepoName) != "" {
+		repoLabel = result.Data.RepoName + " (" + result.Data.RepoID + ")"
+	}
 	_, _ = fmt.Fprintf(stdout, "Registered repo\n")
-	_, _ = fmt.Fprintf(stdout, "  repo_id:        %s\n", result.Data.RepoID)
+	_, _ = fmt.Fprintf(stdout, "  repo:           %s\n", repoLabel)
 	_, _ = fmt.Fprintf(stdout, "  repo_key:       %s\n", result.Data.RepoKey)
 	_, _ = fmt.Fprintf(stdout, "  preferred_root: %s\n", result.Data.PreferredRoot)
 	if len(result.Data.Paths) > 1 {
@@ -187,15 +190,15 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	}
 
 	for _, r := range result.Data.Repos {
-		// Show short name as primary column; fall back to truncated ID for path-based repos
-		label := ids.RepoShortName(r.RepoKey)
-		if label == "" {
-			label = r.RepoID
+		repoLabel := r.RepoID
+		if strings.TrimSpace(r.RepoName) != "" {
+			repoLabel = r.RepoName + " (" + r.RepoID + ")"
 		}
-		if len(label) > 20 {
-			label = label[:20]
+		if strings.TrimSpace(r.RepoKey) != "" {
+			_, _ = fmt.Fprintf(stdout, "%s  %s  %s\n", repoLabel, r.RepoKey, r.PreferredRoot)
+			continue
 		}
-		_, _ = fmt.Fprintf(stdout, "%-20s %s  %s\n", label, r.RepoKey, r.PreferredRoot)
+		_, _ = fmt.Fprintf(stdout, "%s  %s\n", repoLabel, r.PreferredRoot)
 	}
 
 	return nil
@@ -344,7 +347,11 @@ func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmO
 		})
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Removed repository %s\n", result.Data.RepoID)
+	repoLabel := result.Data.RepoID
+	if strings.TrimSpace(result.Data.RepoName) != "" {
+		repoLabel = result.Data.RepoName + " (" + result.Data.RepoID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "Removed repository %s\n", repoLabel)
 	return nil
 }
 
@@ -367,7 +374,11 @@ func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoS
 	}
 
 	r := result.Data
-	_, _ = fmt.Fprintf(stdout, "repo_id:        %s\n", r.RepoID)
+	repoLabel := r.RepoID
+	if strings.TrimSpace(r.RepoName) != "" {
+		repoLabel = r.RepoName + " (" + r.RepoID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "repo:           %s\n", repoLabel)
 	_, _ = fmt.Fprintf(stdout, "repo_key:       %s\n", r.RepoKey)
 	_, _ = fmt.Fprintf(stdout, "preferred_root: %s\n", r.PreferredRoot)
 	accessible := "yes"

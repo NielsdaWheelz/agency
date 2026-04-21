@@ -16,6 +16,7 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - Successful worktree PR merge archives the worktree record and removes the tree directory.
 - Archived worktrees stay discoverable through `agency worktree ls --all`, but targeted lookup by name or id prefix only considers present worktrees.
 - Archived worktrees must be addressed by exact `worktree_id`.
+- The active context points at one present integration worktree and is the default target for context-aware commands such as `agency agent start`.
 - `agency agent start` and worktree PR flows honor explicit `--agency-config`; otherwise they resolve repo-shared config from the registered repo canonical root before falling back to local per-repo config.
 - An `agency.json` inside an integration worktree or sandbox is not repo-shared config and must not override the canonical repo-root config.
 
@@ -25,9 +26,10 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - `agency repo add [path]` accepts a positional checkout path. Omitting the path means use cwd.
 - `agency init` and `agency doctor` default to cwd and accept `--path <checkout-path>` when targeting a different repo checkout.
 - `agency worktree <worktree-ref>` and `agency agent <invocation-ref>` are the canonical default show forms for targeted inspection.
-- `agency worktree create <name>` and `agency agent start [<worktree-ref>]` accept an explicit `--repo` selector from any cwd; when omitted, they resolve the repo from the current directory.
+- `agency worktree create <name>` and `agency agent start` accept an explicit `--repo` selector from any cwd; when omitted, they resolve the repo from the active context first and then from the current directory.
 - `agency worktree create <name>` defaults an omitted `--base` to the current branch of the selected checkout.
-- `agency agent start [<worktree-ref>]` may infer an omitted positional ref only when cwd is inside a present agency integration worktree.
+- `agency agent start --worktree <worktree-ref>` is the explicit worktree override from any cwd.
+- When `--worktree` is omitted, `agency agent start` resolves the worktree from the active context first and then falls back to cwd only when cwd is inside a present agency integration worktree.
 - `agency agent start` should honor explicit `--agency-config` and otherwise resolve repo-shared config from the registered repo canonical root, then fall back to local per-repo config under `AGENCY_CONFIG_DIR`.
 - Targeted worktree actions stay target-first, for example `agency worktree <worktree-ref> open`, `agency worktree <worktree-ref> rebase`, and `agency worktree <worktree-ref> pr sync`.
 - Creating a worktree requires a registered repo when `--repo` is supplied or a git repo with commits when falling back to cwd, plus a clean base checkout and an existing base branch.

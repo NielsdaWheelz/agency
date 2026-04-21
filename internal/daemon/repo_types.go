@@ -10,6 +10,7 @@ type RepoRegisterRequest struct {
 // RepoRegisterData is the data payload for a successful register response.
 type RepoRegisterData struct {
 	RepoID                  string   `json:"repo_id"`
+	RepoName                string   `json:"repo_name"`
 	RepoKey                 string   `json:"repo_key"`
 	Paths                   []string `json:"paths"`
 	PreferredRoot           string   `json:"preferred_root"`
@@ -20,6 +21,7 @@ type RepoRegisterData struct {
 // RepoDTO is the data transfer object for a single repo.
 type RepoDTO struct {
 	RepoID                  string     `json:"repo_id"`
+	RepoName                string     `json:"repo_name"`
 	RepoKey                 string     `json:"repo_key"`
 	Paths                   []string   `json:"paths"`
 	PreferredRoot           string     `json:"preferred_root"`
@@ -49,6 +51,7 @@ type RepoRmRequest struct {
 // RepoRmData is the data payload for a successful repo unregister response.
 type RepoRmData struct {
 	RepoID           string `json:"repo_id"`
+	RepoName         string `json:"repo_name"`
 	RepoKey          string `json:"repo_key"`
 	RemovedFromIndex bool   `json:"removed_from_index"`
 }

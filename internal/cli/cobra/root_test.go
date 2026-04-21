@@ -228,9 +228,10 @@ func TestRoot_HelpExamplesUseTargetFirstGrammar(t *testing.T) {
 	stdout, _, err := executeCmd("--help")
 	require.NoError(t, err, "expected root help to render")
 	assert.Contains(t, stdout, "agency worktree create fix-help --repo agency --base main")
-	assert.Contains(t, stdout, "agency agent start fix-help --repo agency")
+	assert.Contains(t, stdout, "agency context use fix-help --repo agency")
+	assert.Contains(t, stdout, "agency agent start")
 	assert.NotContains(t, stdout, "agency worktree create --repo agency --name fix-help --base main")
-	assert.NotContains(t, stdout, "agency agent start --repo agency --worktree fix-help")
+	assert.NotContains(t, stdout, "agency agent start fix-help --repo agency")
 }
 
 func TestRepoRmCmd_HelpShowsConfirmationFlags(t *testing.T) {

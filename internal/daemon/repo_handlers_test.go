@@ -31,6 +31,7 @@ func TestRepoRegister_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, result.Data.RepoID)
+	assert.Equal(t, filepath.Base(resolvedRepoDir), result.Data.RepoName)
 	assert.NotEmpty(t, result.Data.RepoKey)
 	assert.Contains(t, result.Data.Paths, resolvedRepoDir)
 	assert.Equal(t, resolvedRepoDir, result.Data.PreferredRoot)
@@ -130,6 +131,7 @@ func TestListRepos_AfterRegister(t *testing.T) {
 
 	require.Len(t, result.Data.Repos, 1)
 	assert.Equal(t, reg.Data.RepoID, result.Data.Repos[0].RepoID)
+	assert.Equal(t, reg.Data.RepoName, result.Data.Repos[0].RepoName)
 	assert.Equal(t, resolvedRepoDir, result.Data.Repos[0].PreferredRoot)
 }
 
@@ -151,6 +153,7 @@ func TestGetRepo_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, reg.Data.RepoID, result.Data.RepoID)
+	assert.Equal(t, reg.Data.RepoName, result.Data.RepoName)
 	assert.Equal(t, reg.Data.RepoKey, result.Data.RepoKey)
 	assert.Contains(t, result.Data.Paths, resolvedRepoDir)
 	assert.Equal(t, resolvedRepoDir, result.Data.PreferredRoot)
@@ -246,6 +249,7 @@ func TestRepoRm_ExactRepoIDResolvesBrokenRepoJSONAndRetainsRepoDir(t *testing.T)
 	require.NoError(t, err)
 
 	assert.Equal(t, repoID, result.Data.RepoID)
+	assert.Equal(t, "agency", result.Data.RepoName)
 	assert.Equal(t, repoKey, result.Data.RepoKey)
 	assert.True(t, result.Data.RemovedFromIndex)
 	assert.NotEmpty(t, result.RequestID)

@@ -20,6 +20,9 @@ func NewRootCmd() *cobra.Command {
 	agentCmd := newAgentCmd()
 	agentCmd.GroupID = "workflow"
 
+	contextCmd := newContextCmd()
+	contextCmd.GroupID = "workflow"
+
 	watchCmd := newWatchCmd()
 	watchCmd.GroupID = "workflow"
 
@@ -49,15 +52,17 @@ func NewRootCmd() *cobra.Command {
 Primary workflow:
   1. Register a repo once so --repo works from any directory.
   2. Create an integration worktree for a task.
-  3. Start an agent in that worktree.
-  4. Use watch to inspect running sessions and history.
+  3. Optionally set an active context for that worktree.
+  4. Start an agent in that worktree.
+  5. Use watch to inspect running sessions and history.
 
 Setup commands like init and doctor operate on one checkout path. If you omit
 --path, they use the current directory. Workflow commands use repo refs with
 --repo after a repository has been registered.`,
 		Example: `  agency repo add /path/to/repo
   agency worktree create fix-help --repo agency --base main
-  agency agent start fix-help --repo agency
+  agency context use fix-help --repo agency
+  agency agent start
   agency watch`,
 		Version:       version.FullVersion(),
 		SilenceErrors: true, // We handle error printing in main.go
@@ -82,6 +87,7 @@ Setup commands like init and doctor operate on one checkout path. If you omit
 		repoCmd,
 		worktreeCmd,
 		agentCmd,
+		contextCmd,
 		watchCmd,
 		configCmd,
 		initCmd,

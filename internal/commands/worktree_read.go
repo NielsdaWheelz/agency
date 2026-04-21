@@ -64,6 +64,14 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	for _, wt := range result.Data.Worktrees {
+		worktreeName := wt.WorktreeName
+		if worktreeName == "" {
+			worktreeName = wt.Name
+		}
+		worktreeLabel := wt.WorktreeID
+		if worktreeName != "" {
+			worktreeLabel = worktreeName + " (" + wt.WorktreeID + ")"
+		}
 		state := ""
 		if wt.State == "archived" {
 			state = " [archived]"
@@ -72,7 +80,15 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		if wt.Merge != nil && wt.Merge.StatusSummary != "" {
 			merge = " [merge: " + wt.Merge.StatusSummary + "]"
 		}
-		_, _ = fmt.Fprintf(stdout, "%s  %s  %s%s%s\n", wt.WorktreeID, wt.Name, wt.Branch, state, merge)
+		if repoCtx.AllRepos {
+			repoLabel := wt.RepoID
+			if wt.RepoName != "" {
+				repoLabel = wt.RepoName + " (" + wt.RepoID + ")"
+			}
+			_, _ = fmt.Fprintf(stdout, "%s  %s%s%s  repo: %s\n", worktreeLabel, wt.Branch, state, merge, repoLabel)
+			continue
+		}
+		_, _ = fmt.Fprintf(stdout, "%s  %s%s%s\n", worktreeLabel, wt.Branch, state, merge)
 	}
 
 	return nil
@@ -113,9 +129,20 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	wt := &result.Data
-	_, _ = fmt.Fprintf(stdout, "worktree_id:   %s\n", wt.WorktreeID)
-	_, _ = fmt.Fprintf(stdout, "name:          %s\n", wt.Name)
-	_, _ = fmt.Fprintf(stdout, "repo_id:       %s\n", wt.RepoID)
+	worktreeName := wt.WorktreeName
+	if worktreeName == "" {
+		worktreeName = wt.Name
+	}
+	worktreeLabel := wt.WorktreeID
+	if worktreeName != "" {
+		worktreeLabel = worktreeName + " (" + wt.WorktreeID + ")"
+	}
+	repoLabel := wt.RepoID
+	if wt.RepoName != "" {
+		repoLabel = wt.RepoName + " (" + wt.RepoID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "worktree:    %s\n", worktreeLabel)
+	_, _ = fmt.Fprintf(stdout, "repo:        %s\n", repoLabel)
 	_, _ = fmt.Fprintf(stdout, "branch:        %s\n", wt.Branch)
 	_, _ = fmt.Fprintf(stdout, "base_branch: %s\n", wt.BaseBranch)
 	_, _ = fmt.Fprintf(stdout, "state:         %s\n", wt.State)

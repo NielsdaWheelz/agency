@@ -8,6 +8,7 @@ import (
 
 func newAgentStartCmd() *cobra.Command {
 	var repoRef string
+	var worktreeRef string
 	var runner string
 	var headless bool
 	var name string
@@ -22,18 +23,19 @@ func newAgentStartCmd() *cobra.Command {
 	var jsonOut bool
 
 	cmd := &cobra.Command{
-		Use:   "start [<worktree-ref>]",
+		Use:   "start",
 		Short: "Start a new agent invocation",
 		Long: `Start a new agent invocation in a sandbox.
 
 The selected integration worktree is the source of truth for the sandbox.
-Use --repo to target a registered repo from any cwd. Pass both --repo and
-the worktree ref when you want an explicit, scriptable command that works from
-any directory.
+Use --worktree to target a specific worktree from any cwd. If --worktree is
+omitted, agency resolves the worktree from the active context first and then
+falls back to the current integration worktree only when cwd is already inside
+one.
 
-Omitting the worktree ref only works when cwd is already inside the integration
-worktree you want to use. If you are somewhere else, pass the worktree ref
-explicitly.
+Use --repo to scope worktree resolution when cwd does not already identify the
+repo that owns that worktree. Pass both --repo and --worktree when you want an
+explicit, scriptable command that works from any directory.
 
 Headed mode is the default. It creates the sandbox, starts the runner in tmux,
 and attaches unless you pass --detached. Headless mode runs through the daemon
@@ -43,29 +45,27 @@ If --agency-config is relative, it is resolved from the current directory
 before loading.
 
 Examples:
-  agency agent start my-feature --repo agency
-  agency agent start my-feature --repo agency --runner codex
-  agency agent start my-feature --repo agency --detached
-  agency agent start my-feature --repo agency --name fix-auth
-  agency agent start my-feature --repo agency --agency-config /path/to/agency.json
+  agency agent start
+  agency agent start --worktree my-feature
+  agency agent start --worktree my-feature --repo agency
+  agency agent start --worktree my-feature --repo agency --runner codex
+  agency agent start --worktree my-feature --repo agency --detached
+  agency agent start --worktree my-feature --repo agency --name fix-auth
+  agency agent start --worktree my-feature --repo agency --agency-config /path/to/agency.json
+  agency context use my-feature --repo agency
   agency agent start --headless --prompt-file task.md
-  agency agent start my-feature --repo agency --headless --prompt "Fix the failing test"
-  agency agent start my-feature --repo agency --headless --no-include-untracked`,
-		Args: cobra.MaximumNArgs(1),
+  agency agent start --headless --prompt "Fix the failing test"
+  agency agent start --worktree my-feature --repo agency --headless --no-include-untracked`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
 			if err != nil {
 				return err
 			}
 
-			worktree := ""
-			if len(args) == 1 {
-				worktree = args[0]
-			}
-
 			return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
 				RepoRef:            repoRef,
-				WorktreeRef:        worktree,
+				WorktreeRef:        worktreeRef,
 				Runner:             runner,
 				Headless:           headless,
 				InvocationName:     name,
@@ -84,6 +84,7 @@ Examples:
 	cmd.GroupID = "run"
 
 	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Registered repo ref. Omit only when cwd already identifies the repo.")
+	cmd.Flags().StringVar(&worktreeRef, "worktree", "", "Integration worktree ref to start from. Omit to use the active context or current integration worktree.")
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner id to use (claude-code, codex, amp, opencode, cursor, droid)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run through the daemon without tmux attachment")
 	cmd.Flags().StringVar(&name, "name", "", "Optional invocation name")
@@ -100,8 +101,8 @@ Examples:
 	_ = cmd.MarkFlagFilename("prompt-file")
 	_ = cmd.MarkFlagFilename("agency-config", "json")
 	registerRepoFlagCompletion(cmd)
+	registerWorktreeFlagCompletion(cmd, "present")
 	registerRunnerFlagCompletion(cmd)
-	setWorktreeArgCompletion(cmd, "present")
 
 	return cmd
 }

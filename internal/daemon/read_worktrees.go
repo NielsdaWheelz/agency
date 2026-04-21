@@ -36,6 +36,7 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 
 	var allWorktrees []WorktreeDTO
 	for _, repoID := range repoIDs {
+		repoName := s.repoName(repoID)
 		records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
 		if err != nil {
 			continue
@@ -48,7 +49,11 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(r.Meta.RepoID, r.Meta.WorktreeID)
-			allWorktrees = append(allWorktrees, WorktreeMetaToDTO(r.Meta, mergeMeta))
+			dto := WorktreeMetaToDTO(r.Meta, mergeMeta)
+			dto.WorktreeName = strings.TrimSpace(r.Meta.Name)
+			dto.Name = dto.WorktreeName
+			dto.RepoName = repoName
+			allWorktrees = append(allWorktrees, dto)
 		}
 	}
 
@@ -89,7 +94,11 @@ func (s *Server) handleGetWorktree(w http.ResponseWriter, r *http.Request, workt
 	}
 
 	mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
-	s.writeAPIResponse(w, requestID, WorktreeMetaToDTO(record.Meta, mergeMeta))
+	dto := WorktreeMetaToDTO(record.Meta, mergeMeta)
+	dto.WorktreeName = strings.TrimSpace(record.Meta.Name)
+	dto.Name = dto.WorktreeName
+	dto.RepoName = s.repoName(record.Meta.RepoID)
+	s.writeAPIResponse(w, requestID, dto)
 }
 
 // handleGetWorktreeMerge handles GET /worktrees/{ref}/pr/merge.

@@ -33,18 +33,19 @@ type ControlPlaneStartRequest struct {
 
 // ControlPlaneStartResponse is the response body for POST /invocations/start_headless.
 type ControlPlaneStartResponse struct {
-	OK                      bool      `json:"ok"`
-	InvocationID            string    `json:"invocation_id,omitempty"`
-	SandboxPath             string    `json:"sandbox_path,omitempty"`
-	RepoID                  string    `json:"repo_id,omitempty"`
-	IntegrationWorktreeID   string    `json:"integration_worktree_id,omitempty"`
-	IntegrationWorktreeName string    `json:"integration_worktree_name,omitempty"`
-	PID                     int       `json:"pid,omitempty"`
-	PGID                    int       `json:"pgid,omitempty"`
-	DaemonInstanceID        string    `json:"daemon_instance_id,omitempty"`
-	AlreadyRunning          bool      `json:"already_running,omitempty"`
-	LogPaths                *LogPaths `json:"log_paths,omitempty"`
-	RequestID               string    `json:"request_id,omitempty"`
+	OK               bool      `json:"ok"`
+	InvocationID     string    `json:"invocation_id,omitempty"`
+	SandboxPath      string    `json:"sandbox_path,omitempty"`
+	RepoID           string    `json:"repo_id,omitempty"`
+	RepoName         string    `json:"repo_name,omitempty"`
+	WorktreeID       string    `json:"worktree_id,omitempty"`
+	WorktreeName     string    `json:"worktree_name,omitempty"`
+	PID              int       `json:"pid,omitempty"`
+	PGID             int       `json:"pgid,omitempty"`
+	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning   bool      `json:"already_running,omitempty"`
+	LogPaths         *LogPaths `json:"log_paths,omitempty"`
+	RequestID        string    `json:"request_id,omitempty"`
 
 	// Standard response fields
 	APIVersion      int    `json:"api_version"`
@@ -134,17 +135,18 @@ type ControlPlaneStartHeadedRequest = ControlPlaneStartRequest
 
 // ControlPlaneStartHeadedResponse is the response body for POST /invocations/start_headed.
 type ControlPlaneStartHeadedResponse struct {
-	OK                      bool      `json:"ok"`
-	InvocationID            string    `json:"invocation_id,omitempty"`
-	SandboxPath             string    `json:"sandbox_path,omitempty"`
-	RepoID                  string    `json:"repo_id,omitempty"`
-	IntegrationWorktreeID   string    `json:"integration_worktree_id,omitempty"`
-	IntegrationWorktreeName string    `json:"integration_worktree_name,omitempty"`
-	TmuxSession             string    `json:"tmux_session,omitempty"`
-	DaemonInstanceID        string    `json:"daemon_instance_id,omitempty"`
-	AlreadyRunning          bool      `json:"already_running,omitempty"`
-	LogPaths                *LogPaths `json:"log_paths,omitempty"`
-	RequestID               string    `json:"request_id,omitempty"`
+	OK               bool      `json:"ok"`
+	InvocationID     string    `json:"invocation_id,omitempty"`
+	SandboxPath      string    `json:"sandbox_path,omitempty"`
+	RepoID           string    `json:"repo_id,omitempty"`
+	RepoName         string    `json:"repo_name,omitempty"`
+	WorktreeID       string    `json:"worktree_id,omitempty"`
+	WorktreeName     string    `json:"worktree_name,omitempty"`
+	TmuxSession      string    `json:"tmux_session,omitempty"`
+	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning   bool      `json:"already_running,omitempty"`
+	LogPaths         *LogPaths `json:"log_paths,omitempty"`
+	RequestID        string    `json:"request_id,omitempty"`
 
 	// Standard response fields
 	APIVersion      int    `json:"api_version"`

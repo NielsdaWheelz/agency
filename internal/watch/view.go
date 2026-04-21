@@ -365,13 +365,16 @@ func (m model) worktreeDisplay(worktreeID string) string {
 		if wt.WorktreeID != worktreeID {
 			continue
 		}
-		name := strings.TrimSpace(wt.Name)
+		name := strings.TrimSpace(wt.WorktreeName)
 		if name == "" {
-			return shortID(worktreeID, 12)
+			name = strings.TrimSpace(wt.Name)
 		}
-		return name + " (" + shortID(worktreeID, 12) + ")"
+		if name == "" {
+			return worktreeID
+		}
+		return name + " (" + worktreeID + ")"
 	}
-	return shortID(worktreeID, 12)
+	return worktreeID
 }
 
 func (m model) repoDisplay(repoID string) string {
@@ -383,14 +386,17 @@ func (m model) repoDisplay(repoID string) string {
 		if repo.RepoID != repoID {
 			continue
 		}
-		label := ids.RepoShortName(repo.RepoKey)
+		label := strings.TrimSpace(repo.RepoName)
+		if label == "" {
+			label = ids.RepoShortName(repo.RepoKey)
+		}
 		if label == "" {
 			label = strings.TrimSpace(repo.RepoKey)
 		}
 		if label == "" {
-			label = shortID(repo.RepoID, 12)
+			label = repo.RepoID
 		}
-		return label + " (" + shortID(repo.RepoID, 12) + ")"
+		return label + " (" + repo.RepoID + ")"
 	}
-	return shortID(repoID, 12)
+	return repoID
 }

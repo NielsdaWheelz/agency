@@ -185,6 +185,7 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 
 	s.writeAPIResponse(w, requestID, RepoRegisterData{
 		RepoID:                  repoIdentity.RepoID,
+		RepoName:                repoDisplayName(repoIdentity.RepoKey, preferredRoot, repoIdentity.RepoID),
 		RepoKey:                 repoIdentity.RepoKey,
 		Paths:                   entry.Paths,
 		PreferredRoot:           preferredRoot,
@@ -300,12 +301,39 @@ func (s *Server) buildRepoDTO(entry store.RepoIndexEntry) RepoDTO {
 	if dto.PreferredRoot != "" {
 		dto.PreferredRootAccessible = isRootAccessible(dto.PreferredRoot)
 	}
+	dto.RepoName = repoDisplayName(dto.RepoKey, dto.PreferredRoot, dto.RepoID)
+	if dto.RepoName == dto.RepoID && len(dto.Paths) > 0 {
+		dto.RepoName = repoDisplayName(dto.RepoKey, dto.Paths[0], dto.RepoID)
+	}
 
 	if dto.Paths == nil {
 		dto.Paths = []string{}
 	}
 
 	return dto
+}
+
+func repoDisplayName(repoKey, preferredRoot, repoID string) string {
+	if shortName := strings.TrimSpace(ids.RepoShortName(repoKey)); shortName != "" {
+		return shortName
+	}
+	if label := strings.TrimSpace(repoKey); label != "" && !strings.HasPrefix(label, "path:") {
+		return label
+	}
+	if root := strings.TrimSpace(preferredRoot); root != "" {
+		if base := strings.TrimSpace(filepath.Base(root)); base != "" && base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return strings.TrimSpace(repoID)
+}
+
+func (s *Server) repoName(repoID string) string {
+	rec, exists, _ := s.Store.LoadRepoRecord(repoID)
+	if exists {
+		return repoDisplayName(rec.RepoKey, rec.PreferredRoot, repoID)
+	}
+	return strings.TrimSpace(repoID)
 }
 
 // ensureRepoRecordWithPreferredRoot creates or updates repo.json with PreferredRoot set.
@@ -500,6 +528,7 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 
 	s.writeAPIResponse(w, requestID, RepoRmData{
 		RepoID:           resolved.RepoID,
+		RepoName:         repoDisplayName(repoKey, "", resolved.RepoID),
 		RepoKey:          repoKey,
 		RemovedFromIndex: true,
 	})

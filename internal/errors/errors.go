@@ -193,6 +193,8 @@ const (
 	ERepoIDAmbiguous       Code = "E_REPO_ID_AMBIGUOUS"        // repo ref matches multiple repos
 	ERepoHasWorktrees      Code = "E_REPO_HAS_WORKTREES"       // repo unregister blocked by present or broken worktrees
 	ERepoHasInvocations    Code = "E_REPO_HAS_INVOCATIONS"     // repo unregister blocked by active invocations
+	ENoContext             Code = "E_NO_CONTEXT"               // no active context is set
+	EInvalidContext        Code = "E_INVALID_CONTEXT"          // active context is invalid or stale
 
 	// Slice 8 logs API error codes (PR-B)
 	ELogNotFound     Code = "E_LOG_NOT_FOUND"    // log file does not exist or kind unavailable

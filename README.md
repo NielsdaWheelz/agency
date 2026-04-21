@@ -67,27 +67,31 @@ agency config init
 agency repo add /path/to/myrepo
 agency init --path /path/to/myrepo
 agency worktree create my-feature --repo <repo-ref> --base main
-agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix the auth bug"
+agency context use my-feature --repo <repo-ref>
+agency agent start --headless --prompt "Fix the auth bug"
 agency agent <invocation-ref> land --apply
 ```
 
 `agency repo add [path]` uses a positional path. Omit it only when your current directory is already inside the repo you want to register.
 `agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
-`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory.
+`agency context` shows the active repo/worktree. Use `agency context use <worktree-ref> --repo <repo-ref>` to set it and `agency context unset` to clear it.
+`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the active context first and then from the current directory.
 `agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
 `agency r`, `agency wt`, and `agency ag` are supported noun aliases for `repo`, `worktree`, and `agent`, but the long forms remain the primary documented CLI surface.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency worktree create <name>` uses a positional name and defaults omitted `--base` to the current branch of the selected checkout.
-`agency agent start [<worktree-ref>]` uses a positional worktree ref. It can infer an omitted ref only when cwd is inside a present agency integration worktree. From a repo root, subdirectory, or unrelated cwd, pass the worktree ref explicitly.
+`agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` when you want an explicit override from any cwd.
+If `--worktree` is omitted, `agency agent start` resolves the worktree from the active context first and then falls back to the current integration worktree only when cwd is already inside one.
 Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
 `agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
-Legacy verb-first target forms and the old `--name` and `--worktree` flags are removed with no backward compatibility.
+Legacy verb-first target forms, `worktree create --name`, and the old positional `agency agent start <worktree-ref>` spelling are removed with no backward compatibility.
 
 headless (fire-and-forget):
 
 ```bash
-agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix the auth bug"
-agency agent start my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
+agency context use my-feature --repo <repo-ref>
+agency agent start --headless --prompt "Fix the auth bug"
+agency agent start --worktree my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
 agency agent <invocation-ref> history                 # interactive invocation history/transcript/logs UI (same runtime; tty only)
 agency agent <invocation-ref> history --json          # machine-readable timeline output
 agency agent <invocation-ref> history logs --follow   # raw invocation logs
@@ -105,7 +109,7 @@ agency agent <invocation-ref> restore --turn <entry>
 
 short alias parity for high-traffic s6 navigation/progression surfaces:
 - `worktree create`: `-r/--repo`
-- `agent start`: `-r/--repo`
+- `agent start`: `-r/--repo`, `--worktree`
 - `agent <ref> check`: `-r/--repo`, `-j/--json`
 - `agent <ref> path|open|attach`: `-r/--repo`
 
@@ -133,7 +137,7 @@ agency repo <repo-ref> rm --yes
 automation-friendly mutation json:
 
 ```bash
-agency agent start my-feature --repo <repo-ref> --headless --prompt "fix bug" --json
+agency agent start --worktree my-feature --repo <repo-ref> --headless --prompt "fix bug" --json
 agency agent <invocation-ref> stop --json
 agency agent <invocation-ref> kill --json
 agency agent <invocation-ref> land --json

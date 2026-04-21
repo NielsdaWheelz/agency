@@ -20,8 +20,9 @@ from an integration worktree. Invocations are the execution layer: they run the
 model, stream logs, create checkpoints, and eventually land or discard work.
 
 Use:
-  agency agent start [<worktree-ref>]
-                           to create a new sandbox and run a runner
+  agency agent start       to create a new sandbox from the active context
+  agency agent start --worktree <worktree-ref>
+                           to create a new sandbox from one worktree
   agency agent ls         to list invocations
   agency agent <invocation-ref>
                            to show one invocation
@@ -43,7 +44,7 @@ Use:
 
 			switch args[0] {
 			case "start":
-				return errors.New(errors.EUsage, "use 'agency agent start [<worktree-ref>]'")
+				return errors.New(errors.EUsage, "use 'agency agent start' or 'agency agent start --worktree <worktree-ref>'")
 			case "ls":
 				return errors.New(errors.EUsage, "use 'agency agent ls'")
 			case "show", "check", "diff", "history", "open", "path", "shell", "attach", "stop", "kill", "land", "discard", "followup", "recreate", "restore", "logs", "checkpoint", "restart":

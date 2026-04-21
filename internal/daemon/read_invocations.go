@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/ids"
@@ -57,6 +58,18 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 	now := s.Clock()
 	var allInvocations []InvocationDTO
 	for _, repoID := range repoIDs {
+		repoName := s.repoName(repoID)
+		worktreeNames := map[string]string{}
+		worktrees, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+		if err == nil {
+			for _, worktree := range worktrees {
+				if worktree.Meta == nil {
+					continue
+				}
+				worktreeNames[worktree.WorktreeID] = worktree.Meta.Name
+			}
+		}
+
 		records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
 		if err != nil {
 			continue
@@ -89,6 +102,8 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			dto := InvocationMetaToDTO(r.Meta, repoID, logsDir, runnerMeta, runnerErr, now)
+			dto.RepoName = repoName
+			dto.WorktreeName = strings.TrimSpace(worktreeNames[r.Meta.IntegrationWorktreeID])
 			activityProjection := s.buildInvocationActivityProjection(resolved, dto.State, runnerSummary, nil)
 			applyInvocationActivityProjection(&dto, activityProjection)
 			allInvocations = append(allInvocations, dto)
@@ -131,6 +146,10 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 		}
 	}
 	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, runnerMeta, runnerErr, now)
+	dto.RepoName = s.repoName(record.RepoID)
+	if worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID); err == nil {
+		dto.WorktreeName = strings.TrimSpace(worktreeMeta.Name)
+	}
 	activityProjection := s.buildInvocationActivityProjection(record, dto.State, runnerSummary, nil)
 	applyInvocationActivityProjection(&dto, activityProjection)
 	s.writeAPIResponse(w, requestID, dto)

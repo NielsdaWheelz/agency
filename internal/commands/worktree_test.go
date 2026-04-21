@@ -236,9 +236,8 @@ func TestWorktreeShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 	require.NoError(t, err)
 
 	out := stdout.String()
-	assert.Contains(t, out, "worktree_id:   "+env.WorktreeID)
-	assert.Contains(t, out, "name:          alpha")
-	assert.Contains(t, out, "repo_id:       "+env.RepoID)
+	assert.Contains(t, out, "worktree:    alpha ("+env.WorktreeID+")")
+	assert.Contains(t, out, "repo:        root ("+env.RepoID+")")
 	assert.Contains(t, out, "branch:        agency/alpha-abcd")
 	assert.Contains(t, out, "base_branch: main")
 	assert.Contains(t, out, "state:         present")
@@ -258,8 +257,9 @@ func TestWorktreeLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 	require.Len(t, dtos, 1)
 
 	assert.Equal(t, env.WorktreeID, dtos[0].WorktreeID)
-	assert.Equal(t, "alpha", dtos[0].Name)
+	assert.Equal(t, "alpha", dtos[0].WorktreeName)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
+	assert.Equal(t, "root", dtos[0].RepoName)
 	assert.Equal(t, "agency/alpha-abcd", dtos[0].Branch)
 	assert.Equal(t, "main", dtos[0].BaseBranch)
 	assert.Equal(t, env.TreePath, dtos[0].TreePath)
@@ -278,8 +278,9 @@ func TestWorktreeShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dto))
 
 	assert.Equal(t, env.WorktreeID, dto.WorktreeID)
-	assert.Equal(t, "alpha", dto.Name)
+	assert.Equal(t, "alpha", dto.WorktreeName)
 	assert.Equal(t, env.RepoID, dto.RepoID)
+	assert.Equal(t, "root", dto.RepoName)
 	assert.Equal(t, env.TreePath, dto.TreePath)
 }
 
@@ -675,7 +676,7 @@ func TestWorktreeCreate_DefaultsRepoAndParentFromCWD(t *testing.T) {
 	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{State: "present"})
 	require.NoError(t, listErr)
 	require.Len(t, listResp.Data.Worktrees, 1)
-	assert.Equal(t, "default-context", listResp.Data.Worktrees[0].Name)
+	assert.Equal(t, "default-context", listResp.Data.Worktrees[0].WorktreeName)
 	assert.Equal(t, "main", listResp.Data.Worktrees[0].BaseBranch)
 	assert.Empty(t, stderr.String())
 }
@@ -788,7 +789,7 @@ func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *te
 	})
 	require.NoError(t, listErr)
 	require.Len(t, listResp.Data.Worktrees, 1)
-	assert.Equal(t, "open-fail", listResp.Data.Worktrees[0].Name)
+	assert.Equal(t, "open-fail", listResp.Data.Worktrees[0].WorktreeName)
 }
 
 func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {

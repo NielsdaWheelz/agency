@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
@@ -22,17 +23,17 @@ func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, reque
 
 func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
 	resp := ControlPlaneStartResponse{
-		OK:                    true,
-		InvocationID:          invocationID,
-		SandboxPath:           meta.SandboxPath,
-		RepoID:                repoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		AlreadyRunning:        alreadyRunning,
-		RequestID:             requestID,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		ClientRequestID:       clientRequestID,
-		DaemonInstanceID:      s.InstanceID,
+		OK:               true,
+		InvocationID:     invocationID,
+		SandboxPath:      meta.SandboxPath,
+		RepoID:           repoID,
+		WorktreeID:       meta.IntegrationWorktreeID,
+		AlreadyRunning:   alreadyRunning,
+		RequestID:        requestID,
+		APIVersion:       APIVersion,
+		BuildVersion:     version.FullVersion(),
+		ClientRequestID:  clientRequestID,
+		DaemonInstanceID: s.InstanceID,
 	}
 	if meta.PID != nil {
 		resp.PID = *meta.PID
@@ -46,6 +47,10 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 		Stream:   s.readableInvocationLogPath(repoID, invocationID, "stream"),
 		Hooks:    s.readableInvocationLogPath(repoID, invocationID, "hooks"),
 		Terminal: s.readableInvocationLogPath(repoID, invocationID, "terminal"),
+	}
+	resp.RepoName = s.repoName(repoID)
+	if worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.IntegrationWorktreeID); err == nil {
+		resp.WorktreeName = strings.TrimSpace(worktreeMeta.Name)
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -66,19 +71,19 @@ func (s *Server) writeHeadedError(w http.ResponseWriter, status int, code, messa
 
 func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
 	resp := ControlPlaneStartHeadedResponse{
-		OK:                    true,
-		InvocationID:          invocationID,
-		SandboxPath:           meta.SandboxPath,
-		RepoID:                repoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		TmuxSession:           meta.TmuxSession,
-		AlreadyRunning:        alreadyRunning,
-		RequestID:             requestID,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		GitSHA:                version.Commit,
-		ClientRequestID:       clientRequestID,
-		DaemonInstanceID:      s.InstanceID,
+		OK:               true,
+		InvocationID:     invocationID,
+		SandboxPath:      meta.SandboxPath,
+		RepoID:           repoID,
+		WorktreeID:       meta.IntegrationWorktreeID,
+		TmuxSession:      meta.TmuxSession,
+		AlreadyRunning:   alreadyRunning,
+		RequestID:        requestID,
+		APIVersion:       APIVersion,
+		BuildVersion:     version.FullVersion(),
+		GitSHA:           version.Commit,
+		ClientRequestID:  clientRequestID,
+		DaemonInstanceID: s.InstanceID,
 		LogPaths: &LogPaths{
 			Raw:      s.readableInvocationLogPath(repoID, invocationID, "raw"),
 			Stderr:   s.readableInvocationLogPath(repoID, invocationID, "stderr"),
@@ -86,6 +91,10 @@ func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, 
 			Hooks:    s.readableInvocationLogPath(repoID, invocationID, "hooks"),
 			Terminal: s.readableInvocationLogPath(repoID, invocationID, "terminal"),
 		},
+	}
+	resp.RepoName = s.repoName(repoID)
+	if worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.IntegrationWorktreeID); err == nil {
+		resp.WorktreeName = strings.TrimSpace(worktreeMeta.Name)
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
