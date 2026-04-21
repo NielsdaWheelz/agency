@@ -120,6 +120,17 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	repoRoot := ""
 	repoID := ""
+	var currentCtx *validatedCurrentContext
+	if repoRef == "" || worktreeRef == "" {
+		currentCtx, err = loadValidatedCurrentContext(ctx, ns.client, fsys, ns.dirs.ConfigDir)
+		if err != nil && errors.GetCode(err) != errors.ENoContext {
+			return fail(err)
+		}
+		if errors.GetCode(err) == errors.ENoContext {
+			currentCtx = nil
+		}
+	}
+
 	if repoRef != "" {
 		repo, err := ns.client.GetRepo(ctx, repoRef)
 		if err != nil {
@@ -135,30 +146,22 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 				},
 			))
 		}
-		if worktreeRef == "" {
-			worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
-			if err != nil {
-				return fail(err)
-			}
-			if !ok {
-				return fail(errors.NewWithDetails(
-					errors.EUsage,
-					"pass a worktree ref, or run this command from the integration worktree you want to use",
-					map[string]string{
-						"hint": "cwd-based worktree inference only works inside a present integration worktree",
-					},
-				))
-			}
-			if worktree.RepoID != repo.Data.RepoID {
-				return fail(errors.NewWithDetails(
-					errors.EUsage,
-					"current integration worktree belongs to a different repo",
-					map[string]string{
-						"hint": "pass both --repo <repo_ref> and a worktree ref, or run from a worktree in the selected repo",
-					},
-				))
-			}
-			worktreeRef = worktree.WorktreeID
+		repoRoot = repo.Data.PreferredRoot
+		repoID = repo.Data.RepoID
+	} else if currentCtx != nil {
+		repo, err := ns.client.GetRepo(ctx, currentCtx.RepoID)
+		if err != nil {
+			return fail(err)
+		}
+		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
+			return fail(errors.NewWithDetails(
+				errors.ERepoRootInaccessible,
+				"repo preferred_root is not accessible",
+				map[string]string{
+					"repo": currentCtx.RepoID,
+					"hint": "re-register this repo from an accessible checkout, then re-run the command",
+				},
+			))
 		}
 		repoRoot = repo.Data.PreferredRoot
 		repoID = repo.Data.RepoID
@@ -188,21 +191,12 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			repoRoot = repo.Data.PreferredRoot
 			repoID = repo.Data.RepoID
 		} else {
-			if worktreeRef == "" {
-				return fail(errors.NewWithDetails(
-					errors.EUsage,
-					"pass a worktree ref, or run this command from the integration worktree you want to use",
-					map[string]string{
-						"hint": "cwd-based worktree inference only works inside a present integration worktree",
-					},
-				))
-			}
 			if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
 				return fail(errors.NewWithDetails(
 					errors.EUnsafeRepoRoot,
 					"current directory is inside an agency-managed tree but not a present integration worktree",
 					map[string]string{
-						"hint": "re-run from the original repo checkout, or pass both --repo <repo_ref> and a worktree ref",
+						"hint": "re-run from the original repo checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
 					},
 				))
 			}
@@ -212,7 +206,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 					errors.ENoRepoContext,
 					"cannot resolve agent start without a repo context",
 					map[string]string{
-						"hint": "run from a git checkout, or pass both --repo <repo_ref> and a worktree ref",
+						"hint": "run from a git checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
 					},
 				))
 			}
@@ -233,6 +227,57 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			repoRoot = reg.Data.PreferredRoot
 			repoID = reg.Data.RepoID
 		}
+	}
+
+	switch {
+	case worktreeRef != "":
+		worktree, err := ns.client.GetWorktree(ctx, worktreeRef, repoID)
+		if err != nil {
+			return fail(err)
+		}
+		if worktree.Data.State != "present" {
+			return fail(errors.NewWithDetails(
+				errors.EWorktreeNotFound,
+				"agent start requires a present integration worktree",
+				map[string]string{
+					"hint": "pick a present worktree from `agency worktree ls`",
+				},
+			))
+		}
+		worktreeRef = worktree.Data.WorktreeID
+	case currentCtx != nil && currentCtx.RepoID == repoID:
+		worktree, err := ns.client.GetWorktree(ctx, currentCtx.WorktreeID, repoID)
+		if err != nil {
+			return fail(err)
+		}
+		if worktree.Data.State != "present" {
+			return fail(errors.NewWithDetails(
+				errors.EWorktreeNotFound,
+				"agent start requires a present integration worktree",
+				map[string]string{
+					"hint": "pick a present worktree from `agency worktree ls`",
+				},
+			))
+		}
+		worktreeRef = worktree.Data.WorktreeID
+	default:
+		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
+		if err != nil {
+			return fail(err)
+		}
+		if ok && worktree.RepoID == repoID {
+			worktreeRef = worktree.WorktreeID
+		}
+	}
+
+	if worktreeRef == "" {
+		return fail(errors.NewWithDetails(
+			errors.EUsage,
+			"cannot resolve agent start without a worktree",
+			map[string]string{
+				"hint": "pass --worktree <worktree-ref>, set an active context with `agency context use <worktree-ref>`, or run this command from the integration worktree you want to use",
+			},
+		))
 	}
 	opts.WorktreeRef = worktreeRef
 
@@ -365,8 +410,9 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
 			envelope.InvocationID = resp.InvocationID
 			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
+			envelope.RepoName = resp.RepoName
+			envelope.WorktreeID = resp.WorktreeID
+			envelope.WorktreeName = resp.WorktreeName
 			envelope.SandboxPath = resp.SandboxPath
 			envelope.TmuxSession = resp.TmuxSession
 			envelope.DaemonInstanceID = resp.DaemonInstanceID
@@ -389,17 +435,16 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 	}
 	_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
 	_, _ = fmt.Fprintf(stdout, "  mode:           headed\n")
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", resp.IntegrationWorktreeID)
+	worktree := resp.WorktreeID
+	if strings.TrimSpace(resp.WorktreeName) != "" {
+		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
 	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
 
 	if resp.AlreadyRunning {
 		_, _ = fmt.Fprintf(stdout, "\nNote: Invocation was already running (idempotent start).\n")
-	}
-
-	shortID := resp.InvocationID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
 	}
 
 	// If not detached, attach to the tmux session
@@ -413,11 +458,11 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		if err := attachFn(resp.TmuxSession); err != nil {
 			// Attach failed but session exists - not a fatal error
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach --repo %s' to attach later.\n", resp.InvocationID, resp.RepoID)
 		}
 	} else {
 		_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
-		_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach' to attach.\n", shortID)
+		_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach --repo %s' to attach.\n", resp.InvocationID, resp.RepoID)
 	}
 
 	return nil
@@ -457,8 +502,9 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
 			envelope.InvocationID = resp.InvocationID
 			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
+			envelope.RepoName = resp.RepoName
+			envelope.WorktreeID = resp.WorktreeID
+			envelope.WorktreeName = resp.WorktreeName
 			envelope.SandboxPath = resp.SandboxPath
 			envelope.PID = resp.PID
 			envelope.PGID = resp.PGID
@@ -482,7 +528,11 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 	}
 	_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
 	_, _ = fmt.Fprintf(stdout, "  mode:           headless\n")
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", resp.IntegrationWorktreeID)
+	worktree := resp.WorktreeID
+	if strings.TrimSpace(resp.WorktreeName) != "" {
+		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
 	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  pid:            %d\n", resp.PID)
 

@@ -348,6 +348,7 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	assert.Contains(t, humanOut.String(), "[invocation_waiting]")
 	assert.Contains(t, humanOut.String(), "history:")
 	assert.Contains(t, humanOut.String(), "diff:")
+	assert.NotContains(t, humanOut.String(), "attach:")
 
 	var payload daemon.InvocationCheckData
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
@@ -356,6 +357,7 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	assert.False(t, payload.PRSyncEligible)
 	assert.Equal(t, string(runnerstatus.StateWaiting), payload.RunnerState)
 	assert.Equal(t, runnerstatus.ReasonAwaitingApproval, payload.RunnerReason)
+	assert.Empty(t, payload.Navigation.AttachCommand)
 	assert.NotEmpty(t, payload.Navigation.HistoryCommand)
 	assert.NotEmpty(t, payload.Navigation.DiffCommand)
 

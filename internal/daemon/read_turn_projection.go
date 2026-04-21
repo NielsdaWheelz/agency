@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []Turn {
@@ -225,6 +226,16 @@ func (s *Server) buildInvocationActivityProjection(
 			HistoryCommand: fmt.Sprintf("agency agent %s history --repo %s", record.InvocationID, record.RepoID),
 			DiffCommand:    fmt.Sprintf("agency agent %s diff --repo %s", record.InvocationID, record.RepoID),
 		},
+	}
+	if record.Meta.Mode == store.RunnerModeHeaded {
+		switch record.Meta.Status {
+		case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
+			projection.Navigation.AttachCommand = fmt.Sprintf(
+				"agency agent %s attach --repo %s",
+				record.InvocationID,
+				record.RepoID,
+			)
+		}
 	}
 
 	if len(turns) > 0 {

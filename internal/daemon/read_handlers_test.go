@@ -314,11 +314,14 @@ func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
 
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
 	assert.NotZero(t, resp.APIVersion)
 	assert.NotEmpty(t, resp.RequestID)
+	assert.Contains(t, body, "\"worktree_name\":\"alpha\"")
+	assert.NotContains(t, body, "\"name\":\"alpha\"")
 
 	var data ListWorktreesData
 	decodeData(t, resp, &data)
@@ -326,7 +329,9 @@ func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	// Default state filter is "present" → only wt-1 "alpha"
 	assert.Len(t, data.Worktrees, 1)
 	assert.Equal(t, "wt-1", data.Worktrees[0].WorktreeID)
+	assert.Equal(t, "alpha", data.Worktrees[0].WorktreeName)
 	assert.Equal(t, "alpha", data.Worktrees[0].Name)
+	assert.Equal(t, env.RepoID, data.Worktrees[0].RepoName)
 	require.NotNil(t, data.Worktrees[0].Merge)
 	assert.Equal(t, "running", data.Worktrees[0].Merge.State)
 	assert.Equal(t, "preflight", data.Worktrees[0].Merge.Stage)
@@ -386,15 +391,20 @@ func TestHandleGetWorktree_HappyPath(t *testing.T) {
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1?repo_id="+env.RepoID)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
 
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
+	assert.Contains(t, body, "\"worktree_name\":\"alpha\"")
+	assert.NotContains(t, body, "\"name\":\"alpha\"")
 
 	var dto WorktreeDTO
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "wt-1", dto.WorktreeID)
+	assert.Equal(t, "alpha", dto.WorktreeName)
 	assert.Equal(t, "alpha", dto.Name)
+	assert.Equal(t, env.RepoID, dto.RepoName)
 	assert.Equal(t, "present", dto.State)
 	require.NotNil(t, dto.Merge)
 	assert.Equal(t, "merge-attempt-wt-1", dto.Merge.AttemptID)
@@ -674,6 +684,8 @@ func TestHandleGetInvocation_HappyPath(t *testing.T) {
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "inv-1", dto.InvocationID)
+	assert.Equal(t, env.RepoID, dto.RepoName)
+	assert.Equal(t, "alpha", dto.WorktreeName)
 	assert.Equal(t, "running", dto.State)
 }
 
@@ -724,6 +736,7 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	assert.Equal(t, "stream:1", listed.LatestActivity.TurnID)
 	assert.Equal(t, "latest activity summary", listed.LatestActivity.Summary)
 	assert.Equal(t, "stream:1", listed.Navigation.LatestTurnID)
+	assert.Empty(t, listed.Navigation.AttachCommand)
 
 	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
 	require.True(t, showResp.OK)
@@ -738,6 +751,7 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
 	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
 	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
+	assert.Empty(t, shown.Navigation.AttachCommand)
 
 	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
 	require.True(t, checkResp.OK)
@@ -751,6 +765,94 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
 	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
 	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)
+	assert.Empty(t, check.Navigation.AttachCommand)
+}
+
+func TestInvocationAttachCommand_ConvergesAcrossListShowAndCheckForActiveHeaded(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-2", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateWaiting,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Reason:        runnerstatus.ReasonAwaitingApproval,
+		Summary:       "waiting in tmux",
+	})
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.FinishedAt = ""
+		meta.LandingStatus = ""
+	}))
+
+	wantAttachCommand := "agency agent inv-2 attach --repo " + env.RepoID
+
+	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
+	require.True(t, listResp.OK)
+	var listData ListInvocationsData
+	decodeData(t, listResp, &listData)
+
+	var listed InvocationDTO
+	found := false
+	for _, inv := range listData.Invocations {
+		if inv.InvocationID == "inv-2" {
+			listed = inv
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected inv-2 in invocation list")
+	require.NotNil(t, listed.Navigation)
+	assert.Equal(t, wantAttachCommand, listed.Navigation.AttachCommand)
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	require.NotNil(t, shown.Navigation)
+	assert.Equal(t, wantAttachCommand, shown.Navigation.AttachCommand)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Equal(t, wantAttachCommand, check.Navigation.AttachCommand)
+}
+
+func TestInvocationAttachCommand_OmittedForFinishedHeaded(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
+	require.True(t, listResp.OK)
+	var listData ListInvocationsData
+	decodeData(t, listResp, &listData)
+
+	var listed InvocationDTO
+	found := false
+	for _, inv := range listData.Invocations {
+		if inv.InvocationID == "inv-2" {
+			listed = inv
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected inv-2 in invocation list")
+	require.NotNil(t, listed.Navigation)
+	assert.Empty(t, listed.Navigation.AttachCommand)
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	require.NotNil(t, shown.Navigation)
+	assert.Empty(t, shown.Navigation.AttachCommand)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Empty(t, check.Navigation.AttachCommand)
 }
 
 func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup(t *testing.T) {

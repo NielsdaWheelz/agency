@@ -95,6 +95,9 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		if strings.TrimSpace(activityProjection.Navigation.DiffCommand) != "" {
 			data.Navigation.DiffCommand = activityProjection.Navigation.DiffCommand
 		}
+		if strings.TrimSpace(activityProjection.Navigation.AttachCommand) != "" {
+			data.Navigation.AttachCommand = activityProjection.Navigation.AttachCommand
+		}
 		data.Navigation.LatestTurnID = activityProjection.Navigation.LatestTurnID
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -470,8 +471,9 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		return writeAgentMutationJSONSuccess(stdout, func(envelope *agentMutationEnvelope) {
 			envelope.InvocationID = resp.InvocationID
 			envelope.RepoID = resp.RepoID
-			envelope.IntegrationWorktreeID = resp.IntegrationWorktreeID
-			envelope.IntegrationWorktreeName = resp.IntegrationWorktreeName
+			envelope.RepoName = resp.RepoName
+			envelope.WorktreeID = resp.WorktreeID
+			envelope.WorktreeName = resp.WorktreeName
 			envelope.SandboxPath = resp.SandboxPath
 			envelope.TmuxSession = resp.TmuxSession
 			envelope.DaemonInstanceID = resp.DaemonInstanceID
@@ -490,17 +492,17 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	_, _ = fmt.Fprintln(stdout, "recreated headed agent invocation")
 	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
 	_, _ = fmt.Fprintf(stdout, "  mode:           headed\n")
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", resp.IntegrationWorktreeID)
+	worktree := resp.WorktreeID
+	if strings.TrimSpace(resp.WorktreeName) != "" {
+		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
 	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
 	if resp.AlreadyRunning {
 		_, _ = fmt.Fprintln(stdout, "\nNote: tmux session already exists; no new session was created.")
 	}
 
-	shortID := resp.InvocationID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
 	if !opts.Detached {
 		_, _ = fmt.Fprintln(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)")
 		attachFn := opts.TmuxAttachFn
@@ -509,13 +511,13 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		}
 		if err := attachFn(resp.TmuxSession); err != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach' to attach later.\n", shortID)
+			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach --repo %s' to attach later.\n", resp.InvocationID, resp.RepoID)
 		}
 		return nil
 	}
 
 	_, _ = fmt.Fprintln(stdout, "\nSession recreated in detached mode.")
-	_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach' to attach.\n", shortID)
+	_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach --repo %s' to attach.\n", resp.InvocationID, resp.RepoID)
 	return nil
 }
 

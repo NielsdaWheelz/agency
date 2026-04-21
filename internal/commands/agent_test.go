@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -501,10 +501,13 @@ func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	out := stdout.String()
 	assert.Contains(t, out, "invocation_id:          "+env.InvocationID)
-	assert.Contains(t, out, "worktree_id:            "+env.WorktreeID)
+	assert.Contains(t, out, "worktree:               show-test ("+env.WorktreeID+")")
+	assert.Contains(t, out, "repo:                   ")
+	assert.Contains(t, out, "("+env.RepoID+")")
 	assert.Contains(t, out, "runner:                 claude-code")
 	assert.Contains(t, out, "mode:                   headed")
 	assert.Contains(t, out, "sandbox_path:           "+env.SandboxPath)
+	assert.Contains(t, out, "attach_command:         agency agent "+env.InvocationID+" attach --repo "+env.RepoID)
 }
 
 func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
@@ -521,6 +524,8 @@ func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	assert.Equal(t, env.InvocationID, dtos[0].InvocationID)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
+	assert.NotEmpty(t, dtos[0].RepoName)
+	assert.Equal(t, "lsjson", dtos[0].WorktreeName)
 	assert.Equal(t, "claude-code", dtos[0].Runner)
 	assert.Equal(t, "headless", dtos[0].Mode)
 	assert.Equal(t, env.SandboxPath, dtos[0].SandboxPath)
@@ -538,7 +543,9 @@ func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dto))
 
 	assert.Equal(t, env.InvocationID, dto.InvocationID)
+	assert.Equal(t, "showjson", dto.WorktreeName)
 	assert.Equal(t, env.RepoID, dto.RepoID)
+	assert.NotEmpty(t, dto.RepoName)
 	assert.Equal(t, "claude-code", dto.Runner)
 	assert.Equal(t, env.SandboxPath, dto.SandboxPath)
 }
@@ -625,6 +632,10 @@ func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
 	err := writeAgentLSHumanFromDTO(&out, []daemon.InvocationDTO{
 		{
 			InvocationID: "inv-1",
+			RepoID:       "repo-1",
+			RepoName:     "agency",
+			WorktreeID:   "wt-1",
+			WorktreeName: "feature-x",
 			Runner:       "claude-code",
 			Mode:         "headless",
 			State:        string(runnerstatus.StateRunning),
@@ -639,6 +650,8 @@ func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	assert.Contains(t, out.String(), "repo: agency (repo-1)")
+	assert.Contains(t, out.String(), "worktree: feature-x (wt-1)")
 	assert.Contains(t, out.String(), "latest[stream:9]: [assistant] applied migration (tools=2, checkpoint=4)")
 }
 
@@ -648,9 +661,12 @@ func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T)
 	var out bytes.Buffer
 	err := writeAgentShowHumanFromDTO(&out, &daemon.InvocationDTO{
 		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		RepoName:     "agency",
 		WorktreeID:   "wt-1",
+		WorktreeName: "feature-x",
 		Runner:       "claude-code",
-		Mode:         "headless",
+		Mode:         "headed",
 		State:        string(runnerstatus.StateRunning),
 		StartedAt:    "2026-02-05T11:50:00Z",
 		SandboxPath:  "/tmp/sandbox/inv-1",
@@ -667,15 +683,21 @@ func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T)
 			CheckpointChangedPaths: []string{"internal/apply.go", "internal/apply_test.go"},
 			CheckpointChangedCount: 2,
 		},
+		Navigation: &daemon.InvocationActivityNavigation{
+			AttachCommand: "agency agent inv-1 attach --repo repo-1",
+		},
 	})
 	require.NoError(t, err)
 	output := out.String()
+	assert.Contains(t, output, "repo:                   agency (repo-1)")
+	assert.Contains(t, output, "worktree:               feature-x (wt-1)")
 	assert.Contains(t, output, "latest_activity:        [assistant] applied migration (tools=1, checkpoint=4)")
 	assert.Contains(t, output, "latest_activity_tool:   ▶ Bash go test ./... (exit=1)")
 	assert.Contains(t, output, "latest_activity_checkpoint: 4")
 	assert.Contains(t, output, "latest_activity_checkpoint_description: checkpoint after migration")
 	assert.Contains(t, output, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
 	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
+	assert.Contains(t, output, "attach_command:         agency agent inv-1 attach --repo repo-1")
 }
 
 func TestWriteAgentCheckHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
@@ -929,8 +951,18 @@ func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	assert.Contains(t, stdout.String(), "Session started in detached mode.")
-	assert.Contains(t, stdout.String(), "  worktree:       "+env.WorktreeID)
+	output := stdout.String()
+	assert.Contains(t, output, "Session started in detached mode.")
+	assert.Contains(t, output, "  worktree:       start-infer ("+env.WorktreeID+")")
+	invocationID := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  invocation_id:") {
+			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+			break
+		}
+	}
+	require.NotEmpty(t, invocationID)
+	assert.Contains(t, output, "Use 'agency agent "+invocationID+" attach --repo "+env.RepoID+"' to attach.")
 	assert.Empty(t, stderr.String())
 }
 
@@ -947,9 +979,17 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	assert.Contains(t, stdout.String(), "Session started in detached mode.")
-	assert.Regexp(t, regexp.MustCompile(`Use 'agency agent [^ ]+ attach' to attach\.`), stdout.String())
-	assert.NotContains(t, stdout.String(), "Use 'agency agent attach ")
+	output := stdout.String()
+	assert.Contains(t, output, "Session started in detached mode.")
+	invocationID := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  invocation_id:") {
+			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+			break
+		}
+	}
+	require.NotEmpty(t, invocationID)
+	assert.Contains(t, output, "Use 'agency agent "+invocationID+" attach --repo "+env.RepoID+"' to attach.")
 	assert.Empty(t, stderr.String())
 
 	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
@@ -1217,8 +1257,148 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	assert.NotEmpty(t, cwd)
 	assert.Equal(t, "attach-session -t "+session, args)
 	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
-	assert.Regexp(t, regexp.MustCompile(`Use 'agency agent [^ ]+ attach' to attach later\.`), stderr.String())
-	assert.NotContains(t, stderr.String(), "Use 'agency agent attach ")
+	invocationID := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  invocation_id:") {
+			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+			break
+		}
+	}
+	require.NotEmpty(t, invocationID)
+	assert.Contains(t, stderr.String(), "Use 'agency agent "+invocationID+" attach --repo "+env.RepoID+"' to attach later.")
+}
+
+func TestAgentRecreate_Headed_DetachedPrintsCanonicalAttachCommand(t *testing.T) {
+	env := setupAgentNavEnv(t, "recreate-detached", store.RunnerModeHeaded)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentRecreateOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			Detached:        true,
+			DataDirOverride: env.DataDir,
+			IsInteractive:   func() bool { return false },
+		}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "Session recreated in detached mode.")
+	assert.Contains(t, stdout.String(), "Use 'agency agent "+env.InvocationID+" attach --repo "+env.RepoID+"' to attach.")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentRecreate_Headed_AttachFailureWarnsWithCanonicalAttachCommand(t *testing.T) {
+	env := setupAgentNavEnv(t, "recreate-attach-fail", store.RunnerModeHeaded)
+
+	var attachedSession string
+	var stdout, stderr bytes.Buffer
+	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentRecreateOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			DataDirOverride: env.DataDir,
+			IsInteractive:   func() bool { return true },
+			TmuxAttachFn: func(sessionName string) error {
+				attachedSession = sessionName
+				return fmt.Errorf("attach failed")
+			},
+		}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, attachedSession)
+	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session: attach failed")
+	assert.Contains(t, stderr.String(), "Use 'agency agent "+env.InvocationID+" attach --repo "+env.RepoID+"' to attach later.")
+}
+
+func TestContextUseShowUnset_JSON(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "context-json", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := ContextUse(context.Background(), env.Runner, env.FS, env.RepoDir, ContextUseOpts{
+		RepoRef:     env.RepoID,
+		WorktreeRef: "context-json",
+		JSON:        true,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var used currentContextEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &used))
+	assert.True(t, used.OK)
+	assert.True(t, used.Active)
+	assert.Equal(t, env.RepoID, used.RepoID)
+	assert.Equal(t, env.WorktreeID, used.WorktreeID)
+	assert.Equal(t, "context-json", used.WorktreeName)
+
+	stdout.Reset()
+	stderr.Reset()
+	err = ContextShow(context.Background(), env.Runner, env.FS, env.RepoDir, ContextShowOpts{JSON: true}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var shown currentContextEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &shown))
+	assert.True(t, shown.OK)
+	assert.True(t, shown.Active)
+	assert.Equal(t, used.RepoID, shown.RepoID)
+	assert.Equal(t, used.WorktreeID, shown.WorktreeID)
+	assert.Equal(t, used.WorktreeName, shown.WorktreeName)
+
+	stdout.Reset()
+	stderr.Reset()
+	err = ContextUnset(context.Background(), env.Runner, env.FS, env.RepoDir, ContextUnsetOpts{JSON: true}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var unset currentContextEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &unset))
+	assert.True(t, unset.OK)
+	assert.False(t, unset.Active)
+}
+
+func TestAgentStart_UsesActiveContextFromUnrelatedCWD(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-active-context", 1)
+	configDir := filepath.Join(env.DataDir, "config")
+	require.NoError(t, config.SaveCurrentContext(fs.NewRealFS(), configDir, config.CurrentContext{
+		RepoID:       env.RepoID,
+		RepoName:     filepath.Base(env.RepoDir),
+		WorktreeID:   env.WorktreeID,
+		WorktreeName: "start-active-context",
+		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, t.TempDir(), AgentStartOpts{
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "  worktree:       start-active-context ("+env.WorktreeID+")")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentStart_ExplicitSelectorsIgnoreInvalidActiveContext(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-ignore-context", 1)
+	configDir := filepath.Join(env.DataDir, "config")
+	require.NoError(t, config.SaveCurrentContext(fs.NewRealFS(), configDir, config.CurrentContext{
+		RepoID:       "repo-stale",
+		RepoName:     "repo-stale",
+		WorktreeID:   "wt-stale",
+		WorktreeName: "wt-stale",
+		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, t.TempDir(), AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-ignore-context",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "  worktree:       start-ignore-context ("+env.WorktreeID+")")
+	assert.Empty(t, stderr.String())
 }
 
 func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {

@@ -1,7 +1,10 @@
 // Package daemon implements the agency daemon supervisor.
 package daemon
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // ----- Response Envelope -----
 
@@ -62,16 +65,92 @@ type InvalidQueryArgumentDetails struct {
 
 // WorktreeDTO is the canonical DTO for integration worktree responses.
 type WorktreeDTO struct {
-	WorktreeID string            `json:"worktree_id"`
-	Name       string            `json:"name"`
-	RepoID     string            `json:"repo_id"`
-	Branch     string            `json:"branch"`
-	BaseBranch string            `json:"base_branch"`
-	TreePath   string            `json:"tree_path"`
-	State      string            `json:"state"` // "present" or "archived"
-	CreatedAt  string            `json:"created_at"`
-	LastUsedAt string            `json:"last_used_at,omitempty"`
-	Merge      *WorktreeMergeDTO `json:"merge,omitempty"`
+	WorktreeID   string            `json:"worktree_id"`
+	WorktreeName string            `json:"worktree_name"`
+	Name         string            `json:"-"`
+	RepoID       string            `json:"repo_id"`
+	RepoName     string            `json:"repo_name"`
+	Branch       string            `json:"branch"`
+	BaseBranch   string            `json:"base_branch"`
+	TreePath     string            `json:"tree_path"`
+	State        string            `json:"state"` // "present" or "archived"
+	CreatedAt    string            `json:"created_at"`
+	LastUsedAt   string            `json:"last_used_at,omitempty"`
+	Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
+}
+
+func (dto WorktreeDTO) MarshalJSON() ([]byte, error) {
+	worktreeName := strings.TrimSpace(dto.WorktreeName)
+	if worktreeName == "" {
+		worktreeName = strings.TrimSpace(dto.Name)
+	}
+
+	return json.Marshal(struct {
+		WorktreeID   string            `json:"worktree_id"`
+		WorktreeName string            `json:"worktree_name"`
+		RepoID       string            `json:"repo_id"`
+		RepoName     string            `json:"repo_name"`
+		Branch       string            `json:"branch"`
+		BaseBranch   string            `json:"base_branch"`
+		TreePath     string            `json:"tree_path"`
+		State        string            `json:"state"`
+		CreatedAt    string            `json:"created_at"`
+		LastUsedAt   string            `json:"last_used_at,omitempty"`
+		Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
+	}{
+		WorktreeID:   dto.WorktreeID,
+		WorktreeName: worktreeName,
+		RepoID:       dto.RepoID,
+		RepoName:     strings.TrimSpace(dto.RepoName),
+		Branch:       dto.Branch,
+		BaseBranch:   dto.BaseBranch,
+		TreePath:     dto.TreePath,
+		State:        dto.State,
+		CreatedAt:    dto.CreatedAt,
+		LastUsedAt:   dto.LastUsedAt,
+		Merge:        dto.Merge,
+	})
+}
+
+func (dto *WorktreeDTO) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		WorktreeID   string            `json:"worktree_id"`
+		WorktreeName string            `json:"worktree_name"`
+		Name         string            `json:"name"`
+		RepoID       string            `json:"repo_id"`
+		RepoName     string            `json:"repo_name"`
+		Branch       string            `json:"branch"`
+		BaseBranch   string            `json:"base_branch"`
+		TreePath     string            `json:"tree_path"`
+		State        string            `json:"state"`
+		CreatedAt    string            `json:"created_at"`
+		LastUsedAt   string            `json:"last_used_at,omitempty"`
+		Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	worktreeName := strings.TrimSpace(raw.WorktreeName)
+	if worktreeName == "" {
+		worktreeName = strings.TrimSpace(raw.Name)
+	}
+
+	*dto = WorktreeDTO{
+		WorktreeID:   raw.WorktreeID,
+		WorktreeName: worktreeName,
+		Name:         worktreeName,
+		RepoID:       raw.RepoID,
+		RepoName:     strings.TrimSpace(raw.RepoName),
+		Branch:       raw.Branch,
+		BaseBranch:   raw.BaseBranch,
+		TreePath:     raw.TreePath,
+		State:        raw.State,
+		CreatedAt:    raw.CreatedAt,
+		LastUsedAt:   raw.LastUsedAt,
+		Merge:        raw.Merge,
+	}
+	return nil
 }
 
 // WorktreeMergeDTO is the canonical daemon read shape for durable worktree merge state.
@@ -123,7 +202,9 @@ type InvocationDTO struct {
 	InvocationID   string `json:"invocation_id"`
 	InvocationName string `json:"invocation_name,omitempty"`
 	WorktreeID     string `json:"worktree_id"`
+	WorktreeName   string `json:"worktree_name"`
 	RepoID         string `json:"repo_id"`
+	RepoName       string `json:"repo_name"`
 	Runner         string `json:"runner"`
 	Mode           string `json:"mode"` // "headed" or "headless"
 	TmuxSession    string `json:"tmux_session,omitempty"`
@@ -188,6 +269,7 @@ type InvocationActivityNavigation struct {
 	LatestTurnID   string `json:"latest_turn_id,omitempty"`
 	HistoryCommand string `json:"history_command,omitempty"`
 	DiffCommand    string `json:"diff_command,omitempty"`
+	AttachCommand  string `json:"attach_command,omitempty"`
 }
 
 // ----- CheckpointDTO -----
@@ -295,6 +377,7 @@ type InvocationCheckNavigation struct {
 	LatestTurnID   string `json:"latest_turn_id,omitempty"`
 	HistoryCommand string `json:"history_command"`
 	DiffCommand    string `json:"diff_command,omitempty"`
+	AttachCommand  string `json:"attach_command,omitempty"`
 	PRSyncCommand  string `json:"pr_sync_command,omitempty"`
 }
 

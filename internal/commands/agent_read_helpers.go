@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -48,7 +49,23 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 			attentionStr,
 		)
 
-		detailParts := make([]string, 0, 2)
+		detailParts := make([]string, 0, 3)
+		repo := strings.TrimSpace(inv.RepoID)
+		if repo != "" {
+			if repoName := strings.TrimSpace(inv.RepoName); repoName != "" {
+				detailParts = append(detailParts, "repo: "+repoName+" ("+repo+")")
+			} else {
+				detailParts = append(detailParts, "repo: "+repo)
+			}
+		}
+		worktree := strings.TrimSpace(inv.WorktreeID)
+		if worktree != "" {
+			if strings.TrimSpace(inv.WorktreeName) != "" {
+				detailParts = append(detailParts, "worktree: "+inv.WorktreeName+" ("+worktree+")")
+			} else {
+				detailParts = append(detailParts, "worktree: "+worktree)
+			}
+		}
 		if statusSummary := strings.TrimSpace(inv.StatusSummary); statusSummary != "" {
 			detailParts = append(detailParts, "summary: "+statusSummary)
 		}
@@ -84,7 +101,32 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	if inv.InvocationName != "" {
 		_, _ = fmt.Fprintf(w, "name:                   %s\n", inv.InvocationName)
 	}
-	_, _ = fmt.Fprintf(w, "worktree_id:            %s\n", inv.WorktreeID)
+	worktree := strings.TrimSpace(inv.WorktreeID)
+	if strings.TrimSpace(inv.WorktreeName) != "" {
+		if worktree != "" {
+			_, _ = fmt.Fprintf(w, "worktree:               %s (%s)\n", inv.WorktreeName, worktree)
+		} else {
+			_, _ = fmt.Fprintf(w, "worktree:               %s\n", inv.WorktreeName)
+		}
+	} else {
+		if worktree == "" {
+			worktree = "-"
+		}
+		_, _ = fmt.Fprintf(w, "worktree:               %s\n", worktree)
+	}
+	repo := strings.TrimSpace(inv.RepoID)
+	if strings.TrimSpace(inv.RepoName) != "" {
+		if repo != "" {
+			_, _ = fmt.Fprintf(w, "repo:                   %s (%s)\n", inv.RepoName, repo)
+		} else {
+			_, _ = fmt.Fprintf(w, "repo:                   %s\n", inv.RepoName)
+		}
+	} else {
+		if repo == "" {
+			repo = "-"
+		}
+		_, _ = fmt.Fprintf(w, "repo:                   %s\n", repo)
+	}
 	_, _ = fmt.Fprintf(w, "runner:                 %s\n", inv.Runner)
 	_, _ = fmt.Fprintf(w, "mode:                   %s\n", inv.Mode)
 	_, _ = fmt.Fprintf(w, "state:                  %s\n", inv.State)
@@ -134,7 +176,15 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	if inv.LogsDir != "" {
 		_, _ = fmt.Fprintf(w, "logs_dir:               %s\n", inv.LogsDir)
 	}
+	attachCommand := ""
 	if inv.Navigation != nil {
+		navigationValue := reflect.ValueOf(inv.Navigation)
+		if navigationValue.Kind() == reflect.Pointer && !navigationValue.IsNil() {
+			attachField := navigationValue.Elem().FieldByName("AttachCommand")
+			if attachField.IsValid() && attachField.Kind() == reflect.String {
+				attachCommand = strings.TrimSpace(attachField.String())
+			}
+		}
 		if strings.TrimSpace(inv.Navigation.HistoryCommand) != "" {
 			_, _ = fmt.Fprintf(w, "history_command:        %s\n", inv.Navigation.HistoryCommand)
 		}
@@ -144,6 +194,12 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 		if strings.TrimSpace(inv.Navigation.LatestTurnID) != "" {
 			_, _ = fmt.Fprintf(w, "latest_turn_id:         %s\n", inv.Navigation.LatestTurnID)
 		}
+	}
+	if attachCommand == "" && strings.TrimSpace(inv.Mode) == "headed" && strings.TrimSpace(inv.InvocationID) != "" && strings.TrimSpace(inv.RepoID) != "" {
+		attachCommand = fmt.Sprintf("agency agent %s attach --repo %s", inv.InvocationID, inv.RepoID)
+	}
+	if attachCommand != "" {
+		_, _ = fmt.Fprintf(w, "attach_command:         %s\n", attachCommand)
 	}
 	return nil
 }
@@ -212,7 +268,17 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 	if check.HowToTest != "" {
 		_, _ = fmt.Fprintf(w, "how_to_test:          %s\n", check.HowToTest)
 	}
-
+	attachCommand := ""
+	navigationValue := reflect.ValueOf(check.Navigation)
+	if navigationValue.IsValid() {
+		attachField := navigationValue.FieldByName("AttachCommand")
+		if attachField.IsValid() && attachField.Kind() == reflect.String {
+			attachCommand = strings.TrimSpace(attachField.String())
+		}
+	}
+	if attachCommand != "" {
+		_, _ = fmt.Fprintf(w, "attach_command:      %s\n", attachCommand)
+	}
 	_, _ = fmt.Fprintf(w, "\nBlocking reasons:\n")
 	if len(check.BlockingReasons) == 0 {
 		_, _ = fmt.Fprintf(w, "  (none)\n")
