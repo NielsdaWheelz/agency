@@ -18,7 +18,7 @@ This document covers `internal/watch`.
 - `blocked` is not a primary user-facing state.
 - Human-readable labels such as invocation names, worktree names, and repo labels should be primary in the UI; canonical ids stay visible but secondary.
 - Page headers should make the current agent, worktree, and repo obvious before showing transcript, logs, or history content.
-- The workspace detail pane should prefer a small set of high-signal fields: context, state, reason, latest activity, next action, and ids.
+- The workspace detail pane should prefer a small set of high-signal fields: context, state, reason, latest activity, actions, and ids.
 - Action handling should stay explicit and local to the runtime; avoid generic menu or command frameworks when a direct key/action flow is sufficient.
 - History, transcript, and log views should be read-model pages over canonical daemon reads, not parallel UI stacks.
 - `agency agent <invocation-ref> history` remains the canonical inspection surface; `attach` is only a thin tmux handoff for running headed invocations.
