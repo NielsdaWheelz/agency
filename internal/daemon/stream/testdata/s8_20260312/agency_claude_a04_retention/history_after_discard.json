@@ -127,7 +127,7 @@
       "timestamp": "2026-03-18T16:19:25Z",
       "seq": 6,
       "data": {
-        "raw_json": "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1773864000,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_disabled\",\"isUsingOverage\":false},\"uuid\":\"325216db-ff59-4ecd-9afa-8d13ccecc184\",\"session_id\":\"8fa6a13b-6950-418e-8a78-097348b4587d\"}",
+        "raw_json_preview": "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1773864000,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_disabled\",\"isUsingOverage\":false},\"uuid\":\"325216db-ff59-4ecd-9afa-8d13ccecc184\",\"session_id\":\"8fa6a13b-6950-418e-8a78-097348b4587d\"}",
         "reason": "unsupported_event_type",
         "runner_event_type": "rate_limit_event"
       }

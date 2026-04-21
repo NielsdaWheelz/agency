@@ -9,7 +9,6 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -80,56 +79,4 @@ func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader,
 			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
 		}
 	}
-}
-
-func (s *Server) runSemanticStatusFlushLoop(proc *SupervisedProcess) {
-	if proc.Parser == nil {
-		return
-	}
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	var lastStatus *runnerstatus.Status
-	var lastUpdatedAt time.Time
-
-	for {
-		select {
-		case <-proc.done:
-			return
-		case <-s.shutdownCh:
-			return
-		case <-ticker.C:
-			currentStatus := proc.Parser.GetSemanticStatus()
-			currentUpdatedAt := proc.Parser.GetSemanticStatusUpdatedAt()
-
-			statusChanged := false
-			if currentStatus == nil && lastStatus != nil {
-				statusChanged = true
-			} else if currentStatus != nil && lastStatus == nil {
-				statusChanged = true
-			} else if currentStatus != nil && lastStatus != nil && *currentStatus != *lastStatus {
-				statusChanged = true
-			} else if !currentUpdatedAt.IsZero() && currentUpdatedAt.After(lastUpdatedAt) {
-				statusChanged = true
-			}
-
-			if statusChanged {
-				s.flushSemanticStatus(proc, currentStatus, currentUpdatedAt)
-				lastStatus = currentStatus
-				lastUpdatedAt = currentUpdatedAt
-			}
-		}
-	}
-}
-
-func (s *Server) flushSemanticStatus(proc *SupervisedProcess, status *runnerstatus.Status, updatedAt time.Time) {
-	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
-		meta.SemanticStatus = status
-		if status != nil && !updatedAt.IsZero() {
-			meta.SemanticStatusUpdatedAt = updatedAt.UTC().Format(time.RFC3339)
-			return
-		}
-		meta.SemanticStatusUpdatedAt = ""
-	})
 }

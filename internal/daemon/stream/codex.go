@@ -3,8 +3,6 @@ package stream
 import (
 	"encoding/json"
 	"strings"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // CodexAdapter parses Codex CLI JSON output.
@@ -90,9 +88,7 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		if raw.Item != nil {
 			switch raw.Item.Type {
 			case "command_execution":
-				events, status := a.parseCommandStart(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseCommandStart(&raw)
 			case "reasoning":
 				return &ParseResult{}, nil
 			default:
@@ -112,9 +108,7 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		if raw.Item != nil {
 			switch raw.Item.Type {
 			case "command_execution":
-				events, status := a.parseCommandStart(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseCommandStart(&raw)
 			case "reasoning":
 				return &ParseResult{}, nil
 			default:
@@ -134,17 +128,11 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		if raw.Item != nil {
 			switch raw.Item.Type {
 			case "command_execution":
-				events, status := a.parseCommandEnd(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseCommandEnd(&raw)
 			case "agent_message":
-				events, status := a.parseAgentMessage(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseAgentMessage(&raw)
 			case "file_change":
-				events, status := a.parseFileChange(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseFileChange(&raw)
 			case "reasoning":
 				// Ignore reasoning items - internal model thought
 				return &ParseResult{}, nil
@@ -188,7 +176,7 @@ func (a *CodexAdapter) parseThreadStarted(raw *codexRawEvent) []*NormalizedEvent
 }
 
 // parseCommandStart handles item.started command_execution events.
-func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindToolStart,
 		Data: make(map[string]interface{}),
@@ -208,14 +196,11 @@ func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) ([]*NormalizedEvent
 		output = a.commandOutput(raw.Item.ID)
 	}
 	setOutputPreview(event.Data, output)
-
-	// Command execution -> working status
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 // parseCommandEnd handles item.completed command_execution events.
-func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindToolEnd,
 		Data: make(map[string]interface{}),
@@ -239,14 +224,11 @@ func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, 
 		a.clearCommandOutput(raw.Item.ID)
 	}
 	setOutputPreview(event.Data, output)
-
-	// Keep working status after command ends
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 // parseAgentMessage handles item.completed agent_message events.
-func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindMessage,
 		Data: make(map[string]interface{}),
@@ -285,14 +267,11 @@ func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent
 			event.Data["text"] = strings.Join(textParts, "\n")
 		}
 	}
-
-	// Agent message (final) -> ready
-	status := runnerstatus.StatusReady
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 // parseFileChange handles item.completed file_change events.
-func (a *CodexAdapter) parseFileChange(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseFileChange(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindToolEnd,
 		Data: make(map[string]interface{}),
@@ -319,9 +298,7 @@ func (a *CodexAdapter) parseFileChange(raw *codexRawEvent) ([]*NormalizedEvent, 
 			event.Data["change_kinds"] = kinds
 		}
 	}
-
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 // parseTurnCompleted handles turn.completed events.

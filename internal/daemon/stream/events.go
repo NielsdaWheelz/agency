@@ -1,5 +1,5 @@
 // Package stream provides parsing and normalization of headless runner output.
-// This implements PR-07: Stream Parsing, Normalized Events, and Semantic Status.
+// This implements PR-07: Stream Parsing and Normalized Events.
 package stream
 
 import (
@@ -41,8 +41,9 @@ const (
 	// EventKindParseError indicates a parsing error for a raw line.
 	EventKindParseError EventKind = "parse_error"
 
-	// EventKindUnknown indicates a runner event shape we could not classify.
-	// The raw bytes remain in raw.jsonl, while data carries diagnostic metadata.
+	// EventKindUnknown is a parser diagnostic for a provider event shape we
+	// could not classify. The raw bytes remain in raw.jsonl, while data carries
+	// the provider type, reason, and a raw JSON preview.
 	EventKindUnknown EventKind = "unknown"
 )
 

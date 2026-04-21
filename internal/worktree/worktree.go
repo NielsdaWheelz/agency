@@ -185,7 +185,7 @@ func scaffoldWorkspace(fsys fs.FS, worktreePath string) error {
 		return fmt.Errorf("failed to create INSTRUCTIONS.md: %w", err)
 	}
 
-	// Create runner_status.json with initial "working" status
+	// Create runner_status.json with initial "running" state.
 	statusPath := runnerstatus.StatusPath(worktreePath)
 	if _, err := fsys.Stat(statusPath); os.IsNotExist(err) {
 		initialStatus := runnerstatus.NewInitial()

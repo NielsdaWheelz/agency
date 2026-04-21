@@ -14,6 +14,11 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 - `agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations, not a parallel inspection workflow.
 - `agency agent <invocation-ref> history logs` is the raw log subcommand of that same inspection surface, not a separate top-level workflow.
 - Headed interactive log viewing should prefer live terminal output; daemon-backed transcript/log pages remain the inspection surface.
+- The runtime should present one canonical invocation `state`: `starting`, `running`, `waiting`, `stopping`, `succeeded`, or `failed`.
+- `waiting` covers both turn-complete idle and waiting-for-user cases.
+- If the UI needs more detail, show `reason` or the pending question text next to the state instead of inventing a second state label.
+- Do not expose separate semantic, display, or readiness state layers in the UI.
+- Do not show `blocked` as a primary user-facing state.
 - Snapshot loading should compose daemon read APIs rather than reconstruct state from raw files.
 - Interactive terminal checks belong at the command boundary before launching the UI.
 - Invocation history UI should live in `internal/watch`, not in a second TUI package.

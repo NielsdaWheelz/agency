@@ -75,6 +75,18 @@ type WorktreeDTO struct {
 
 // ----- InvocationDTO -----
 
+// InvocationState is the canonical invocation state exposed by daemon reads.
+type InvocationState string
+
+const (
+	InvocationStateStarting  InvocationState = "starting"
+	InvocationStateRunning   InvocationState = "running"
+	InvocationStateWaiting   InvocationState = "waiting"
+	InvocationStateStopping  InvocationState = "stopping"
+	InvocationStateSucceeded InvocationState = "succeeded"
+	InvocationStateFailed    InvocationState = "failed"
+)
+
 // InvocationDTO is the canonical DTO for invocation responses.
 // Used by both list and show endpoints (no separate summary DTO).
 type InvocationDTO struct {
@@ -91,19 +103,15 @@ type InvocationDTO struct {
 	FinishedAt   string `json:"finished_at,omitempty"`
 	LastOutputAt string `json:"last_output_at,omitempty"`
 
-	// Lifecycle status
-	Status     string `json:"status"`      // starting, running, stopping, finished, failed
+	// Canonical invocation state.
+	State      string `json:"state"` // starting, running, waiting, stopping, succeeded, failed
+	Reason     string `json:"reason,omitempty"`
 	ExitReason string `json:"exit_reason"` // exited, killed, stopped, start_failed, unknown
 	ExitCode   *int   `json:"exit_code,omitempty"`
-
-	// Semantic status (headless only)
-	SemanticStatus string `json:"semantic_status,omitempty"` // working, needs_input, blocked, ready
 
 	// Landing status
 	LandingStatus string `json:"landing_status,omitempty"` // pending, landed, discarded
 
-	// Derived display fields (computed by daemon)
-	DisplayStatus  string   `json:"display_status"`  // daemon-derived human-readable status
 	AttentionFlags []string `json:"attention_flags"` // daemon-derived flags
 	SortKey        int      `json:"sort_key"`        // daemon-derived priority for rendering
 
@@ -264,14 +272,12 @@ type InvocationCheckNavigation struct {
 type InvocationCheckData struct {
 	InvocationID    string                    `json:"invocation_id"`
 	RepoID          string                    `json:"repo_id"`
-	Ready           bool                      `json:"ready"`
-	Readiness       string                    `json:"readiness"` // "ready" or "blocked"
+	State           string                    `json:"state"`
+	Reason          string                    `json:"reason,omitempty"`
 	PRSyncEligible  bool                      `json:"pr_sync_eligible"`
-	Status          string                    `json:"status"`
-	DisplayStatus   string                    `json:"display_status"`
-	SemanticStatus  string                    `json:"semantic_status,omitempty"`
 	LandingStatus   string                    `json:"landing_status,omitempty"`
-	RunnerStatus    string                    `json:"runner_status,omitempty"`
+	RunnerState     string                    `json:"runner_state,omitempty"`
+	RunnerReason    string                    `json:"runner_reason,omitempty"`
 	RunnerSummary   string                    `json:"runner_summary,omitempty"`
 	StatusSummary   string                    `json:"status_summary,omitempty"`
 	LatestActivity  *InvocationLatestActivity `json:"latest_activity,omitempty"`
@@ -308,24 +314,6 @@ type CheckpointCursor struct {
 	ID int `json:"id"`
 }
 
-// ----- Display Status Constants -----
-
-// Display status values derived by daemon.
-const (
-	DisplayStatusFailed         = "failed"
-	DisplayStatusStopping       = "stopping"
-	DisplayStatusNeedsAttention = "needs attention"
-	DisplayStatusNeedsInput     = "needs input"
-	DisplayStatusBlocked        = "blocked"
-	DisplayStatusReady          = "ready"
-	DisplayStatusWorking        = "working"
-	DisplayStatusRunning        = "running"
-	DisplayStatusFinished       = "finished"
-	DisplayStatusStarting       = "starting"
-	DisplayStatusLanded         = "landed"
-	DisplayStatusDiscarded      = "discarded"
-)
-
 // Attention flag values.
 const (
 	AttentionFlagNeedsAttention = "needs_attention"
@@ -337,15 +325,12 @@ const (
 // Sort key constants (lower = higher priority).
 const (
 	SortKeyFailed         = 10
-	SortKeyStopping       = 15
-	SortKeyNeedsAttention = 20
-	SortKeyNeedsInput     = 30
-	SortKeyBlocked        = 40
-	SortKeyReady          = 50
-	SortKeyWorking        = 60
-	SortKeyRunning        = 70
-	SortKeyFinished       = 80
-	SortKeyStarting       = 90
+	SortKeyStopping       = 20
+	SortKeyNeedsAttention = 30
+	SortKeyWaiting        = 40
+	SortKeyRunning        = 50
+	SortKeyStarting       = 60
+	SortKeySucceeded      = 70
 	SortKeyLanded         = 100
 	SortKeyDiscarded      = 110
 )

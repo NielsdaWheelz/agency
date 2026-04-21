@@ -18,7 +18,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/jsonl"
 	"github.com/NielsdaWheelz/agency/internal/runners"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -290,7 +289,6 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	go s.streamOutput(proc, startedProc.StderrPipe, stderrFile)
 	go s.waitForExitWithFailureReason(proc, startedProc, rawFile, stderrFile, streamFile)
 	go s.runOutputFlushLoop(proc)
-	go s.runSemanticStatusFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
 	return pid, pgid, nil
@@ -403,20 +401,6 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 		queuedResumePrompts = resumeRelay.Drain()
 	}
 
-	var semanticStatus *string
-	var semanticStatusUpdatedAt string
-	if proc.Parser != nil {
-		if s := proc.Parser.GetSemanticStatus(); s != nil {
-			str := string(*s)
-			semanticStatus = &str
-			semanticStatusUpdatedAt = proc.Parser.GetSemanticStatusUpdatedAt().UTC().Format(time.RFC3339)
-		}
-		if status == store.InvocationStatusFailed {
-			semanticStatus = nil
-			semanticStatusUpdatedAt = ""
-		}
-	}
-
 	if status == store.InvocationStatusFinished && len(queuedResumePrompts) > 0 && runners.SupportsResumeTurns(proc.Runner) {
 		pid, pgid, resumeErr := s.startRunnerResumeTurn(context.Background(), proc, queuedResumePrompts[0])
 		if resumeErr != nil {
@@ -440,8 +424,6 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 				meta.ExitCode = nil
 				meta.FinishedAt = ""
 				meta.LifecycleOwner = "daemon"
-				meta.SemanticStatus = nil
-				meta.SemanticStatusUpdatedAt = ""
 				meta.Flags.NeedsAttention = false
 			})
 			return
@@ -452,21 +434,11 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 	if err := s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
 		meta.Status = status
 		meta.ExitReason = exitReason
-		if failureReason != "" {
-			meta.FailureReason = failureReason
-		}
+		meta.FailureReason = failureReason
 		meta.ExitCode = &exitCode
 		meta.FinishedAt = now
 		meta.PID = nil
 		meta.LifecycleOwner = ""
-		if semanticStatus != nil {
-			s := runnerstatus.Status(*semanticStatus)
-			meta.SemanticStatus = &s
-			meta.SemanticStatusUpdatedAt = semanticStatusUpdatedAt
-		} else {
-			meta.SemanticStatus = nil
-			meta.SemanticStatusUpdatedAt = ""
-		}
 	}); err != nil {
 		s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "meta_update_on_exit_failed", err.Error(), nil)
 	}

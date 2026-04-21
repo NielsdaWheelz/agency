@@ -115,8 +115,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		State:         store.WorktreeStateArchived,
 	}))
 
-	// Create invocation inv-1: running, headless, wt-1, started 10min ago
-	semanticWorking := runnerstatus.StatusWorking
+	// Create invocation inv-1: running, headless, wt-1, started 10min ago.
 	_, err = st.EnsureInvocationDir(repoID, "inv-1")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-1", &store.InvocationMeta{
@@ -130,10 +129,15 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-10 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
-		SemanticStatus:        &semanticWorking,
 	}))
+	writeRunnerStatusForInvocation(t, st, repoID, "inv-1", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateRunning,
+		UpdatedAt:     now.Add(-9 * time.Minute).Format(time.RFC3339),
+		Summary:       "still running",
+	})
 
-	// Create invocation inv-2: finished, headed, wt-1, started 5min ago, landed
+	// Create invocation inv-2: finished, headed, wt-1, started 5min ago, landed.
 	_, err = st.EnsureInvocationDir(repoID, "inv-2")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-2", &store.InvocationMeta{
@@ -152,6 +156,13 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		ExitReason:            "exited",
 		LandingStatus:         store.LandingStatusLanded,
 	}))
+	writeRunnerStatusForInvocation(t, st, repoID, "inv-2", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateSucceeded,
+		UpdatedAt:     now.Add(-2 * time.Minute).Format(time.RFC3339),
+		Summary:       "landed cleanly",
+		HowToTest:     "go test ./...",
+	})
 
 	// Create invocation inv-3: failed, headless, wt-2, started 1min ago
 	_, err = st.EnsureInvocationDir(repoID, "inv-3")
@@ -456,9 +467,9 @@ func TestHandleListInvocations_HappyPath(t *testing.T) {
 	assert.Equal(t, "inv-2", data.Invocations[1].InvocationID)
 	assert.Equal(t, "inv-1", data.Invocations[2].InvocationID)
 
-	// Each should have display_status populated
+	// Each should have state populated.
 	for _, inv := range data.Invocations {
-		assert.NotEmpty(t, inv.DisplayStatus, "display_status should be populated for %s", inv.InvocationID)
+		assert.NotEmpty(t, inv.State, "state should be populated for %s", inv.InvocationID)
 	}
 }
 
@@ -541,8 +552,7 @@ func TestHandleGetInvocation_HappyPath(t *testing.T) {
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "inv-1", dto.InvocationID)
-	assert.Equal(t, "running", dto.Status)
-	assert.Equal(t, "working", dto.DisplayStatus)
+	assert.Equal(t, "running", dto.State)
 }
 
 func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing.T) {
@@ -551,20 +561,16 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 
 	sandboxPath := filepath.Join(t.TempDir(), "inv-1-activity-sandbox")
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
-	working := runnerstatus.StatusWorking
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusRunning
-		meta.SemanticStatus = &working
 	}))
 
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusWorking,
+		State:         runnerstatus.StateRunning,
 		UpdatedAt:     "2026-02-05T11:59:30Z",
 		Summary:       "waiting on api contract",
-		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	})
 
@@ -591,7 +597,7 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	require.True(t, found, "expected inv-1 in invocation list")
 	require.NotNil(t, listed.LatestActivity)
 	require.NotNil(t, listed.Navigation)
-	assert.Equal(t, "working", listed.DisplayStatus)
+	assert.Equal(t, "running", listed.State)
 	assert.Equal(t, "waiting on api contract", listed.StatusSummary)
 	assert.Equal(t, "stream:1", listed.LatestActivity.TurnID)
 	assert.Equal(t, "latest activity summary", listed.LatestActivity.Summary)
@@ -603,7 +609,7 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	decodeData(t, showResp, &shown)
 	require.NotNil(t, shown.LatestActivity)
 	require.NotNil(t, shown.Navigation)
-	assert.Equal(t, listed.DisplayStatus, shown.DisplayStatus)
+	assert.Equal(t, listed.State, shown.State)
 	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
 	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
 	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
@@ -616,7 +622,7 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 	var check InvocationCheckData
 	decodeData(t, checkResp, &check)
 	require.NotNil(t, check.LatestActivity)
-	assert.Equal(t, shown.DisplayStatus, check.DisplayStatus)
+	assert.Equal(t, shown.State, check.State)
 	assert.Equal(t, shown.StatusSummary, check.StatusSummary)
 	assert.Equal(t, shown.LatestActivity.TurnID, check.LatestActivity.TurnID)
 	assert.Equal(t, shown.LatestActivity.Summary, check.LatestActivity.Summary)
@@ -634,21 +640,17 @@ func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup
 
 	status := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusWorking,
+		State:         runnerstatus.StateRunning,
 		UpdatedAt:     "2026-02-05T11:59:30Z",
 		Summary:       "invocation-owned summary survives cleanup",
-		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 
-	working := runnerstatus.StatusWorking
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusRunning
-		meta.SemanticStatus = &working
 	}))
 	require.NoError(t, os.RemoveAll(sandboxPath))
 
@@ -666,11 +668,9 @@ func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	working := runnerstatus.StatusWorking
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusStopping
 		meta.Flags.NeedsAttention = true
-		meta.SemanticStatus = &working
 	}))
 
 	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
@@ -678,8 +678,7 @@ func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
 
 	var shown InvocationDTO
 	decodeData(t, showResp, &shown)
-	assert.Equal(t, string(store.InvocationStatusStopping), shown.Status)
-	assert.Equal(t, DisplayStatusStopping, shown.DisplayStatus)
+	assert.Equal(t, string(InvocationStateStopping), shown.State)
 	assert.Contains(t, shown.AttentionFlags, AttentionFlagNeedsAttention)
 
 	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
@@ -687,12 +686,11 @@ func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
 
 	var check InvocationCheckData
 	decodeData(t, checkResp, &check)
-	assert.Equal(t, string(store.InvocationStatusStopping), check.Status)
-	assert.Equal(t, DisplayStatusStopping, check.DisplayStatus)
+	assert.Equal(t, string(InvocationStateStopping), check.State)
 	assert.Contains(t, check.BlockingReasons, InvocationCheckReason{
 		Code:    checkReasonInvocationActive,
 		Message: "invocation is still active",
-		Hint:    "wait for completion before check/merge progression",
+		Hint:    "wait for completion before workflow progression",
 	})
 }
 

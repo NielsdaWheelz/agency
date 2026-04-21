@@ -3,8 +3,6 @@ package stream
 import (
 	"encoding/json"
 	"strings"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // CursorAdapter parses Cursor agent stream-json output.
@@ -32,10 +30,9 @@ func (a *CursorAdapter) ParseLine(line []byte) (*ParseResult, error) {
 	}
 
 	if raw.Type == "tool_call" {
-		events, status := a.parseToolCall(&raw, line)
+		events := a.parseToolCall(&raw, line)
 		return &ParseResult{
-			Events:         events,
-			SemanticStatus: status,
+			Events: events,
 		}, nil
 	}
 
@@ -44,7 +41,7 @@ func (a *CursorAdapter) ParseLine(line []byte) (*ParseResult, error) {
 	return claude.ParseLine(line)
 }
 
-func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) []*NormalizedEvent {
 	switch raw.Subtype {
 	case "started", "completed":
 	default:
@@ -52,7 +49,7 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) ([]*Norm
 		if strings.TrimSpace(raw.Subtype) != "" {
 			unknown.Data["subtype"] = raw.Subtype
 		}
-		return []*NormalizedEvent{unknown}, nil
+		return []*NormalizedEvent{unknown}
 	}
 
 	kind := EventKindToolStart
@@ -64,7 +61,7 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) ([]*Norm
 	if strings.TrimSpace(name) == "" {
 		return []*NormalizedEvent{
 			newUnknownRunnerEvent(raw.Type, "unrecognized_tool_structure", line),
-		}, nil
+		}
 	}
 
 	event := &NormalizedEvent{
@@ -86,9 +83,7 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) ([]*Norm
 	if kind == EventKindToolEnd && exitCode != nil {
 		event.Data["exit_code"] = *exitCode
 	}
-
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 var cursorToolCallKeyOrder = []struct {

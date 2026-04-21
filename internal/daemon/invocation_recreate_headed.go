@@ -249,8 +249,6 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		m.OrphanedAt = ""
 		m.Flags.NeedsAttention = false
 		m.Flags.Orphaned = false
-		m.SemanticStatus = nil
-		m.SemanticStatusUpdatedAt = ""
 	}); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
@@ -358,7 +356,6 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	s.processes[record.InvocationID] = proc
 	s.mu.Unlock()
 	go s.runOutputFlushLoop(proc)
-	go s.runSemanticStatusFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
 	meta, _ = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)

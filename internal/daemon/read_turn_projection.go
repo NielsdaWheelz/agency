@@ -207,7 +207,7 @@ func HistoryTurnExists(turns []Turn, entryID string) bool {
 
 func (s *Server) buildInvocationActivityProjection(
 	record *resolvedInvocation,
-	displayStatus string,
+	state string,
 	runnerSummary string,
 	entries []timelineSortableEntry,
 ) invocationActivityProjection {
@@ -272,7 +272,7 @@ func (s *Server) buildInvocationActivityProjection(
 		statusSummary = strings.TrimSpace(projection.LatestActivity.Summary)
 	}
 	if statusSummary == "" {
-		statusSummary = strings.TrimSpace(displayStatus)
+		statusSummary = strings.TrimSpace(state)
 	}
 	projection.StatusSummary = truncateActivitySummary(statusSummary)
 	return projection

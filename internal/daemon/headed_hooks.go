@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -288,18 +287,6 @@ func (s *Server) parseHeadedReader(repoID, invocationID, runner string, reader i
 	endInfo, _ := rawFile.Stat()
 	if proc != nil {
 		s.flushLastOutputAt(proc)
-		s.flushSemanticStatus(proc, parser.GetSemanticStatus(), parser.GetSemanticStatusUpdatedAt())
-	} else {
-		status := parser.GetSemanticStatus()
-		updatedAt := parser.GetSemanticStatusUpdatedAt()
-		_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-			meta.SemanticStatus = status
-			if status != nil && !updatedAt.IsZero() {
-				meta.SemanticStatusUpdatedAt = updatedAt.UTC().Format(time.RFC3339)
-				return
-			}
-			meta.SemanticStatusUpdatedAt = ""
-		})
 	}
 	if startInfo == nil || endInfo == nil {
 		return 0, err

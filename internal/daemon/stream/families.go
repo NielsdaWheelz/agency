@@ -15,7 +15,7 @@ const (
 	MessageFamilyToolResult = "tool_result"
 )
 
-const unknownEventPreviewBytes = 4096
+const unparsedEventPreviewBytes = 4096
 
 func actionFamilyForToolName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
@@ -50,11 +50,11 @@ func newUnknownRunnerEvent(rawType, reason string, line []byte) *NormalizedEvent
 	if len(line) > 0 {
 		preview := line
 		truncated := false
-		if len(preview) > unknownEventPreviewBytes {
-			preview = preview[:unknownEventPreviewBytes]
+		if len(preview) > unparsedEventPreviewBytes {
+			preview = preview[:unparsedEventPreviewBytes]
 			truncated = true
 		}
-		event.Data["raw_json"] = string(preview)
+		event.Data["raw_json_preview"] = string(preview)
 		if truncated {
 			event.Data["raw_truncated"] = true
 		}

@@ -138,12 +138,11 @@ func setupWorktreeMutationReadyState(t *testing.T, env *readTestEnv) string {
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
 	statusBytes, err := json.Marshal(runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "ready for mutation",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	})
 	require.NoError(t, err)

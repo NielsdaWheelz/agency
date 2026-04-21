@@ -24,12 +24,11 @@ func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
 	stateDir := filepath.Join(integrationTree, ".agency", "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(`{
-  "schema_version": "1.0",
-  "status": "ready",
+  "schema_version": "2.0",
+  "state": "succeeded",
   "updated_at": "2026-02-05T12:00:00Z",
   "summary": "landed invocation changes",
   "questions": [],
-  "blockers": [],
   "how_to_test": "go test ./...",
   "risks": []
 }`), 0o644))

@@ -122,20 +122,6 @@ func (s *Server) loadRunnerStatusForInvocation(record *resolvedInvocation) (*run
 	return runnerstatus.Load(invocationRoot)
 }
 
-func (s *Server) loadRunnerSummaryBestEffort(record *resolvedInvocation) string {
-	statusMeta, err := s.loadRunnerStatusForInvocation(record)
-	if err != nil || statusMeta == nil {
-		return ""
-	}
-	if statusMeta.SchemaVersion != runnerstatus.SchemaVersion {
-		return ""
-	}
-	if err := statusMeta.Validate(); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(statusMeta.Summary)
-}
-
 func getRepoIDsForQuery(s *Server, repoID string) ([]string, error) {
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {

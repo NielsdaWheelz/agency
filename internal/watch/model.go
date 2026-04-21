@@ -397,7 +397,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
 			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
 			m.selectedMode = m.snapshot.Invocations[0].Mode
-			m.selectedStatus = m.snapshot.Invocations[0].Status
+			m.selectedStatus = m.snapshot.Invocations[0].State
 		}
 		return m, nil
 	case isBottomKey(msg):
@@ -406,7 +406,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
 			m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
-			m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].Status
+			m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].State
 		}
 		return m, nil
 	case msg.Text == "h":
@@ -784,12 +784,10 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		invocationID := strings.TrimSpace(m.selectedInvocationID)
 		repoID := strings.TrimSpace(m.selectedRepoID)
 		mode := strings.TrimSpace(m.selectedMode)
-		status := strings.TrimSpace(m.selectedStatus)
 		if ok {
 			invocationID = selected.InvocationID
 			repoID = selected.RepoID
 			mode = firstNonEmpty(selected.Mode, mode)
-			status = firstNonEmpty(selected.Status, status)
 		}
 		if invocationID == "" || repoID == "" {
 			m.lastActionError = true
@@ -815,7 +813,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 			)
 			return m, nil
 		}
-		if status != "running" {
+		if selected.FinishedAt != "" {
 			m.lastActionError = true
 			m.lastActionMessage = formatActionError(
 				kind,
@@ -1073,21 +1071,28 @@ func (m model) canStartAction(kind actionKind) bool {
 		status := strings.TrimSpace(m.selectedStatus)
 		if ok {
 			mode = firstNonEmpty(selected.Mode, mode)
-			status = firstNonEmpty(selected.Status, status)
+			status = firstNonEmpty(selected.State, status)
 		}
-		return mode == "headed" && status == "running" && strings.TrimSpace(m.selectedInvocationID) != "" && strings.TrimSpace(m.selectedRepoID) != ""
+		return mode == "headed" &&
+			strings.TrimSpace(m.selectedInvocationID) != "" &&
+			strings.TrimSpace(m.selectedRepoID) != "" &&
+			selected.FinishedAt == "" &&
+			status != ""
 	case actionOpen:
 		return m.open != nil
 	case actionStop:
-		return m.stop != nil && (selected.Status == "starting" || selected.Status == "running" || selected.Status == "stopping")
+		return m.stop != nil && selected.FinishedAt == ""
 	case actionKill:
-		return m.kill != nil && (selected.Status == "starting" || selected.Status == "running" || selected.Status == "stopping")
+		return m.kill != nil && selected.FinishedAt == ""
 	case actionLand:
 		return m.land != nil && selected.LandingStatus != "landed" && selected.LandingStatus != "discarded"
 	case actionDiscard:
 		return m.discard != nil && selected.LandingStatus != "landed" && selected.LandingStatus != "discarded"
 	case actionFollowup:
-		return m.followup != nil && selected.Mode == "headless" && selected.Status == "running"
+		return m.followup != nil &&
+			selected.Mode == "headless" &&
+			selected.FinishedAt == "" &&
+			(selected.State == "running" || selected.State == "waiting")
 	case actionRecreate:
 		return m.recreate != nil && selected.Mode == "headed"
 	case actionPRSync:
@@ -1131,7 +1136,7 @@ func (m *model) moveSelection(delta int) {
 	m.selectedInvocationID = m.snapshot.Invocations[next].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[next].RepoID
 	m.selectedMode = m.snapshot.Invocations[next].Mode
-	m.selectedStatus = m.snapshot.Invocations[next].Status
+	m.selectedStatus = m.snapshot.Invocations[next].State
 }
 
 func (m *model) reconcileSelection() {
@@ -1150,7 +1155,7 @@ func (m *model) reconcileSelection() {
 				m.selectedIndex = idx
 				m.selectedRepoID = inv.RepoID
 				m.selectedMode = inv.Mode
-				m.selectedStatus = inv.Status
+				m.selectedStatus = inv.State
 				return
 			}
 		}
@@ -1160,7 +1165,7 @@ func (m *model) reconcileSelection() {
 	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
 	m.selectedMode = m.snapshot.Invocations[m.selectedIndex].Mode
-	m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].Status
+	m.selectedStatus = m.snapshot.Invocations[m.selectedIndex].State
 }
 
 func (m *model) reconcileHistorySelection() {

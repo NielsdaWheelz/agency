@@ -7,6 +7,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/ids"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -75,13 +76,20 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 			}
 
 			logsDir := s.preferredInvocationLogsDir(repoID, r.InvocationID)
-			dto := InvocationMetaToDTO(r.Meta, repoID, logsDir, now)
 			resolved := &resolvedInvocation{
 				InvocationID: r.InvocationID,
 				RepoID:       repoID,
 				Meta:         r.Meta,
 			}
-			activityProjection := s.buildInvocationActivityProjection(resolved, dto.DisplayStatus, s.loadRunnerSummaryBestEffort(resolved), nil)
+			runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(resolved)
+			runnerSummary := ""
+			if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
+				if err := runnerMeta.Validate(); err == nil {
+					runnerSummary = runnerMeta.Summary
+				}
+			}
+			dto := InvocationMetaToDTO(r.Meta, repoID, logsDir, runnerMeta, runnerErr, now)
+			activityProjection := s.buildInvocationActivityProjection(resolved, dto.State, runnerSummary, nil)
 			applyInvocationActivityProjection(&dto, activityProjection)
 			allInvocations = append(allInvocations, dto)
 		}
@@ -115,8 +123,15 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 
 	now := s.Clock()
 	logsDir := s.preferredInvocationLogsDir(record.RepoID, record.InvocationID)
-	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, now)
-	activityProjection := s.buildInvocationActivityProjection(record, dto.DisplayStatus, s.loadRunnerSummaryBestEffort(record), nil)
+	runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(record)
+	runnerSummary := ""
+	if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
+		if err := runnerMeta.Validate(); err == nil {
+			runnerSummary = runnerMeta.Summary
+		}
+	}
+	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, runnerMeta, runnerErr, now)
+	activityProjection := s.buildInvocationActivityProjection(record, dto.State, runnerSummary, nil)
 	applyInvocationActivityProjection(&dto, activityProjection)
 	s.writeAPIResponse(w, requestID, dto)
 }

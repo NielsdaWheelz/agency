@@ -92,7 +92,7 @@ agency agent <invocation-ref> history                 # interactive invocation h
 agency agent <invocation-ref> history --json          # machine-readable timeline output
 agency agent <invocation-ref> history logs --follow   # raw invocation logs
 agency agent <invocation-ref> followup --prompt "continue with edge-case tests"
-agency agent <invocation-ref> check                   # readiness verdict + blocking reasons
+agency agent <invocation-ref> check                   # canonical invocation state + reason
 agency agent <invocation-ref> diff --turn <entry>    # changes for a turn or range
 agency agent <invocation-ref> diff --turn-range <start>..<end>
 agency agent <invocation-ref> land --apply           # land sandbox into integration worktree
@@ -114,6 +114,9 @@ That runtime exposes workspace, history, transcript, and logs pages over the sam
 `agency agent <invocation-ref> history` is the canonical inspection surface for invocation turns, checkpoints, transcripts, and logs.
 `agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations; it is not a parallel inspection workflow.
 For headed interactive logs, prefer the live terminal output; use history/transcript/logs pages for daemon-backed inspection and replay.
+Invocation state uses one canonical vocabulary: `starting`, `running`, `waiting`, `stopping`, `succeeded`, `failed`.
+`waiting` covers both done-and-idle and waiting-for-user cases.
+`blocked` is not a user-facing state.
 `agency agent <invocation-ref> restore` restores sandbox state only; it does not rerun the original prompt.
 use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
 after a restore, use `agency agent <invocation-ref> followup` to continue from the restored state.
@@ -165,7 +168,11 @@ you register a repo, create worktrees (isolated branches), start agents inside s
 
 invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, headed recreate, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
-runner status progression is mode-aware: headless `review`/`pr sync`/`pr merge` is strict and typed; headed flows stay progression-capable with explicit diagnostics and deterministic fallback behavior.
+the only semantic runner contract is `.agency/state/runner_status.json`.
+it uses one canonical `state`; the CLI and terminal UI should not layer separate semantic, display, or readiness statuses on top of it.
+the runner writes `running`, `waiting`, `succeeded`, or `failed`.
+`waiting` covers both turn-complete idle and waiting-for-user cases.
+unknown provider events should degrade to diagnostics in transcript/log inspection, not to a fake top-level invocation state.
 
 ## documentation
 

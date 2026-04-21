@@ -68,7 +68,7 @@ func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) (Run
 		m.selectedInvocationID = invocation.Data.InvocationID
 		m.selectedRepoID = invocation.Data.RepoID
 		m.selectedMode = invocation.Data.Mode
-		m.selectedStatus = invocation.Data.Status
+		m.selectedStatus = invocation.Data.State
 		repos, err := client.ListRepos(ctx)
 		if err == nil {
 			for _, repo := range repos.Data.Repos {

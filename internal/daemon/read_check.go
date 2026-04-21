@@ -12,16 +12,14 @@ import (
 
 const (
 	checkReasonInvocationActive       = "invocation_active"
+	checkReasonInvocationWaiting      = "invocation_waiting"
 	checkReasonInvocationFailed       = "invocation_failed"
 	checkReasonLandingPending         = "landing_pending"
 	checkReasonAlreadyDiscarded       = "already_discarded"
-	checkReasonRunnerNeedsInput       = "runner_needs_input"
-	checkReasonRunnerBlocked          = "runner_blocked"
-	checkReasonRunnerWorking          = "runner_working"
 	checkReasonRunnerStatusMissing    = "runner_status_missing"
 	checkReasonRunnerStatusUnreadable = "runner_status_unreadable"
 	checkReasonRunnerStatusInvalid    = "runner_status_invalid"
-	checkReasonRunnerNotReady         = "runner_not_ready"
+	checkReasonInvalidRunnerState     = "invalid_runner_state"
 )
 
 // handleGetInvocationCheck handles GET /invocations/{ref}/check.
@@ -45,14 +43,22 @@ func (s *Server) handleGetInvocationCheck(w http.ResponseWriter, r *http.Request
 
 func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationCheckData {
 	meta := record.Meta
-	derived := DeriveDisplayStatus(meta, s.Clock())
+	runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(record)
+	dto := InvocationMetaToDTO(
+		meta,
+		record.RepoID,
+		s.preferredInvocationLogsDir(record.RepoID, record.InvocationID),
+		runnerMeta,
+		runnerErr,
+		s.Clock(),
+	)
 
 	data := InvocationCheckData{
 		InvocationID:    record.InvocationID,
 		RepoID:          record.RepoID,
-		Status:          string(meta.Status),
-		DisplayStatus:   derived.DisplayStatus,
-		LandingStatus:   string(meta.LandingStatus),
+		State:           dto.State,
+		Reason:          dto.Reason,
+		LandingStatus:   dto.LandingStatus,
 		BlockingReasons: make([]InvocationCheckReason, 0, 8),
 		Navigation: InvocationCheckNavigation{
 			InvocationRef:  record.InvocationID,
@@ -62,40 +68,21 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 			PRSyncCommand:  fmt.Sprintf("agency worktree %s pr sync --repo %s", firstNonEmpty(strings.TrimSpace(meta.IntegrationWorktreeID), "<worktree_ref>"), record.RepoID),
 		},
 	}
-	if meta.SemanticStatus != nil {
-		data.SemanticStatus = string(*meta.SemanticStatus)
-	}
 
-	timelineEntries := s.collectTimelineEntries(record)
-
-	if runnerMeta, err := s.loadRunnerStatusForInvocation(record); err != nil {
-		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-			Code:    checkReasonRunnerStatusUnreadable,
-			Message: "runner status file could not be read",
-			Hint:    err.Error(),
-		})
-	} else if runnerMeta != nil {
-		if runnerMeta.SchemaVersion != runnerstatus.SchemaVersion {
-			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-				Code:    checkReasonRunnerStatusInvalid,
-				Message: "runner status file schema_version is unsupported",
-				Hint:    fmt.Sprintf("expected %s, got %s", runnerstatus.SchemaVersion, firstNonEmpty(runnerMeta.SchemaVersion, "<empty>")),
-			})
-		} else if err := runnerMeta.Validate(); err != nil {
-			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-				Code:    checkReasonRunnerStatusInvalid,
-				Message: "runner status file is present but invalid",
-				Hint:    err.Error(),
-			})
-		} else {
-			data.RunnerStatus = string(runnerMeta.Status)
+	runnerSummary := ""
+	if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
+		if err := runnerMeta.Validate(); err == nil {
+			data.RunnerState = string(runnerMeta.State)
+			data.RunnerReason = strings.TrimSpace(runnerMeta.Reason)
 			data.RunnerSummary = runnerMeta.Summary
 			data.RunnerUpdatedAt = runnerMeta.UpdatedAt
 			data.HowToTest = runnerMeta.HowToTest
+			runnerSummary = runnerMeta.Summary
 		}
 	}
 
-	activityProjection := s.buildInvocationActivityProjection(record, data.DisplayStatus, data.RunnerSummary, timelineEntries)
+	timelineEntries := s.collectTimelineEntries(record)
+	activityProjection := s.buildInvocationActivityProjection(record, data.State, runnerSummary, timelineEntries)
 	data.StatusSummary = activityProjection.StatusSummary
 	data.LatestActivity = activityProjection.LatestActivity
 	if strings.TrimSpace(data.RunnerSummary) == "" {
@@ -116,17 +103,62 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonInvocationActive,
 			Message: "invocation is still active",
-			Hint:    "wait for completion before check/merge progression",
+			Hint:    "wait for completion before workflow progression",
 		})
-	case store.InvocationStatusFailed:
-		message := "invocation failed before reaching ready state"
-		if meta.FailureReason != "" {
-			message = fmt.Sprintf("invocation failed (%s)", meta.FailureReason)
+	}
+
+	switch data.State {
+	case string(InvocationStateWaiting):
+		message := "invocation is waiting"
+		hint := "send a follow-up prompt or inspect history/logs"
+		switch data.Reason {
+		case runnerstatus.ReasonAwaitingUserInput:
+			message = "invocation is waiting for user input"
+			hint = "answer the pending question and continue the invocation"
+		case runnerstatus.ReasonAwaitingApproval:
+			message = "invocation is waiting for approval"
+			hint = "approve the requested action and continue the invocation"
+		case runnerstatus.ReasonTurnComplete:
+			message = "invocation is waiting for the next prompt"
+		}
+		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
+			Code:    checkReasonInvocationWaiting,
+			Message: message,
+			Hint:    hint,
+		})
+	case string(InvocationStateFailed):
+		message := "invocation failed"
+		hint := "inspect history/logs and restore a checkpoint if needed"
+		switch data.Reason {
+		case "runner_status_missing":
+			message = "runner status file is missing after invocation completion"
+			hint = "ensure .agency/state/runner_status.json is written before the runner exits"
+		case "runner_status_unreadable":
+			message = "runner status file could not be read"
+			if runnerErr != nil {
+				hint = runnerErr.Error()
+			}
+		case "runner_status_invalid":
+			message = "runner status file is present but invalid"
+			if runnerMeta != nil && runnerMeta.SchemaVersion != runnerstatus.SchemaVersion {
+				hint = fmt.Sprintf("expected schema_version %s, got %s", runnerstatus.SchemaVersion, firstNonEmpty(runnerMeta.SchemaVersion, "<empty>"))
+			} else if runnerMeta != nil {
+				if err := runnerMeta.Validate(); err != nil {
+					hint = err.Error()
+				}
+			}
+		case "invalid_runner_state":
+			message = "runner finished with a non-terminal state"
+			hint = "runner must write waiting, succeeded, or failed before exiting"
+		default:
+			if strings.TrimSpace(data.Reason) != "" {
+				message = fmt.Sprintf("invocation failed (%s)", data.Reason)
+			}
 		}
 		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonInvocationFailed,
 			Message: message,
-			Hint:    "inspect history/logs and restore a checkpoint if needed",
+			Hint:    hint,
 		})
 	}
 
@@ -141,67 +173,47 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
 			Code:    checkReasonAlreadyDiscarded,
 			Message: "invocation is already discarded",
-			Hint:    "diff and readiness progression are no longer applicable",
+			Hint:    "diff and workflow progression are no longer applicable",
 		})
 	}
 
-	effectiveSemantic := data.SemanticStatus
-	if effectiveSemantic == "" && data.RunnerStatus != "" {
-		effectiveSemantic = data.RunnerStatus
-	}
-
-	switch effectiveSemantic {
-	case string(runnerstatus.StatusNeedsInput):
-		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-			Code:    checkReasonRunnerNeedsInput,
-			Message: "runner status requires human input",
-			Hint:    "resolve questions and continue the invocation",
-		})
-	case string(runnerstatus.StatusBlocked):
-		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-			Code:    checkReasonRunnerBlocked,
-			Message: "runner reported blocked status",
-			Hint:    firstNonEmpty(data.RunnerSummary, "address blockers and continue the invocation"),
-		})
-	case string(runnerstatus.StatusWorking):
-		data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-			Code:    checkReasonRunnerWorking,
-			Message: "runner is still working",
-			Hint:    "wait until status becomes ready",
-		})
-	}
-
-	if meta.Status == store.InvocationStatusFinished &&
-		meta.LandingStatus != store.LandingStatusDiscarded {
-		if effectiveSemantic == "" {
-			if !hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusUnreadable) &&
-				!hasCheckReason(data.BlockingReasons, checkReasonRunnerStatusInvalid) {
-				data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-					Code:    checkReasonRunnerStatusMissing,
-					Message: "no runner readiness status is available",
-					Hint:    "ensure .agency/state/runner_status.json is updated",
-				})
-			}
-		} else if effectiveSemantic != string(runnerstatus.StatusReady) &&
-			effectiveSemantic != string(runnerstatus.StatusNeedsInput) &&
-			effectiveSemantic != string(runnerstatus.StatusBlocked) &&
-			effectiveSemantic != string(runnerstatus.StatusWorking) {
+	if meta.Status == store.InvocationStatusFinished {
+		if runnerErr != nil {
 			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
-				Code:    checkReasonRunnerNotReady,
-				Message: "runner status is not ready",
-				Hint:    fmt.Sprintf("current status: %s", effectiveSemantic),
+				Code:    checkReasonRunnerStatusUnreadable,
+				Message: "runner status file could not be read",
+				Hint:    runnerErr.Error(),
+			})
+		} else if runnerMeta == nil {
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
+				Code:    checkReasonRunnerStatusMissing,
+				Message: "no runner status file is available",
+				Hint:    "ensure .agency/state/runner_status.json is updated before the runner exits",
+			})
+		} else if runnerMeta.SchemaVersion != runnerstatus.SchemaVersion {
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
+				Code:    checkReasonRunnerStatusInvalid,
+				Message: "runner status file schema_version is unsupported",
+				Hint:    fmt.Sprintf("expected %s, got %s", runnerstatus.SchemaVersion, firstNonEmpty(runnerMeta.SchemaVersion, "<empty>")),
+			})
+		} else if err := runnerMeta.Validate(); err != nil {
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
+				Code:    checkReasonRunnerStatusInvalid,
+				Message: "runner status file is present but invalid",
+				Hint:    err.Error(),
+			})
+		} else if runnerMeta.State != runnerstatus.StateWaiting &&
+			runnerMeta.State != runnerstatus.StateSucceeded &&
+			runnerMeta.State != runnerstatus.StateFailed {
+			data.BlockingReasons = append(data.BlockingReasons, InvocationCheckReason{
+				Code:    checkReasonInvalidRunnerState,
+				Message: "runner finished with a non-terminal state",
+				Hint:    fmt.Sprintf("current runner state: %s", runnerMeta.State),
 			})
 		}
 	}
 
-	data.Ready = len(data.BlockingReasons) == 0
-	if data.Ready {
-		data.Readiness = "ready"
-	} else {
-		data.Readiness = "blocked"
-	}
-	data.PRSyncEligible = data.Ready
-
+	data.PRSyncEligible = len(data.BlockingReasons) == 0
 	return data
 }
 
@@ -212,13 +224,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func hasCheckReason(reasons []InvocationCheckReason, code string) bool {
-	for _, reason := range reasons {
-		if reason.Code == code {
-			return true
-		}
-	}
-	return false
 }

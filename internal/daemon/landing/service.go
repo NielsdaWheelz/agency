@@ -279,11 +279,10 @@ func (s *Service) syncWorktreeRunnerStatus(repoID, invocationID, worktreeID stri
 
 	worktreeStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     s.clock().UTC().Format(time.RFC3339),
 		Summary:       "Landed invocation " + invocationID,
 		Questions:     []string{},
-		Blockers:      []string{},
 		HowToTest:     "How to test not provided.",
 		Risks:         []string{},
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 func TestModel_WorkspaceSelection_ReconcilesByInvocationID(t *testing.T) {
@@ -102,7 +103,7 @@ func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", Status: "running"},
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", State: string(runnerstatus.StateRunning)},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -127,7 +128,7 @@ func TestModel_ActionAttach_HeadlessInvocationStaysInTUI(t *testing.T) {
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headless", Status: "running"},
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headless", State: string(runnerstatus.StateRunning)},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -150,7 +151,13 @@ func TestModel_ActionAttach_NonRunningInvocationStaysInTUI(t *testing.T) {
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", Status: "finished"},
+			{
+				InvocationID: "inv-1",
+				RepoID:       "repo-1",
+				Mode:         "headed",
+				State:        string(runnerstatus.StateSucceeded),
+				FinishedAt:   "2026-02-05T12:00:00Z",
+			},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -244,8 +251,7 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 				WorktreeID:     "wt-1",
 				Runner:         "claude-code",
 				Mode:           "headless",
-				Status:         "running",
-				DisplayStatus:  "working",
+				State:          string(runnerstatus.StateRunning),
 				LandingStatus:  "landed",
 			},
 		},
@@ -253,10 +259,9 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 		Checks: map[string]daemon.InvocationCheckData{
 			"inv-1": {
 				InvocationID:   "inv-1",
-				Readiness:      "blocked",
-				Ready:          false,
+				State:          string(runnerstatus.StateWaiting),
 				PRSyncEligible: false,
-				DisplayStatus:  "working",
+				RunnerState:    string(runnerstatus.StateWaiting),
 				StatusSummary:  "waiting on api contract",
 				LatestActivity: &daemon.InvocationLatestActivity{
 					TurnID:        "stream:1",
@@ -293,7 +298,7 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	assert.Contains(t, view.Content, "agent auth (inv-1)")
 	assert.Contains(t, view.Content, "Worktree:   feature-auth (wt-1)")
 	assert.Contains(t, view.Content, "Repo:       github.com/acme/one (repo-1)")
-	assert.Contains(t, view.Content, "State:      working")
+	assert.Contains(t, view.Content, "State:      waiting")
 	assert.Contains(t, view.Content, "Latest:     [assistant] latest activity summary (tools=1, checkpoint=3)")
 	assert.Contains(t, view.Content, "open sandbox")
 	assert.Contains(t, view.Content, "send follow-up")

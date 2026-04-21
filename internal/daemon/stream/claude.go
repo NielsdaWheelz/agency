@@ -3,8 +3,6 @@ package stream
 import (
 	"encoding/json"
 	"strings"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // ClaudeAdapter parses Claude CLI stream-json output.
@@ -83,17 +81,13 @@ func (a *ClaudeAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		}
 
 	case "assistant":
-		events, status := a.parseAssistant(&raw)
-		result.Events = events
-		result.SemanticStatus = status
+		result.Events = a.parseAssistant(&raw)
 
 	case "user":
 		result.Events = a.parseUser(&raw)
 
 	case "result":
-		events, status := a.parseResult(&raw)
-		result.Events = events
-		result.SemanticStatus = status
+		result.Events = a.parseResult(&raw)
 
 	default:
 		result.Events = []*NormalizedEvent{
@@ -125,7 +119,7 @@ func (a *ClaudeAdapter) parseSystemInit(raw *claudeRawEvent) []*NormalizedEvent 
 }
 
 // parseAssistant handles assistant message events.
-func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindMessage,
 		Data: make(map[string]interface{}),
@@ -202,10 +196,7 @@ func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) ([]*NormalizedEvent,
 			}
 		}
 	}
-
-	// Any assistant event -> working status
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 // parseUser handles user message events (tool results).
@@ -295,7 +286,7 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 }
 
 // parseResult handles result events (success/error).
-func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) []*NormalizedEvent {
 	success, failureReason := claudeResultSucceeded(raw)
 	if !success {
 		event := &NormalizedEvent{
@@ -320,9 +311,7 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *r
 		if failureReason != "" {
 			event.Data["result_state"] = failureReason
 		}
-
-		// Error -> no semantic status (lifecycle handles it)
-		return []*NormalizedEvent{event}, nil
+		return []*NormalizedEvent{event}
 	}
 
 	// Success result
@@ -352,10 +341,7 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *r
 		}
 		event.Data["usage"] = usage
 	}
-
-	// Success -> ready
-	status := runnerstatus.StatusReady
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 func claudeResultSucceeded(raw *claudeRawEvent) (bool, string) {

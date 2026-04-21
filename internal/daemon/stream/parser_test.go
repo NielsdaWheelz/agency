@@ -13,8 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 func fixedClock() time.Time {
@@ -44,11 +42,10 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 	adapter := &ClaudeAdapter{}
 
 	tests := []struct {
-		name       string
-		input      string
-		wantKind   EventKind
-		wantStatus *runnerstatus.Status
-		wantErr    bool
+		name     string
+		input    string
+		wantKind EventKind
+		wantErr  bool
 	}{
 		{
 			name:     "system init",
@@ -59,19 +56,11 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 			name:     "assistant text only",
 			input:    `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]}}`,
 			wantKind: EventKindMessage,
-			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusWorking
-				return &s
-			}(),
 		},
 		{
 			name:     "assistant with tool use",
 			input:    `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"tool_use","id":"t1","name":"Read"}]}}`,
 			wantKind: EventKindMessage,
-			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusWorking
-				return &s
-			}(),
 		},
 		{
 			name:     "user tool result",
@@ -82,10 +71,6 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 			name:     "result success",
 			input:    `{"type":"result","subtype":"success","duration_ms":45000,"cost_usd":0.15}`,
 			wantKind: EventKindFinal,
-			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusReady
-				return &s
-			}(),
 		},
 		{
 			name:     "result error",
@@ -121,11 +106,6 @@ func TestClaudeAdapter_ParseLine(t *testing.T) {
 
 			if len(result.Events) > 0 {
 				assert.Equal(t, tt.wantKind, result.Events[0].Kind)
-			}
-
-			if tt.wantStatus != nil {
-				require.NotNil(t, result.SemanticStatus, "ParseLine() semantic status is nil, want %v", *tt.wantStatus)
-				assert.Equal(t, *tt.wantStatus, *result.SemanticStatus)
 			}
 		})
 	}
@@ -203,11 +183,10 @@ func TestCodexAdapter_ParseLine(t *testing.T) {
 	adapter := &CodexAdapter{}
 
 	tests := []struct {
-		name       string
-		input      string
-		wantKind   EventKind
-		wantStatus *runnerstatus.Status
-		wantErr    bool
+		name     string
+		input    string
+		wantKind EventKind
+		wantErr  bool
 	}{
 		{
 			name:     "thread started",
@@ -218,28 +197,16 @@ func TestCodexAdapter_ParseLine(t *testing.T) {
 			name:     "command start",
 			input:    `{"type":"item.started","item":{"type":"command_execution","command":"cat file.txt"}}`,
 			wantKind: EventKindToolStart,
-			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusWorking
-				return &s
-			}(),
 		},
 		{
 			name:     "command end",
 			input:    `{"type":"item.completed","item":{"type":"command_execution","command":"cat file.txt","exit_code":0}}`,
 			wantKind: EventKindToolEnd,
-			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusWorking
-				return &s
-			}(),
 		},
 		{
 			name:     "agent message",
 			input:    `{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Done!"}]}}`,
 			wantKind: EventKindMessage,
-			wantStatus: func() *runnerstatus.Status {
-				s := runnerstatus.StatusReady
-				return &s
-			}(),
 		},
 		{
 			name:     "turn completed",
@@ -270,11 +237,6 @@ func TestCodexAdapter_ParseLine(t *testing.T) {
 
 			if len(result.Events) > 0 {
 				assert.Equal(t, tt.wantKind, result.Events[0].Kind)
-			}
-
-			if tt.wantStatus != nil {
-				require.NotNil(t, result.SemanticStatus, "ParseLine() semantic status is nil, want %v", *tt.wantStatus)
-				assert.Equal(t, *tt.wantStatus, *result.SemanticStatus)
 			}
 		})
 	}
@@ -327,14 +289,12 @@ func TestCursorAdapter_ParseLine_ToolCallCompleted(t *testing.T) {
 	result, err := adapter.ParseLine([]byte(input))
 	require.NoError(t, err)
 	require.Len(t, result.Events, 1)
-	require.NotNil(t, result.SemanticStatus)
 
 	ev := result.Events[0]
 	assert.Equal(t, EventKindToolEnd, ev.Kind)
 	assert.Equal(t, "Edit", ev.Data["name"])
 	assert.Equal(t, "main.go", ev.Data["command"])
 	assert.Equal(t, 0, ev.Data["exit_code"])
-	assert.Equal(t, runnerstatus.StatusWorking, *result.SemanticStatus)
 }
 
 func TestCursorAdapter_ParseLine_ToolCallCompleted_DeterministicKeyPriority(t *testing.T) {
@@ -406,10 +366,7 @@ func TestParser_StreamAndParse_ClaudeCodeFixture(t *testing.T) {
 	}
 	assert.True(t, foundContentBlocks, "stream.jsonl should contain content_blocks in at least one event")
 
-	// Verify final semantic status
-	finalStatus := parser.GetSemanticStatus()
-	require.NotNil(t, finalStatus, "Final semantic status is nil")
-	assert.Equal(t, runnerstatus.StatusReady, *finalStatus)
+	assert.Nil(t, parser.GetSemanticStatus(), "stream parsing should not infer semantic status")
 }
 
 func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
@@ -448,10 +405,7 @@ func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
 	streamData, _ := os.ReadFile(streamFile.Name())
 	assert.NotEmpty(t, streamData, "stream.jsonl is empty")
 
-	// Verify final semantic status
-	finalStatus := parser.GetSemanticStatus()
-	require.NotNil(t, finalStatus, "Final semantic status is nil")
-	assert.Equal(t, runnerstatus.StatusReady, *finalStatus)
+	assert.Nil(t, parser.GetSemanticStatus(), "stream parsing should not infer semantic status")
 }
 
 func TestParser_StreamAndParse_CodexCommandOutputAcrossStartAndEndPreserved(t *testing.T) {
@@ -631,10 +585,7 @@ func TestParser_StreamAndParse_NoTrailingNewline(t *testing.T) {
 	streamData, _ := os.ReadFile(streamFile.Name())
 	assert.Contains(t, string(streamData), `"kind":"final"`, "stream.jsonl should contain final event from line without trailing newline")
 
-	// Verify final semantic status
-	finalStatus := parser.GetSemanticStatus()
-	require.NotNil(t, finalStatus, "Final semantic status is nil")
-	assert.Equal(t, runnerstatus.StatusReady, *finalStatus)
+	assert.Nil(t, parser.GetSemanticStatus(), "stream parsing should not infer semantic status")
 }
 
 func TestParser_SeqMonotonic(t *testing.T) {
@@ -1494,6 +1445,8 @@ func TestCodexAdapter_ParseLine_ItemStartedNil_EmitsUnknownDiagnostic(t *testing
 	require.Len(t, result.Events, 1)
 	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
 	assert.Equal(t, "missing_item", dataStringValue(result.Events[0].Data, "reason"))
+	assert.Contains(t, dataStringValue(result.Events[0].Data, "raw_json_preview"), `"item":null`)
+	assert.Empty(t, dataStringValue(result.Events[0].Data, "raw_json"))
 }
 
 func TestCodexAdapter_ParseLine_ItemCompletedNil_EmitsUnknownDiagnostic(t *testing.T) {
@@ -1505,6 +1458,8 @@ func TestCodexAdapter_ParseLine_ItemCompletedNil_EmitsUnknownDiagnostic(t *testi
 	require.Len(t, result.Events, 1)
 	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
 	assert.Equal(t, "missing_item", dataStringValue(result.Events[0].Data, "reason"))
+	assert.Contains(t, dataStringValue(result.Events[0].Data, "raw_json_preview"), `"item":null`)
+	assert.Empty(t, dataStringValue(result.Events[0].Data, "raw_json"))
 }
 
 func TestCursorAdapter_ParseLine_UnrecognizedToolCall_EmitsUnknownDiagnostic(t *testing.T) {
@@ -1516,6 +1471,7 @@ func TestCursorAdapter_ParseLine_UnrecognizedToolCall_EmitsUnknownDiagnostic(t *
 	require.Len(t, result.Events, 1)
 	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
 	assert.Equal(t, "unrecognized_tool_structure", dataStringValue(result.Events[0].Data, "reason"))
+	assert.Contains(t, dataStringValue(result.Events[0].Data, "raw_json_preview"), `"strangeToolCall"`)
 }
 
 func TestCursorAdapter_ParseLine_EmptyToolCall_EmitsUnknownDiagnostic(t *testing.T) {

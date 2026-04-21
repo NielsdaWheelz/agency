@@ -32,11 +32,6 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 			name = " (" + inv.InvocationName + ")"
 		}
 
-		displayStatus := inv.DisplayStatus
-		if displayStatus == "" {
-			displayStatus = inv.Status
-		}
-
 		attentionStr := ""
 		if len(inv.AttentionFlags) > 0 {
 			for _, flag := range inv.AttentionFlags {
@@ -48,7 +43,7 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 			inv.InvocationID,
 			inv.Runner,
 			inv.Mode,
-			displayStatus,
+			inv.State,
 			name,
 			attentionStr,
 		)
@@ -92,16 +87,15 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	_, _ = fmt.Fprintf(w, "worktree_id:            %s\n", inv.WorktreeID)
 	_, _ = fmt.Fprintf(w, "runner:                 %s\n", inv.Runner)
 	_, _ = fmt.Fprintf(w, "mode:                   %s\n", inv.Mode)
-	_, _ = fmt.Fprintf(w, "status:                 %s\n", inv.Status)
-	_, _ = fmt.Fprintf(w, "display_status:         %s\n", inv.DisplayStatus)
+	_, _ = fmt.Fprintf(w, "state:                  %s\n", inv.State)
+	if strings.TrimSpace(inv.Reason) != "" {
+		_, _ = fmt.Fprintf(w, "reason:                 %s\n", inv.Reason)
+	}
 	if strings.TrimSpace(inv.StatusSummary) != "" {
 		_, _ = fmt.Fprintf(w, "status_summary:         %s\n", inv.StatusSummary)
 	}
 	if inv.LandingStatus != "" {
 		_, _ = fmt.Fprintf(w, "landing_status:         %s\n", inv.LandingStatus)
-	}
-	if inv.SemanticStatus != "" {
-		_, _ = fmt.Fprintf(w, "semantic_status:        %s\n", inv.SemanticStatus)
 	}
 	if inv.LatestActivity != nil {
 		if strings.TrimSpace(inv.LatestActivity.TurnID) != "" {
@@ -159,32 +153,29 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 		return errors.New(errors.EInternal, "check payload is missing")
 	}
 
-	verdict := "BLOCKED"
-	if check.Ready || strings.EqualFold(strings.TrimSpace(check.Readiness), "ready") {
-		verdict = "READY"
-	}
 	prSyncEligible := "no"
 	if check.PRSyncEligible {
 		prSyncEligible = "yes"
 	}
 
-	_, _ = fmt.Fprintf(w, "Readiness:            %s\n", verdict)
+	_, _ = fmt.Fprintf(w, "state:                %s\n", check.State)
+	if strings.TrimSpace(check.Reason) != "" {
+		_, _ = fmt.Fprintf(w, "reason:               %s\n", check.Reason)
+	}
 	_, _ = fmt.Fprintf(w, "pr_sync_eligible:     %s\n", prSyncEligible)
 	_, _ = fmt.Fprintf(w, "invocation_id:        %s\n", check.InvocationID)
 	_, _ = fmt.Fprintf(w, "repo_id:              %s\n", check.RepoID)
-	_, _ = fmt.Fprintf(w, "status:               %s\n", check.Status)
-	_, _ = fmt.Fprintf(w, "display_status:       %s\n", check.DisplayStatus)
 	if check.StatusSummary != "" {
 		_, _ = fmt.Fprintf(w, "status_summary:       %s\n", check.StatusSummary)
 	}
 	if check.LandingStatus != "" {
 		_, _ = fmt.Fprintf(w, "landing_status:       %s\n", check.LandingStatus)
 	}
-	if check.SemanticStatus != "" {
-		_, _ = fmt.Fprintf(w, "semantic_status:      %s\n", check.SemanticStatus)
+	if check.RunnerState != "" {
+		_, _ = fmt.Fprintf(w, "runner_state:         %s\n", check.RunnerState)
 	}
-	if check.RunnerStatus != "" {
-		_, _ = fmt.Fprintf(w, "runner_status:        %s\n", check.RunnerStatus)
+	if strings.TrimSpace(check.RunnerReason) != "" {
+		_, _ = fmt.Fprintf(w, "runner_reason:        %s\n", check.RunnerReason)
 	}
 	if check.RunnerUpdatedAt != "" {
 		_, _ = fmt.Fprintf(w, "runner_updated_at:    %s\n", check.RunnerUpdatedAt)

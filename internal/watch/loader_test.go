@@ -16,6 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 func startFakeDaemon(t *testing.T, handler http.Handler) string {
@@ -83,20 +84,20 @@ func TestLoadWorkspaceSnapshot_DrainsPaginationAndCollectsChecks(t *testing.T) {
 		case r.URL.Path == "/invocations" && r.URL.Query().Get("cursor") == "":
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyWorking},
+					{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyRunning},
 				},
 				NextCursor: "inv-next-1",
 			})
 		case r.URL.Path == "/invocations" && r.URL.Query().Get("cursor") == "inv-next-1":
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-2", RepoID: "repo-1", WorktreeID: "wt-2", SortKey: daemon.SortKeyBlocked},
+					{InvocationID: "inv-2", RepoID: "repo-1", WorktreeID: "wt-2", SortKey: daemon.SortKeyWaiting},
 				},
 			})
 		case r.URL.Path == "/invocations/inv-1/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-1", Readiness: "ready", Ready: true})
+			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-1", State: string(runnerstatus.StateRunning)})
 		case r.URL.Path == "/invocations/inv-2/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-2", Readiness: "blocked", Ready: false})
+			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-2", State: string(runnerstatus.StateWaiting)})
 		default:
 			http.NotFound(w, r)
 		}
@@ -109,8 +110,8 @@ func TestLoadWorkspaceSnapshot_DrainsPaginationAndCollectsChecks(t *testing.T) {
 	require.Len(t, snapshot.Worktrees, 3)
 	require.Len(t, snapshot.Invocations, 2)
 	require.Len(t, snapshot.Checks, 2)
-	assert.Equal(t, "ready", snapshot.Checks["inv-1"].Readiness)
-	assert.Equal(t, "blocked", snapshot.Checks["inv-2"].Readiness)
+	assert.Equal(t, string(runnerstatus.StateRunning), snapshot.Checks["inv-1"].State)
+	assert.Equal(t, string(runnerstatus.StateWaiting), snapshot.Checks["inv-2"].State)
 	assert.Empty(t, snapshot.Warnings)
 }
 
@@ -165,12 +166,12 @@ func TestLoadWorkspaceSnapshot_CheckReadFailuresAreRecoverable(t *testing.T) {
 		case "/invocations":
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-good", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyReady},
-					{InvocationID: "inv-bad", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyBlocked},
+					{InvocationID: "inv-good", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeySucceeded},
+					{InvocationID: "inv-bad", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyWaiting},
 				},
 			})
 		case "/invocations/inv-good/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-good", Readiness: "ready", Ready: true})
+			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-good", State: string(runnerstatus.StateSucceeded)})
 		case "/invocations/inv-bad/check":
 			writeDaemonError(t, w, agencyerrors.EInternal, "temporary daemon timeout")
 		default:
@@ -202,17 +203,17 @@ func TestLoadWorkspaceSnapshot_SortsBySortKeyThenStartedAt(t *testing.T) {
 		case "/invocations":
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{
-					{InvocationID: "inv-2", RepoID: "repo-1", SortKey: daemon.SortKeyReady, StartedAt: "2026-02-01T10:00:00Z"},
-					{InvocationID: "inv-1", RepoID: "repo-1", SortKey: daemon.SortKeyBlocked, StartedAt: "2026-02-03T10:00:00Z"},
-					{InvocationID: "inv-3", RepoID: "repo-1", SortKey: daemon.SortKeyReady, StartedAt: "2026-02-05T10:00:00Z"},
+					{InvocationID: "inv-2", RepoID: "repo-1", SortKey: daemon.SortKeySucceeded, StartedAt: "2026-02-01T10:00:00Z"},
+					{InvocationID: "inv-1", RepoID: "repo-1", SortKey: daemon.SortKeyWaiting, StartedAt: "2026-02-03T10:00:00Z"},
+					{InvocationID: "inv-3", RepoID: "repo-1", SortKey: daemon.SortKeySucceeded, StartedAt: "2026-02-05T10:00:00Z"},
 				},
 			})
 		case "/invocations/inv-1/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-1", Readiness: "blocked", Ready: false})
+			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-1", State: string(runnerstatus.StateWaiting)})
 		case "/invocations/inv-2/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-2", Readiness: "ready", Ready: true})
+			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-2", State: string(runnerstatus.StateSucceeded)})
 		case "/invocations/inv-3/check":
-			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-3", Readiness: "ready", Ready: true})
+			writeDaemonOK(t, w, daemon.InvocationCheckData{InvocationID: "inv-3", State: string(runnerstatus.StateSucceeded)})
 		default:
 			http.NotFound(w, r)
 		}

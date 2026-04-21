@@ -16,31 +16,45 @@ const ClaudeMDTemplate = `# Agency Runner Protocol
 
 ` + "`" + `.agency/state/runner_status.json` + "`" + ` is the only runner contract.
 
+It is the only semantic state contract for an invocation.
+Do not model separate semantic, display, or readiness layers in runner output.
+
 Update it at milestones:
 
-| Status | When | Required Fields |
+| State | When | Required Fields |
 |--------|------|-----------------|
-| ` + "`" + `working` + "`" + ` | Actively making progress | ` + "`" + `summary` + "`" + ` |
-| ` + "`" + `needs_input` + "`" + ` | Waiting for user answer | ` + "`" + `summary` + "`" + `, ` + "`" + `questions[]` + "`" + ` |
-| ` + "`" + `blocked` + "`" + ` | Cannot proceed | ` + "`" + `summary` + "`" + `, ` + "`" + `blockers[]` + "`" + ` |
-| ` + "`" + `ready` + "`" + ` | Work complete | ` + "`" + `summary` + "`" + `, ` + "`" + `how_to_test` + "`" + ` |
+| ` + "`" + `running` + "`" + ` | Actively executing work | ` + "`" + `summary` + "`" + ` |
+| ` + "`" + `waiting` + "`" + ` | Not executing right now. Use this for both turn-complete idle and waiting for user input. | ` + "`" + `summary` + "`" + ` |
+| ` + "`" + `succeeded` + "`" + ` | Work is complete and validated enough to hand back. | ` + "`" + `summary` + "`" + `, ` + "`" + `how_to_test` + "`" + ` |
+| ` + "`" + `failed` + "`" + ` | Work cannot complete successfully. | ` + "`" + `summary` + "`" + ` |
+
+Rules:
+
+- Use exactly one canonical ` + "`" + `state` + "`" + `.
+- ` + "`" + `waiting` + "`" + ` covers both done-and-idle and waiting-for-user cases.
+- Use ` + "`" + `reason` + "`" + ` when ` + "`" + `waiting` + "`" + ` or ` + "`" + `failed` + "`" + ` needs clarification.
+- When ` + "`" + `state` + "`" + ` is ` + "`" + `waiting` + "`" + ` because the runner needs a user answer, include ` + "`" + `questions[]` + "`" + `.
+- ` + "`" + `blocked` + "`" + ` is removed from the runner and user-facing vocabulary. Do not write it.
+- ` + "`" + `ready` + "`" + ` is removed. Use ` + "`" + `succeeded` + "`" + `.
+- ` + "`" + `needs_input` + "`" + ` is removed. Use ` + "`" + `waiting` + "`" + `.
+- ` + "`" + `working` + "`" + ` is removed. Use ` + "`" + `running` + "`" + `.
 
 Schema:
 
 ` + "```" + `json
 {
-  "schema_version": "1.0",
-  "status": "working",
+  "schema_version": "2.0",
+  "state": "waiting",
   "updated_at": "2026-01-19T12:00:00Z",
-  "summary": "Implementing user authentication",
-  "questions": [],
-  "blockers": [],
-  "how_to_test": "",
-  "risks": []
+  "reason": "awaiting_user_input",
+  "summary": "I finished the API refactor and need the preferred webhook path before I update the client.",
+  "questions": [
+    "Should the webhook stay at /webhooks/github or move to /api/github/webhook?"
+  ]
 }
 ` + "```" + `
 
-Before finishing, set status to ` + "`" + `ready` + "`" + ` and include ` + "`" + `summary` + "`" + ` and ` + "`" + `how_to_test` + "`" + `.
+Before finishing successfully, set ` + "`" + `state` + "`" + ` to ` + "`" + `succeeded` + "`" + ` and include ` + "`" + `summary` + "`" + ` and ` + "`" + `how_to_test` + "`" + `.
 `
 
 // WriteClaudeMD writes the CLAUDE.md file to the repo root if it doesn't exist.

@@ -130,7 +130,7 @@ func TestCreate_Success(t *testing.T) {
 	status, err := runnerstatus.Load(result.WorktreePath)
 	require.NoError(t, err, "failed to load runner_status.json")
 	require.NotNil(t, status, "runner_status.json should exist")
-	assert.Equal(t, runnerstatus.StatusWorking, status.Status)
+	assert.Equal(t, runnerstatus.StateRunning, status.State)
 	assert.NoError(t, status.Validate(), "initial runner status should be valid")
 
 	// Verify report.md is not scaffolded.
@@ -246,15 +246,14 @@ func TestScaffoldWorkspaceOnly_RunnerStatusNotOverwritten(t *testing.T) {
 	status, err := runnerstatus.Load(dir)
 	require.NoError(t, err, "failed to load initial runner status")
 	require.NotNil(t, status, "runner_status.json should exist after scaffold")
-	assert.Equal(t, runnerstatus.StatusWorking, status.Status)
+	assert.Equal(t, runnerstatus.StateRunning, status.State)
 
 	custom := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-04-20T18:00:00Z",
 		Summary:       "Finished the task",
 		Questions:     []string{},
-		Blockers:      []string{},
 		HowToTest:     "go test ./internal/worktree",
 		Risks:         []string{"none"},
 	}

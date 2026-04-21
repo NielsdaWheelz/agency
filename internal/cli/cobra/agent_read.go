@@ -287,11 +287,12 @@ func newAgentCheckCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "<invocation-ref> check",
-		Short: "Check invocation readiness",
-		Long: `Show the daemon's readiness view for one invocation.
+		Short: "Show invocation state",
+		Long: `Show the daemon's canonical state view for one invocation.
 
-This is the canonical machine-friendly readiness surface for deciding whether
-an invocation is blocked, needs input, or is ready to land.
+This is the canonical machine-friendly surface for deciding whether an
+invocation is running, waiting, succeeded, or failed, and whether workflow
+actions such as PR sync are blocked.
 
 Examples:
   agency agent 20260131 check

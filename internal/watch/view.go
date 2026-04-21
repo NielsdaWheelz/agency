@@ -169,6 +169,9 @@ func (m model) renderDetailsPanel(width int) string {
 	lines = append(lines, "Repo:       "+m.repoDisplay(selected.RepoID))
 	lines = append(lines, "Runner:     "+selected.Runner+" / "+selected.Mode)
 	lines = append(lines, "State:      "+state)
+	if strings.TrimSpace(selected.Reason) != "" {
+		lines = append(lines, "Reason:     "+selected.Reason)
+	}
 	lines = append(lines, "Latest:     "+latest)
 	lines = append(lines, "Next:       "+m.nextActionSummary(selected))
 	lines = append(lines, "")
@@ -278,13 +281,13 @@ func (m model) selectedActionTarget() string {
 
 func (m model) invocationState(inv daemon.InvocationDTO) string {
 	check, ok := m.snapshot.Checks[inv.InvocationID]
-	if ok && strings.TrimSpace(check.DisplayStatus) != "" {
-		return check.DisplayStatus
+	if ok && strings.TrimSpace(check.State) != "" {
+		return check.State
 	}
-	if strings.TrimSpace(inv.DisplayStatus) != "" {
-		return inv.DisplayStatus
+	if strings.TrimSpace(inv.State) != "" {
+		return inv.State
 	}
-	return inv.Status
+	return "-"
 }
 
 func (m model) latestSummary(inv daemon.InvocationDTO) string {

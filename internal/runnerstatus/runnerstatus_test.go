@@ -22,12 +22,9 @@ func TestStatusPath(t *testing.T) {
 func TestLoad_Missing(t *testing.T) {
 	t.Parallel()
 
-	// Create a temp dir without the status file
-	tmpDir := t.TempDir()
-
-	status, err := Load(tmpDir)
-	assert.NoError(t, err, "Load() should not error for missing file")
-	assert.Nil(t, status, "Load() should return nil for missing file")
+	status, err := Load(t.TempDir())
+	assert.NoError(t, err)
+	assert.Nil(t, status)
 }
 
 func TestLoad_Valid(t *testing.T) {
@@ -35,26 +32,24 @@ func TestLoad_Valid(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0755))
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
 
 	content := `{
-		"schema_version": "1.0",
-		"status": "working",
+		"schema_version": "2.0",
+		"state": "waiting",
 		"updated_at": "2026-01-19T12:00:00Z",
-		"summary": "Test summary",
-		"questions": [],
-		"blockers": [],
-		"how_to_test": "",
-		"risks": []
+		"reason": "awaiting_user_input",
+		"summary": "Need clarification",
+		"questions": ["Which library should I use?"]
 	}`
-	statusPath := filepath.Join(stateDir, "runner_status.json")
-	require.NoError(t, os.WriteFile(statusPath, []byte(content), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(content), 0o644))
 
 	status, err := Load(tmpDir)
 	require.NoError(t, err)
 	require.NotNil(t, status)
-	assert.Equal(t, StatusWorking, status.Status)
-	assert.Equal(t, "Test summary", status.Summary)
+	assert.Equal(t, StateWaiting, status.State)
+	assert.Equal(t, ReasonAwaitingUserInput, status.Reason)
+	assert.Equal(t, "Need clarification", status.Summary)
 }
 
 func TestLoad_Invalid(t *testing.T) {
@@ -62,15 +57,12 @@ func TestLoad_Invalid(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0755))
-
-	content := `not valid json`
-	statusPath := filepath.Join(stateDir, "runner_status.json")
-	require.NoError(t, os.WriteFile(statusPath, []byte(content), 0644))
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte("not valid json"), 0o644))
 
 	status, err := Load(tmpDir)
-	require.Error(t, err, "Load() should error for invalid JSON")
-	assert.Nil(t, status, "Load() should return nil for invalid JSON")
+	require.Error(t, err)
+	assert.Nil(t, status)
 }
 
 func TestLoadWithModTime(t *testing.T) {
@@ -78,32 +70,20 @@ func TestLoadWithModTime(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0755))
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
 
 	content := `{
-		"schema_version": "1.0",
-		"status": "working",
+		"schema_version": "2.0",
+		"state": "running",
 		"updated_at": "2026-01-19T12:00:00Z",
 		"summary": "Test summary"
 	}`
-	statusPath := filepath.Join(stateDir, "runner_status.json")
-	require.NoError(t, os.WriteFile(statusPath, []byte(content), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(content), 0o644))
 
 	status, modTime, err := LoadWithModTime(tmpDir)
 	require.NoError(t, err)
 	require.NotNil(t, status)
-	assert.False(t, modTime.IsZero(), "LoadWithModTime() modTime should be non-zero")
-}
-
-func TestLoadWithModTime_Missing(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-
-	status, modTime, err := LoadWithModTime(tmpDir)
-	assert.NoError(t, err, "LoadWithModTime() should not error for missing file")
-	assert.Nil(t, status, "LoadWithModTime() status should be nil for missing file")
-	assert.True(t, modTime.IsZero(), "LoadWithModTime() modTime should be zero for missing file")
+	assert.False(t, modTime.IsZero())
 }
 
 func TestRunnerStatus_Validate(t *testing.T) {
@@ -120,88 +100,80 @@ func TestRunnerStatus_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "empty status value",
+			name: "missing state",
 			status: &RunnerStatus{
-				Status:  "",
 				Summary: "test",
 			},
 			wantErr: true,
 		},
 		{
-			name: "invalid status value",
+			name: "invalid state",
 			status: &RunnerStatus{
-				Status:  "invalid",
+				State:   "invalid",
 				Summary: "test",
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing summary",
+			name: "running requires summary only",
 			status: &RunnerStatus{
-				Status:  StatusWorking,
-				Summary: "",
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid working status",
-			status: &RunnerStatus{
-				Status:  StatusWorking,
+				State:   StateRunning,
 				Summary: "Working on feature",
 			},
 			wantErr: false,
 		},
 		{
-			name: "needs_input without questions",
+			name: "waiting user input requires questions",
 			status: &RunnerStatus{
-				Status:    StatusNeedsInput,
-				Summary:   "Need clarification",
-				Questions: []string{},
+				State:   StateWaiting,
+				Reason:  ReasonAwaitingUserInput,
+				Summary: "Need clarification",
 			},
 			wantErr: true,
 		},
 		{
-			name: "valid needs_input",
+			name: "waiting questions require awaiting_user_input",
 			status: &RunnerStatus{
-				Status:    StatusNeedsInput,
+				State:     StateWaiting,
+				Reason:    ReasonTurnComplete,
+				Summary:   "Done for now",
+				Questions: []string{"Continue?"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "waiting user input valid",
+			status: &RunnerStatus{
+				State:     StateWaiting,
+				Reason:    ReasonAwaitingUserInput,
 				Summary:   "Need clarification",
-				Questions: []string{"What library?"},
+				Questions: []string{"Which library should I use?"},
 			},
 			wantErr: false,
 		},
 		{
-			name: "blocked without blockers",
+			name: "succeeded requires how_to_test",
 			status: &RunnerStatus{
-				Status:   StatusBlocked,
-				Summary:  "Cannot proceed",
-				Blockers: []string{},
+				State:   StateSucceeded,
+				Summary: "Work complete",
 			},
 			wantErr: true,
 		},
 		{
-			name: "valid blocked",
+			name: "succeeded valid",
 			status: &RunnerStatus{
-				Status:   StatusBlocked,
-				Summary:  "Cannot proceed",
-				Blockers: []string{"Dependency unavailable"},
+				State:     StateSucceeded,
+				Summary:   "Work complete",
+				HowToTest: "go test ./...",
 			},
 			wantErr: false,
 		},
 		{
-			name: "ready without how_to_test",
+			name: "failed valid",
 			status: &RunnerStatus{
-				Status:    StatusReady,
-				Summary:   "Work complete",
-				HowToTest: "",
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid ready",
-			status: &RunnerStatus{
-				Status:    StatusReady,
-				Summary:   "Work complete",
-				HowToTest: "Run npm test",
+				State:   StateFailed,
+				Reason:  "dependency_missing",
+				Summary: "Cannot finish successfully",
 			},
 			wantErr: false,
 		},
@@ -211,13 +183,12 @@ func TestRunnerStatus_Validate(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			err := tt.status.Validate()
 			if tt.wantErr {
 				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				return
 			}
+			assert.NoError(t, err)
 		})
 	}
 }
@@ -249,11 +220,9 @@ func TestRunnerStatus_Age(t *testing.T) {
 	t.Run("valid updated_at", func(t *testing.T) {
 		t.Parallel()
 
-		// Set updated_at to 5 minutes ago
 		fiveMinutesAgo := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
 		s := &RunnerStatus{UpdatedAt: fiveMinutesAgo}
 		age := s.Age()
-		// Allow some tolerance
 		assert.True(t, age >= 4*time.Minute && age <= 6*time.Minute, "Age() = %v, want ~5m", age)
 	})
 }
@@ -263,36 +232,34 @@ func TestNewInitial(t *testing.T) {
 
 	s := NewInitial()
 	assert.Equal(t, SchemaVersion, s.SchemaVersion)
-	assert.Equal(t, StatusWorking, s.Status)
+	assert.Equal(t, StateRunning, s.State)
 	assert.Equal(t, "Starting work", s.Summary)
-	assert.NotEmpty(t, s.UpdatedAt, "UpdatedAt should not be empty")
-	// Verify it parses as RFC3339
+	assert.NotEmpty(t, s.UpdatedAt)
 	_, err := time.Parse(time.RFC3339, s.UpdatedAt)
-	assert.NoError(t, err, "UpdatedAt is not valid RFC3339")
+	assert.NoError(t, err)
 }
 
-func TestStatus_IsValid(t *testing.T) {
+func TestState_IsValid(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		status Status
-		want   bool
+		state State
+		want  bool
 	}{
-		{StatusWorking, true},
-		{StatusNeedsInput, true},
-		{StatusBlocked, true},
-		{StatusReady, true},
+		{StateRunning, true},
+		{StateWaiting, true},
+		{StateSucceeded, true},
+		{StateFailed, true},
 		{"", false},
 		{"invalid", false},
-		{"Working", false}, // case sensitive
+		{"Running", false},
 	}
 
 	for _, tt := range tests {
 		tt := tt
-		t.Run(string(tt.status), func(t *testing.T) {
+		t.Run(string(tt.state), func(t *testing.T) {
 			t.Parallel()
-
-			assert.Equal(t, tt.want, tt.status.IsValid())
+			assert.Equal(t, tt.want, tt.state.IsValid())
 		})
 	}
 }

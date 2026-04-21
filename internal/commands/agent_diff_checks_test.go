@@ -285,7 +285,7 @@ func TestAgentDiff_TurnAware_LatestAssistantTurnSingleCheckpointUsesBaseBoundary
 	assert.Equal(t, "1111111", payload.CommittedRange.To)
 }
 
-func TestAgentCheck_Blocked_HumanAndJSONAligned(t *testing.T) {
+func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "checks-blocked")
 	invocationID := "20260201102020-chkb"
@@ -294,25 +294,26 @@ func TestAgentCheck_Blocked_HumanAndJSONAligned(t *testing.T) {
 	st := store.NewStore(fsys, dataDir, time.Now)
 	sandboxPath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
 
-	blocked := runnerstatus.StatusBlocked
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
-		meta.SemanticStatus = &blocked
 		meta.SandboxPath = sandboxPath
 	}))
 
-	stateDir := filepath.Join(sandboxPath, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	runnerStatusPath := st.InvocationRunnerStatusPath(repoID, invocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
 	rs := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusBlocked,
+		State:         runnerstatus.StateWaiting,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
+		Reason:        runnerstatus.ReasonAwaitingApproval,
 		Summary:       "waiting on API contract decision",
-		Blockers:      []string{"need owner sign-off"},
+		Questions:     []string{},
+		HowToTest:     "",
+		Risks:         []string{},
 	}
 	rsBytes, err := json.Marshal(rs)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), rsBytes, 0o600))
+	require.NoError(t, os.WriteFile(runnerStatusPath, rsBytes, 0o600))
 
 	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"`+invocationID+`","kind":"agency.followup_prompt","data":{"text":"continue"}}`+"\n",
@@ -338,18 +339,23 @@ func TestAgentCheck_Blocked_HumanAndJSONAligned(t *testing.T) {
 	}, &jsonOut, &errOut)
 	require.NoError(t, err)
 
-	assert.Regexp(t, `Readiness:\s+BLOCKED`, humanOut.String())
+	assert.Contains(t, humanOut.String(), "state:                waiting")
+	assert.Contains(t, humanOut.String(), "reason:               awaiting_approval")
 	assert.Contains(t, humanOut.String(), "pr_sync_eligible:     no")
+	assert.Contains(t, humanOut.String(), "runner_state:         waiting")
+	assert.Contains(t, humanOut.String(), "runner_reason:        awaiting_approval")
 	assert.Contains(t, humanOut.String(), "[invocation_active]")
-	assert.Contains(t, humanOut.String(), "[runner_blocked]")
+	assert.Contains(t, humanOut.String(), "[invocation_waiting]")
 	assert.Contains(t, humanOut.String(), "history:")
 	assert.Contains(t, humanOut.String(), "diff:")
 
 	var payload daemon.InvocationCheckData
 	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
-	assert.False(t, payload.Ready)
-	assert.Equal(t, "blocked", payload.Readiness)
+	assert.Equal(t, string(runnerstatus.StateWaiting), payload.State)
+	assert.Equal(t, runnerstatus.ReasonAwaitingApproval, payload.Reason)
 	assert.False(t, payload.PRSyncEligible)
+	assert.Equal(t, string(runnerstatus.StateWaiting), payload.RunnerState)
+	assert.Equal(t, runnerstatus.ReasonAwaitingApproval, payload.RunnerReason)
 	assert.NotEmpty(t, payload.Navigation.HistoryCommand)
 	assert.NotEmpty(t, payload.Navigation.DiffCommand)
 
@@ -358,7 +364,7 @@ func TestAgentCheck_Blocked_HumanAndJSONAligned(t *testing.T) {
 		codes = append(codes, reason.Code)
 	}
 	assert.Contains(t, codes, "invocation_active")
-	assert.Contains(t, codes, "runner_blocked")
+	assert.Contains(t, codes, "invocation_waiting")
 }
 
 func TestParseTurnRange_Validation(t *testing.T) {

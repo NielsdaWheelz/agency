@@ -243,9 +243,9 @@ func completeInvocationRefsForState(cmd *cobra.Command, toComplete string, state
 		if toComplete != "" && !strings.HasPrefix(ref, toComplete) {
 			continue
 		}
-		desc := invocation.DisplayStatus
+		desc := invocation.State
 		if invocation.InvocationName != "" {
-			desc = invocation.InvocationName + " · " + invocation.DisplayStatus
+			desc = invocation.InvocationName + " · " + invocation.State
 		}
 		candidates = append(candidates, ref+"\t"+desc)
 	}

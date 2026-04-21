@@ -115,12 +115,11 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	stateDir := filepath.Join(worktreePath, ".agency", "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755), "mkdir runner status")
 	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(`{
-  "schema_version": "1.0",
-  "status": "ready",
+  "schema_version": "2.0",
+  "state": "succeeded",
   "updated_at": "2026-04-20T00:00:00Z",
   "summary": "e2e runner status: verifying agent pr sync + merge works",
   "questions": [],
-  "blockers": [],
   "how_to_test": "This is an automated e2e test - no manual testing required.",
   "risks": []
 }`), 0o644), "write runner status")

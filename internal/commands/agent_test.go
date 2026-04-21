@@ -546,22 +546,22 @@ func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(t *testing.T) {
 	env := setupAgentNavEnv(t, "activity-converge", store.RunnerModeHeadless)
 
-	stateDir := filepath.Join(env.SandboxPath, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	runnerStatusPath := st.InvocationRunnerStatusPath(env.RepoID, env.InvocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
 	runner := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusWorking,
+		State:         runnerstatus.StateRunning,
 		UpdatedAt:     "2026-02-05T11:59:30Z",
 		Summary:       "waiting on api contract",
 		Questions:     []string{},
-		Blockers:      []string{},
+		HowToTest:     "",
 		Risks:         []string{},
 	}
 	runnerBytes, err := json.Marshal(runner)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), runnerBytes, 0o600))
+	require.NoError(t, os.WriteFile(runnerStatusPath, runnerBytes, 0o600))
 
-	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
 	logsDir := st.InvocationLogsDir(env.RepoID, env.InvocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
@@ -595,12 +595,13 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 	require.NoError(t, json.Unmarshal(checkJSON.Bytes(), &check))
 	require.NotNil(t, check.LatestActivity)
 
-	assert.Equal(t, listed.DisplayStatus, shown.DisplayStatus)
-	assert.Equal(t, shown.DisplayStatus, check.DisplayStatus)
+	assert.Equal(t, listed.State, shown.State)
+	assert.Equal(t, shown.State, check.State)
+	assert.Equal(t, string(runnerstatus.StateRunning), check.RunnerState)
 
 	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
 	assert.Equal(t, shown.StatusSummary, check.StatusSummary)
-	assert.Equal(t, "latest activity summary", check.StatusSummary)
+	assert.Equal(t, "waiting on api contract", check.StatusSummary)
 
 	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
 	assert.Equal(t, shown.LatestActivity.TurnID, check.LatestActivity.TurnID)
@@ -623,11 +624,10 @@ func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
 	var out bytes.Buffer
 	err := writeAgentLSHumanFromDTO(&out, []daemon.InvocationDTO{
 		{
-			InvocationID:  "inv-1",
-			Runner:        "claude-code",
-			Mode:          "headless",
-			Status:        "running",
-			DisplayStatus: "working",
+			InvocationID: "inv-1",
+			Runner:       "claude-code",
+			Mode:         "headless",
+			State:        string(runnerstatus.StateRunning),
 			LatestActivity: &daemon.InvocationLatestActivity{
 				TurnID:        "stream:9",
 				Kind:          "assistant",
@@ -647,14 +647,13 @@ func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T)
 
 	var out bytes.Buffer
 	err := writeAgentShowHumanFromDTO(&out, &daemon.InvocationDTO{
-		InvocationID:  "inv-1",
-		WorktreeID:    "wt-1",
-		Runner:        "claude-code",
-		Mode:          "headless",
-		Status:        "running",
-		DisplayStatus: "working",
-		StartedAt:     "2026-02-05T11:50:00Z",
-		SandboxPath:   "/tmp/sandbox/inv-1",
+		InvocationID: "inv-1",
+		WorktreeID:   "wt-1",
+		Runner:       "claude-code",
+		Mode:         "headless",
+		State:        string(runnerstatus.StateRunning),
+		StartedAt:    "2026-02-05T11:50:00Z",
+		SandboxPath:  "/tmp/sandbox/inv-1",
 		LatestActivity: &daemon.InvocationLatestActivity{
 			TurnID:                 "stream:9",
 			Kind:                   "assistant",
@@ -684,10 +683,9 @@ func TestWriteAgentCheckHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T
 
 	var out bytes.Buffer
 	check := &daemon.InvocationCheckData{
-		InvocationID:  "inv-1",
-		RepoID:        "repo-1",
-		Status:        "running",
-		DisplayStatus: "working",
+		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		State:        string(runnerstatus.StateRunning),
 		Navigation: daemon.InvocationCheckNavigation{
 			HistoryCommand: "agency agent inv-1 history --repo repo-1",
 		},
@@ -716,15 +714,15 @@ func TestWriteAgentCheckHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T
 	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
 }
 
-func TestWriteAgentCheckHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *testing.T) {
+func TestWriteAgentCheckHumanFromDTO_RendersSucceededState(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
 	check := &daemon.InvocationCheckData{
 		InvocationID: "inv-1",
 		RepoID:       "repo-1",
-		Status:       "finished",
-		Readiness:    "ready",
+		State:        string(runnerstatus.StateSucceeded),
+		RunnerState:  string(runnerstatus.StateSucceeded),
 		Navigation: daemon.InvocationCheckNavigation{
 			HistoryCommand: "agency agent inv-1 history --repo repo-1",
 		},
@@ -732,7 +730,8 @@ func TestWriteAgentCheckHumanFromDTO_ReadinessFallbackRendersReadyVerdict(t *tes
 
 	err := writeAgentCheckHumanFromDTO(&out, check)
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "Readiness:            READY")
+	assert.Contains(t, out.String(), "state:                succeeded")
+	assert.Contains(t, out.String(), "runner_state:         succeeded")
 }
 
 func TestWriteAgentCheckHumanFromDTO_NilCheckReturnsInternalError(t *testing.T) {

@@ -367,19 +367,17 @@ func TestHandleGetInvocationCheck_BlockedIncludesReasonsAndNavigation(t *testing
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	blockedStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusBlocked,
+		State:         runnerstatus.StateWaiting,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
+		Reason:        runnerstatus.ReasonAwaitingApproval,
 		Summary:       "waiting on product decision",
-		Blockers:      []string{"need decision on schema version"},
 		Questions:     []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", blockedStatus)
 
-	blocked := runnerstatus.StatusBlocked
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
-		meta.SemanticStatus = &blocked
 		meta.Status = store.InvocationStatusRunning
 	}))
 
@@ -394,13 +392,12 @@ func TestHandleGetInvocationCheck_BlockedIncludesReasonsAndNavigation(t *testing
 
 	var data map[string]any
 	decodeData(t, resp, &data)
-	assert.Equal(t, "blocked", data["readiness"])
-	assert.Equal(t, false, data["ready"])
+	assert.Equal(t, "waiting", data["state"])
 	assert.Equal(t, false, data["pr_sync_eligible"])
 
 	codes := blockingReasonCodes(data)
 	assert.Contains(t, codes, "invocation_active")
-	assert.Contains(t, codes, "runner_blocked")
+	assert.Contains(t, codes, "invocation_waiting")
 
 	nav, ok := data["navigation"].(map[string]any)
 	require.True(t, ok, "expected navigation context")
@@ -493,12 +490,11 @@ func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
@@ -509,12 +505,10 @@ func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 		meta.TreePath = integrationTree
 	}))
 
-	ready := runnerstatus.StatusReady
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusLanded
-		meta.SemanticStatus = &ready
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 	}))
 
@@ -529,8 +523,7 @@ func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 
 	var data map[string]any
 	decodeData(t, resp, &data)
-	assert.Equal(t, "ready", data["readiness"])
-	assert.Equal(t, true, data["ready"])
+	assert.Equal(t, "succeeded", data["state"])
 	assert.Equal(t, true, data["pr_sync_eligible"])
 	assert.Empty(t, blockingReasonCodes(data))
 
@@ -548,12 +541,11 @@ func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCle
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "invocation-owned runner status",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
@@ -563,7 +555,6 @@ func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCle
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusPending
-		meta.SemanticStatus = nil
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 	}))
 	require.NoError(t, os.RemoveAll(sandboxPath))
@@ -579,7 +570,7 @@ func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCle
 	codes := blockingReasonCodes(data)
 	assert.NotContains(t, codes, "runner_status_unreadable")
 	assert.NotContains(t, codes, "runner_status_missing")
-	assert.Equal(t, "ready", data["runner_status"])
+	assert.Equal(t, "succeeded", data["runner_state"])
 	assert.Equal(t, "invocation-owned runner status", data["runner_summary"])
 }
 
@@ -591,12 +582,11 @@ func TestHandleGetInvocationCheck_HeadlessDoesNotRequireWorktreeReport(t *testin
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
@@ -607,12 +597,10 @@ func TestHandleGetInvocationCheck_HeadlessDoesNotRequireWorktreeReport(t *testin
 		meta.TreePath = integrationTree
 	}))
 
-	ready := runnerstatus.StatusReady
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusLanded
-		meta.SemanticStatus = &ready
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 		meta.Mode = store.RunnerModeHeadless
 	}))
@@ -624,9 +612,8 @@ func TestHandleGetInvocationCheck_HeadlessDoesNotRequireWorktreeReport(t *testin
 
 	var data map[string]any
 	decodeData(t, resp, &data)
-	assert.Equal(t, "ready", data["readiness"])
-	assert.Equal(t, true, data["ready"])
-	assert.Equal(t, "ready", data["runner_status"])
+	assert.Equal(t, "succeeded", data["state"])
+	assert.Equal(t, "succeeded", data["runner_state"])
 	assert.NotContains(t, blockingReasonCodes(data), "report_missing")
 }
 
@@ -638,12 +625,11 @@ func TestHandleGetInvocationCheck_HeadlessOmitsReportMetadata(t *testing.T) {
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
 	readyStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
@@ -654,12 +640,10 @@ func TestHandleGetInvocationCheck_HeadlessOmitsReportMetadata(t *testing.T) {
 		meta.TreePath = integrationTree
 	}))
 
-	ready := runnerstatus.StatusReady
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusLanded
-		meta.SemanticStatus = &ready
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 		meta.Mode = store.RunnerModeHeadless
 	}))
@@ -671,8 +655,7 @@ func TestHandleGetInvocationCheck_HeadlessOmitsReportMetadata(t *testing.T) {
 
 	var data map[string]any
 	decodeData(t, resp, &data)
-	assert.Equal(t, "ready", data["readiness"])
-	assert.Equal(t, true, data["ready"])
+	assert.Equal(t, "succeeded", data["state"])
 }
 
 func TestHandleGetInvocationCheck_AmbiguousInvocationRefReturnsConflict(t *testing.T) {
@@ -694,7 +677,7 @@ func TestHandleGetInvocationCheck_AmbiguousInvocationRefReturnsConflict(t *testi
 	assert.Len(t, details.Candidates, 3)
 }
 
-func TestHandleGetInvocationCheck_InvalidRunnerSchemaBlocksReadiness(t *testing.T) {
+func TestHandleGetInvocationCheck_InvalidRunnerSchemaFailsState(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -703,12 +686,11 @@ func TestHandleGetInvocationCheck_InvalidRunnerSchemaBlocksReadiness(t *testing.
 
 	invalidSchema := runnerstatus.RunnerStatus{
 		SchemaVersion: "9.9",
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     "2026-02-05T12:00:00Z",
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Blockers:      []string{},
 		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", invalidSchema)
@@ -717,7 +699,6 @@ func TestHandleGetInvocationCheck_InvalidRunnerSchemaBlocksReadiness(t *testing.
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusPending
-		meta.SemanticStatus = nil
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 	}))
 
@@ -728,8 +709,7 @@ func TestHandleGetInvocationCheck_InvalidRunnerSchemaBlocksReadiness(t *testing.
 
 	var data map[string]any
 	decodeData(t, resp, &data)
-	assert.Equal(t, "blocked", data["readiness"])
-	assert.Equal(t, false, data["ready"])
+	assert.Equal(t, "failed", data["state"])
 
 	codes := blockingReasonCodes(data)
 	assert.Contains(t, codes, "runner_status_invalid")

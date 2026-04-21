@@ -554,21 +554,16 @@ func TestDaemonControlPlaneFollowUp_ClaudeQueuedPromptResumesNextTurnAndDiffTurn
 	meta := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 15*time.Second)
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
 	assert.Empty(t, meta.FailureReason)
-	if meta.SemanticStatus != nil {
-		assert.Equal(t, runnerstatus.StatusReady, *meta.SemanticStatus)
-	}
 
 	invResp, err := env.Client.GetInvocation(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "get invocation")
-	assert.Equal(t, "finished", invResp.Data.Status)
-	assert.NotEqual(t, "running", invResp.Data.DisplayStatus)
-	assert.NotEqual(t, "working", invResp.Data.DisplayStatus)
+	assert.Equal(t, "failed", invResp.Data.State)
+	assert.Equal(t, "runner_status_missing", invResp.Data.Reason)
 
 	checkResp, err := env.Client.GetInvocationCheck(ctx, startResp.InvocationID, repoID)
 	require.NoError(t, err, "get check")
-	assert.Equal(t, "finished", checkResp.Data.Status)
-	assert.NotEqual(t, "running", checkResp.Data.DisplayStatus)
-	assert.NotEqual(t, "working", checkResp.Data.DisplayStatus)
+	assert.Equal(t, "failed", checkResp.Data.State)
+	assert.Equal(t, "runner_status_missing", checkResp.Data.Reason)
 	require.NotEmpty(t, strings.TrimSpace(checkResp.Data.Navigation.LatestTurnID))
 
 	listResp, err := env.Client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
@@ -583,8 +578,8 @@ func TestDaemonControlPlaneFollowUp_ClaudeQueuedPromptResumesNextTurnAndDiffTurn
 			continue
 		}
 		found = true
-		assert.NotEqual(t, "running", inv.DisplayStatus)
-		assert.NotEqual(t, "working", inv.DisplayStatus)
+		assert.Equal(t, "failed", inv.State)
+		assert.Equal(t, "runner_status_missing", inv.Reason)
 	}
 	assert.True(t, found, "invocation should appear in list response")
 
@@ -738,7 +733,6 @@ func TestDaemonControlPlaneStart_RawLogFallback_NoSemanticAdapter(t *testing.T) 
 
 	meta := waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
 	assert.Equal(t, store.InvocationStatusFinished, meta.Status)
-	assert.Nil(t, meta.SemanticStatus)
 
 	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, resp.InvocationID))
 	require.NoError(t, readErr, "read raw log")
@@ -1490,7 +1484,7 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	// Seed invocation-owned runner_status.json to validate post-cleanup durability.
 	landStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Summary:       "landed invocation runner status",
 		HowToTest:     "go test ./...",
@@ -1548,7 +1542,7 @@ func TestDaemonLandCherryPick(t *testing.T) {
 	require.NoError(t, err, "integration worktree runner status should be refreshed after landing")
 	var mirroredStatus runnerstatus.RunnerStatus
 	require.NoError(t, json.Unmarshal(worktreeRunnerStatusBytes, &mirroredStatus))
-	assert.Equal(t, landStatus.Status, mirroredStatus.Status)
+	assert.Equal(t, landStatus.State, mirroredStatus.State)
 	assert.Equal(t, landStatus.Summary, mirroredStatus.Summary)
 	assert.Equal(t, landStatus.HowToTest, mirroredStatus.HowToTest)
 
@@ -1574,7 +1568,7 @@ func TestDaemonLandCherryPick(t *testing.T) {
 		checkCodes = append(checkCodes, reason.Code)
 	}
 	assert.NotContains(t, checkCodes, "runner_status_unreadable")
-	assert.Equal(t, "ready", checkResp.Data.RunnerStatus)
+	assert.Equal(t, "succeeded", checkResp.Data.RunnerState)
 }
 
 func TestDaemonLandApply(t *testing.T) {
@@ -1859,7 +1853,7 @@ func TestDaemonDiscard(t *testing.T) {
 
 	landStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
-		Status:        runnerstatus.StatusReady,
+		State:         runnerstatus.StateSucceeded,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Summary:       "discard invocation runner status",
 		HowToTest:     "go test ./...",
@@ -1918,7 +1912,7 @@ func TestDaemonDiscard(t *testing.T) {
 		checkCodes = append(checkCodes, reason.Code)
 	}
 	assert.NotContains(t, checkCodes, "runner_status_unreadable")
-	assert.Equal(t, "ready", checkResp.Data.RunnerStatus)
+	assert.Equal(t, "succeeded", checkResp.Data.RunnerState)
 }
 
 func TestDaemonDiscardRunning(t *testing.T) {

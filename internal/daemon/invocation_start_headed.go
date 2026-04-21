@@ -301,7 +301,6 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	s.processes[createResult.InvocationID] = proc
 	s.mu.Unlock()
 	go s.runOutputFlushLoop(proc)
-	go s.runSemanticStatusFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
 	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, sessionName, createResult.SandboxPath)

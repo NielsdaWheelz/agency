@@ -52,10 +52,10 @@ type Parser struct {
 	// seq is the monotonic sequence counter for normalized events.
 	seq uint64
 
-	// semanticStatus is the current semantic status.
-	semanticStatus *runnerstatus.Status
+	// semanticStatus remains for daemon wiring; stream parsing no longer infers it.
+	semanticStatus *runnerstatus.State
 
-	// semanticStatusUpdatedAt is when semantic status was last updated.
+	// semanticStatusUpdatedAt tracks the last external semantic-status update time.
 	semanticStatusUpdatedAt time.Time
 
 	// lastOutputAt tracks when the last output was received.
@@ -107,14 +107,14 @@ func (p *Parser) SetInitialSeq(seq uint64) {
 	p.seq = seq
 }
 
-// GetSemanticStatus returns the current semantic status.
-func (p *Parser) GetSemanticStatus() *runnerstatus.Status {
+// GetSemanticStatus returns the current semantic status value.
+func (p *Parser) GetSemanticStatus() *runnerstatus.State {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.semanticStatus
 }
 
-// GetSemanticStatusUpdatedAt returns when the semantic status was last updated.
+// GetSemanticStatusUpdatedAt returns when semantic status was last updated.
 func (p *Parser) GetSemanticStatusUpdatedAt() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -282,11 +282,6 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 		p.maybeNotifySessionStart(event)
 		p.maybeNotifyFinal(event)
 	}
-
-	// Update semantic status if provided
-	if result.SemanticStatus != nil {
-		p.updateSemanticStatus(result.SemanticStatus)
-	}
 	return nil
 }
 
@@ -333,15 +328,6 @@ func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.Fil
 		return fmt.Errorf("%w: %v", ErrNormalizedStreamWriteFailed, err)
 	}
 	return nil
-}
-
-// updateSemanticStatus updates the semantic status.
-func (p *Parser) updateSemanticStatus(status *runnerstatus.Status) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.semanticStatus = status
-	p.semanticStatusUpdatedAt = p.Clock()
 }
 
 // emitParseError emits a parse_error event with throttling.
