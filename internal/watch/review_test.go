@@ -13,12 +13,14 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 )
 
-func TestReviewPage_RenderShowsWorkflowSummaryAndFiles(t *testing.T) {
+func TestReviewPage_FromWorkspaceOpensFullInvocationReview(t *testing.T) {
 	t.Parallel()
 
+	requestedTurns := make(chan string, 1)
 	client := daemonclient.NewClient(startFakeDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/invocations/inv-1/diff":
+			requestedTurns <- r.URL.Query().Get("turn")
 			assert.Equal(t, "repo-1", r.URL.Query().Get("repo_id"))
 			assert.Equal(t, "5242880", r.URL.Query().Get("max_patch_bytes"))
 			writeDaemonOK(t, w, daemon.InvocationDiffData{
@@ -38,6 +40,7 @@ func TestReviewPage_RenderShowsWorkflowSummaryAndFiles(t *testing.T) {
 				InvocationID:   "inv-1",
 				RepoID:         "repo-1",
 				State:          "succeeded",
+				Reason:         "awaiting review",
 				LandingStatus:  "pending",
 				PRSyncEligible: false,
 				RunnerSummary:  "finished cleanly",
@@ -98,16 +101,26 @@ func TestReviewPage_RenderShowsWorkflowSummaryAndFiles(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	msg := cmd()
+	select {
+	case turnID := <-requestedTurns:
+		assert.Empty(t, turnID)
+	default:
+		t.Fatal("expected full invocation diff request")
+	}
+
 	next, _ = next.(model).Update(msg)
 	nextModel := next.(model)
 
 	assert.Equal(t, pageReview, nextModel.page)
+	assert.Equal(t, pageWorkspace, nextModel.backPage)
+	assert.Empty(t, nextModel.reviewTurnID)
 	assert.False(t, nextModel.reviewLoading)
 	assert.Empty(t, nextModel.reviewError)
-	assert.Len(t, nextModel.reviewFiles, 2)
+	require.Len(t, nextModel.reviewFiles, 2)
 
 	content := nextModel.View().Content
 	assert.Contains(t, content, "Scope:      full invocation diff")
+	assert.Contains(t, content, "State:      succeeded (awaiting review)")
 	assert.Contains(t, content, "landing pending")
 	assert.Contains(t, content, "pr sync not yet")
 	assert.Contains(t, content, "merge failed during archive cleanup")
@@ -118,7 +131,7 @@ func TestReviewPage_RenderShowsWorkflowSummaryAndFiles(t *testing.T) {
 	assert.Contains(t, content, "go test ./internal/watch")
 }
 
-func TestReviewPage_FromHistoryUsesSelectedTurnForDiff(t *testing.T) {
+func TestReviewPage_FromHistoryOpensTurnScopedReview(t *testing.T) {
 	t.Parallel()
 
 	requestedTurns := make(chan string, 1)
@@ -134,7 +147,7 @@ func TestReviewPage_FromHistoryUsesSelectedTurnForDiff(t *testing.T) {
 					From:     "aaa11111",
 					To:       "bbb22222",
 					Diffstat: "1 file changed, 1 insertion(+)",
-					Patch:    "diff --git a/cp2.txt b/cp2.txt\n+checkpoint two\n",
+					Patch:    "diff --git a/checkpoints/cp2.txt b/checkpoints/cp2.txt\n@@ -0,0 +1 @@\n+checkpoint two\n",
 				},
 				TurnContext: &daemon.DiffTurnContext{
 					Selector: daemon.DiffTurnSelector{
@@ -152,8 +165,15 @@ func TestReviewPage_FromHistoryUsesSelectedTurnForDiff(t *testing.T) {
 				InvocationID:   "inv-1",
 				RepoID:         "repo-1",
 				State:          "succeeded",
+				Reason:         "checkpoint review",
 				LandingStatus:  "pending",
 				PRSyncEligible: false,
+				BlockingReasons: []daemon.InvocationCheckReason{
+					{
+						Code:    "checkpoint_pending",
+						Message: "turn review must complete before workflow progression",
+					},
+				},
 			})
 		default:
 			http.NotFound(w, r)
@@ -164,7 +184,14 @@ func TestReviewPage_FromHistoryUsesSelectedTurnForDiff(t *testing.T) {
 	m.page = pageHistory
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", Runner: "codex", Mode: "headless"},
+			{
+				InvocationID: "inv-1",
+				RepoID:       "repo-1",
+				WorktreeID:   "wt-1",
+				Runner:       "codex",
+				Mode:         "headless",
+				State:        "succeeded",
+			},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -172,6 +199,8 @@ func TestReviewPage_FromHistoryUsesSelectedTurnForDiff(t *testing.T) {
 	m.historyTurns = historyTestTurns()
 	m.historySelectedIndex = 2
 	m.historySelectedEntryID = "e-3"
+	m.width = 160
+	m.height = 40
 
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "d"})
 	require.NotNil(t, cmd)
@@ -181,23 +210,34 @@ func TestReviewPage_FromHistoryUsesSelectedTurnForDiff(t *testing.T) {
 	case turnID := <-requestedTurns:
 		assert.Equal(t, "e-3", turnID)
 	default:
-		t.Fatal("expected turn-aware diff request")
+		t.Fatal("expected turn-scoped diff request")
 	}
+
 	next, _ = next.(model).Update(msg)
 	nextModel := next.(model)
 
 	assert.Equal(t, pageReview, nextModel.page)
 	assert.Equal(t, pageHistory, nextModel.backPage)
 	assert.Equal(t, "e-3", nextModel.reviewTurnID)
+	assert.False(t, nextModel.reviewLoading)
+	assert.Empty(t, nextModel.reviewError)
+	require.Len(t, nextModel.reviewFiles, 1)
 	require.NotNil(t, nextModel.reviewDiff.TurnContext)
 	assert.Equal(t, "e-3", nextModel.reviewDiff.TurnContext.Selector.TurnID)
+
+	content := nextModel.View().Content
+	assert.Contains(t, content, "Scope:      turn e-3")
+	assert.Contains(t, content, "State:      succeeded (checkpoint review)")
+	assert.Contains(t, content, "turn review must complete before workflow progression")
+	assert.Contains(t, content, "checkpoints/cp2.txt")
 }
 
-func TestReviewPage_TracksReviewedFilesAndPatchScroll(t *testing.T) {
+func TestReviewPage_NavigationMovesSelectionScrollsPatchAndReturns(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.page = pageReview
+	m.backPage = pageHistory
 	m.width = 140
 	m.height = 24
 	m.reviewFilesFocus = true
@@ -234,20 +274,78 @@ func TestReviewPage_TracksReviewedFilesAndPatchScroll(t *testing.T) {
 	m.reviewSelectedIndex = 0
 	m.reviewSelectedKey = m.reviewFiles[0].key
 
-	next, _ := m.Update(tea.KeyPressMsg{Text: " "})
+	next, _ := m.Update(tea.KeyPressMsg{Text: "j"})
 	nextModel := next.(model)
-	assert.True(t, nextModel.reviewReviewed["committed:001:a.go"])
-
-	next, _ = nextModel.Update(tea.KeyPressMsg{Text: "n"})
-	nextModel = next.(model)
 	assert.Equal(t, 1, nextModel.reviewSelectedIndex)
 	assert.Equal(t, "committed:002:b.go", nextModel.reviewSelectedKey)
+	assert.True(t, nextModel.reviewFilesFocus)
+	assert.Zero(t, nextModel.reviewScroll)
 
 	next, _ = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	nextModel = next.(model)
 	assert.False(t, nextModel.reviewFilesFocus)
 
-	next, _ = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	next, _ = nextModel.Update(tea.KeyPressMsg{Text: "j"})
 	nextModel = next.(model)
 	assert.Equal(t, 1, nextModel.reviewScroll)
+
+	next, _ = nextModel.Update(tea.KeyPressMsg{Text: "k"})
+	nextModel = next.(model)
+	assert.Zero(t, nextModel.reviewScroll)
+
+	next, cmd := nextModel.Update(tea.KeyPressMsg{Text: "b"})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, pageHistory, nextModel.page)
+}
+
+func TestReviewPage_DoesNotSupportReviewedWorkflowKeys(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.page = pageReview
+	m.width = 140
+	m.height = 24
+	m.reviewFilesFocus = true
+	m.reviewFiles = []reviewFile{
+		{
+			key:     "committed:001:a.go",
+			title:   "a.go",
+			section: "committed",
+			lines:   []string{"diff --git a/a.go b/a.go", "@@ -1 +1 @@", "-old", "+new"},
+		},
+		{
+			key:     "committed:002:b.go",
+			title:   "b.go",
+			section: "committed",
+			lines:   []string{"diff --git a/b.go b/b.go", "@@ -1 +1 @@", "-before", "+after"},
+		},
+	}
+	m.reviewSelectedIndex = 0
+	m.reviewSelectedKey = m.reviewFiles[0].key
+
+	content := m.View().Content
+	assert.NotContains(t, content, "space reviewed")
+	assert.NotContains(t, content, "n/N unreviewed")
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: " "})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, 0, nextModel.reviewSelectedIndex)
+	assert.Equal(t, m.reviewSelectedKey, nextModel.reviewSelectedKey)
+	assert.Zero(t, nextModel.reviewScroll)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Text: "n"})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, 0, nextModel.reviewSelectedIndex)
+	assert.Equal(t, m.reviewSelectedKey, nextModel.reviewSelectedKey)
+	assert.Zero(t, nextModel.reviewScroll)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Text: "N"})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, 0, nextModel.reviewSelectedIndex)
+	assert.Equal(t, m.reviewSelectedKey, nextModel.reviewSelectedKey)
+	assert.Zero(t, nextModel.reviewScroll)
 }

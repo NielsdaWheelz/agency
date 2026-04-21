@@ -157,7 +157,6 @@ type model struct {
 	reviewLoading       bool
 	reviewError         string
 	reviewFilesFocus    bool
-	reviewReviewed      map[string]bool
 
 	transcriptContent string
 	transcriptScroll  int
@@ -334,9 +333,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reviewCheck = msg.check
 		m.reviewFiles = msg.files
 		m.reviewError = ""
-		if m.reviewReviewed == nil {
-			m.reviewReviewed = make(map[string]bool)
-		}
 		m.reconcileReviewSelection()
 		m.reviewScroll = clamp(m.reviewScroll, 0, m.maxReviewScroll())
 		return m, nil
@@ -683,15 +679,6 @@ func (m model) updateReviewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.reviewScroll = m.maxReviewScroll()
-		return m, nil
-	case msg.Text == " ":
-		m.toggleReviewed()
-		return m, nil
-	case msg.Text == "n":
-		m.moveReviewSelectionToNextUnreviewed(1)
-		return m, nil
-	case msg.Text == "N":
-		m.moveReviewSelectionToNextUnreviewed(-1)
 		return m, nil
 	case msg.Text == "a":
 		return m.startInvocationAction(actionAttach)
@@ -1358,7 +1345,6 @@ func (m model) openReviewPage(turnID string, backPage watchPage) (tea.Model, tea
 	m.reviewLoading = true
 	m.reviewError = ""
 	m.reviewFilesFocus = true
-	m.reviewReviewed = make(map[string]bool)
 	return m, m.loadReviewCmd()
 }
 
@@ -1536,37 +1522,6 @@ func (m *model) moveReviewSelectionTo(index int) {
 	m.reviewSelectedIndex = next
 	m.reviewSelectedKey = m.reviewFiles[next].key
 	m.reviewScroll = 0
-}
-
-func (m *model) moveReviewSelectionToNextUnreviewed(delta int) {
-	if len(m.reviewFiles) == 0 || delta == 0 {
-		return
-	}
-	start := clamp(m.reviewSelectedIndex, 0, len(m.reviewFiles)-1)
-	for step := 1; step <= len(m.reviewFiles); step++ {
-		idx := (start + step*delta + len(m.reviewFiles)) % len(m.reviewFiles)
-		if !m.reviewReviewed[m.reviewFiles[idx].key] {
-			m.reviewSelectedIndex = idx
-			m.reviewSelectedKey = m.reviewFiles[idx].key
-			m.reviewScroll = 0
-			return
-		}
-	}
-}
-
-func (m *model) toggleReviewed() {
-	selected, ok := m.selectedReviewFile()
-	if !ok {
-		return
-	}
-	if m.reviewReviewed == nil {
-		m.reviewReviewed = make(map[string]bool)
-	}
-	if m.reviewReviewed[selected.key] {
-		delete(m.reviewReviewed, selected.key)
-		return
-	}
-	m.reviewReviewed[selected.key] = true
 }
 
 func (m *model) reconcileReviewSelection() {

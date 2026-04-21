@@ -20,10 +20,9 @@ type reviewFile struct {
 }
 
 var (
-	reviewFocusedTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
-	reviewMetaStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	reviewAddedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	reviewDeletedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	reviewMetaStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	reviewAddedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	reviewDeletedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 func (m model) renderReview() string {
@@ -59,7 +58,7 @@ func (m model) renderReview() string {
 
 	lines = append(lines, m.renderReviewPanels(width))
 	lines = append(lines, "")
-	lines = append(lines, warningStyle.Render("j/k move • tab pane • space reviewed • n/N unreviewed • a attach • x actions • r refresh • b back • q quit"))
+	lines = append(lines, warningStyle.Render("j/k move • g/G top/bottom • tab pane • a attach • x actions • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
 }
 
@@ -114,13 +113,6 @@ func (m model) renderReviewSummary(width int) []string {
 	}
 	lines = append(lines, scope)
 
-	reviewedCount := 0
-	for _, file := range m.reviewFiles {
-		if m.reviewReviewed[file.key] {
-			reviewedCount++
-		}
-	}
-
 	changeParts := make([]string, 0, 5)
 	if diffRange := m.reviewDiff.CommittedRange; diffRange != nil {
 		if diffstat := strings.TrimSpace(diffRange.Diffstat); diffstat != "" {
@@ -137,7 +129,6 @@ func (m model) renderReviewSummary(width int) []string {
 		}
 	}
 	changeParts = append(changeParts, fmt.Sprintf("files %d", len(m.reviewFiles)))
-	changeParts = append(changeParts, fmt.Sprintf("reviewed %d", reviewedCount))
 	lines = append(lines, "Changes:    "+strings.Join(changeParts, "  "))
 
 	workflowParts := make([]string, 0, 4)
@@ -200,7 +191,13 @@ func (m model) renderReviewSummary(width int) []string {
 		}
 	}
 
-	return splitTruncatedLines(lines, width)
+	if width <= 0 {
+		return lines
+	}
+	for idx := range lines {
+		lines[idx] = truncateWithEllipsis(lines[idx], width)
+	}
+	return lines
 }
 
 func (m model) renderReviewPanels(width int) string {
@@ -231,10 +228,10 @@ func (m model) renderReviewPanels(width int) string {
 func (m model) renderReviewFilesPanel(width, height int) string {
 	title := "files"
 	if m.reviewFilesFocus {
-		title = reviewFocusedTitleStyle.Render("files *")
+		title += " *"
 	}
 
-	lines := []string{title, ""}
+	lines := []string{headerStyle.Render(title), ""}
 	if len(m.reviewFiles) == 0 {
 		lines = append(lines, "(no file-level diff available)")
 		return strings.Join(lines, "\n")
@@ -249,12 +246,7 @@ func (m model) renderReviewFilesPanel(width, height int) string {
 			prefix = ">"
 		}
 
-		reviewed := " "
-		if m.reviewReviewed[file.key] {
-			reviewed = "x"
-		}
-
-		row := fmt.Sprintf("%s [%s] %-9s %s", prefix, reviewed, reviewSectionLabel(file.section), file.title)
+		row := fmt.Sprintf("%s %-9s %s", prefix, reviewSectionLabel(file.section), file.title)
 		switch {
 		case file.added > 0 || file.deleted > 0:
 			row += fmt.Sprintf("  +%d -%d", file.added, file.deleted)
@@ -279,10 +271,10 @@ func (m model) renderReviewFilesPanel(width, height int) string {
 func (m model) renderReviewPatchPanel(width, height int) string {
 	title := "patch"
 	if !m.reviewFilesFocus {
-		title = reviewFocusedTitleStyle.Render("patch *")
+		title += " *"
 	}
 
-	lines := []string{title, ""}
+	lines := []string{headerStyle.Render(title), ""}
 	selected, ok := m.selectedReviewFile()
 	if !ok {
 		lines = append(lines, "(no diff loaded)")
@@ -290,9 +282,6 @@ func (m model) renderReviewPatchPanel(width, height int) string {
 	}
 
 	label := fmt.Sprintf("[%s] %s", reviewSectionLabel(selected.section), selected.title)
-	if m.reviewReviewed[selected.key] {
-		label += "  [reviewed]"
-	}
 	switch {
 	case selected.added > 0 || selected.deleted > 0:
 		label += fmt.Sprintf("  +%d -%d", selected.added, selected.deleted)
@@ -474,17 +463,6 @@ func reviewSectionLabel(section string) string {
 	default:
 		return "summary"
 	}
-}
-
-func splitTruncatedLines(lines []string, width int) []string {
-	if width <= 0 {
-		return lines
-	}
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		out = append(out, truncateWithEllipsis(line, width))
-	}
-	return out
 }
 
 func (m model) reviewPanelHeights() (int, int) {
