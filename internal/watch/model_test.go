@@ -230,6 +230,10 @@ func TestModel_ActionOpenSuccessUsesConfiguredOutput(t *testing.T) {
 func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing.T) {
 	t.Parallel()
 
+	const invocationID = "invocation-selected-pane-1234567890abcdef"
+	const worktreeID = "20260421103000-c3d4"
+	const repoID = "769749d77af0806f"
+
 	m := newModel(context.Background(), nil, RunOptions{
 		Open:     func(context.Context, string, string) (string, error) { return "", nil },
 		Stop:     func(context.Context, string, string) (string, error) { return "", nil },
@@ -242,23 +246,23 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	m.width = 240
 	m.height = 28
 	m.snapshot = Snapshot{
-		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
+		Repos: []daemon.RepoDTO{{RepoID: repoID, RepoKey: "github.com/acme/one"}},
 		Invocations: []daemon.InvocationDTO{
 			{
-				InvocationID:   "inv-1",
+				InvocationID:   invocationID,
 				InvocationName: "agent auth",
-				RepoID:         "repo-1",
-				WorktreeID:     "wt-1",
+				RepoID:         repoID,
+				WorktreeID:     worktreeID,
 				Runner:         "claude-code",
 				Mode:           "headless",
 				State:          string(runnerstatus.StateRunning),
 				LandingStatus:  "landed",
 			},
 		},
-		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", Name: "feature-auth"}},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: worktreeID, Name: "feature-auth"}},
 		Checks: map[string]daemon.InvocationCheckData{
-			"inv-1": {
-				InvocationID:   "inv-1",
+			invocationID: {
+				InvocationID:   invocationID,
 				State:          string(runnerstatus.StateWaiting),
 				PRSyncEligible: false,
 				RunnerState:    string(runnerstatus.StateWaiting),
@@ -279,14 +283,14 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 					CheckpointChangedCount: 2,
 				},
 				Navigation: daemon.InvocationCheckNavigation{
-					HistoryCommand: "agency agent inv-1 history --repo repo-1",
-					DiffCommand:    "agency agent inv-1 diff --repo repo-1 --turn stream:1",
+					HistoryCommand: "agency agent " + invocationID + " history --repo " + repoID,
+					DiffCommand:    "agency agent " + invocationID + " diff --repo " + repoID + " --turn stream:1",
 					LatestTurnID:   "stream:1",
 				},
 			},
 		},
 	}
-	m.selectedInvocationID = "inv-1"
+	m.selectedInvocationID = invocationID
 	m.selectedIndex = 0
 	m.actionMenuOpen = true
 
@@ -295,11 +299,13 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	assert.Contains(t, view.Content, "selected")
 	assert.Contains(t, view.Content, "STATE")
 	assert.Contains(t, view.Content, "AGENT")
-	assert.Contains(t, view.Content, "agent auth (inv-1)")
-	assert.Contains(t, view.Content, "Worktree:   feature-auth (wt-1)")
-	assert.Contains(t, view.Content, "Repo:       github.com/acme/one (repo-1)")
+	assert.Contains(t, view.Content, "Agent:      agent auth ("+invocationID+")")
+	assert.Contains(t, view.Content, "Worktree:   feature-auth ("+worktreeID+")")
+	assert.Contains(t, view.Content, "Repo:       github.com/acme/one ("+repoID+")")
 	assert.Contains(t, view.Content, "State:      waiting")
 	assert.Contains(t, view.Content, "Latest:     [assistant] latest activity summary (tools=1, checkpoint=3)")
+	assert.NotContains(t, view.Content, "Next:")
+	assert.Contains(t, view.Content, "Actions:")
 	assert.Contains(t, view.Content, "open sandbox")
 	assert.Contains(t, view.Content, "send follow-up")
 	assert.Contains(t, view.Content, "sync PR")
@@ -308,7 +314,7 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	assert.Contains(t, view.Content, "stop invocation")
 	assert.Contains(t, view.Content, "kill invocation")
 	assert.Contains(t, view.Content, "open")
-	assert.Contains(t, view.Content, "IDs:        inv-1 · wt-1 · repo-1")
+	assert.NotContains(t, view.Content, "IDs:")
 }
 
 func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {

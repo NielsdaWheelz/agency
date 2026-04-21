@@ -164,7 +164,14 @@ func (m model) renderDetailsPanel(width int) string {
 		latest = "no recent activity"
 	}
 
-	lines = append(lines, "Agent:      "+m.agentDisplay(selected))
+	agent := strings.TrimSpace(selected.InvocationName)
+	if agent == "" {
+		agent = strings.TrimSpace(selected.InvocationID)
+	} else {
+		agent += " (" + selected.InvocationID + ")"
+	}
+
+	lines = append(lines, "Agent:      "+agent)
 	lines = append(lines, "Worktree:   "+m.worktreeDisplay(selected.WorktreeID))
 	lines = append(lines, "Repo:       "+m.repoDisplay(selected.RepoID))
 	lines = append(lines, "Runner:     "+selected.Runner+" / "+selected.Mode)
@@ -173,11 +180,8 @@ func (m model) renderDetailsPanel(width int) string {
 		lines = append(lines, "Reason:     "+selected.Reason)
 	}
 	lines = append(lines, "Latest:     "+latest)
-	lines = append(lines, "Next:       "+m.nextActionSummary(selected))
 	lines = append(lines, "")
 	lines = append(lines, m.renderActionPanel(width)...)
-	lines = append(lines, "")
-	lines = append(lines, "IDs:        "+selected.InvocationID+" · "+firstNonEmpty(selected.WorktreeID, "-")+" · "+selected.RepoID)
 	return truncateLines(lines, width)
 }
 
@@ -327,25 +331,6 @@ func latestSummaryFromActivity(activity *daemon.InvocationLatestActivity) string
 		activity.CheckpointID,
 		activity.Restorable,
 	)
-}
-
-func (m model) nextActionSummary(inv daemon.InvocationDTO) string {
-	switch {
-	case m.followupInput:
-		return "type a follow-up prompt and press enter"
-	case m.confirmAction != "":
-		return "confirm the selected action or cancel it"
-	case m.actionMenuOpen:
-		return "choose an action key from the list"
-	case m.canStartAction(actionAttach):
-		return "attach to the running session"
-	case m.canStartAction(actionLand):
-		return "land the agent changes"
-	case m.canStartAction(actionPRSync):
-		return "sync the PR"
-	default:
-		return "open actions, inspect history, or read logs"
-	}
 }
 
 func (m model) agentDisplay(inv daemon.InvocationDTO) string {
