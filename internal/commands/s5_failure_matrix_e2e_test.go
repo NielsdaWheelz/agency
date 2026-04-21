@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -156,12 +157,20 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		st := store.NewStore(fsys, dataDir, time.Now)
 		client := daemonclient.NewClient(st.DaemonSocketPath())
 
-		resp, err := client.WorktreePRMerge(ctx, "wt-any", repoID, daemonclient.WorktreePRMergeOpts{
+		_, err := client.WorktreePRMerge(ctx, "wt-any", repoID, daemonclient.WorktreePRMergeOpts{
 			Strategy:         "squash",
 			ConfirmationMode: "yes",
 			Confirmed:        false,
 		})
-		require.NoError(t, err)
+
+		require.Error(t, err)
+		assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+
+		dae, ok := daemonclient.AsDaemonActionError(err)
+		require.True(t, ok, "expected daemon action error, got %v", err)
+
+		var resp daemon.WorktreePRMergeResponse
+		require.NoError(t, dae.DecodeResponse(&resp))
 		assert.False(t, resp.OK)
 		assert.Equal(t, string(errors.EConfirmationRequired), resp.ErrorCode)
 		assert.NotEmpty(t, resp.RequestID)
