@@ -100,7 +100,7 @@ func ConfigInit(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts Con
 	}
 
 	cfg := config.UserConfig{
-		Version: 2,
+		Version: 3,
 		Defaults: config.UserDefaults{
 			Runner:     runnerIDs[0],
 			Editor:     defaultEditor,

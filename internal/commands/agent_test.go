@@ -200,15 +200,19 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 	repoDir, dataDir, repoID, worktreeID, fakeRunner, fsys := setupAgentTestEnvShort(t, worktreeName)
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	runnerPath := os.Getenv("TEST_FAKE_RUNNER_PATH")
+	if runnerPath == "" {
+		runnerPath = "fake-runner"
+	}
 
 	cfg := map[string]any{
-		"version": 2,
+		"version": 3,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",
 		},
 		"runners": map[string]string{
-			"claude-code": "fake-runner",
+			"claude-code": runnerPath,
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
@@ -1005,7 +1009,7 @@ func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-defaults", 1)
 
 	cfg := map[string]any{
-		"version": 2,
+		"version": 3,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",
@@ -1047,7 +1051,7 @@ func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-agency-runner-defaults", 1)
 
 	cfg := map[string]any{
-		"version": 2,
+		"version": 3,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",
@@ -1067,7 +1071,7 @@ func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
 
 	agencyJSON := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -1114,7 +1118,7 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-cli-runner-defaults", 1)
 
 	cfg := map[string]any{
-		"version": 2,
+		"version": 3,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",
@@ -1134,7 +1138,7 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
 
 	agencyJSON := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -1177,6 +1181,88 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
 	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--model", "cli-opus", "--effort", "medium"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_UsesUserClaudePermissionModeWhenCLIUnset(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-permission-mode", 1)
+
+	cfg := map[string]any{
+		"version": 3,
+		"defaults": map[string]string{
+			"runner": "claude-code",
+			"editor": "code",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"permission_mode": "bypassPermissions",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-user-runner-permission-mode",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--permission-mode", "bypassPermissions"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_HeadlessClaudeDefaultsPermissionModeToBypassPermissions(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-headless-default-permission-mode", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-headless-default-permission-mode",
+		Runner:        "claude-code",
+		Headless:      true,
+		Prompt:        "headless default permissions",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--permission-mode", "bypassPermissions"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_HeadlessClaudeRejectsPromptingPermissionModes(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-headless-invalid-permission-mode", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:        env.RepoID,
+		WorktreeRef:    "start-headless-invalid-permission-mode",
+		Runner:         "claude-code",
+		Headless:       true,
+		Prompt:         "headless invalid permissions",
+		PermissionMode: "default",
+		IsInteractive:  func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "headless Claude requires an autonomous permission mode")
 }
 
 func TestAgentStart_ExplicitMissingAgencyConfigFails(t *testing.T) {

@@ -147,7 +147,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", req.ClientRequestID, requestID)
 		return
 	}
-	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, createResult.SandboxPath); err != nil {
+	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath); err != nil {
 		s.markHeadedInvocationFailed(repoIdentity.RepoID, createResult.InvocationID, "start_failed")
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", req.ClientRequestID, requestID)
 		return

@@ -320,7 +320,7 @@ func TestDaemonControlPlaneStart_TargetRunnerSetLaunchArgs(t *testing.T) {
 			var wantArgs []string
 			switch tc.canonicalRunner {
 			case "claude-code":
-				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions")
+				wantArgs = append(wantArgs, "-p", "--output-format", "stream-json", "--input-format", "text", "--verbose")
 				wantArgs = append(wantArgs, tc.runnerArgs...)
 				wantArgs = append(wantArgs, tc.prompt)
 			case "codex":
@@ -636,7 +636,7 @@ func TestDaemonControlPlaneFollowUp_ClaudeQueuedPromptResumesNextTurnAndDiffTurn
 	// Capture file is overwritten per launch; after resume it reflects the second turn launch args.
 	capture := readFakeRunnerLaunchCapture(t, capturePath)
 	assert.Equal(t, "claude-session-mutate-then-exit-ok", capture.Mode)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--resume", "sess_claude_resume_test", "second claude turn"}, capture.Args)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--resume", "sess_claude_resume_test", "second claude turn"}, capture.Args)
 }
 
 func TestDaemonStopAfterClaudeSuccessfulFinalDoesNotRelabelFailed(t *testing.T) {

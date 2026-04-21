@@ -14,10 +14,13 @@ import (
 func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	// Validate version
 	if cfg.Version == 1 {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 2")
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 3")
 	}
-	if cfg.Version != 2 {
-		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 2")
+	if cfg.Version == 2 {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "version 2 is not supported; agency.json must use version 3")
+	}
+	if cfg.Version != 3 {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 3")
 	}
 
 	// Validate required fields in scripts
@@ -41,6 +44,10 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 
 		model := strings.TrimSpace(runnerDefaults.Model)
 		effort := strings.TrimSpace(runnerDefaults.Effort)
+		permissionMode := strings.TrimSpace(runnerDefaults.PermissionMode)
+		if permissionMode != "" || runnerDefaults.PermissionMode != "" {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+".permission_mode is not supported in agency.json")
+		}
 		if model == "" && effort == "" {
 			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" requires at least one of model or effort")
 		}

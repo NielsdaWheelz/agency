@@ -30,14 +30,15 @@ type UserDefaults struct {
 
 // RunnerDefaults contains typed runner defaults for one canonical runner id.
 type RunnerDefaults struct {
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
 // DefaultUserConfig returns scaffold content for creating a new user config.
 func DefaultUserConfig() UserConfig {
 	return UserConfig{
-		Version: 2,
+		Version: 3,
 		Defaults: UserDefaults{
 			Runner:     "claude-code",
 			Editor:     "code",
@@ -124,8 +125,15 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 		if version == 1 {
 			return UserConfig{}, errors.NewWithDetails(
 				errors.EInvalidUserConfig,
-				"version 1 is not supported; upgrade config.json to version 2",
-				map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 2 config"},
+				"version 1 is not supported; config.json must use version 3",
+				map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 3 config"},
+			)
+		}
+		if version == 2 {
+			return UserConfig{}, errors.NewWithDetails(
+				errors.EInvalidUserConfig,
+				"version 2 is not supported; config.json must use version 3",
+				map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 3 config"},
 			)
 		}
 		cfg.Version = version
@@ -204,8 +212,9 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			}
 
 			allowedRunnerDefaultsKeys := map[string]bool{
-				"model":  true,
-				"effort": true,
+				"model":           true,
+				"effort":          true,
+				"permission_mode": true,
 			}
 			for key := range runnerDefaultsMap {
 				if !allowedRunnerDefaultsKeys[key] {
@@ -227,6 +236,13 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".effort must be a string")
 				}
 				runnerDefaults.Effort = effort
+			}
+			if rawPermissionMode, ok := runnerDefaultsMap["permission_mode"]; ok {
+				var permissionMode string
+				if err := json.Unmarshal(rawPermissionMode, &permissionMode); err != nil {
+					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".permission_mode must be a string")
+				}
+				runnerDefaults.PermissionMode = permissionMode
 			}
 
 			cfg.RunnerDefaults[runnerName] = runnerDefaults
@@ -273,12 +289,19 @@ func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
 	if cfg.Version == 1 {
 		return cfg, errors.NewWithDetails(
 			errors.EInvalidUserConfig,
-			"version 1 is not supported; upgrade config.json to version 2",
-			map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 2 config"},
+			"version 1 is not supported; config.json must use version 3",
+			map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 3 config"},
 		)
 	}
-	if cfg.Version != 2 {
-		return cfg, errors.New(errors.EInvalidUserConfig, "version must be 2")
+	if cfg.Version == 2 {
+		return cfg, errors.NewWithDetails(
+			errors.EInvalidUserConfig,
+			"version 2 is not supported; config.json must use version 3",
+			map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 3 config"},
+		)
+	}
+	if cfg.Version != 3 {
+		return cfg, errors.New(errors.EInvalidUserConfig, "version must be 3")
 	}
 	if cfg.Defaults.Runner == "" {
 		return cfg, errors.New(errors.EInvalidUserConfig, "missing required field defaults.runner")
@@ -313,8 +336,9 @@ func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
 
 		model := strings.TrimSpace(runnerDefaults.Model)
 		effort := strings.TrimSpace(runnerDefaults.Effort)
-		if model == "" && effort == "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" requires at least one of model or effort")
+		permissionMode := strings.TrimSpace(runnerDefaults.PermissionMode)
+		if model == "" && effort == "" && permissionMode == "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" requires at least one of model, effort, or permission_mode")
 		}
 		if runnerDefaults.Model != "" && model == "" {
 			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".model must be a non-empty string")
@@ -322,13 +346,20 @@ func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
 		if runnerDefaults.Effort != "" && effort == "" {
 			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".effort must be a non-empty string")
 		}
+		if runnerDefaults.PermissionMode != "" && permissionMode == "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".permission_mode must be a non-empty string")
+		}
 		if canonicalRunner == runners.RunnerCursor && effort != "" {
 			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults.cursor.effort is not supported")
 		}
+		if canonicalRunner != runners.RunnerClaudeCode && permissionMode != "" {
+			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".permission_mode is only supported for claude-code")
+		}
 
 		cfg.RunnerDefaults[canonicalRunner] = RunnerDefaults{
-			Model:  model,
-			Effort: effort,
+			Model:          model,
+			Effort:         effort,
+			PermissionMode: permissionMode,
 		}
 		if canonicalRunner != name {
 			delete(cfg.RunnerDefaults, name)

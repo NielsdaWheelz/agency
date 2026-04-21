@@ -59,7 +59,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	// Must include "defaults" for LoadUserConfig validation to pass.
 	runnerPath := fakeRunnerPath(t)
 	cfg := map[string]any{
-		"version": 2,
+		"version": 3,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",

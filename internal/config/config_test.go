@@ -62,7 +62,7 @@ func TestLoadAgencyConfig_MissingFile(t *testing.T) {
 func TestLoadAgencyConfig_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
-	stub.files["/repo/agency.json"] = []byte(`{"version": 2, "scripts": {`)
+	stub.files["/repo/agency.json"] = []byte(`{"version": 3, "scripts": {`)
 	_, err := LoadAgencyConfig(stub, "/repo")
 	require.Error(t, err, "expected error for invalid JSON")
 	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
@@ -78,7 +78,7 @@ func TestLoadAgencyConfig_ValidMinimal(t *testing.T) {
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
 	require.NoError(t, err)
-	assert.Equal(t, 2, cfg.Version)
+	assert.Equal(t, 3, cfg.Version)
 	assert.Equal(t, "scripts/agency_setup.sh", cfg.Scripts.Setup.Path)
 	assert.Equal(t, 10*time.Minute, cfg.Scripts.Setup.Timeout)
 	assert.Equal(t, "scripts/agency_verify.sh", cfg.Scripts.Verify.Path)
@@ -96,8 +96,31 @@ func TestLoadAgencyConfig_ValidWithRunnerDefaults(t *testing.T) {
 
 	cfg, err := LoadAgencyConfig(stub, "/repo")
 	require.NoError(t, err)
-	assert.Equal(t, 2, cfg.Version)
+	assert.Equal(t, 3, cfg.Version)
 	assert.Equal(t, "scripts/agency_setup.sh", cfg.Scripts.Setup.Path)
+}
+
+func TestLoadAgencyConfig_RunnerDefaultsPermissionModeRejected(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/repo/agency.json"] = []byte(`{
+  "version": 3,
+  "scripts": {
+    "setup": {"path": "scripts/setup.sh"},
+    "verify": {"path": "scripts/verify.sh"},
+    "archive": {"path": "scripts/archive.sh"}
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "permission_mode": "default"
+    }
+  }
+}`)
+
+	_, err := LoadAgencyConfig(stub, "/repo")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "runner_defaults.claude-code.permission_mode is not supported in agency.json")
 }
 
 func TestResolveAgencyConfig_PrefersRepoThenLocal(t *testing.T) {
@@ -304,7 +327,7 @@ func TestValidateAgencyConfig_WrongVersion(t *testing.T) {
 	_, err = ValidateAgencyConfig(cfg)
 	require.Error(t, err, "expected validation error")
 	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version 1 is not supported")
+	assert.Contains(t, err.Error(), "version 2 is not supported")
 }
 
 func TestValidateAgencyConfig_UnknownKeys(t *testing.T) {
@@ -349,7 +372,7 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	configContent := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/setup.sh",
@@ -373,7 +396,7 @@ func TestLoadAgencyConfig_RealFS(t *testing.T) {
 	cfg, err := LoadAgencyConfig(realFS, tmpDir)
 	require.NoError(t, err)
 
-	assert.Equal(t, 2, cfg.Version)
+	assert.Equal(t, 3, cfg.Version)
 	assert.Equal(t, "scripts/setup.sh", cfg.Scripts.Setup.Path)
 	assert.Equal(t, 10*time.Minute, cfg.Scripts.Setup.Timeout)
 }

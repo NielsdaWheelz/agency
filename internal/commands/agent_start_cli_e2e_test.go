@@ -73,7 +73,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			name:            "claude-code canonical",
 			runnerInput:     "claude-code",
 			canonicalRunner: "claude-code",
-			runnerArg:       "--model=opus",
+			runnerArg:       "--allowed-extra=claude",
 			prompt:          "cli e2e matrix claude canonical",
 		},
 		{
@@ -450,7 +450,7 @@ func readLaunchCapture(t *testing.T, capturePath string) launchCapture {
 func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string) []string {
 	switch canonicalRunner {
 	case "claude-code":
-		return []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", runnerArg, prompt}
+		return []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", runnerArg, "--permission-mode", "bypassPermissions", prompt}
 	case "codex":
 		return []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", sandboxPath, "--json", runnerArg, "--disable", "unified_exec", prompt}
 	case "amp":
@@ -470,7 +470,7 @@ func writeE2EConfig(t *testing.T, configDir, fakeRunnerBin string) {
 	t.Helper()
 
 	cfg := map[string]any{
-		"version": 2,
+		"version": 3,
 		"defaults": map[string]string{
 			"runner": "claude-code",
 			"editor": "code",

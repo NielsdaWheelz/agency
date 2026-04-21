@@ -338,7 +338,7 @@ func writeWorktreeMergeScriptsAndConfigWithVerifyScript(t *testing.T, integratio
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "archive.sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755))
 
 	agencyJSON := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/setup.sh",

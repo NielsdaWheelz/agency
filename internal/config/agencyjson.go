@@ -173,6 +173,9 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 				"effort": true,
 			}
 			for key := range runnerDefaultsMap {
+				if key == "permission_mode" {
+					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".permission_mode is not supported in agency.json")
+				}
 				if !allowedRunnerDefaultsKeys[key] {
 					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" contains unknown field: "+key)
 				}

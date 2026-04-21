@@ -74,8 +74,9 @@ func TestValidateArgs(t *testing.T) {
 	require.Error(t, ValidateArgs("droid", []string{"--input-format", "text"}))
 	require.NoError(t, ValidateArgs("amp", []string{"--model", "amp-fast"}))
 
-	// Permission flags are allowed in headed mode (user at terminal).
-	require.NoError(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
+	// Approval flags remain runner-specific in headed mode, except for Claude's
+	// bypass shortcut which Agency owns through typed permission-mode handling.
+	require.Error(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
 	require.NoError(t, ValidateArgs("codex", []string{"--full-auto"}))
 	require.NoError(t, ValidateArgs("codex", []string{"--ask-for-approval", "never"}))
 	require.NoError(t, ValidateArgs("codex", []string{"--sandbox", "workspace-write"}))
@@ -93,8 +94,6 @@ func TestValidateHeadlessArgs(t *testing.T) {
 
 	// Permission/approval flags rejected in headless mode — Agency controls them.
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--dangerously-skip-permissions"}))
-	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "default"}))
-	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode=acceptEdits"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"-a", "never"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--ask-for-approval", "never"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--ask-for-approval=never"}))
@@ -113,6 +112,7 @@ func TestValidateHeadlessArgs(t *testing.T) {
 
 	// Non-conflicting flags pass.
 	require.NoError(t, ValidateHeadlessArgs("claude-code", []string{"--model", "opus"}))
+	require.NoError(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "bypassPermissions"}))
 	require.NoError(t, ValidateHeadlessArgs("codex", []string{"--model", "gpt-5"}))
 	require.NoError(t, ValidateHeadlessArgs("opencode", []string{"--model", "open"}))
 }
@@ -120,9 +120,9 @@ func TestValidateHeadlessArgs(t *testing.T) {
 func TestBuildHeadlessArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildHeadlessArgs("claude-code", "fix bug", "/sandbox", []string{"--model", "opus"})
+	claudeArgs, err := BuildHeadlessArgs("claude-code", "fix bug", "/sandbox", []string{"--model", "opus", "--permission-mode", "bypassPermissions"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "fix bug"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--model", "opus", "--permission-mode", "bypassPermissions", "fix bug"}, claudeArgs)
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
@@ -156,13 +156,13 @@ func TestBuildHeadlessArgs_RequiresPrompt(t *testing.T) {
 func TestBuildResumeArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "", []string{"--model", "opus"})
+	claudeArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "", []string{"--model", "opus", "--permission-mode", "bypassPermissions"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--continue", "--model", "opus", "continue from previous turn"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--continue", "--model", "opus", "--permission-mode", "bypassPermissions", "continue from previous turn"}, claudeArgs)
 
-	claudeExplicitArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "sess_abc123", []string{"--model", "opus"})
+	claudeExplicitArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "sess_abc123", []string{"--model", "opus", "--permission-mode", "bypassPermissions"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--dangerously-skip-permissions", "--resume", "sess_abc123", "--model", "opus", "continue from previous turn"}, claudeExplicitArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--resume", "sess_abc123", "--model", "opus", "--permission-mode", "bypassPermissions", "continue from previous turn"}, claudeExplicitArgs)
 
 	codexArgs, err := BuildResumeArgs("codex", "continue from previous turn", "", []string{"--model", "gpt-5"})
 	require.NoError(t, err)

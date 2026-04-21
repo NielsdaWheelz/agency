@@ -106,7 +106,7 @@ func TestFormatContextKeysInOrder(t *testing.T) {
 func TestFormatShowsPathAndSourceByDefault(t *testing.T) {
 	t.Parallel()
 
-	err := NewWithDetails(EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 2", map[string]string{
+	err := NewWithDetails(EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 3", map[string]string{
 		"path":   "/repo/agency.json",
 		"source": "repo",
 		"hint":   "fix /repo/agency.json, or regenerate it",

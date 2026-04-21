@@ -19,6 +19,7 @@ func newAgentStartCmd() *cobra.Command {
 	var runnerArgs []string
 	var model string
 	var effort string
+	var permissionMode string
 	var noIncludeUntracked bool
 	var jsonOut bool
 
@@ -76,6 +77,7 @@ Examples:
 				RunnerArgs:         runnerArgs,
 				Model:              model,
 				Effort:             effort,
+				PermissionMode:     permissionMode,
 				JSON:               jsonOut,
 				NoIncludeUntracked: noIncludeUntracked,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -95,6 +97,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional runner argument (repeatable)")
 	cmd.Flags().StringVar(&model, "model", "", "Runner model override")
 	cmd.Flags().StringVar(&effort, "effort", "", "Runner effort override")
+	cmd.Flags().StringVar(&permissionMode, "permission-mode", "", "Claude permission mode override")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from headless checkpoint snapshots")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")

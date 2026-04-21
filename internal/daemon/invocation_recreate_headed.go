@@ -176,7 +176,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", "", requestID)
 		return
 	}
-	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, meta.SandboxPath); err != nil {
+	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath); err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", "", requestID)
 		return
 	}

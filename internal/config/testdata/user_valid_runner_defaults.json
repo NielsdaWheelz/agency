@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
@@ -8,7 +8,8 @@
   "runner_defaults": {
     "claude-code": {
       "model": "opus-4.7",
-      "effort": "max"
+      "effort": "max",
+      "permission_mode": "acceptEdits"
     },
     "codex": {
       "model": "gpt-5.4",

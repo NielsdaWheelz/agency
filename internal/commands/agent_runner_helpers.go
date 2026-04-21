@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	claudeModelArgFlag  = "--model"
-	claudeEffortArgFlag = "--effort"
+	claudeModelArgFlag                 = "--model"
+	claudeEffortArgFlag                = "--effort"
+	claudePermissionModeArgFlag        = "--permission-mode"
+	claudeDangerousSkipPermissionsFlag = "--dangerously-skip-permissions"
 
 	codexModelArgFlag             = "--model"
 	codexConfigArgFlag            = "--config"
@@ -44,7 +46,7 @@ func resolveAgentRunner(input, defaultRunner string) (string, error) {
 	return canonicalRunner, nil
 }
 
-func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effort string) ([]string, error) {
+func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effort, permissionMode string, headless bool) ([]string, error) {
 	canonicalRunner, err := runners.Canonicalize(runner)
 	if err != nil {
 		return nil, errors.NewWithDetails(
@@ -59,17 +61,19 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effor
 
 	model = strings.TrimSpace(model)
 	effort = strings.TrimSpace(effort)
+	permissionMode = strings.TrimSpace(permissionMode)
 
 	supportsModel := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex || canonicalRunner == runners.RunnerCursor
 	supportsEffort := canonicalRunner == runners.RunnerClaudeCode || canonicalRunner == runners.RunnerCodex
 
 	if !supportsModel {
-		if model != "" || effort != "" {
+		if model != "" || effort != "" || permissionMode != "" {
 			return nil, errors.NewWithDetails(
 				errors.EUsage,
-				fmt.Sprintf("--model is supported for runners %s; --effort is supported for runners %s",
+				fmt.Sprintf("--model is supported for runners %s; --effort is supported for runners %s; --permission-mode is supported for runner %s",
 					strings.Join([]string{runners.RunnerClaudeCode, runners.RunnerCodex, runners.RunnerCursor}, ", "),
 					strings.Join([]string{runners.RunnerClaudeCode, runners.RunnerCodex}, ", "),
+					runners.RunnerClaudeCode,
 				),
 				map[string]string{
 					"runner": canonicalRunner,
@@ -79,28 +83,110 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effor
 		}
 		return append([]string(nil), runnerArgs...), nil
 	}
+	if !supportsEffort && effort != "" {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--effort is not supported for runner "+canonicalRunner,
+			map[string]string{
+				"runner": canonicalRunner,
+				"hint":   "select thinking-capable models via --model (for example: sonnet-4.6-thinking)",
+			},
+		)
+	}
 	if !supportsEffort {
-		if effort != "" {
-			return nil, errors.NewWithDetails(
-				errors.EUsage,
-				"--effort is not supported for runner "+canonicalRunner,
-				map[string]string{
-					"runner": canonicalRunner,
-					"hint":   "select thinking-capable models via --model (for example: sonnet-4.6-thinking)",
-				},
-			)
-		}
 		effort = ""
+	}
+	if canonicalRunner != runners.RunnerClaudeCode && permissionMode != "" {
+		return nil, errors.NewWithDetails(
+			errors.EUsage,
+			"--permission-mode is not supported for runner "+canonicalRunner,
+			map[string]string{
+				"runner": canonicalRunner,
+			},
+		)
 	}
 
 	out := append([]string(nil), runnerArgs...)
 	switch canonicalRunner {
 	case runners.RunnerClaudeCode:
+		for _, arg := range runnerArgs {
+			switch {
+			case arg == claudeModelArgFlag || strings.HasPrefix(arg, claudeModelArgFlag+"="):
+				return nil, errors.NewWithDetails(
+					errors.ERunnerArgConflict,
+					"reserved flag '"+claudeModelArgFlag+"' cannot be passed via runner_args",
+					map[string]string{
+						"runner": canonicalRunner,
+						"flag":   claudeModelArgFlag,
+						"hint":   "use --model instead of --runner-arg",
+					},
+				)
+			case arg == claudeEffortArgFlag || strings.HasPrefix(arg, claudeEffortArgFlag+"="):
+				return nil, errors.NewWithDetails(
+					errors.ERunnerArgConflict,
+					"reserved flag '"+claudeEffortArgFlag+"' cannot be passed via runner_args",
+					map[string]string{
+						"runner": canonicalRunner,
+						"flag":   claudeEffortArgFlag,
+						"hint":   "use --effort instead of --runner-arg",
+					},
+				)
+			case arg == claudePermissionModeArgFlag || strings.HasPrefix(arg, claudePermissionModeArgFlag+"="):
+				return nil, errors.NewWithDetails(
+					errors.ERunnerArgConflict,
+					"reserved flag '"+claudePermissionModeArgFlag+"' cannot be passed via runner_args",
+					map[string]string{
+						"runner": canonicalRunner,
+						"flag":   claudePermissionModeArgFlag,
+						"hint":   "use --permission-mode instead of --runner-arg",
+					},
+				)
+			case arg == claudeDangerousSkipPermissionsFlag || strings.HasPrefix(arg, claudeDangerousSkipPermissionsFlag+"="):
+				return nil, errors.NewWithDetails(
+					errors.ERunnerArgConflict,
+					"reserved flag '"+claudeDangerousSkipPermissionsFlag+"' cannot be passed via runner_args",
+					map[string]string{
+						"runner": canonicalRunner,
+						"flag":   claudeDangerousSkipPermissionsFlag,
+						"hint":   "use --permission-mode bypassPermissions instead of --runner-arg",
+					},
+				)
+			}
+		}
+		switch permissionMode {
+		case "":
+			if headless {
+				permissionMode = "bypassPermissions"
+			}
+		case "default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions":
+		default:
+			return nil, errors.NewWithDetails(
+				errors.EUsage,
+				"invalid Claude permission mode: "+permissionMode,
+				map[string]string{
+					"runner": canonicalRunner,
+					"hint":   "valid Claude permission modes: default, acceptEdits, plan, auto, dontAsk, bypassPermissions",
+				},
+			)
+		}
+		if headless && (permissionMode == "default" || permissionMode == "acceptEdits" || permissionMode == "plan") {
+			return nil, errors.NewWithDetails(
+				errors.EUsage,
+				"headless Claude requires an autonomous permission mode",
+				map[string]string{
+					"runner": canonicalRunner,
+					"hint":   "use --permission-mode auto, dontAsk, or bypassPermissions",
+				},
+			)
+		}
 		if model != "" {
 			out = append(out, claudeModelArgFlag, model)
 		}
 		if effort != "" {
 			out = append(out, claudeEffortArgFlag, effort)
+		}
+		if permissionMode != "" {
+			out = append(out, claudePermissionModeArgFlag, permissionMode)
 		}
 	case runners.RunnerCodex:
 		if model != "" {

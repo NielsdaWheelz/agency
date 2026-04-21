@@ -3,6 +3,8 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/testutil"
@@ -13,5 +15,29 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+
+	tmpDir, err := os.MkdirTemp("", "fakerunner-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to create temp dir for fakerunner:", err)
+		os.Exit(1)
+	}
+
+	fakeRunnerBin := filepath.Join(tmpDir, "claude-code")
+	cmd := exec.Command("go", "build", "-o", fakeRunnerBin, "github.com/NielsdaWheelz/agency/internal/daemon/testdata/fakerunner")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to build fakerunner:", err)
+		_ = os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+
+	if err := os.Setenv("TEST_FAKE_RUNNER_PATH", fakeRunnerBin); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to set TEST_FAKE_RUNNER_PATH:", err)
+		_ = os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
+	os.Exit(code)
 }

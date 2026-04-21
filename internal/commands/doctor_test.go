@@ -37,7 +37,7 @@ func setupTestRepoAt(t *testing.T, root string) string {
 
 	// Create agency.json
 	agencyJSON := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -73,7 +73,7 @@ func writeUserConfig(t *testing.T, configDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "failed to create config dir")
 	cfg := `{
-  "version": 2,
+  "version": 3,
   "defaults": {
     "runner": "claude-code",
     "editor": "code"
@@ -104,7 +104,7 @@ func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
 	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create local config dir")
 
 	agencyJSON := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",

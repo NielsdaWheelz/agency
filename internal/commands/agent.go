@@ -57,6 +57,9 @@ type AgentStartOpts struct {
 	// Cursor runner does not support effort and expects thinking-capable model IDs via --model.
 	Effort string
 
+	// PermissionMode selects the Claude permission mode.
+	PermissionMode string
+
 	// JSON outputs as JSON.
 	JSON bool
 
@@ -333,7 +336,8 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 	model := strings.TrimSpace(opts.Model)
 	effort := strings.TrimSpace(opts.Effort)
-	if model == "" || effort == "" {
+	permissionMode := strings.TrimSpace(opts.PermissionMode)
+	if model == "" || effort == "" || permissionMode == "" {
 		if err := loadUserCfg(false); err != nil {
 			return fail(err)
 		}
@@ -363,8 +367,13 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			effort = runnerDefaults.Effort
 		}
 	}
+	if permissionMode == "" {
+		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
+			permissionMode = runnerDefaults.PermissionMode
+		}
+	}
 
-	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, model, effort)
+	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, model, effort, permissionMode, opts.Headless)
 	if err != nil {
 		return fail(err)
 	}

@@ -28,7 +28,7 @@ go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 
 `git`, `tmux`, `gh` (authenticated), and at least one supported runner executable on `PATH`.
 
-Run `agency config init` first. It writes a working version `2` `config.json` under your agency config dir.
+Run `agency config init` first. It writes a working version `3` `config.json` under your agency config dir.
 For the full schema and setup rules, see [docs/configuration.md](docs/configuration.md).
 For paths and precedence, see [docs/environment.md](docs/environment.md).
 
@@ -36,20 +36,21 @@ Short working `config.json` example:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "defaults": {
-    "runner": "codex",
+    "runner": "claude-code",
     "editor": "code",
     "base_branch": "main"
   },
   "runner_defaults": {
-    "codex": {
-      "model": "gpt-5.4",
-      "effort": "xhigh"
+    "claude-code": {
+      "model": "claude-opus-4-7[1m]",
+      "effort": "max",
+      "permission_mode": "bypassPermissions"
     }
   },
   "runners": {
-    "codex": "codex"
+    "claude-code": "claude"
   },
   "editors": {
     "code": "code"
@@ -83,15 +84,26 @@ agency agent <invocation-ref> land --apply
 `agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` when you want an explicit override from any cwd.
 If `--worktree` is omitted, `agency agent start` resolves the worktree from the active context first and then falls back to the current integration worktree only when cwd is already inside one.
 Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
-`agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-local `<repo>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
-Legacy verb-first target forms, `worktree create --name`, and the old positional `agency agent start <worktree-ref>` spelling are removed with no backward compatibility.
+`agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
+`agency agent start` defaults to headed mode. Use `--headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
+For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set `permission_mode` in user `config.json` only; use `runner_defaults` or `agency agent start --model/--effort` for Claude model and effort.
+
+headed (interactive tmux):
+
+```bash
+agency agent start --worktree my-feature --repo <repo-ref>
+agency agent start --worktree my-feature --repo <repo-ref> --detached --model opus[1m] --effort max
+agency agent <invocation-ref> attach
+```
+
+For `claude-code`, headed mode launches interactive Claude in tmux and applies Agency-owned Claude settings without the print/stream-json startup path.
 
 headless (fire-and-forget):
 
 ```bash
 agency context use my-feature --repo <repo-ref>
 agency agent start --headless --prompt "Fix the auth bug"
-agency agent start --worktree my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model opus-4.7 --effort max
+agency agent start --worktree my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model claude-opus-4-7[1m] --effort max
 agency agent <invocation-ref> history                 # interactive invocation history/transcript/logs UI (same runtime; tty only)
 agency agent <invocation-ref> history --json          # machine-readable timeline output
 agency agent <invocation-ref> history logs --follow   # raw invocation logs
@@ -106,6 +118,8 @@ agency worktree <worktree-ref> rebase                # rebase worktree branch on
 agency agent <invocation-ref> restore --checkpoint 3
 agency agent <invocation-ref> restore --turn <entry>
 ```
+
+For `claude-code`, headless mode runs through the daemon in print/stream-json mode. Agency owns the Claude startup flags, applies configured `model` and `effort`, and controls the effective permission behavior.
 
 short alias parity for high-traffic s6 navigation/progression surfaces:
 - `worktree create`: `-r/--repo`
@@ -181,7 +195,7 @@ unknown provider events should degrade to diagnostics in transcript/log inspecti
 ## documentation
 
 - **[docs/index.md](docs/index.md)** — documentation map and ownership rules
-- **[docs/configuration.md](docs/configuration.md)** — config setup and version `2` schemas
+- **[docs/configuration.md](docs/configuration.md)** — config setup and version `3` schemas
 - **[docs/codebase.md](docs/codebase.md)** — package layout and architecture boundaries
 - **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
 - **[docs/environment.md](docs/environment.md)** — config paths, overrides, and precedence

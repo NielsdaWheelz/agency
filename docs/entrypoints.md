@@ -22,10 +22,13 @@ This document covers entrypoints and side effects.
 - `agency agent start` should take no positional worktree argument.
 - `agency agent start --worktree <worktree-ref>` is the explicit worktree override and the scriptable surface from any cwd.
 - When `--worktree` is omitted, `agency agent start` should resolve the worktree from the active context first and then fall back to cwd only when cwd is inside a present agency integration worktree.
+- `agency agent start` should default to headed mode.
 - `agency agent start` should honor explicit `--agency-config` and otherwise resolve repo-scoped runner defaults through: canonical repo-root `agency.json`, then per-repo config under `AGENCY_CONFIG_DIR`.
+- `agency agent start` should load user `config.json`, overlay repo-scoped runner-default fields from the selected `agency.json`, and apply explicit `--model` and `--effort` last.
+- `agency agent start` should source `runner_defaults.claude-code.permission_mode` from user `config.json` only.
+- For `claude-code`, headed starts should launch interactive Claude in tmux. Headless starts should launch daemon-backed Claude through the print/stream-json path.
 - Integration worktrees and sandboxes are execution surfaces and do not own repo-shared config.
 - Merge, verify, and archive entrypoints should resolve repo-shared config from the registered repo canonical root and should not write repo-shared files into agency-managed worktrees.
-- Legacy verb-first target forms, `worktree create --name`, and the removed positional `agency agent start <worktree-ref>` spelling should not retain compatibility paths.
 - Daemon HTTP handlers are service entrypoints and should delegate non-transport work into helper packages instead of accumulating policy inline.
 - Bubble Tea programs and models are TUI entrypoints, not persistence owners.
 - Only entrypoints should read terminals directly or decide final stdout and stderr rendering.

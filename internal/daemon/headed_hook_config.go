@@ -13,7 +13,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
-func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocationID, runner, sandboxPath string) error {
+func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocationID, runner string, runnerArgs []string, sandboxPath string) error {
 	if runner != runners.RunnerClaudeCode && runner != runners.RunnerCodex {
 		return nil
 	}
@@ -43,7 +43,19 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 			return err
 		}
-		if err := writeClaudeHeadedHookConfig(settingsPath, command); err != nil {
+		skipDangerousModePrompt := false
+		for i := 0; i < len(runnerArgs); i++ {
+			arg := runnerArgs[i]
+			if arg == "--permission-mode" && i+1 < len(runnerArgs) && runnerArgs[i+1] == "bypassPermissions" {
+				skipDangerousModePrompt = true
+				break
+			}
+			if arg == "--permission-mode=bypassPermissions" {
+				skipDangerousModePrompt = true
+				break
+			}
+		}
+		if err := writeClaudeHeadedHookConfig(settingsPath, command, skipDangerousModePrompt); err != nil {
 			return err
 		}
 		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".claude/settings.local.json"}); err != nil {
@@ -68,12 +80,17 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 	return nil
 }
 
-func writeClaudeHeadedHookConfig(path, command string) error {
+func writeClaudeHeadedHookConfig(path, command string, skipDangerousModePrompt bool) error {
 	settings, err := readJSONObject(path)
 	if err != nil {
 		return err
 	}
 	settings["disableAllHooks"] = false
+	if skipDangerousModePrompt {
+		settings["skipDangerousModePermissionPrompt"] = true
+	} else {
+		delete(settings, "skipDangerousModePermissionPrompt")
+	}
 	hooks := objectAt(settings, "hooks")
 	for _, event := range []string{
 		"SessionStart",

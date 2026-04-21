@@ -45,7 +45,7 @@ func TestLoadUserConfig_MissingFile(t *testing.T) {
 func TestLoadUserConfig_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
-	stub.files["/cfg/config.json"] = []byte(`{"version": 2, "defaults": {`)
+	stub.files["/cfg/config.json"] = []byte(`{"version": 3, "defaults": {`)
 	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for invalid JSON")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
@@ -55,7 +55,7 @@ func TestLoadUserConfig_UnknownKeys(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 2,
+  "version": 3,
 	  "defaults": { "runner": "claude-code", "editor": "code" },
   "extra": "nope"
 }`)
@@ -68,7 +68,7 @@ func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 2,
+  "version": 3,
 	  "defaults": { "runner": "claude-code", "editor": "code", "unknown": "nope" }
 }`)
 	_, err := LoadUserConfig(stub, "/cfg")
@@ -109,7 +109,7 @@ func TestLoadUserConfig_DefaultsThinkingRejected(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 2,
+  "version": 3,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
@@ -140,6 +140,24 @@ func TestLoadUserConfig_Version1Rejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "version 1 is not supported")
 }
 
+func TestLoadUserConfig_Version2Rejected(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 2,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "version 2 is not supported")
+	assert.Contains(t, err.Error(), "version 3")
+}
+
 func TestLoadUserConfig_ValidRunnerDefaults(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
@@ -149,10 +167,33 @@ func TestLoadUserConfig_ValidRunnerDefaults(t *testing.T) {
 
 	cfg, err := LoadUserConfig(stub, "/cfg")
 	require.NoError(t, err)
-	assert.Equal(t, 2, cfg.Version)
+	assert.Equal(t, 3, cfg.Version)
 	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
 	assert.Equal(t, "code", cfg.Defaults.Editor)
 	assert.Equal(t, "main", cfg.Defaults.BaseBranch)
+	assert.Equal(t, "acceptEdits", cfg.RunnerDefaults["claude-code"].PermissionMode)
+}
+
+func TestLoadUserConfig_RunnerDefaultsPermissionModeRequiresClaudeCode(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 3,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  },
+  "runner_defaults": {
+    "codex": {
+      "permission_mode": "default"
+    }
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "runner_defaults.codex.permission_mode is only supported for claude-code")
 }
 
 func TestLoadUserConfig_RunnerDefaultsWrongTypes(t *testing.T) {
@@ -192,7 +233,7 @@ func TestLoadUserConfig_RunnerDefaultsValidation(t *testing.T) {
 	}{
 		{"unknown runner", "user_runner_defaults_unknown_runner.json", "runner_defaults.amp is not supported"},
 		{"cursor effort unsupported", "user_runner_defaults_cursor_effort.json", "runner_defaults.cursor.effort is not supported"},
-		{"missing model and effort", "user_runner_defaults_empty_entry.json", "runner_defaults.codex requires at least one of model or effort"},
+		{"missing model, effort, and permission_mode", "user_runner_defaults_empty_entry.json", "runner_defaults.codex requires at least one of model, effort, or permission_mode"},
 	}
 
 	for _, tt := range tests {
@@ -214,7 +255,7 @@ func TestLoadUserConfig_RunnerDefaultsValidation(t *testing.T) {
 
 func TestValidateUserConfig_RequiredFields(t *testing.T) {
 	t.Parallel()
-	cfg := UserConfig{Version: 2}
+	cfg := UserConfig{Version: 3}
 	_, err := ValidateUserConfig(cfg)
 	require.Error(t, err, "expected validation error")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
@@ -236,10 +277,10 @@ func TestValidateUserConfig_WrongVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "version 1 is not supported")
 }
 
-func TestValidateUserConfig_UnsupportedVersion(t *testing.T) {
+func TestValidateUserConfig_Version2Rejected(t *testing.T) {
 	t.Parallel()
 	cfg := UserConfig{
-		Version: 3,
+		Version: 2,
 		Defaults: UserDefaults{
 			Runner: "claude-code",
 			Editor: "code",
@@ -249,7 +290,23 @@ func TestValidateUserConfig_UnsupportedVersion(t *testing.T) {
 	_, err := ValidateUserConfig(cfg)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version must be 2")
+	assert.Contains(t, err.Error(), "version 2 is not supported")
+}
+
+func TestValidateUserConfig_UnsupportedVersion(t *testing.T) {
+	t.Parallel()
+	cfg := UserConfig{
+		Version: 4,
+		Defaults: UserDefaults{
+			Runner: "claude-code",
+			Editor: "code",
+		},
+	}
+
+	_, err := ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "version must be 3")
 }
 
 func TestResolveRunnerCmd_Path(t *testing.T) {
@@ -262,7 +319,7 @@ func TestResolveRunnerCmd_Path(t *testing.T) {
 	require.NoError(t, err, "failed to write file")
 
 	cfg := UserConfig{
-		Version: 2,
+		Version: 3,
 		Defaults: UserDefaults{
 			Runner: "claude-code",
 			Editor: "code",
@@ -287,7 +344,7 @@ func TestResolveEditorCmd_Path(t *testing.T) {
 	require.NoError(t, err, "failed to write file")
 
 	cfg := UserConfig{
-		Version: 2,
+		Version: 3,
 		Defaults: UserDefaults{
 			Runner: "claude-code",
 			Editor: "custom",

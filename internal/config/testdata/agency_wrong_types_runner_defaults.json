@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",

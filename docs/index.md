@@ -13,7 +13,7 @@ This directory is the canonical home for repository documentation.
 ## Starting Points
 
 - [tech-stack.md](tech-stack.md): runtime and tooling stack
-- [configuration.md](configuration.md): config setup and version 2 schemas
+- [configuration.md](configuration.md): config setup and version 3 schemas
 - [codebase.md](codebase.md): package layout and ownership boundaries
 - [entrypoints.md](entrypoints.md): CLI, daemon, and TUI entrypoints
 - [process-execution.md](process-execution.md): external command execution, runner, tmux, and env rules

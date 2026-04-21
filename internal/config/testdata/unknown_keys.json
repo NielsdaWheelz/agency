@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": "scripts/agency_setup.sh",
     "verify": "scripts/agency_verify.sh",

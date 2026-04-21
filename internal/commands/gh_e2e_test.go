@@ -92,7 +92,7 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 
 	// Fixed agency.json content - same every run
 	agencyJSON := `{
-  "version": 2,
+  "version": 3,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
