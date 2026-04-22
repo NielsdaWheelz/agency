@@ -288,7 +288,7 @@ func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO
 		lines = append(lines, "Session:     error")
 		lines = append(lines, "Session err: "+truncateWithEllipsis(m.selectedSessionError, max(1, width-13)))
 	default:
-		status := strings.TrimSpace(m.selectedSession.Status)
+		status := strings.TrimSpace(m.selectedSession.SessionStatus)
 		if status == "" {
 			status = "unknown"
 		}
@@ -296,7 +296,7 @@ func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO
 		if sessionName := strings.TrimSpace(m.selectedSession.TmuxSession); sessionName != "" {
 			lines = append(lines, "Tmux:        "+sessionName)
 		}
-		lines = append(lines, fmt.Sprintf("Clients:     %d", m.selectedSession.ConnectedClientCount()))
+		lines = append(lines, fmt.Sprintf("Clients:     %d", sessionConnectedClientCount(m.selectedSession)))
 		if attachCommand := strings.TrimSpace(m.selectedSession.AttachCommand); attachCommand != "" {
 			lines = append(lines, "Attach:      "+attachCommand)
 		}
@@ -305,14 +305,14 @@ func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO
 			recreate = "yes"
 		}
 		lines = append(lines, "Recreate:    "+recreate)
-		if hint := strings.TrimSpace(m.selectedSession.Hint); hint != "" && m.selectedSession.IsMissing() {
+		if hint := sessionHint(m.selectedSession); hint != "" {
 			lines = append(lines, "Hint:        "+truncateWithEllipsis(hint, max(1, width-13)))
 		}
-		if len(m.selectedSession.Clients) > 0 {
+		if len(m.selectedSession.ConnectedClients) > 0 {
 			lines = append(lines, "Connected:")
-			for idx, client := range m.selectedSession.Clients {
+			for idx, client := range m.selectedSession.ConnectedClients {
 				if idx == 5 {
-					lines = append(lines, fmt.Sprintf("  ... %d more", len(m.selectedSession.Clients)-idx))
+					lines = append(lines, fmt.Sprintf("  ... %d more", len(m.selectedSession.ConnectedClients)-idx))
 					break
 				}
 				label := strings.TrimSpace(client.Name)

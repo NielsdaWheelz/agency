@@ -977,7 +977,7 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
-		SchemaVersion: "1.0",
+		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
 			{
 				ID:                   1,
@@ -1010,8 +1010,10 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	// 3 checkpoints, ordered by ID desc (latest first)
 	require.Len(t, data.Checkpoints, 3)
 	assert.Equal(t, 3, data.Checkpoints[0].ID)
+	assert.True(t, data.Checkpoints[0].Degraded)
 	assert.Equal(t, 2, data.Checkpoints[1].ID)
 	assert.Equal(t, 1, data.Checkpoints[2].ID)
+	assert.False(t, data.Checkpoints[2].Degraded)
 	assert.Equal(t, []string{"README.md", "cmd/main.go"}, data.Checkpoints[2].ChangedPaths)
 	assert.Equal(t, 2, data.Checkpoints[2].ChangedPathCount)
 	assert.False(t, data.Checkpoints[2].ChangedPathTruncated)
@@ -1024,7 +1026,7 @@ func TestHandleGetInvocationCheckpoints_UsesInvocationOwnedAfterSandboxCleanup(t
 	// Seed invocation-owned checkpoints and remove sandbox dir to simulate
 	// post-land/discard lifecycle cleanup.
 	cpFile := &checkpoint.CheckpointsFile{
-		SchemaVersion: "1.0",
+		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
 			{
 				ID:                9,
@@ -1948,7 +1950,7 @@ func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
 	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
-		SchemaVersion: "1.0",
+		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
 			{ID: 1, CreatedAt: "2026-02-05T11:51:00Z", SnapshotCommit: "aaa", IncludesUntracked: true},
 			{ID: 2, CreatedAt: "2026-02-05T11:52:00Z", SnapshotCommit: "bbb", IncludesUntracked: true},

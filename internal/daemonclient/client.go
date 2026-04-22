@@ -108,15 +108,23 @@ func (c *Client) newJSONRequest(ctx context.Context, method, rawURL string, reqB
 	return req, nil
 }
 
-func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, reqBody any, respBody any) error {
+func (c *Client) doHTTPRequest(ctx context.Context, method, rawURL string, reqBody any) (*http.Response, error) {
 	req, err := c.newJSONRequest(ctx, method, rawURL, reqBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, reqBody any, respBody any) error {
+	resp, err := c.doHTTPRequest(ctx, method, rawURL, reqBody)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -127,14 +135,9 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, reqBo
 }
 
 func (c *Client) doActionRequest(ctx context.Context, method, rawURL string, reqBody any, respBody any) error {
-	req, err := c.newJSONRequest(ctx, method, rawURL, reqBody)
+	resp, err := c.doHTTPRequest(ctx, method, rawURL, reqBody)
 	if err != nil {
 		return err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -186,14 +189,9 @@ func (c *Client) doActionRequest(ctx context.Context, method, rawURL string, req
 }
 
 func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBody any) (*daemon.RawAPIResponse, error) {
-	req, err := c.newJSONRequest(ctx, method, rawURL, reqBody)
+	resp, err := c.doHTTPRequest(ctx, method, rawURL, reqBody)
 	if err != nil {
 		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(errors.EDaemonConnectionFailed, "failed to connect to daemon", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

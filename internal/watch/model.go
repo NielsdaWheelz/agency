@@ -107,7 +107,7 @@ type transcriptLoadedMsg struct {
 type sessionLoadedMsg struct {
 	invocationID string
 	repoID       string
-	session      InvocationSession
+	session      daemon.InvocationSessionData
 	err          error
 }
 
@@ -169,7 +169,7 @@ type model struct {
 	logsLoading bool
 	logsError   string
 
-	selectedSession           InvocationSession
+	selectedSession           daemon.InvocationSessionData
 	selectedSessionLoading    bool
 	selectedSessionError      string
 	selectedSessionInvocation string
@@ -222,12 +222,12 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 
 	sessionLoader := opts.SessionLoader
 	if sessionLoader == nil && client != nil {
-		sessionLoader = func(ctx context.Context, invocationID, repoID string) (InvocationSession, error) {
+		sessionLoader = func(ctx context.Context, invocationID, repoID string) (daemon.InvocationSessionData, error) {
 			result, err := client.GetInvocationSession(ctx, invocationID, repoID)
 			if err != nil {
-				return InvocationSession{}, err
+				return daemon.InvocationSessionData{}, err
 			}
-			return invocationSessionFromDTO(result.Data), nil
+			return result.Data, nil
 		}
 	}
 
@@ -369,7 +369,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedSessionInvocation = msg.invocationID
 		m.selectedSessionRepo = msg.repoID
 		if msg.err != nil {
-			m.selectedSession = InvocationSession{}
+			m.selectedSession = daemon.InvocationSessionData{}
 			m.selectedSessionError = msg.err.Error()
 			return m, nil
 		}
@@ -879,7 +879,7 @@ func (m *model) loadSelectedSessionCmd(invocationID, repoID string) tea.Cmd {
 }
 
 func (m *model) clearSelectedSession() {
-	m.selectedSession = InvocationSession{}
+	m.selectedSession = daemon.InvocationSessionData{}
 	m.selectedSessionLoading = false
 	m.selectedSessionError = ""
 	m.selectedSessionInvocation = ""
@@ -887,7 +887,7 @@ func (m *model) clearSelectedSession() {
 }
 
 func (m *model) beginSelectedSessionLoad(invocationID, repoID string) tea.Cmd {
-	m.selectedSession = InvocationSession{}
+	m.selectedSession = daemon.InvocationSessionData{}
 	m.selectedSessionError = ""
 	m.selectedSessionLoading = true
 	m.selectedSessionInvocation = invocationID
@@ -903,7 +903,7 @@ func (m *model) loadSelectedSessionForSelectionCmd() tea.Cmd {
 	}
 	if m.selectedSessionInvocation == selected.InvocationID &&
 		m.selectedSessionRepo == selected.RepoID &&
-		(m.selectedSessionLoading || m.selectedSession.Status != "" || m.selectedSessionError != "") {
+		(m.selectedSessionLoading || strings.TrimSpace(m.selectedSession.SessionStatus) != "" || m.selectedSessionError != "") {
 		return nil
 	}
 	return m.beginSelectedSessionLoad(selected.InvocationID, selected.RepoID)
@@ -1105,7 +1105,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 			m.lastActionMessage = "attach unavailable: " + m.selectedSessionError
 			return m, nil
 		}
-		if !m.selectedSession.IsLive() {
+		if !sessionIsLive(m.selectedSession) {
 			m.lastActionError = true
 			m.lastActionMessage = formatActionError(
 				kind,
@@ -1394,7 +1394,7 @@ func (m model) canStartAction(kind actionKind) bool {
 		return mode == "headed" &&
 			strings.TrimSpace(m.selectedInvocationID) != "" &&
 			strings.TrimSpace(m.selectedRepoID) != "" &&
-			m.selectedSession.IsLive() &&
+			sessionIsLive(m.selectedSession) &&
 			!m.selectedSessionLoading &&
 			strings.TrimSpace(m.selectedSessionError) == ""
 	case actionOpen:

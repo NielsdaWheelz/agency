@@ -15,7 +15,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
@@ -88,37 +87,20 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		targetPath = opts.Path
 	}
 
-	homeDir, err := os.UserHomeDir()
+	dirs, err := resolveCommandDirs(opts.DataDirOverride, opts.ConfigDirOverride)
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	if opts.DataDirOverride != "" {
-		dirs.DataDir = opts.DataDirOverride
-	}
-	if opts.ConfigDirOverride != "" {
-		dirs.ConfigDir = opts.ConfigDirOverride
+		return err
 	}
 	if repoID, ok := agencyManagedTreeRepoID(targetPath, dirs.DataDir); ok {
 		ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 		if err != nil {
 			return err
 		}
-		repo, err := ns.client.GetRepo(ctx, repoID)
+		repo, err := resolveAccessibleRepo(ctx, ns.client, repoID)
 		if err != nil {
 			return err
 		}
-		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-			return errors.NewWithDetails(
-				errors.ERepoRootInaccessible,
-				"repo preferred_root is not accessible",
-				map[string]string{
-					"repo": repoID,
-					"hint": "re-register this repo from an accessible checkout, then re-run doctor",
-				},
-			)
-		}
-		targetPath = repo.Data.PreferredRoot
+		targetPath = repo.PreferredRoot
 	}
 
 	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)

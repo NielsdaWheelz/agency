@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/ids"
@@ -88,25 +89,19 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			logsDir := s.preferredInvocationLogsDir(repoID, r.InvocationID)
 			resolved := &resolvedInvocation{
 				InvocationID: r.InvocationID,
 				RepoID:       repoID,
 				Meta:         r.Meta,
 			}
-			runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(resolved)
-			runnerSummary := ""
-			if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
-				if err := runnerMeta.Validate(); err == nil {
-					runnerSummary = runnerMeta.Summary
-				}
-			}
-			dto := InvocationMetaToDTO(r.Meta, repoID, logsDir, runnerMeta, runnerErr, now)
-			dto.RepoName = repoName
-			dto.WorktreeName = strings.TrimSpace(worktreeNames[r.Meta.IntegrationWorktreeID])
-			activityProjection := s.buildInvocationActivityProjection(resolved, dto.State, runnerSummary, nil)
-			applyInvocationActivityProjection(&dto, activityProjection)
-			allInvocations = append(allInvocations, dto)
+			projection := s.projectInvocationReadSurface(
+				resolved,
+				repoName,
+				worktreeNames[r.Meta.IntegrationWorktreeID],
+				now,
+				nil,
+			)
+			allInvocations = append(allInvocations, projection.DTO)
 		}
 	}
 
@@ -137,22 +132,47 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 	}
 
 	now := s.Clock()
+	worktreeName := ""
+	if worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID); err == nil && worktreeMeta != nil {
+		worktreeName = worktreeMeta.Name
+	}
+	projection := s.projectInvocationReadSurface(record, s.repoName(record.RepoID), worktreeName, now, nil)
+	dto := projection.DTO
+	s.writeAPIResponse(w, requestID, dto)
+}
+
+type invocationReadProjection struct {
+	DTO        InvocationDTO
+	RunnerMeta *runnerstatus.RunnerStatus
+	RunnerErr  error
+}
+
+func (s *Server) projectInvocationReadSurface(
+	record *resolvedInvocation,
+	repoName string,
+	worktreeName string,
+	now time.Time,
+	entries []timelineSortableEntry,
+) invocationReadProjection {
+	if record == nil || record.Meta == nil {
+		return invocationReadProjection{}
+	}
+
 	logsDir := s.preferredInvocationLogsDir(record.RepoID, record.InvocationID)
 	runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(record)
-	runnerSummary := ""
-	if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
-		if err := runnerMeta.Validate(); err == nil {
-			runnerSummary = runnerMeta.Summary
-		}
-	}
 	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, runnerMeta, runnerErr, now)
-	dto.RepoName = s.repoName(record.RepoID)
-	if worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID); err == nil {
-		dto.WorktreeName = strings.TrimSpace(worktreeMeta.Name)
-	}
-	activityProjection := s.buildInvocationActivityProjection(record, dto.State, runnerSummary, nil)
+	dto.RepoName = repoName
+	dto.WorktreeName = strings.TrimSpace(worktreeName)
+
+	_, _, runnerSummary, _ := projectRunnerStatus(runnerMeta, runnerErr)
+	activityProjection := s.buildInvocationActivityProjection(record, dto.State, runnerSummary, entries)
 	applyInvocationActivityProjection(&dto, activityProjection)
-	s.writeAPIResponse(w, requestID, dto)
+
+	return invocationReadProjection{
+		DTO:        dto,
+		RunnerMeta: runnerMeta,
+		RunnerErr:  runnerErr,
+	}
 }
 
 // resolvedInvocation contains the resolved invocation with its repo ID.

@@ -12,7 +12,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/watch"
 )
@@ -33,6 +32,18 @@ type watchActionDispatcher struct {
 	fsys            fs.FS
 	cwd             string
 	dataDirOverride string
+}
+
+type watchLaunchOptions struct {
+	initialPage     watch.InitialPage
+	invocationID    string
+	repoID          string
+	interval        time.Duration
+	input           io.Reader
+	output          io.Writer
+	isInteractive   func() bool
+	dataDirOverride string
+	runWatch        func(context.Context, *daemonclient.Client, watch.RunOptions) (watch.RunResult, error)
 }
 
 func (d *watchActionDispatcher) Open(ctx context.Context, invocationID, repoID string) (string, error) {
@@ -150,13 +161,21 @@ func (d *watchActionDispatcher) capture(run func(stdout, stderr io.Writer) error
 	return output, err
 }
 
-// Watch launches the full-screen, daemon-backed watch workspace.
-func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WatchOpts, stdout, stderr io.Writer) error {
+func newWatchActionDispatcher(cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string) *watchActionDispatcher {
+	return &watchActionDispatcher{
+		cr:              cr,
+		fsys:            fsys,
+		cwd:             cwd,
+		dataDirOverride: dataDirOverride,
+	}
+}
+
+func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, stdout, stderr io.Writer, opts watchLaunchOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	isInteractive := opts.IsInteractive
+	isInteractive := opts.isInteractive
 	if isInteractive == nil {
 		isInteractive = func() bool {
 			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
@@ -173,14 +192,13 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
+	if opts.dataDirOverride != "" {
+		dataDir = opts.dataDirOverride
 	} else {
-		homeDir, err := os.UserHomeDir()
+		dirs, err := resolveCommandDirs("", "")
 		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+			return err
 		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
 		dataDir = dirs.DataDir
 	}
 
@@ -196,53 +214,55 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		return err
 	}
 
-	interval := opts.Interval
+	interval := opts.interval
 	if interval <= 0 {
 		interval = defaultWatchInterval
 	}
-	input := opts.Input
+	input := opts.input
 	if input == nil {
 		input = os.Stdin
 	}
-	output := opts.Output
+	output := opts.output
 	if output == nil {
 		output = stdout
 	}
 
-	actionDelegates := &watchActionDispatcher{
-		cr:              cr,
-		fsys:            fsys,
-		cwd:             cwd,
-		dataDirOverride: opts.DataDirOverride,
+	dispatcher := newWatchActionDispatcher(cr, fsys, cwd, opts.dataDirOverride)
+	runWatch := opts.runWatch
+	if runWatch == nil {
+		runWatch = watch.Run
 	}
+
 	runOpts := watch.RunOptions{
-		InitialPage: watch.InitialPageWorkspace,
-		Interval:    interval,
-		Input:       input,
-		Output:      output,
-		Open:        actionDelegates.Open,
-		Stop:        actionDelegates.Stop,
-		Kill:        actionDelegates.Kill,
-		Land:        actionDelegates.Land,
-		Discard:     actionDelegates.Discard,
-		Recreate:    actionDelegates.Recreate,
-		Followup:    actionDelegates.Followup,
-		PRSync:      actionDelegates.PRSync,
-		PRMerge:     actionDelegates.PRMerge,
-		Rebase:      actionDelegates.Rebase,
+		InitialPage:  opts.initialPage,
+		InvocationID: opts.invocationID,
+		RepoID:       opts.repoID,
+		Interval:     interval,
+		Input:        input,
+		Output:       output,
+		Open:         dispatcher.Open,
+		Stop:         dispatcher.Stop,
+		Kill:         dispatcher.Kill,
+		Land:         dispatcher.Land,
+		Discard:      dispatcher.Discard,
+		Recreate:     dispatcher.Recreate,
+		Followup:     dispatcher.Followup,
+		PRSync:       dispatcher.PRSync,
+		PRMerge:      dispatcher.PRMerge,
+		Rebase:       dispatcher.Rebase,
 		Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
-			return actionDelegates.capture(func(stdout, stderr io.Writer) error {
-				return AgentRestore(ctx, actionDelegates.cr, actionDelegates.fsys, actionDelegates.cwd, AgentRestoreOpts{
+			return dispatcher.capture(func(stdout, stderr io.Writer) error {
+				return AgentRestore(ctx, cr, fsys, cwd, AgentRestoreOpts{
 					InvocationRef:   invocationID,
 					RepoRef:         repoID,
 					TurnID:          turnID,
-					DataDirOverride: actionDelegates.dataDirOverride,
+					DataDirOverride: opts.dataDirOverride,
 				}, stdout, stderr)
 			})
 		},
 	}
 
-	result, err := watch.Run(ctx, client, runOpts)
+	result, err := runWatch(ctx, client, runOpts)
 	if err != nil {
 		return err
 	}
@@ -253,6 +273,19 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		InvocationRef:   result.AttachInvocationID,
 		RepoRef:         result.AttachRepoID,
 		IsInteractive:   isInteractive,
-		DataDirOverride: opts.DataDirOverride,
+		DataDirOverride: opts.dataDirOverride,
 	}, stdout, stderr)
+}
+
+// Watch launches the full-screen, daemon-backed watch workspace.
+func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WatchOpts, stdout, stderr io.Writer) error {
+	return launchWatchWorkspace(ctx, cr, fsys, cwd, stdout, stderr, watchLaunchOptions{
+		initialPage:     watch.InitialPageWorkspace,
+		interval:        opts.Interval,
+		input:           opts.Input,
+		output:          opts.Output,
+		isInteractive:   opts.IsInteractive,
+		dataDirOverride: opts.DataDirOverride,
+		runWatch:        watch.Run,
+	})
 }

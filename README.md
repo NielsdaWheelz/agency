@@ -78,7 +78,6 @@ agency agent <invocation-ref> land --apply
 `agency context` shows the active repo/worktree. Use `agency context use <worktree-ref> --repo <repo-ref>` to set it and `agency context unset` to clear it.
 `worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the active context first and then from the current directory.
 `agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
-`agency r`, `agency wt`, and `agency ag` are supported noun aliases for `repo`, `worktree`, and `agent`, but the long forms remain the primary documented CLI surface.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
 `agency worktree create <name>` uses a positional name and defaults omitted `--base` to the current branch of the selected checkout.
 `agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` when you want an explicit override from any cwd.
@@ -120,12 +119,6 @@ agency agent <invocation-ref> restore --turn <entry>
 ```
 
 For `claude-code`, headless mode runs through the daemon in print/stream-json mode. Agency owns the Claude startup flags, applies configured `model` and `effort`, and controls the effective permission behavior.
-
-short alias parity for high-traffic s6 navigation/progression surfaces:
-- `worktree create`: `-r/--repo`
-- `agent start`: `-r/--repo`, `--worktree`
-- `agent <ref> check`: `-r/--repo`, `-j/--json`
-- `agent <ref> path|open|attach`: `-r/--repo`
 
 `agency watch` and `agency agent <invocation-ref> history` open different pages of the same Bubble Tea runtime.
 That runtime exposes workspace, history, transcript, and logs pages over the same daemon-backed read model.

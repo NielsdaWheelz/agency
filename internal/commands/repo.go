@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -214,7 +215,7 @@ type daemonNavSetup struct {
 	client *daemonclient.Client
 }
 
-func resolveCommandDirs(dataDirOverride string) (paths.Dirs, error) {
+func resolveCommandDirs(dataDirOverride, configDirOverride string) (paths.Dirs, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return paths.Dirs{}, errors.Wrap(errors.EInternal, "failed to get home directory", err)
@@ -223,11 +224,14 @@ func resolveCommandDirs(dataDirOverride string) (paths.Dirs, error) {
 	if dataDirOverride != "" {
 		dirs.DataDir = dataDirOverride
 	}
+	if configDirOverride != "" {
+		dirs.ConfigDir = configDirOverride
+	}
 	return dirs, nil
 }
 
 func ensureDaemonClient(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonclient.Client, error) {
-	dirs, err := resolveCommandDirs(dataDirOverride)
+	dirs, err := resolveCommandDirs(dataDirOverride, "")
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +254,7 @@ func ensureDaemonClientFromDirs(ctx context.Context, fsys fs.FS, dirs paths.Dirs
 }
 
 func setupDaemonNav(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonNavSetup, error) {
-	dirs, err := resolveCommandDirs(dataDirOverride)
+	dirs, err := resolveCommandDirs(dataDirOverride, "")
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +272,63 @@ func runAttachedInDir(ctx context.Context, command string, args []string, dir st
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	})
+}
+
+func ensureAccessibleRepo(repo daemon.RepoDTO, repoRef string) (daemon.RepoDTO, error) {
+	if repo.PreferredRoot != "" && repo.PreferredRootAccessible {
+		return repo, nil
+	}
+	if strings.TrimSpace(repoRef) == "" {
+		repoRef = repo.RepoID
+	}
+	return daemon.RepoDTO{}, errors.NewWithDetails(
+		errors.ERepoRootInaccessible,
+		"repo preferred_root is not accessible",
+		map[string]string{
+			"repo": repoRef,
+			"hint": "re-register this repo from an accessible checkout, then re-run the command",
+		},
+	)
+}
+
+func resolveAccessibleRepo(ctx context.Context, client *daemonclient.Client, repoRef string) (daemon.RepoDTO, error) {
+	repo, err := client.GetRepo(ctx, repoRef)
+	if err != nil {
+		return daemon.RepoDTO{}, err
+	}
+	return ensureAccessibleRepo(repo.Data, repoRef)
+}
+
+func resolveAccessibleRegisteredRepo(ctx context.Context, client *daemonclient.Client, root string) (daemon.RepoDTO, error) {
+	repo, err := client.RegisterRepo(ctx, root)
+	if err != nil {
+		return daemon.RepoDTO{}, err
+	}
+	return ensureAccessibleRepo(daemon.RepoDTO{
+		RepoID:                  repo.Data.RepoID,
+		RepoName:                repo.Data.RepoName,
+		RepoKey:                 repo.Data.RepoKey,
+		Paths:                   repo.Data.Paths,
+		PreferredRoot:           repo.Data.PreferredRoot,
+		PreferredRootAccessible: repo.Data.PreferredRootAccessible,
+		LastSeenAt:              repo.Data.LastSeenAt,
+	}, repo.Data.RepoID)
+}
+
+func requirePresentWorktree(worktree daemon.WorktreeDTO, message string) (daemon.WorktreeDTO, error) {
+	if worktree.State == "present" {
+		return worktree, nil
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "worktree must be present"
+	}
+	return daemon.WorktreeDTO{}, errors.NewWithDetails(
+		errors.EWorktreeNotFound,
+		message,
+		map[string]string{
+			"hint": "pick a present worktree from `agency worktree ls`",
+		},
+	)
 }
 
 // RepoShowOpts holds options for the repo show command.

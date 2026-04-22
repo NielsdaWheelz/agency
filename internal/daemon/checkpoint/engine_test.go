@@ -1921,8 +1921,8 @@ func TestValidSchemaVersion(t *testing.T) {
 		v    string
 		want bool
 	}{
-		{"1.0", true},
 		{"1.1", true},
+		{"1.0", false},
 		{"2.0", false},
 		{"", false},
 		{"0.9", false},

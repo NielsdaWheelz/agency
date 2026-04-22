@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -18,6 +20,14 @@ type HeadedHookOpts struct {
 }
 
 func HeadedHook(ctx context.Context, fsys fs.FS, opts HeadedHookOpts) error {
+	warn := func(message string, err error) {
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: headed hook ingest skipped: %s: %v\n", message, err)
+			return
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "warning: headed hook ingest skipped: %s\n", message)
+	}
+
 	if strings.TrimSpace(opts.RepoID) == "" {
 		return errors.New(errors.EInvalidArgument, "repo_id is required")
 	}
@@ -30,12 +40,16 @@ func HeadedHook(ctx context.Context, fsys fs.FS, opts HeadedHookOpts) error {
 	}
 	payload, err := io.ReadAll(in)
 	if err != nil {
+		warn("failed to read hook payload", err)
 		return nil
 	}
 	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 	if err != nil {
+		warn("failed to initialize daemon client", err)
 		return nil
 	}
-	_, _ = ns.client.IngestHeadedHook(ctx, opts.RepoID, opts.InvocationID, opts.Runner, payload)
+	if _, err := ns.client.IngestHeadedHook(ctx, opts.RepoID, opts.InvocationID, opts.Runner, payload); err != nil {
+		warn("daemon rejected hook payload", err)
+	}
 	return nil
 }

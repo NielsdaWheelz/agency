@@ -44,6 +44,24 @@ func timelineEntriesFromSortable(entries []timelineSortableEntry) []TimelineEntr
 	return dtos
 }
 
+func checkpointToDTO(cp checkpoint.Checkpoint) CheckpointDTO {
+	return CheckpointDTO{
+		ID:                   cp.ID,
+		CreatedAt:            cp.CreatedAt,
+		Diffstat:             cp.Diffstat,
+		SnapshotCommit:       cp.SnapshotCommit,
+		IncludesUntracked:    cp.IncludesUntracked,
+		Degraded:             !cp.IncludesUntracked,
+		Trigger:              cp.Trigger,
+		ToolName:             cp.ToolName,
+		StreamSeq:            cp.StreamSeq,
+		Description:          cp.Description,
+		ChangedPaths:         append([]string(nil), cp.ChangedPaths...),
+		ChangedPathCount:     cp.ChangedPathCount,
+		ChangedPathTruncated: cp.ChangedPathTruncated,
+	}
+}
+
 func checkpointDTOsFromCheckpoints(checkpoints []checkpoint.Checkpoint) []CheckpointDTO {
 	if len(checkpoints) == 0 {
 		return nil
@@ -51,22 +69,28 @@ func checkpointDTOsFromCheckpoints(checkpoints []checkpoint.Checkpoint) []Checkp
 
 	dtos := make([]CheckpointDTO, len(checkpoints))
 	for i, cp := range checkpoints {
-		dtos[i] = CheckpointDTO{
+		dtos[i] = checkpointToDTO(cp)
+	}
+	return dtos
+}
+
+func turnCheckpointRefsFromDTOs(checkpoints []CheckpointDTO) []TurnCheckpointRef {
+	if len(checkpoints) == 0 {
+		return nil
+	}
+
+	refs := make([]TurnCheckpointRef, len(checkpoints))
+	for i, cp := range checkpoints {
+		refs[i] = TurnCheckpointRef{
 			ID:                   cp.ID,
-			CreatedAt:            cp.CreatedAt,
-			Diffstat:             cp.Diffstat,
-			SnapshotCommit:       cp.SnapshotCommit,
-			IncludesUntracked:    cp.IncludesUntracked,
-			Trigger:              cp.Trigger,
-			ToolName:             cp.ToolName,
-			StreamSeq:            cp.StreamSeq,
 			Description:          cp.Description,
-			ChangedPaths:         append([]string(nil), cp.ChangedPaths...),
+			Diffstat:             cp.Diffstat,
+			ChangedPaths:         cp.ChangedPaths,
 			ChangedPathCount:     cp.ChangedPathCount,
 			ChangedPathTruncated: cp.ChangedPathTruncated,
 		}
 	}
-	return dtos
+	return refs
 }
 
 // ProjectTimelineTurns converts daemon timeline and checkpoint DTOs into the
@@ -86,19 +110,7 @@ func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDT
 		}
 	}
 
-	pickerCheckpoints := make([]TurnCheckpointRef, len(checkpoints))
-	for i, cp := range checkpoints {
-		pickerCheckpoints[i] = TurnCheckpointRef{
-			ID:                   cp.ID,
-			Description:          cp.Description,
-			Diffstat:             cp.Diffstat,
-			ChangedPaths:         cp.ChangedPaths,
-			ChangedPathCount:     cp.ChangedPathCount,
-			ChangedPathTruncated: cp.ChangedPathTruncated,
-		}
-	}
-
-	return GroupTimelineIntoTurns(pickerEntries, pickerCheckpoints)
+	return GroupTimelineIntoTurns(pickerEntries, turnCheckpointRefsFromDTOs(checkpoints))
 }
 
 // PaginateHistoryTurns returns a stable cursor page over projected turns.

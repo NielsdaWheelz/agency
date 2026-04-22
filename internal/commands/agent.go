@@ -70,6 +70,92 @@ type AgentStartOpts struct {
 	TmuxAttachFn  func(sessionName string) error
 }
 
+func resolveAgentStartRepo(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, fsys fs.FS, cwd, repoRef, worktreeRef string) (daemon.RepoDTO, *validatedCurrentContext, daemon.WorktreeDTO, bool, error) {
+	var currentCtx *validatedCurrentContext
+	if repoRef == "" || worktreeRef == "" {
+		current, err := loadValidatedCurrentContext(ctx, ns.client, fsys, ns.dirs.ConfigDir)
+		if err != nil && errors.GetCode(err) != errors.ENoContext {
+			return daemon.RepoDTO{}, nil, daemon.WorktreeDTO{}, false, err
+		}
+		if errors.GetCode(err) != errors.ENoContext {
+			currentCtx = current
+		}
+	}
+
+	cwdWorktree, cwdHasWorktree, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
+	if err != nil {
+		return daemon.RepoDTO{}, nil, daemon.WorktreeDTO{}, false, err
+	}
+
+	switch {
+	case repoRef != "":
+		repo, err := resolveAccessibleRepo(ctx, ns.client, repoRef)
+		return repo, currentCtx, cwdWorktree, cwdHasWorktree, err
+	case currentCtx != nil:
+		repo, err := resolveAccessibleRepo(ctx, ns.client, currentCtx.RepoID)
+		return repo, currentCtx, cwdWorktree, cwdHasWorktree, err
+	case cwdHasWorktree:
+		repo, err := resolveAccessibleRepo(ctx, ns.client, cwdWorktree.RepoID)
+		return repo, currentCtx, cwdWorktree, cwdHasWorktree, err
+	case cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir):
+		return daemon.RepoDTO{}, nil, daemon.WorktreeDTO{}, false, errors.NewWithDetails(
+			errors.EUnsafeRepoRoot,
+			"current directory is inside an agency-managed tree but not a present integration worktree",
+			map[string]string{
+				"hint": "re-run from the original repo checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
+			},
+		)
+	default:
+		currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+		if err != nil {
+			return daemon.RepoDTO{}, nil, daemon.WorktreeDTO{}, false, errors.NewWithDetails(
+				errors.ENoRepoContext,
+				"cannot resolve agent start without a repo context",
+				map[string]string{
+					"hint": "run from a git checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
+				},
+			)
+		}
+		repo, err := resolveAccessibleRegisteredRepo(ctx, ns.client, currentRoot.Path)
+		return repo, currentCtx, cwdWorktree, cwdHasWorktree, err
+	}
+}
+
+func resolveAgentStartWorktree(ctx context.Context, client *daemonclient.Client, repoID, worktreeRef string, currentCtx *validatedCurrentContext, cwdWorktree daemon.WorktreeDTO, cwdHasWorktree bool) (string, error) {
+	switch {
+	case strings.TrimSpace(worktreeRef) != "":
+		result, err := client.GetWorktree(ctx, worktreeRef, repoID)
+		if err != nil {
+			return "", err
+		}
+		worktree, err := requirePresentWorktree(result.Data, "agent start requires a present integration worktree")
+		if err != nil {
+			return "", err
+		}
+		return worktree.WorktreeID, nil
+	case currentCtx != nil && currentCtx.RepoID == repoID:
+		result, err := client.GetWorktree(ctx, currentCtx.WorktreeID, repoID)
+		if err != nil {
+			return "", err
+		}
+		worktree, err := requirePresentWorktree(result.Data, "agent start requires a present integration worktree")
+		if err != nil {
+			return "", err
+		}
+		return worktree.WorktreeID, nil
+	case cwdHasWorktree && cwdWorktree.RepoID == repoID:
+		return cwdWorktree.WorktreeID, nil
+	default:
+		return "", errors.NewWithDetails(
+			errors.EUsage,
+			"cannot resolve agent start without a worktree",
+			map[string]string{
+				"hint": "pass --worktree <worktree-ref>, set an active context with `agency context use <worktree-ref>`, or run this command from the integration worktree you want to use",
+			},
+		)
+	}
+}
+
 // AgentStart starts a new agent invocation.
 func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
 	fail := func(err error) error {
@@ -121,166 +207,15 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 	}
 
-	repoRoot := ""
-	repoID := ""
-	var currentCtx *validatedCurrentContext
-	if repoRef == "" || worktreeRef == "" {
-		currentCtx, err = loadValidatedCurrentContext(ctx, ns.client, fsys, ns.dirs.ConfigDir)
-		if err != nil && errors.GetCode(err) != errors.ENoContext {
-			return fail(err)
-		}
-		if errors.GetCode(err) == errors.ENoContext {
-			currentCtx = nil
-		}
+	repo, currentCtx, cwdWorktree, cwdHasWorktree, err := resolveAgentStartRepo(ctx, cr, ns, fsys, cwd, repoRef, worktreeRef)
+	if err != nil {
+		return fail(err)
 	}
-
-	if repoRef != "" {
-		repo, err := ns.client.GetRepo(ctx, repoRef)
-		if err != nil {
-			return fail(err)
-		}
-		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-			return fail(errors.NewWithDetails(
-				errors.ERepoRootInaccessible,
-				"repo preferred_root is not accessible",
-				map[string]string{
-					"repo": repoRef,
-					"hint": "re-register this repo from an accessible checkout, then re-run the command",
-				},
-			))
-		}
-		repoRoot = repo.Data.PreferredRoot
-		repoID = repo.Data.RepoID
-	} else if currentCtx != nil {
-		repo, err := ns.client.GetRepo(ctx, currentCtx.RepoID)
-		if err != nil {
-			return fail(err)
-		}
-		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-			return fail(errors.NewWithDetails(
-				errors.ERepoRootInaccessible,
-				"repo preferred_root is not accessible",
-				map[string]string{
-					"repo": currentCtx.RepoID,
-					"hint": "re-register this repo from an accessible checkout, then re-run the command",
-				},
-			))
-		}
-		repoRoot = repo.Data.PreferredRoot
-		repoID = repo.Data.RepoID
-	} else {
-		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
-		if err != nil {
-			return fail(err)
-		}
-		if ok {
-			if worktreeRef == "" {
-				worktreeRef = worktree.WorktreeID
-			}
-			repo, err := ns.client.GetRepo(ctx, worktree.RepoID)
-			if err != nil {
-				return fail(err)
-			}
-			if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-				return fail(errors.NewWithDetails(
-					errors.ERepoRootInaccessible,
-					"repo preferred_root is not accessible",
-					map[string]string{
-						"repo": worktree.RepoID,
-						"hint": "re-register this repo from an accessible checkout, then re-run the command",
-					},
-				))
-			}
-			repoRoot = repo.Data.PreferredRoot
-			repoID = repo.Data.RepoID
-		} else {
-			if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
-				return fail(errors.NewWithDetails(
-					errors.EUnsafeRepoRoot,
-					"current directory is inside an agency-managed tree but not a present integration worktree",
-					map[string]string{
-						"hint": "re-run from the original repo checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
-					},
-				))
-			}
-			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-			if err != nil {
-				return fail(errors.NewWithDetails(
-					errors.ENoRepoContext,
-					"cannot resolve agent start without a repo context",
-					map[string]string{
-						"hint": "run from a git checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
-					},
-				))
-			}
-			reg, err := ns.client.RegisterRepo(ctx, currentRoot.Path)
-			if err != nil {
-				return fail(err)
-			}
-			if reg.Data.PreferredRoot == "" || !reg.Data.PreferredRootAccessible {
-				return fail(errors.NewWithDetails(
-					errors.ERepoRootInaccessible,
-					"repo preferred_root is not accessible",
-					map[string]string{
-						"repo": reg.Data.RepoID,
-						"hint": "re-register this repo from an accessible checkout, then re-run the command",
-					},
-				))
-			}
-			repoRoot = reg.Data.PreferredRoot
-			repoID = reg.Data.RepoID
-		}
-	}
-
-	switch {
-	case worktreeRef != "":
-		worktree, err := ns.client.GetWorktree(ctx, worktreeRef, repoID)
-		if err != nil {
-			return fail(err)
-		}
-		if worktree.Data.State != "present" {
-			return fail(errors.NewWithDetails(
-				errors.EWorktreeNotFound,
-				"agent start requires a present integration worktree",
-				map[string]string{
-					"hint": "pick a present worktree from `agency worktree ls`",
-				},
-			))
-		}
-		worktreeRef = worktree.Data.WorktreeID
-	case currentCtx != nil && currentCtx.RepoID == repoID:
-		worktree, err := ns.client.GetWorktree(ctx, currentCtx.WorktreeID, repoID)
-		if err != nil {
-			return fail(err)
-		}
-		if worktree.Data.State != "present" {
-			return fail(errors.NewWithDetails(
-				errors.EWorktreeNotFound,
-				"agent start requires a present integration worktree",
-				map[string]string{
-					"hint": "pick a present worktree from `agency worktree ls`",
-				},
-			))
-		}
-		worktreeRef = worktree.Data.WorktreeID
-	default:
-		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
-		if err != nil {
-			return fail(err)
-		}
-		if ok && worktree.RepoID == repoID {
-			worktreeRef = worktree.WorktreeID
-		}
-	}
-
-	if worktreeRef == "" {
-		return fail(errors.NewWithDetails(
-			errors.EUsage,
-			"cannot resolve agent start without a worktree",
-			map[string]string{
-				"hint": "pass --worktree <worktree-ref>, set an active context with `agency context use <worktree-ref>`, or run this command from the integration worktree you want to use",
-			},
-		))
+	repoRoot := repo.PreferredRoot
+	repoID := repo.RepoID
+	worktreeRef, err = resolveAgentStartWorktree(ctx, ns.client, repoID, worktreeRef, currentCtx, cwdWorktree, cwdHasWorktree)
+	if err != nil {
+		return fail(err)
 	}
 	opts.WorktreeRef = worktreeRef
 

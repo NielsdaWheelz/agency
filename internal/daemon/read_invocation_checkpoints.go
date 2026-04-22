@@ -49,22 +49,7 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 
 	allCheckpoints := make([]CheckpointDTO, 0, len(cpFile.Checkpoints))
 	for i := len(cpFile.Checkpoints) - 1; i >= 0; i-- {
-		cp := cpFile.Checkpoints[i]
-		allCheckpoints = append(allCheckpoints, CheckpointDTO{
-			ID:                   cp.ID,
-			CreatedAt:            cp.CreatedAt,
-			Diffstat:             cp.Diffstat,
-			SnapshotCommit:       cp.SnapshotCommit,
-			IncludesUntracked:    cp.IncludesUntracked,
-			Degraded:             !cp.IncludesUntracked,
-			Trigger:              cp.Trigger,
-			ToolName:             cp.ToolName,
-			StreamSeq:            cp.StreamSeq,
-			Description:          cp.Description,
-			ChangedPaths:         cp.ChangedPaths,
-			ChangedPathCount:     cp.ChangedPathCount,
-			ChangedPathTruncated: cp.ChangedPathTruncated,
-		})
+		allCheckpoints = append(allCheckpoints, checkpointToDTO(cpFile.Checkpoints[i]))
 	}
 
 	checkpoints, nextCursor := paginateCheckpoints(allCheckpoints, cursor, limit)

@@ -43,18 +43,12 @@ func (s *Server) handleGetInvocationCheck(w http.ResponseWriter, r *http.Request
 
 func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationCheckData {
 	meta := record.Meta
-	runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(record)
-	dto := InvocationMetaToDTO(
-		meta,
-		record.RepoID,
-		s.preferredInvocationLogsDir(record.RepoID, record.InvocationID),
-		runnerMeta,
-		runnerErr,
-		s.Clock(),
-	)
 	timelineEntries := s.collectTimelineEntries(record)
-	activityProjection := s.buildInvocationActivityProjection(record, dto.State, "", timelineEntries)
-	applyInvocationActivityProjection(&dto, activityProjection)
+	projection := s.projectInvocationReadSurface(record, "", "", s.Clock(), timelineEntries)
+	dto := projection.DTO
+	runnerMeta := projection.RunnerMeta
+	runnerErr := projection.RunnerErr
+	runnerState, runnerReason, runnerSummary, runnerValid := projectRunnerStatus(runnerMeta, runnerErr)
 
 	data := InvocationCheckData{
 		InvocationID:    dto.InvocationID,
@@ -64,38 +58,18 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		PRSyncEligible:  dto.PRSyncEligible,
 		LandingStatus:   dto.LandingStatus,
 		BlockingReasons: make([]InvocationCheckReason, 0, 8),
-		Navigation: InvocationCheckNavigation{
-			InvocationRef:  dto.InvocationID,
-			RepoID:         dto.RepoID,
-			HistoryCommand: fmt.Sprintf("agency agent %s history --repo %s", dto.InvocationID, dto.RepoID),
-			DiffCommand:    fmt.Sprintf("agency agent %s diff --repo %s", dto.InvocationID, dto.RepoID),
-			PRSyncCommand:  fmt.Sprintf("agency worktree %s pr sync --repo %s", firstNonEmpty(strings.TrimSpace(meta.IntegrationWorktreeID), "<worktree_ref>"), dto.RepoID),
-		},
+		Navigation:      projectInvocationCheckNavigation(dto, meta),
 	}
 
-	if runnerErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
-		if err := runnerMeta.Validate(); err == nil {
-			data.RunnerState = string(runnerMeta.State)
-			data.RunnerReason = strings.TrimSpace(runnerMeta.Reason)
-			data.RunnerSummary = runnerMeta.Summary
-			data.RunnerUpdatedAt = runnerMeta.UpdatedAt
-			data.HowToTest = runnerMeta.HowToTest
-		}
+	if runnerValid {
+		data.RunnerState = runnerState
+		data.RunnerReason = runnerReason
+		data.RunnerSummary = runnerSummary
+		data.RunnerUpdatedAt = runnerMeta.UpdatedAt
+		data.HowToTest = runnerMeta.HowToTest
 	}
 	if strings.TrimSpace(data.RunnerSummary) == "" {
 		data.RunnerSummary = dto.StatusSummary
-	}
-	if dto.Navigation != nil {
-		if strings.TrimSpace(dto.Navigation.HistoryCommand) != "" {
-			data.Navigation.HistoryCommand = dto.Navigation.HistoryCommand
-		}
-		if strings.TrimSpace(dto.Navigation.DiffCommand) != "" {
-			data.Navigation.DiffCommand = dto.Navigation.DiffCommand
-		}
-		if strings.TrimSpace(dto.Navigation.AttachCommand) != "" {
-			data.Navigation.AttachCommand = dto.Navigation.AttachCommand
-		}
-		data.Navigation.LatestTurnID = dto.Navigation.LatestTurnID
 	}
 
 	switch meta.Status {
@@ -213,6 +187,30 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 		}
 	}
 	return data
+}
+
+func projectInvocationCheckNavigation(dto InvocationDTO, meta *store.InvocationMeta) InvocationCheckNavigation {
+	nav := InvocationCheckNavigation{
+		InvocationRef:  dto.InvocationID,
+		RepoID:         dto.RepoID,
+		HistoryCommand: fmt.Sprintf("agency agent %s history --repo %s", dto.InvocationID, dto.RepoID),
+		DiffCommand:    fmt.Sprintf("agency agent %s diff --repo %s", dto.InvocationID, dto.RepoID),
+		PRSyncCommand:  fmt.Sprintf("agency worktree %s pr sync --repo %s", firstNonEmpty(strings.TrimSpace(meta.IntegrationWorktreeID), "<worktree_ref>"), dto.RepoID),
+	}
+	if dto.Navigation == nil {
+		return nav
+	}
+	if strings.TrimSpace(dto.Navigation.HistoryCommand) != "" {
+		nav.HistoryCommand = dto.Navigation.HistoryCommand
+	}
+	if strings.TrimSpace(dto.Navigation.DiffCommand) != "" {
+		nav.DiffCommand = dto.Navigation.DiffCommand
+	}
+	if strings.TrimSpace(dto.Navigation.AttachCommand) != "" {
+		nav.AttachCommand = dto.Navigation.AttachCommand
+	}
+	nav.LatestTurnID = dto.Navigation.LatestTurnID
+	return nav
 }
 
 func firstNonEmpty(values ...string) string {

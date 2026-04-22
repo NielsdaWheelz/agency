@@ -8,62 +8,26 @@ import (
 )
 
 // InvocationSessionLoader reads headed-session facts for one invocation.
-type InvocationSessionLoader func(context.Context, string, string) (InvocationSession, error)
+type InvocationSessionLoader func(context.Context, string, string) (daemon.InvocationSessionData, error)
 
-// InvocationSession is the headed-session read shape consumed by watch.
-type InvocationSession struct {
-	InvocationID      string
-	RepoID            string
-	Status            string
-	TmuxSession       string
-	ClientCount       int
-	Clients           []InvocationSessionClient
-	AttachCommand     string
-	RecreateAvailable bool
-	Hint              string
+func sessionIsLive(session daemon.InvocationSessionData) bool {
+	return strings.EqualFold(strings.TrimSpace(session.SessionStatus), "live")
 }
 
-// InvocationSessionClient is one live tmux client attached to a headed invocation session.
-type InvocationSessionClient struct {
-	Name     string
-	TTY      string
-	PID      int
-	ReadOnly bool
+func sessionIsMissing(session daemon.InvocationSessionData) bool {
+	return strings.EqualFold(strings.TrimSpace(session.SessionStatus), "missing")
 }
 
-func (s InvocationSession) IsLive() bool {
-	return strings.EqualFold(strings.TrimSpace(s.Status), "live")
-}
-
-func (s InvocationSession) IsMissing() bool {
-	return strings.EqualFold(strings.TrimSpace(s.Status), "missing")
-}
-
-func (s InvocationSession) ConnectedClientCount() int {
-	if s.ClientCount > 0 {
-		return s.ClientCount
+func sessionConnectedClientCount(session daemon.InvocationSessionData) int {
+	if session.ClientCount > 0 {
+		return session.ClientCount
 	}
-	return len(s.Clients)
+	return len(session.ConnectedClients)
 }
 
-func invocationSessionFromDTO(data daemon.InvocationSessionData) InvocationSession {
-	session := InvocationSession{
-		InvocationID:      data.InvocationID,
-		RepoID:            data.RepoID,
-		Status:            data.SessionStatus,
-		TmuxSession:       data.TmuxSession,
-		ClientCount:       data.ClientCount,
-		AttachCommand:     data.AttachCommand,
-		RecreateAvailable: data.RecreateAvailable,
-		Clients:           make([]InvocationSessionClient, 0, len(data.ConnectedClients)),
+func sessionHint(session daemon.InvocationSessionData) string {
+	if sessionIsMissing(session) && session.RecreateAvailable {
+		return "use recreate to start a new headed session in the same sandbox"
 	}
-	for _, client := range data.ConnectedClients {
-		session.Clients = append(session.Clients, InvocationSessionClient{
-			Name:     client.Name,
-			TTY:      client.TTY,
-			PID:      client.PID,
-			ReadOnly: client.ReadOnly,
-		})
-	}
-	return session
+	return ""
 }

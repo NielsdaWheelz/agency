@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/ids"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 )
 
 type currentContextEnvelope struct {
@@ -120,29 +118,24 @@ func ContextUse(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return err
 	}
 
-	repo, err := ns.client.GetRepo(ctx, repoCtx.RepoID)
+	repo, err := resolveAccessibleRepo(ctx, ns.client, repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
-	worktree, err := ns.client.GetWorktree(ctx, strings.TrimSpace(opts.WorktreeRef), repoCtx.RepoID)
+	result, err := ns.client.GetWorktree(ctx, strings.TrimSpace(opts.WorktreeRef), repoCtx.RepoID)
 	if err != nil {
 		return err
 	}
-	if worktree.Data.State != "present" {
-		return errors.NewWithDetails(
-			errors.EWorktreeNotFound,
-			"active context requires a present integration worktree",
-			map[string]string{
-				"hint": "pick a present worktree from `agency worktree ls`",
-			},
-		)
+	worktree, err := requirePresentWorktree(result.Data, "active context requires a present integration worktree")
+	if err != nil {
+		return err
 	}
 
 	current := config.CurrentContext{
-		RepoID:       repo.Data.RepoID,
-		RepoName:     repoDisplayName(repo.Data),
-		WorktreeID:   worktree.Data.WorktreeID,
-		WorktreeName: worktree.Data.WorktreeName,
+		RepoID:       repo.RepoID,
+		RepoName:     repoDisplayName(repo),
+		WorktreeID:   worktree.WorktreeID,
+		WorktreeName: worktree.WorktreeName,
 		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := config.SaveCurrentContext(fsys, ns.dirs.ConfigDir, current); err != nil {
@@ -177,11 +170,10 @@ func ContextUnset(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		fsys = fs.NewRealFS()
 	}
 
-	homeDir, err := os.UserHomeDir()
+	dirs, err := resolveCommandDirs("", "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return err
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
 
 	_, statErr := fsys.Stat(config.CurrentContextPath(dirs.ConfigDir))
 	hadCurrent := statErr == nil
@@ -206,7 +198,7 @@ func loadValidatedCurrentContext(ctx context.Context, client *daemonclient.Clien
 		return nil, err
 	}
 
-	repo, err := client.GetRepo(ctx, current.RepoID)
+	repo, err := resolveAccessibleRepo(ctx, client, current.RepoID)
 	if err != nil {
 		return nil, errors.NewWithDetails(
 			errors.EInvalidContext,
@@ -226,7 +218,7 @@ func loadValidatedCurrentContext(ctx context.Context, client *daemonclient.Clien
 			},
 		)
 	}
-	if worktree.Data.State != "present" {
+	if _, err := requirePresentWorktree(worktree.Data, "active context worktree is archived"); err != nil {
 		return nil, errors.NewWithDetails(
 			errors.EInvalidContext,
 			"active context worktree is archived",
@@ -242,8 +234,8 @@ func loadValidatedCurrentContext(ctx context.Context, client *daemonclient.Clien
 	}
 
 	return &validatedCurrentContext{
-		RepoID:       repo.Data.RepoID,
-		RepoName:     repoDisplayName(repo.Data),
+		RepoID:       repo.RepoID,
+		RepoName:     repoDisplayName(repo),
 		WorktreeID:   worktree.Data.WorktreeID,
 		WorktreeName: worktreeName,
 		UpdatedAt:    current.UpdatedAt,

@@ -40,16 +40,7 @@ func InvocationMetaToDTO(
 		flags = append(flags, AttentionFlagLandable)
 	}
 
-	runnerState := ""
-	runnerReason := ""
-	runnerValid := false
-	if runnerStatusErr == nil && runnerMeta != nil && runnerMeta.SchemaVersion == runnerstatus.SchemaVersion {
-		if err := runnerMeta.Validate(); err == nil {
-			runnerState = string(runnerMeta.State)
-			runnerReason = strings.TrimSpace(runnerMeta.Reason)
-			runnerValid = true
-		}
-	}
+	runnerState, runnerReason, _, runnerValid := projectRunnerStatus(runnerMeta, runnerStatusErr)
 
 	state := InvocationStateStarting
 	reason := ""
@@ -147,6 +138,19 @@ func InvocationMetaToDTO(
 		SandboxPath:    meta.SandboxPath,
 		LogsDir:        logsDir,
 	}
+}
+
+func projectRunnerStatus(
+	runnerMeta *runnerstatus.RunnerStatus,
+	runnerStatusErr error,
+) (state string, reason string, summary string, valid bool) {
+	if runnerStatusErr != nil || runnerMeta == nil || runnerMeta.SchemaVersion != runnerstatus.SchemaVersion {
+		return "", "", "", false
+	}
+	if err := runnerMeta.Validate(); err != nil {
+		return "", "", "", false
+	}
+	return string(runnerMeta.State), strings.TrimSpace(runnerMeta.Reason), strings.TrimSpace(runnerMeta.Summary), true
 }
 
 // WorktreeMetaToDTO converts an IntegrationWorktreeMeta and optional merge state to a WorktreeDTO.

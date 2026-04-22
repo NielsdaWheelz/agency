@@ -25,6 +25,58 @@ type WorktreeCreateOpts struct {
 	Editor     string
 }
 
+func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, cwd, repoRef string) (string, string, error) {
+	if strings.TrimSpace(repoRef) != "" {
+		repo, err := resolveAccessibleRepo(ctx, ns.client, repoRef)
+		if err != nil {
+			return "", "", err
+		}
+		return repo.PreferredRoot, repo.PreferredRoot, nil
+	}
+
+	cwdWorktree, cwdHasWorktree, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
+	if err != nil {
+		return "", "", err
+	}
+	if cwdHasWorktree {
+		repo, err := resolveAccessibleRepo(ctx, ns.client, cwdWorktree.RepoID)
+		if err != nil {
+			return "", "", err
+		}
+		currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+		if err != nil {
+			return "", "", err
+		}
+		return repo.PreferredRoot, currentRoot.Path, nil
+	}
+
+	if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
+		return "", "", errors.NewWithDetails(
+			errors.EUnsafeRepoRoot,
+			"current directory is inside an agency-managed tree but not a present integration worktree",
+			map[string]string{
+				"hint": "re-run from the original repo checkout, or pass --repo <repo_ref> explicitly",
+			},
+		)
+	}
+
+	currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	if err != nil {
+		return "", "", errors.NewWithDetails(
+			errors.ENoRepoContext,
+			"cannot resolve worktree create without a repo context",
+			map[string]string{
+				"hint": "run from a git checkout, or pass --repo <repo_ref>",
+			},
+		)
+	}
+	repo, err := resolveAccessibleRegisteredRepo(ctx, ns.client, currentRoot.Path)
+	if err != nil {
+		return "", "", err
+	}
+	return repo.PreferredRoot, currentRoot.Path, nil
+}
+
 // WorktreeCreate creates a new integration worktree.
 func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeCreateOpts, stdout, stderr io.Writer) error {
 	repoRef := strings.TrimSpace(opts.RepoRef)
@@ -44,88 +96,9 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return err
 	}
 
-	repoRoot := ""
-	baseRoot := ""
-	if repoRef != "" {
-		repo, err := ns.client.GetRepo(ctx, repoRef)
-		if err != nil {
-			return err
-		}
-		if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-			return errors.NewWithDetails(
-				errors.ERepoRootInaccessible,
-				"repo preferred_root is not accessible",
-				map[string]string{
-					"repo": repoRef,
-					"hint": "re-register this repo from an accessible checkout, then re-run the command",
-				},
-			)
-		}
-		repoRoot = repo.Data.PreferredRoot
-		baseRoot = repoRoot
-	} else {
-		worktree, ok, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
-		if err != nil {
-			return err
-		}
-		if ok {
-			repo, err := ns.client.GetRepo(ctx, worktree.RepoID)
-			if err != nil {
-				return err
-			}
-			if repo.Data.PreferredRoot == "" || !repo.Data.PreferredRootAccessible {
-				return errors.NewWithDetails(
-					errors.ERepoRootInaccessible,
-					"repo preferred_root is not accessible",
-					map[string]string{
-						"repo": worktree.RepoID,
-						"hint": "re-register this repo from an accessible checkout, then re-run the command",
-					},
-				)
-			}
-			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-			if err != nil {
-				return err
-			}
-			repoRoot = repo.Data.PreferredRoot
-			baseRoot = currentRoot.Path
-		} else {
-			if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
-				return errors.NewWithDetails(
-					errors.EUnsafeRepoRoot,
-					"current directory is inside an agency-managed tree but not a present integration worktree",
-					map[string]string{
-						"hint": "re-run from the original repo checkout, or pass --repo <repo_ref> explicitly",
-					},
-				)
-			}
-			currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-			if err != nil {
-				return errors.NewWithDetails(
-					errors.ENoRepoContext,
-					"cannot resolve worktree create without a repo context",
-					map[string]string{
-						"hint": "run from a git checkout, or pass --repo <repo_ref>",
-					},
-				)
-			}
-			reg, err := ns.client.RegisterRepo(ctx, currentRoot.Path)
-			if err != nil {
-				return err
-			}
-			if reg.Data.PreferredRoot == "" || !reg.Data.PreferredRootAccessible {
-				return errors.NewWithDetails(
-					errors.ERepoRootInaccessible,
-					"repo preferred_root is not accessible",
-					map[string]string{
-						"repo": reg.Data.RepoID,
-						"hint": "re-register this repo from an accessible checkout, then re-run the command",
-					},
-				)
-			}
-			repoRoot = reg.Data.PreferredRoot
-			baseRoot = currentRoot.Path
-		}
+	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, cwd, repoRef)
+	if err != nil {
+		return err
 	}
 
 	if baseBranch == "" {

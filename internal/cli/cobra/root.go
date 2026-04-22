@@ -108,7 +108,7 @@ func Execute(stdout, stderr io.Writer) (bool, error) {
 	rootCmd := NewRootCmd()
 	rootCmd.SetOut(stdout)
 	rootCmd.SetErr(stderr)
-	rootCmd.SetArgs(rewriteTargetFirstArgs(os.Args[1:]))
+	rootCmd.SetArgs(os.Args[1:])
 	err := rootCmd.Execute()
 	verbose, verboseErr := rootCmd.PersistentFlags().GetBool("verbose")
 	if verboseErr != nil {

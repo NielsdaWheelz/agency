@@ -108,11 +108,11 @@ func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
 	}
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
-	m.selectedSession = InvocationSession{
-		InvocationID: "inv-1",
-		RepoID:       "repo-1",
-		Status:       "live",
-		TmuxSession:  "agency_inv-1",
+	m.selectedSession = daemon.InvocationSessionData{
+		InvocationID:  "inv-1",
+		RepoID:        "repo-1",
+		SessionStatus: "live",
+		TmuxSession:   "agency_inv-1",
 	}
 	m.selectedSessionInvocation = "inv-1"
 	m.selectedSessionRepo = "repo-1"
@@ -145,10 +145,10 @@ func TestModel_ActionAttach_MissingSessionOpensActionsAndAllowsRecreate(t *testi
 	}
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
-	m.selectedSession = InvocationSession{
+	m.selectedSession = daemon.InvocationSessionData{
 		InvocationID:      "inv-1",
 		RepoID:            "repo-1",
-		Status:            "missing",
+		SessionStatus:     "missing",
 		TmuxSession:       "agency_inv-1",
 		RecreateAvailable: true,
 	}
@@ -357,8 +357,8 @@ func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
 
 	m := newModel(context.Background(), nil, RunOptions{
 		Recreate: func(context.Context, string, string) (string, error) { return "", nil },
-		SessionLoader: func(context.Context, string, string) (InvocationSession, error) {
-			return InvocationSession{}, nil
+		SessionLoader: func(context.Context, string, string) (daemon.InvocationSessionData, error) {
+			return daemon.InvocationSessionData{}, nil
 		},
 	})
 	m.width = 180
@@ -378,16 +378,15 @@ func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
 	}
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
-	m.selectedSession = InvocationSession{
+	m.selectedSession = daemon.InvocationSessionData{
 		InvocationID:      "inv-1",
 		RepoID:            "repo-1",
-		Status:            "missing",
+		SessionStatus:     "missing",
 		TmuxSession:       "agency_inv-1",
 		ClientCount:       2,
 		AttachCommand:     "agency agent inv-1 attach --repo repo-1",
 		RecreateAvailable: true,
-		Hint:              "use recreate to start a new headed session in the same sandbox",
-		Clients: []InvocationSessionClient{
+		ConnectedClients: []daemon.InvocationSessionClient{
 			{Name: "tty1"},
 			{Name: "tty2", ReadOnly: true},
 		},
@@ -401,6 +400,7 @@ func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
 	assert.Contains(t, content, "Clients:     2")
 	assert.Contains(t, content, "Attach:      agency agent inv-1 attach --repo repo-1")
 	assert.Contains(t, content, "Recreate:    yes")
+	assert.Contains(t, content, "Hint:        use recreate to start a new headed session in the")
 	assert.Contains(t, content, "tty2 (read-only)")
 }
 

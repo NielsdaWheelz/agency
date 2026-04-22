@@ -8,11 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-func TestReadTimelineJSONL_StrictFlagControlsMalformedLineHandling(t *testing.T) {
+func TestReadTimelineJSONL_DegradesMalformedLinesIntoParseErrors(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -23,13 +21,9 @@ func TestReadTimelineJSONL_StrictFlagControlsMalformedLineHandling(t *testing.T)
 	}, "\n") + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	entries, err := readTimelineJSONL(path, "2026-02-05T11:50:00Z", "stream", timelineSourceRankStream, false, buildStreamTimelineEntry)
+	entries, err := readTimelineJSONL(path, "2026-02-05T11:50:00Z", "stream", timelineSourceRankStream, buildStreamTimelineEntry)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	assert.Equal(t, "message", entries[0].dto.Kind)
 	assert.Equal(t, "parse_error", entries[1].dto.Kind)
-
-	_, err = readTimelineJSONL(path, "2026-02-05T11:50:00Z", "stream", timelineSourceRankStream, true, buildStreamTimelineEntry)
-	require.Error(t, err)
-	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }

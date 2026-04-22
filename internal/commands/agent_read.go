@@ -235,60 +235,20 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		}
 	}
 	if isInteractive() && !opts.JSON && !opts.Last && opts.Cursor == "" && opts.Limit == 50 {
-		watchOutput := opts.WatchOutput
-		if watchOutput == nil {
-			watchOutput = stdout
-		}
 		runWatch := opts.RunWatch
 		if runWatch == nil {
 			runWatch = watch.Run
 		}
-
-		actionDelegates := &watchActionDispatcher{
-			cr:              cr,
-			fsys:            fsys,
-			cwd:             cwd,
+		return launchWatchWorkspace(ctx, cr, fsys, cwd, stdout, stderr, watchLaunchOptions{
+			initialPage:     watch.InitialPageHistory,
+			invocationID:    opts.InvocationRef,
+			repoID:          repoCtx.RepoID,
+			input:           opts.WatchInput,
+			output:          opts.WatchOutput,
+			isInteractive:   isInteractive,
 			dataDirOverride: opts.DataDirOverride,
-		}
-		result, err := runWatch(ctx, ns.client, watch.RunOptions{
-			InitialPage:  watch.InitialPageHistory,
-			InvocationID: opts.InvocationRef,
-			RepoID:       repoCtx.RepoID,
-			Input:        opts.WatchInput,
-			Output:       watchOutput,
-			Open:         actionDelegates.Open,
-			Stop:         actionDelegates.Stop,
-			Kill:         actionDelegates.Kill,
-			Land:         actionDelegates.Land,
-			Discard:      actionDelegates.Discard,
-			Recreate:     actionDelegates.Recreate,
-			Followup:     actionDelegates.Followup,
-			PRSync:       actionDelegates.PRSync,
-			PRMerge:      actionDelegates.PRMerge,
-			Rebase:       actionDelegates.Rebase,
-			Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
-				return actionDelegates.capture(func(stdout, stderr io.Writer) error {
-					return AgentRestore(ctx, actionDelegates.cr, actionDelegates.fsys, actionDelegates.cwd, AgentRestoreOpts{
-						InvocationRef:   invocationID,
-						RepoRef:         repoID,
-						TurnID:          turnID,
-						DataDirOverride: actionDelegates.dataDirOverride,
-					}, stdout, stderr)
-				})
-			},
+			runWatch:        runWatch,
 		})
-		if err != nil {
-			return err
-		}
-		if result.AttachInvocationID == "" || result.AttachRepoID == "" {
-			return nil
-		}
-		return AgentAttach(ctx, cr, fsys, cwd, AgentAttachOpts{
-			InvocationRef:   result.AttachInvocationID,
-			RepoRef:         result.AttachRepoID,
-			IsInteractive:   isInteractive,
-			DataDirOverride: opts.DataDirOverride,
-		}, stdout, stderr)
 	}
 
 	// JSON remains the machine-fidelity escape hatch for raw timeline entries.
