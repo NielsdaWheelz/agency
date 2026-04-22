@@ -19,8 +19,7 @@ import (
 
 func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	var req ControlPlaneStartHeadedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

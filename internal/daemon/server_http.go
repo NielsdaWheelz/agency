@@ -7,8 +7,7 @@ import (
 
 func (s *Server) withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := resolveOrGenerateRequestID(r.Header.Get("X-Request-ID"))
-		setRequestIDHeader(w, requestID)
+		requestID := prepareRequestID(w, r)
 		next.ServeHTTP(w, r.WithContext(withRequestIDContext(r.Context(), requestID)))
 	})
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -269,6 +270,24 @@ func (s *Service) Remove(ctx context.Context, repoID, worktreeID string, opts Re
 		)
 	}
 
+	if !opts.Force {
+		clean, err := git.IsClean(ctx, s.CR, meta.TreePath)
+		if err != nil {
+			return err
+		}
+		if !clean {
+			return errors.NewWithDetails(
+				errors.EDirtyWorktree,
+				"worktree has uncommitted changes; commit/stash your changes or use --force",
+				map[string]string{
+					"worktree_id": worktreeID,
+					"tree_path":   meta.TreePath,
+					"hint":        "commit or stash your changes, or rerun with --force",
+				},
+			)
+		}
+	}
+
 	// Build git worktree remove command
 	args := []string{"-C", opts.RepoRoot, "worktree", "remove"}
 	if opts.Force {
@@ -288,18 +307,6 @@ func (s *Service) Remove(ctx context.Context, repoID, worktreeID string, opts Re
 
 	if result.ExitCode != 0 {
 		stderr := strings.TrimSpace(result.Stderr)
-		// Check for dirty worktree error
-		if !opts.Force && (strings.Contains(stderr, "untracked") || strings.Contains(stderr, "modified")) {
-			return errors.NewWithDetails(
-				errors.EDirtyWorktree,
-				"worktree has uncommitted changes; commit/stash your changes or use --force",
-				map[string]string{
-					"worktree_id": worktreeID,
-					"tree_path":   meta.TreePath,
-					"hint":        "commit or stash your changes, or rerun with --force",
-				},
-			)
-		}
 		return errors.NewWithDetails(
 			errors.EWorktreeRemoveFailed,
 			"git worktree remove failed: "+stderr,

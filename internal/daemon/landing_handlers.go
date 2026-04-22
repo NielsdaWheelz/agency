@@ -12,13 +12,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // handleLand handles POST /invocations/{ref}/land.
 func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
@@ -112,25 +110,20 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	// Success response
-	resp := LandResponse{
-		OK:                    true,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		RequestID:             requestID,
-		InvocationID:          mutation.record.InvocationID,
-		AppliedMode:           LandingMode(result.Mode),
-		IntegrationHeadBefore: result.IntegrationHeadBefore,
-		IntegrationHeadAfter:  result.IntegrationHeadAfter,
-		CommitsLanded:         result.CommitsLanded,
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	s.writeLandSuccess(
+		w,
+		requestID,
+		mutation.record.InvocationID,
+		LandingMode(result.Mode),
+		result.IntegrationHeadBefore,
+		result.IntegrationHeadAfter,
+		result.CommitsLanded,
+	)
 }
 
 // handleDiscard handles POST /invocations/{ref}/discard.
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
@@ -186,15 +179,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		return
 	}
 
-	// Success response
-	resp := DiscardResponse{
-		OK:           true,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		InvocationID: mutation.record.InvocationID,
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	s.writeDiscardSuccess(w, requestID, mutation.record.InvocationID)
 }
 
 type landingMutation struct {

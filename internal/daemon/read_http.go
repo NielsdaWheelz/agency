@@ -27,7 +27,7 @@ func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data 
 	resp := APIResponse{
 		OK:           true,
 		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
+		BuildVersion: daemonBuildVersion(),
 		GitSHA:       version.Commit,
 		RequestID:    requestID,
 		Data:         data,
@@ -42,7 +42,7 @@ func (s *Server) writeAPIError(w http.ResponseWriter, status int, requestID, cod
 	resp := APIResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
+		BuildVersion: daemonBuildVersion(),
 		GitSHA:       version.Commit,
 		RequestID:    requestID,
 		ErrorCode:    code,

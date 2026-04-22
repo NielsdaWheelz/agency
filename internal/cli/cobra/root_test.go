@@ -105,10 +105,34 @@ func TestWorktreeCmd_ReturnsUsageError(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestWorktreeLS_CreateFlagsAreRejected(t *testing.T) {
+	_, _, err := executeCmd("worktree", "ls", "--base", "main")
+	require.Error(t, err, "expected create-only flags to be rejected by worktree ls")
+	assert.Contains(t, err.Error(), "unknown flag: --base")
+}
+
+func TestWorktreeTarget_CreateFlagsAreRejected(t *testing.T) {
+	_, _, err := executeCmd("worktree", "wt-1", "--base", "main")
+	require.Error(t, err, "expected create-only flags to be rejected by target-first worktree commands")
+	assert.Contains(t, err.Error(), "unknown flag: --base")
+}
+
 func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 	_, _, err := executeCmd("agent")
 	require.Error(t, err, "expected error when agent called without target")
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentLS_StartFlagsAreRejected(t *testing.T) {
+	_, _, err := executeCmd("agent", "ls", "--headless")
+	require.Error(t, err, "expected start-only flags to be rejected by agent ls")
+	assert.Contains(t, err.Error(), "unknown flag: --headless")
+}
+
+func TestAgentTarget_StartFlagsAreRejected(t *testing.T) {
+	_, _, err := executeCmd("agent", "inv-1", "--headless")
+	require.Error(t, err, "expected start-only flags to be rejected by target-first agent commands")
+	assert.Contains(t, err.Error(), "unknown flag: --headless")
 }
 
 func TestWatchCmd_NonInteractiveReturnsENotInteractive(t *testing.T) {

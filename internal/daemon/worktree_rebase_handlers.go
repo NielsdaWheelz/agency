@@ -10,7 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 const (
@@ -21,8 +20,7 @@ const (
 
 // handleWorktreeRebase handles POST /worktrees/{ref}/rebase.
 func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, worktreeRef string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
@@ -53,8 +51,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	resp, err := s.executeWorktreeRebase(r.Context(), requestID, record)
-	if err != nil {
+	if err := s.executeWorktreeRebase(r.Context(), record); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.EInternal
@@ -66,21 +63,20 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), hint)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, *resp)
+	s.writeWorktreeRebaseSuccess(w, requestID, record)
 }
 
 func (s *Server) executeWorktreeRebase(
 	ctx context.Context,
-	requestID string,
 	record *store.IntegrationWorktreeRecord,
-) (*WorktreeRebaseResponse, error) {
+) error {
 	if record == nil || record.Meta == nil {
-		return nil, errors.New(errors.EInternal, "worktree metadata missing")
+		return errors.New(errors.EInternal, "worktree metadata missing")
 	}
 
 	unlock, err := s.repoLock.Lock(record.RepoID, "worktree_rebase")
 	if err != nil {
-		return nil, errors.NewWithDetails(
+		return errors.NewWithDetails(
 			errors.ERepoLocked,
 			"repository is locked by another operation",
 			map[string]string{"hint": "wait for the other operation to complete"},
@@ -89,7 +85,7 @@ func (s *Server) executeWorktreeRebase(
 	defer func() { _ = unlock() }()
 
 	if err := s.ensureWorktreeMergeInactive(record.RepoID, record.WorktreeID, "rebase the worktree"); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventStarted, map[string]any{
@@ -98,9 +94,9 @@ func (s *Server) executeWorktreeRebase(
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
-			return nil, errors.New(errors.EPersistFailed, err.Error())
+			return errors.New(errors.EPersistFailed, err.Error())
 		}
-		return nil, err
+		return err
 	}
 
 	if err := s.performWorktreeRebase(ctx, record); err != nil {
@@ -114,11 +110,11 @@ func (s *Server) executeWorktreeRebase(
 		}); appendErr != nil {
 			appendCode := errors.GetCode(appendErr)
 			if appendCode == "" {
-				return nil, errors.New(errors.EPersistFailed, appendErr.Error())
+				return errors.New(errors.EPersistFailed, appendErr.Error())
 			}
-			return nil, appendErr
+			return appendErr
 		}
-		return nil, err
+		return err
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventSucceeded, map[string]any{
@@ -127,21 +123,12 @@ func (s *Server) executeWorktreeRebase(
 	}); err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
-			return nil, errors.New(errors.EPersistFailed, err.Error())
+			return errors.New(errors.EPersistFailed, err.Error())
 		}
-		return nil, err
+		return err
 	}
 
-	return &WorktreeRebaseResponse{
-		OK:                    true,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		RequestID:             requestID,
-		RepoID:                record.RepoID,
-		IntegrationWorktreeID: record.WorktreeID,
-		Branch:                record.Meta.Branch,
-		BaseBranch:            record.Meta.BaseBranch,
-	}, nil
+	return nil
 }
 
 func (s *Server) performWorktreeRebase(ctx context.Context, record *store.IntegrationWorktreeRecord) error {

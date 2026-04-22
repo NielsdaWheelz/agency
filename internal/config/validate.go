@@ -5,7 +5,6 @@ import (
 	"unicode"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
@@ -76,14 +75,4 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 // containsWhitespace returns true if s contains any whitespace character.
 func containsWhitespace(s string) bool {
 	return strings.ContainsFunc(s, unicode.IsSpace)
-}
-
-// LoadAndValidate is a convenience function that loads and validates agency.json.
-// This is the primary entry point for callers that need full validation (e.g., doctor).
-func LoadAndValidate(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
-	cfg, err := LoadAgencyConfig(filesystem, repoRoot)
-	if err != nil {
-		return AgencyConfig{}, err
-	}
-	return ValidateAgencyConfig(cfg)
 }

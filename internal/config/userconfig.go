@@ -122,20 +122,6 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "version must be an integer")
 			}
 		}
-		if version == 1 {
-			return UserConfig{}, errors.NewWithDetails(
-				errors.EInvalidUserConfig,
-				"version 1 is not supported; config.json must use version 3",
-				map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 3 config"},
-			)
-		}
-		if version == 2 {
-			return UserConfig{}, errors.NewWithDetails(
-				errors.EInvalidUserConfig,
-				"version 2 is not supported; config.json must use version 3",
-				map[string]string{"hint": "run `agency config init --force` to scaffold a fresh version 3 config"},
-			)
-		}
 		cfg.Version = version
 	}
 

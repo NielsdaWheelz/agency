@@ -91,6 +91,9 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return err
 	}
+	dirs.DataDir = doctorDisplayPath(dirs.DataDir)
+	dirs.ConfigDir = doctorDisplayPath(dirs.ConfigDir)
+	dirs.CacheDir = doctorDisplayPath(dirs.CacheDir)
 	if repoID, ok := agencyManagedTreeRepoID(targetPath, dirs.DataDir); ok {
 		ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 		if err != nil {
@@ -114,6 +117,10 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		}
 		return err
 	}
+	repoRoot.Path, err = doctorCanonicalPath(repoRoot.Path, "repo root")
+	if err != nil {
+		return err
+	}
 
 	userCfg, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
 	if err != nil {
@@ -127,6 +134,12 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	agencyConfigPath := opts.AgencyConfigPath
 	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
 		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
+	}
+	if agencyConfigPath != "" {
+		agencyConfigPath, err = doctorCanonicalPath(agencyConfigPath, "agency config")
+		if err != nil {
+			return err
+		}
 	}
 	resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot.Path, dirs.ConfigDir, repoIdentity.RepoID, agencyConfigPath)
 	if err != nil {
@@ -210,7 +223,6 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return err
 	}
-
 	report := DoctorReport{
 		RepoRoot:                   repoRoot.Path,
 		AgencyDataDir:              dirs.DataDir,
@@ -307,11 +319,15 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 	if !filepath.IsAbs(scriptPath) {
 		absPath = filepath.Join(repoRoot, scriptPath)
 	}
+	absPath, err := doctorCanonicalPath(absPath, scriptName+" script")
+	if err != nil {
+		return "", err
+	}
 
 	info, err := fsys.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", errors.New(errors.EScriptNotFound, "script not found: "+scriptPath)
+			return "", errors.New(errors.EScriptNotFound, "script not found: "+absPath)
 		}
 		return "", errors.Wrap(errors.EScriptNotFound, "failed to check script "+scriptName, err)
 	}
@@ -319,7 +335,7 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 	// Follow symlink if needed and check executable
 	// For symlinks, Stat already follows them, so mode check is on the target
 	if info.Mode().Perm()&0111 == 0 {
-		return "", errors.New(errors.EScriptNotExecutable, "script is not executable: "+scriptPath+"; run 'chmod +x "+scriptPath+"'")
+		return "", errors.New(errors.EScriptNotExecutable, "script is not executable: "+absPath+"; run 'chmod +x "+absPath+"'")
 	}
 
 	return absPath, nil
@@ -382,4 +398,24 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func doctorCanonicalPath(pathValue, label string) (string, error) {
+	resolvedPath, err := canonicalCommandDir(pathValue, label)
+	if err != nil {
+		return "", err
+	}
+	return doctorDisplayPath(resolvedPath), nil
+}
+
+func doctorDisplayPath(pathValue string) string {
+	cleanPath := filepath.Clean(pathValue)
+	switch {
+	case cleanPath == "/private/var":
+		return "/var"
+	case strings.HasPrefix(cleanPath, "/private/var/"):
+		return strings.TrimPrefix(cleanPath, "/private")
+	default:
+		return cleanPath
+	}
 }

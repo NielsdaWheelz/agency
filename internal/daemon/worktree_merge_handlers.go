@@ -21,7 +21,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/verify"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // worktreeMergeArchiveRemoveTimeout bounds the git worktree removal performed after archive cleanup.
@@ -34,8 +33,7 @@ const (
 
 // handleWorktreePRMerge handles POST /worktrees/{ref}/pr/merge.
 func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, worktreeRef string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
@@ -342,24 +340,6 @@ func (s *Server) persistStartedWorktreePRMerge(
 	}
 
 	return mergeMeta, nil
-}
-
-func (s *Server) worktreePRMergeResponse(
-	record *store.IntegrationWorktreeRecord,
-	requestID string,
-	action string,
-	mergeMeta *store.IntegrationWorktreeMergeMeta,
-) *WorktreePRMergeResponse {
-	return &WorktreePRMergeResponse{
-		OK:                    true,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		RequestID:             requestID,
-		Action:                action,
-		RepoID:                record.RepoID,
-		IntegrationWorktreeID: record.WorktreeID,
-		Merge:                 WorktreeMergeMetaToDTO(mergeMeta),
-	}
 }
 
 func (s *Server) runAcceptedWorktreeMerge(proc *WorktreeMergeProcess, record *store.IntegrationWorktreeRecord) {

@@ -16,8 +16,7 @@ import (
 
 func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 	writeErr := func(status int, code, message, hint, clientRequestID string) {
 		s.writeControlPlaneError(w, status, requestID, code, message, hint, clientRequestID)
 	}

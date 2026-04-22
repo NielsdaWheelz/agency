@@ -68,16 +68,6 @@ func Run(ctx context.Context, client *daemonclient.Client, opts RunOptions) (Run
 		m.snapshot.Invocations = []daemon.InvocationDTO{invocation.Data}
 		m.selectedInvocationID = invocation.Data.InvocationID
 		m.selectedRepoID = invocation.Data.RepoID
-		m.selectedMode = invocation.Data.Mode
-		repos, err := client.ListRepos(ctx)
-		if err == nil {
-			for _, repo := range repos.Data.Repos {
-				if repo.RepoID == opts.RepoID {
-					m.snapshot.Repos = []daemon.RepoDTO{repo}
-					break
-				}
-			}
-		}
 		if invocation.Data.WorktreeID != "" {
 			worktree, err := client.GetWorktree(ctx, invocation.Data.WorktreeID, opts.RepoID)
 			if err == nil {

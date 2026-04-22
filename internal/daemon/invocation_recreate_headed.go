@@ -18,8 +18,7 @@ import (
 
 func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	ctx := r.Context()
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {

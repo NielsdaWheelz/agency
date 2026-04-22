@@ -11,22 +11,10 @@ import (
 
 func newAgentCmd() *cobra.Command {
 	var repoRef string
-	var allRepos bool
-	var worktree string
-	var all bool
 	var jsonOut bool
-	var runner string
-	var headless bool
-	var name string
-	var detached bool
 	var prompt string
 	var promptFile string
-	var agencyConfigPath string
-	var runnerArgs []string
-	var model string
-	var effort string
-	var permissionMode string
-	var noIncludeUntracked bool
+	var detached bool
 	var turnID string
 	var turnRange string
 	var last bool
@@ -36,6 +24,8 @@ func newAgentCmd() *cobra.Command {
 	var follow bool
 	var offset int64
 	var checkpointID int
+	startCmd := newAgentStartCmd()
+	lsCmd := newAgentLSCmd()
 
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -65,16 +55,6 @@ Use:
 			case len(args) == 0:
 				_ = cmd.Help()
 				return errors.New(errors.EUsage, "specify 'start', 'ls', or an invocation ref")
-			case args[0] == "start":
-				if len(args) > 1 {
-					return errors.New(errors.EUsage, "too many arguments for \"agency agent start\"")
-				}
-				return runAgentStart(cmd, repoRef, worktree, runner, headless, name, detached, prompt, promptFile, agencyConfigPath, runnerArgs, model, effort, permissionMode, jsonOut, noIncludeUntracked)
-			case args[0] == "ls":
-				if len(args) > 1 {
-					return errors.New(errors.EUsage, "too many arguments for \"agency agent ls\"")
-				}
-				return runAgentLS(cmd, repoRef, allRepos, worktree, all, jsonOut)
 			default:
 				invocationRef := args[0]
 				switch {
@@ -135,23 +115,13 @@ Use:
 		&cobra.Group{ID: "recover", Title: "Recover"},
 	)
 
-	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
-	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
-	cmd.Flags().StringVar(&worktree, "worktree", "", "Only show invocations for this integration worktree")
-	cmd.Flags().BoolVar(&all, "all", false, "Include all invocations")
+	cmd.AddCommand(startCmd, lsCmd)
+
+	cmd.PersistentFlags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
-	cmd.Flags().StringVar(&runner, "runner", "", "Runner id to use")
-	cmd.Flags().BoolVar(&headless, "headless", false, "Run through the daemon without tmux attachment")
-	cmd.Flags().StringVar(&name, "name", "", "Optional invocation name")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Create the tmux session but do not attach")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless prompt text")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read the headless prompt from this file")
-	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
-	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional runner argument (repeatable)")
-	cmd.Flags().StringVar(&model, "model", "", "Runner model override")
-	cmd.Flags().StringVar(&effort, "effort", "", "Runner effort override")
-	cmd.Flags().StringVar(&permissionMode, "permission-mode", "", "Claude permission mode override")
-	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from headless checkpoint snapshots")
 	cmd.Flags().StringVar(&turnID, "turn", "", "Timeline entry id to anchor diff context")
 	cmd.Flags().StringVar(&turnRange, "turn-range", "", "Inclusive turn range (<start_entry_id>..<end_entry_id>)")
 	cmd.Flags().BoolVar(&last, "last", false, "Show only the last timeline entry")
@@ -161,14 +131,14 @@ Use:
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
-	cmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.MarkFlagsMutuallyExclusive("last", "cursor")
+	lsCmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
 	registerRepoFlagCompletion(cmd)
-	registerWorktreeFlagCompletion(cmd, "present")
-	registerRunnerFlagCompletion(cmd)
 	registerLogKindFlagCompletion(cmd)
-	setInvocationArgCompletion(cmd, "all")
+	registerWorktreeFlagCompletion(startCmd, "present")
+	registerWorktreeFlagCompletion(lsCmd, "present")
+	registerRunnerFlagCompletion(startCmd)
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		for i, arg := range args {
@@ -188,13 +158,8 @@ Use:
 
 		switch len(args) {
 		case 0:
-			candidates := []string{"start\tStart a new agent invocation", "ls\tList agent invocations"}
-			invocations, directive := completeInvocationRefsForState(cmd, toComplete, "all")
-			return append(candidates, invocations...), directive
+			return completeInvocationRefsForState(cmd, toComplete, "all")
 		case 1:
-			if args[0] == "start" || args[0] == "ls" {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			}
 			values := []string{"check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore"}
 			candidates := make([]string, 0, len(values))
 			for _, value := range values {
@@ -220,44 +185,131 @@ Use:
 	return cmd
 }
 
-func runAgentStart(cmd *cobra.Command, repoRef string, worktreeRef string, runner string, headless bool, name string, detached bool, prompt string, promptFile string, agencyConfigPath string, runnerArgs []string, model string, effort string, permissionMode string, jsonOut bool, noIncludeUntracked bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
+func newAgentStartCmd() *cobra.Command {
+	var worktreeRef string
+	var jsonOut bool
+	var runner string
+	var headless bool
+	var name string
+	var detached bool
+	var prompt string
+	var promptFile string
+	var agencyConfigPath string
+	var runnerArgs []string
+	var model string
+	var effort string
+	var permissionMode string
+	var noIncludeUntracked bool
+
+	cmd := &cobra.Command{
+		Use:     "start",
+		Short:   "Start a new agent invocation",
+		GroupID: "run",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return errors.New(errors.EUsage, "too many arguments for \"agency agent start\"")
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRef, err := cmd.Flags().GetString("repo")
+			if err != nil {
+				return err
+			}
+
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
+				RepoRef:            repoRef,
+				WorktreeRef:        worktreeRef,
+				Runner:             runner,
+				Headless:           headless,
+				InvocationName:     name,
+				Detached:           detached,
+				Prompt:             prompt,
+				PromptFile:         promptFile,
+				AgencyConfigPath:   agencyConfigPath,
+				RunnerArgs:         runnerArgs,
+				Model:              model,
+				Effort:             effort,
+				PermissionMode:     permissionMode,
+				JSON:               jsonOut,
+				NoIncludeUntracked: noIncludeUntracked,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 	}
 
-	return commands.AgentStart(ctx, cr, fsys, cwd, commands.AgentStartOpts{
-		RepoRef:            repoRef,
-		WorktreeRef:        worktreeRef,
-		Runner:             runner,
-		Headless:           headless,
-		InvocationName:     name,
-		Detached:           detached,
-		Prompt:             prompt,
-		PromptFile:         promptFile,
-		AgencyConfigPath:   agencyConfigPath,
-		RunnerArgs:         runnerArgs,
-		Model:              model,
-		Effort:             effort,
-		PermissionMode:     permissionMode,
-		JSON:               jsonOut,
-		NoIncludeUntracked: noIncludeUntracked,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	cmd.Flags().StringVar(&worktreeRef, "worktree", "", "Use this integration worktree instead of the active context or cwd")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	cmd.Flags().StringVar(&runner, "runner", "", "Runner id to use")
+	cmd.Flags().BoolVar(&headless, "headless", false, "Run through the daemon without tmux attachment")
+	cmd.Flags().StringVar(&name, "name", "", "Optional invocation name")
+	cmd.Flags().BoolVar(&detached, "detached", false, "Create the tmux session but do not attach")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless prompt text")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read the headless prompt from this file")
+	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
+	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional runner argument (repeatable)")
+	cmd.Flags().StringVar(&model, "model", "", "Runner model override")
+	cmd.Flags().StringVar(&effort, "effort", "", "Runner effort override")
+	cmd.Flags().StringVar(&permissionMode, "permission-mode", "", "Claude permission mode override")
+	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from headless checkpoint snapshots")
+	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
+
+	return cmd
 }
 
-func runAgentLS(cmd *cobra.Command, repoRef string, allRepos bool, worktree string, all bool, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
+func newAgentLSCmd() *cobra.Command {
+	var allRepos bool
+	var worktreeRef string
+	var all bool
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:     "ls",
+		Short:   "List agent invocations",
+		GroupID: "inspect",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return errors.New(errors.EUsage, "too many arguments for \"agency agent ls\"")
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRef, err := cmd.Flags().GetString("repo")
+			if err != nil {
+				return err
+			}
+
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.AgentLS(ctx, cr, fsys, cwd, commands.AgentLSOpts{
+				RepoRef:     repoRef,
+				AllRepos:    allRepos,
+				WorktreeRef: worktreeRef,
+				All:         all,
+				JSON:        jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 	}
 
-	return commands.AgentLS(ctx, cr, fsys, cwd, commands.AgentLSOpts{
-		RepoRef:     repoRef,
-		AllRepos:    allRepos,
-		WorktreeRef: worktree,
-		All:         all,
-		JSON:        jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
+	cmd.Flags().StringVar(&worktreeRef, "worktree", "", "Only show invocations for this integration worktree")
+	cmd.Flags().BoolVar(&all, "all", false, "Include all invocations")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+
+	return cmd
 }
 
 func runAgentShow(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool) error {

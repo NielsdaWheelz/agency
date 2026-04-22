@@ -15,11 +15,6 @@ import (
 func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 	requestID := getOrCreateRequestID(r)
 
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
-
 	params, invalid := parseListWorktreesParams(r)
 	if invalid != nil {
 		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
@@ -69,11 +64,6 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 // handleGetWorktree handles GET /worktrees/{ref}.
 func (s *Server) handleGetWorktree(w http.ResponseWriter, r *http.Request, worktreeRef string) {
 	requestID := getOrCreateRequestID(r)
-
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {

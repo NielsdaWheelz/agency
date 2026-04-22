@@ -12,7 +12,7 @@ This document covers repository-wide package organization and ownership boundari
 - `internal/config/` owns user config, repo config, current-context files, and config resolution.
 - `internal/daemon/` owns daemon lifecycle, handlers, reconciliation, streaming, checkpointing, landing flows, and the durable worktree PR merge lifecycle.
 - `internal/daemonclient/` owns the daemon transport client.
-- `internal/repo/`, `internal/worktree/`, `internal/invocation/`, `internal/mergeflow/`, and `internal/verify/` own domain logic below the command boundary.
+- `internal/integrationworktree/`, `internal/invocation/`, `internal/mergeflow/`, and `internal/verify/` own domain logic below the command boundary.
 - `internal/ids/` and `internal/identity/` own reference resolution and durable repo identity rules.
 - `internal/store/` owns on-disk layout, schema types, scans, load/save behavior, and persisted merge-state files.
 - `internal/watch/` owns the read-model and Bubble Tea workspace UI.

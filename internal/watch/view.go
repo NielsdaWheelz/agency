@@ -8,7 +8,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
@@ -121,8 +120,8 @@ func (m model) renderInvocationsPanel(width, height int) string {
 			prefix,
 			stateWidth, truncateWithEllipsis(m.invocationState(inv), stateWidth),
 			agentWidth, truncateWithEllipsis(m.agentDisplay(inv), agentWidth),
-			worktreeWidth, truncateWithEllipsis(m.worktreeDisplay(inv.WorktreeID), worktreeWidth),
-			repoWidth, truncateWithEllipsis(m.repoDisplay(inv.RepoID), repoWidth),
+			worktreeWidth, truncateWithEllipsis(m.worktreeDisplay(inv.WorktreeName, inv.WorktreeID), worktreeWidth),
+			repoWidth, truncateWithEllipsis(m.repoDisplay(inv.RepoName, inv.RepoID), repoWidth),
 			truncateWithEllipsis(m.latestSummary(inv), latestWidth),
 		)
 		row = truncateWithEllipsis(row, width)
@@ -150,8 +149,8 @@ func (m model) renderDetailsPanel(width int) string {
 	}
 
 	state := m.invocationState(selected)
-	if len(selected.AttentionFlags) > 0 {
-		state += " [" + strings.Join(selected.AttentionFlags, ", ") + "]"
+	if reason := strings.TrimSpace(selected.Reason); reason != "" {
+		state += " (" + reason + ")"
 	}
 
 	latest := m.latestSummary(selected)
@@ -167,13 +166,10 @@ func (m model) renderDetailsPanel(width int) string {
 	}
 
 	lines = append(lines, "Agent:      "+agent)
-	lines = append(lines, "Worktree:   "+m.worktreeDisplay(selected.WorktreeID))
-	lines = append(lines, "Repo:       "+m.repoDisplay(selected.RepoID))
+	lines = append(lines, "Worktree:   "+m.worktreeDisplay(selected.WorktreeName, selected.WorktreeID))
+	lines = append(lines, "Repo:       "+m.repoDisplay(selected.RepoName, selected.RepoID))
 	lines = append(lines, "Runner:     "+selected.Runner+" / "+selected.Mode)
 	lines = append(lines, "State:      "+state)
-	if strings.TrimSpace(selected.Reason) != "" {
-		lines = append(lines, "Reason:     "+selected.Reason)
-	}
 	lines = append(lines, "Latest:     "+latest)
 	lines = append(lines, m.renderSessionDetailLines(width, selected)...)
 	lines = append(lines, "")
@@ -192,7 +188,7 @@ func (m model) renderPageHeader(title string) []string {
 	}
 
 	lines = append(lines, dimStyle.Render(
-		"agent "+m.agentDisplay(selected)+"  worktree "+m.worktreeDisplay(selected.WorktreeID)+"  repo "+m.repoDisplay(selected.RepoID),
+		"agent "+m.agentDisplay(selected)+"  worktree "+m.worktreeDisplay(selected.WorktreeName, selected.WorktreeID)+"  repo "+m.repoDisplay(selected.RepoName, selected.RepoID),
 	))
 	lines = append(lines, dimStyle.Render(
 		"state "+m.invocationState(selected)+"  runner "+selected.Runner+"/"+selected.Mode,
@@ -296,7 +292,11 @@ func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO
 		if sessionName := strings.TrimSpace(m.selectedSession.TmuxSession); sessionName != "" {
 			lines = append(lines, "Tmux:        "+sessionName)
 		}
-		lines = append(lines, fmt.Sprintf("Clients:     %d", sessionConnectedClientCount(m.selectedSession)))
+		clientCount := m.selectedSession.ClientCount
+		if clientCount <= 0 {
+			clientCount = len(m.selectedSession.ConnectedClients)
+		}
+		lines = append(lines, fmt.Sprintf("Clients:     %d", clientCount))
 		if attachCommand := strings.TrimSpace(m.selectedSession.AttachCommand); attachCommand != "" {
 			lines = append(lines, "Attach:      "+attachCommand)
 		}
@@ -305,8 +305,8 @@ func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO
 			recreate = "yes"
 		}
 		lines = append(lines, "Recreate:    "+recreate)
-		if hint := sessionHint(m.selectedSession); hint != "" {
-			lines = append(lines, "Hint:        "+truncateWithEllipsis(hint, max(1, width-13)))
+		if strings.EqualFold(strings.TrimSpace(m.selectedSession.SessionStatus), "missing") && m.selectedSession.RecreateAvailable {
+			lines = append(lines, "Hint:        "+truncateWithEllipsis("use recreate to start a new headed session in the same sandbox", max(1, width-13)))
 		}
 		if len(m.selectedSession.ConnectedClients) > 0 {
 			lines = append(lines, "Connected:")
@@ -335,7 +335,7 @@ func (m model) selectedActionTarget() string {
 	if !ok {
 		return "selected invocation"
 	}
-	return m.agentDisplay(selected) + " / " + m.worktreeDisplay(selected.WorktreeID) + " / " + m.repoDisplay(selected.RepoID)
+	return m.agentDisplay(selected) + " / " + m.worktreeDisplay(selected.WorktreeName, selected.WorktreeID) + " / " + m.repoDisplay(selected.RepoName, selected.RepoID)
 }
 
 func (m model) invocationState(inv daemon.InvocationDTO) string {
@@ -383,44 +383,56 @@ func (m model) agentDisplay(inv daemon.InvocationDTO) string {
 	return name + " (" + shortID(inv.InvocationID, 12) + ")"
 }
 
-func (m model) worktreeDisplay(worktreeID string) string {
-	worktreeID = strings.TrimSpace(worktreeID)
-	if worktreeID == "" {
-		return "-"
+func (m model) worktreeDisplay(name, worktreeID string) string {
+	if strings.TrimSpace(name) != "" || strings.TrimSpace(worktreeID) == "" {
+		return displayWorktree(name, worktreeID)
 	}
 	for _, wt := range m.snapshot.Worktrees {
-		if wt.WorktreeID != worktreeID {
-			continue
+		if wt.WorktreeID == worktreeID {
+			return displayWorktree(wt.WorktreeName, wt.WorktreeID)
 		}
-		name := strings.TrimSpace(wt.WorktreeName)
-		if name == "" {
-			return worktreeID
-		}
-		return name + " (" + worktreeID + ")"
 	}
-	return worktreeID
+	return displayWorktree(name, worktreeID)
 }
 
-func (m model) repoDisplay(repoID string) string {
-	repoID = strings.TrimSpace(repoID)
-	if repoID == "" {
-		return "-"
+func (m model) repoDisplay(name, repoID string) string {
+	if strings.TrimSpace(name) != "" || strings.TrimSpace(repoID) == "" {
+		return displayRepo(name, repoID)
 	}
 	for _, repo := range m.snapshot.Repos {
-		if repo.RepoID != repoID {
-			continue
+		if repo.RepoID == repoID {
+			return displayRepo(repo.RepoKey, repo.RepoID)
 		}
-		label := strings.TrimSpace(repo.RepoName)
-		if label == "" {
-			label = ids.RepoShortName(repo.RepoKey)
-		}
-		if label == "" {
-			label = strings.TrimSpace(repo.RepoKey)
-		}
-		if label == "" {
-			label = repo.RepoID
-		}
-		return label + " (" + repo.RepoID + ")"
 	}
-	return repoID
+	return displayRepo(name, repoID)
+}
+
+func displayWorktree(name, worktreeID string) string {
+	worktreeID = strings.TrimSpace(worktreeID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		if worktreeID == "" {
+			return "-"
+		}
+		return worktreeID
+	}
+	if worktreeID == "" {
+		return name
+	}
+	return name + " (" + worktreeID + ")"
+}
+
+func displayRepo(name, repoID string) string {
+	repoID = strings.TrimSpace(repoID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		if repoID == "" {
+			return "-"
+		}
+		return repoID
+	}
+	if repoID == "" {
+		return name
+	}
+	return name + " (" + repoID + ")"
 }

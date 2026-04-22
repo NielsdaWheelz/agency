@@ -45,7 +45,6 @@ func TestModel_RequestedAttachRequiresBothIDs(t *testing.T) {
 	t.Parallel()
 
 	invocationID, repoID, ok := (model{
-		attachRequested:     true,
 		attachInvocationID:  "inv-1",
 		attachRequestedRepo: "repo-1",
 	}).requestedAttach()
@@ -53,6 +52,6 @@ func TestModel_RequestedAttachRequiresBothIDs(t *testing.T) {
 	assert.Equal(t, "inv-1", invocationID)
 	assert.Equal(t, "repo-1", repoID)
 
-	_, _, ok = (model{attachRequested: true, attachInvocationID: "inv-1"}).requestedAttach()
+	_, _, ok = (model{attachInvocationID: "inv-1"}).requestedAttach()
 	assert.False(t, ok)
 }

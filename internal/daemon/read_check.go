@@ -25,10 +25,6 @@ const (
 // handleGetInvocationCheck handles GET /invocations/{ref}/check.
 func (s *Server) handleGetInvocationCheck(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)

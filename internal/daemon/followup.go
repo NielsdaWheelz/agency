@@ -17,8 +17,7 @@ const followUpPromptEventKind = "agency.followup_prompt"
 
 // handleControlPlaneFollowUp handles POST /invocations/{ref}/followup.
 func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Request, invocationRef string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	// Enforce explicit repo scoping for mutating operations.
 	repoID := r.URL.Query().Get("repo_id")

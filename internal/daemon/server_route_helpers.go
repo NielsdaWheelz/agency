@@ -12,6 +12,10 @@ func trimRoutePrefix(path, prefix string) (string, bool) {
 	return strings.TrimPrefix(path, prefix), true
 }
 
+func routePathEquals(path, route string) bool {
+	return path == route || path == route+"/"
+}
+
 func splitRouteRefAction(tail string) (string, string) {
 	ref, action, _ := strings.Cut(tail, "/")
 	return ref, action

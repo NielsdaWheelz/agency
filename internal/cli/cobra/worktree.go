@@ -11,11 +11,7 @@ import (
 
 func newWorktreeCmd() *cobra.Command {
 	var repoRef string
-	var allRepos bool
-	var all bool
 	var jsonOut bool
-	var base string
-	var open bool
 	var editor string
 	var force bool
 	var yes bool
@@ -26,6 +22,8 @@ func newWorktreeCmd() *cobra.Command {
 	var rebaseStrategy bool
 	var noDeleteBranch bool
 	var agencyConfigPath string
+	createCmd := newWorktreeCreateCmd()
+	lsCmd := newWorktreeLSCmd()
 
 	cmd := &cobra.Command{
 		Use:   "worktree",
@@ -51,19 +49,6 @@ Use:
 			case len(args) == 0:
 				_ = cmd.Help()
 				return errors.New(errors.EUsage, "specify 'create', 'ls', or a worktree ref")
-			case args[0] == "create":
-				if len(args) != 2 {
-					if len(args) < 2 {
-						return errors.New(errors.EUsage, "use 'agency worktree create <worktree-name>'")
-					}
-					return errors.New(errors.EUsage, "too many arguments for \"agency worktree create\"")
-				}
-				return runWorktreeCreate(cmd, args[1], repoRef, base, open, editor)
-			case args[0] == "ls":
-				if len(args) != 1 {
-					return errors.New(errors.EUsage, "too many arguments for \"agency worktree ls\"")
-				}
-				return runWorktreeLS(cmd, repoRef, allRepos, all, jsonOut)
 			default:
 				worktreeRef := args[0]
 				switch {
@@ -102,12 +87,15 @@ Use:
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
-	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
-	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
+	cmd.AddGroup(
+		&cobra.Group{ID: "run", Title: "Run"},
+		&cobra.Group{ID: "inspect", Title: "Inspect"},
+	)
+
+	cmd.AddCommand(createCmd, lsCmd)
+
+	cmd.PersistentFlags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	cmd.Flags().StringVar(&base, "base", "", "Base branch. Omit to use the current branch of the selected checkout.")
-	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the new worktree in your editor after creation")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm removal in non-interactive mode")
@@ -118,8 +106,8 @@ Use:
 	cmd.Flags().BoolVar(&rebaseStrategy, "rebase", false, "Use rebase merge strategy")
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
 	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "load agency config from this file")
-	cmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
 	cmd.MarkFlagsMutuallyExclusive("squash", "merge", "rebase")
+	lsCmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
 	registerRepoFlagCompletion(cmd)
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -135,13 +123,8 @@ Use:
 
 		switch len(args) {
 		case 0:
-			candidates := []string{"create\tCreate a new integration worktree", "ls\tList integration worktrees"}
-			worktrees, directive := completeWorktreeRefsForState(cmd, toComplete, "all")
-			return append(candidates, worktrees...), directive
+			return completeWorktreeRefsForState(cmd, toComplete, "all")
 		case 1:
-			if args[0] == "create" || args[0] == "ls" {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			}
 			values := []string{"path", "open", "shell", "rm", "rebase", "pr"}
 			candidates := make([]string, 0, len(values))
 			for _, value := range values {
@@ -172,33 +155,99 @@ Use:
 	return cmd
 }
 
-func runWorktreeCreate(cmd *cobra.Command, name string, repoRef string, base string, open bool, editor string) error {
-	ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
+func newWorktreeCreateCmd() *cobra.Command {
+	var base string
+	var open bool
+	var editor string
+
+	cmd := &cobra.Command{
+		Use:     "create <worktree-name>",
+		Short:   "Create a new integration worktree",
+		GroupID: "run",
+		Args: func(cmd *cobra.Command, args []string) error {
+			switch len(args) {
+			case 0:
+				return errors.New(errors.EUsage, "use 'agency worktree create <worktree-name>'")
+			case 1:
+				return nil
+			default:
+				return errors.New(errors.EUsage, "too many arguments for \"agency worktree create\"")
+			}
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRef, err := cmd.Flags().GetString("repo")
+			if err != nil {
+				return err
+			}
+
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.WorktreeCreate(ctx, cr, fsys, cwd, commands.WorktreeCreateOpts{
+				RepoRef:    repoRef,
+				Name:       args[0],
+				BaseBranch: strings.TrimSpace(base),
+				Open:       open,
+				Editor:     editor,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 	}
 
-	return commands.WorktreeCreate(ctx, cr, fsys, cwd, commands.WorktreeCreateOpts{
-		RepoRef:    repoRef,
-		Name:       name,
-		BaseBranch: strings.TrimSpace(base),
-		Open:       open,
-		Editor:     editor,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	cmd.Flags().StringVar(&base, "base", "", "Base branch. Omit to use the current branch of the selected checkout.")
+	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the new worktree in your editor after creation")
+	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use")
+
+	return cmd
 }
 
-func runWorktreeLS(cmd *cobra.Command, repoRef string, allRepos bool, all bool, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
+func newWorktreeLSCmd() *cobra.Command {
+	var allRepos bool
+	var all bool
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:     "ls",
+		Short:   "List integration worktrees",
+		GroupID: "inspect",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return errors.New(errors.EUsage, "too many arguments for \"agency worktree ls\"")
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRef, err := cmd.Flags().GetString("repo")
+			if err != nil {
+				return err
+			}
+
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.WorktreeLS(ctx, cr, fsys, cwd, commands.WorktreeLSOpts{
+				RepoRef:  repoRef,
+				AllRepos: allRepos,
+				All:      all,
+				JSON:     jsonOut,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 	}
 
-	return commands.WorktreeLS(ctx, cr, fsys, cwd, commands.WorktreeLSOpts{
-		RepoRef:  repoRef,
-		AllRepos: allRepos,
-		All:      all,
-		JSON:     jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
+	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+
+	return cmd
 }
 
 func runWorktreeShow(cmd *cobra.Command, worktreeRef string, repoRef string, jsonOut bool) error {

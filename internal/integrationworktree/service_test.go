@@ -253,6 +253,44 @@ func TestRemove_GitFails(t *testing.T) {
 		"expected E_WORKTREE_REMOVE_FAILED when git worktree remove exits non-zero")
 }
 
+func TestRemove_DirtyWorktree(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+	repoID := "abc123"
+	wtID := "20260201120000-f1a2"
+
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	meta := store.NewIntegrationWorktreeMeta(
+		wtID, "dirty-test", repoID,
+		"agency/dirty-test-f1a2", "main",
+		treePath, now,
+	)
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+
+	cr := testutil.NewFakeCommandRunner()
+	cr.Responses["git status --porcelain"] = testutil.FakeResponse{
+		Stdout:   " M README.md\n",
+		ExitCode: 0,
+	}
+
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+
+	err = svc.Remove(context.Background(), repoID, wtID, RemoveOpts{
+		RepoRoot: "/fake/repo",
+		Force:    false,
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.EDirtyWorktree, errors.GetCode(err))
+	assert.NotContains(t, cr.Calls, "git -C /fake/repo worktree remove "+treePath)
+}
+
 // TestRemove_GitRunError verifies that Remove returns E_WORKTREE_REMOVE_FAILED
 // when the git worktree remove command itself fails to execute (e.g., binary not found).
 func TestRemove_GitRunError(t *testing.T) {

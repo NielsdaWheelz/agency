@@ -45,9 +45,7 @@ type RunConfig struct {
 	RecordPath string
 }
 
-// GracePeriod is the duration to wait between SIGINT and SIGKILL when
-// terminating a verify process (timeout or cancellation).
-const GracePeriod = 3 * time.Second
+const gracePeriod = 3 * time.Second
 
 // Run executes the verify script and writes the canonical verify_record.json.
 //
@@ -212,19 +210,19 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	}
 
 	// Read verify.json (optional structured output)
-	vjResult := ReadVerifyJSON(cfg.VerifyJSONPath)
-	if vjResult.Exists {
+	vjResult := readVerifyJSON(cfg.VerifyJSONPath)
+	if vjResult.exists {
 		record.VerifyJSONPath = &cfg.VerifyJSONPath
-		if vjResult.Err != nil && record.Error == nil {
+		if vjResult.err != nil && record.Error == nil {
 			// Record parse/validation error only if no other internal error
-			errStr := vjResult.Err.Error()
+			errStr := vjResult.err.Error()
 			record.Error = &errStr
 		}
 	}
 
 	// Derive OK and Summary using precedence rules
-	record.OK = DeriveOK(timedOut, cancelled, record.ExitCode, vjResult.VJ)
-	record.Summary = DeriveSummary(timedOut, cancelled, record.ExitCode, vjResult.VJ)
+	record.OK = deriveOK(timedOut, cancelled, record.ExitCode, vjResult.value)
+	record.Summary = deriveSummary(timedOut, cancelled, record.ExitCode, vjResult.value)
 
 	// Write verify_record.json atomically
 	if err := fs.WriteJSONAtomic(cfg.RecordPath, record, 0o644); err != nil {
@@ -234,14 +232,14 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	return record, nil
 }
 
-// killProcessGroup sends SIGINT to the process group, waits GracePeriod,
+// killProcessGroup sends SIGINT to the process group, waits gracePeriod,
 // then sends SIGKILL to the process group.
 func killProcessGroup(pgid int) {
 	// Send SIGINT to process group (negative pgid targets the group)
 	_ = syscall.Kill(-pgid, syscall.SIGINT)
 
 	// Wait grace period
-	time.Sleep(GracePeriod)
+	time.Sleep(gracePeriod)
 
 	// Send SIGKILL to process group
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)

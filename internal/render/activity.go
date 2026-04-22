@@ -39,19 +39,9 @@ func ActivitySummaryText(kind, summary string) string {
 	}
 }
 
-// FormatActivityLabel returns canonical "[kind] summary" presentation.
-func FormatActivityLabel(kind, summary string) string {
-	return fmt.Sprintf("[%s] %s", NormalizeActivityKind(kind), ActivitySummaryText(kind, summary))
-}
-
-// FormatActivityWithExtras returns activity label with tool/checkpoint suffix.
+// FormatActivityWithExtras returns canonical "[kind] summary" presentation
+// plus concise turn metadata suffixes.
 func FormatActivityWithExtras(kind, summary string, toolCount int, checkpointID int, restorable bool) string {
-	return FormatActivityLabel(kind, summary) + FormatTurnExtras(toolCount, checkpointID, restorable)
-}
-
-// FormatTurnExtras returns concise turn metadata suffix, e.g.
-// "(tools=2, checkpoint=4)".
-func FormatTurnExtras(toolCount int, checkpointID int, restorable bool) string {
 	parts := make([]string, 0, 2)
 	if toolCount > 0 {
 		parts = append(parts, fmt.Sprintf("tools=%d", toolCount))
@@ -60,9 +50,14 @@ func FormatTurnExtras(toolCount int, checkpointID int, restorable bool) string {
 		parts = append(parts, fmt.Sprintf("checkpoint=%d", checkpointID))
 	}
 	if len(parts) == 0 {
-		return ""
+		return fmt.Sprintf("[%s] %s", NormalizeActivityKind(kind), ActivitySummaryText(kind, summary))
 	}
-	return " (" + strings.Join(parts, ", ") + ")"
+	return fmt.Sprintf(
+		"[%s] %s (%s)",
+		NormalizeActivityKind(kind),
+		ActivitySummaryText(kind, summary),
+		strings.Join(parts, ", "),
+	)
 }
 
 // FormatToolCallSummary renders tool calls in one stable style.

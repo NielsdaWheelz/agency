@@ -13,21 +13,6 @@ func TestNormalizeActivityKind_FollowupAliases(t *testing.T) {
 	assert.Equal(t, "follow-up", NormalizeActivityKind("follow-up"))
 }
 
-func TestFormatActivityLabel_UsesFallbackSummary(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "[assistant] assistant turn", FormatActivityLabel("assistant", ""))
-	assert.Equal(t, "[prompt] prompt", FormatActivityLabel("prompt", ""))
-	assert.Equal(t, "[follow-up] follow-up prompt", FormatActivityLabel("followup", ""))
-}
-
-func TestFormatTurnExtras(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "", FormatTurnExtras(0, 0, false))
-	assert.Equal(t, " (tools=2)", FormatTurnExtras(2, 0, false))
-	assert.Equal(t, " (checkpoint=3)", FormatTurnExtras(0, 3, true))
-	assert.Equal(t, " (tools=1, checkpoint=3)", FormatTurnExtras(1, 3, true))
-}
-
 func TestFormatToolCallSummary(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "▶ tool", FormatToolCallSummary("", "", false, 0))
@@ -38,6 +23,8 @@ func TestFormatToolCallSummary(t *testing.T) {
 func TestFormatActivityWithExtras(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "[assistant] assistant turn", FormatActivityWithExtras("assistant", "", 0, 0, false))
+	assert.Equal(t, "[prompt] prompt", FormatActivityWithExtras("prompt", "", 0, 0, false))
+	assert.Equal(t, "[follow-up] follow-up prompt", FormatActivityWithExtras("followup", "", 0, 0, false))
 	assert.Equal(t, "[assistant] fixed tests (tools=2, checkpoint=7)", FormatActivityWithExtras("assistant", "fixed tests", 2, 7, true))
 }
 

@@ -15,11 +15,6 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 	ctx := r.Context()
 	requestID := getOrCreateRequestID(r)
 
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
-
 	params, invalid := parseGetDiffParams(r)
 	if invalid != nil {
 		s.writeAPIError(

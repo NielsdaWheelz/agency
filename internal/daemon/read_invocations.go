@@ -17,11 +17,6 @@ import (
 func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 	requestID := getOrCreateRequestID(r)
 
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
-
 	params, invalid := parseListInvocationsParams(r)
 	if invalid != nil {
 		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
@@ -119,11 +114,6 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 // handleGetInvocation handles GET /invocations/{ref}.
 func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
-
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
 
 	record, resolveErr := s.resolveInvocationRef(invocationRef, r.URL.Query().Get("repo_id"))
 	if resolveErr != nil {

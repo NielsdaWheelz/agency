@@ -105,7 +105,6 @@ const (
 	EInvalidName Code = "E_INVALID_NAME" // name does not match validation rules
 	// Slice 7 global resolution error codes
 	EInvalidRepoPath Code = "E_INVALID_REPO_PATH" // --repo path does not exist or is not inside a git repo
-	ERunRefAmbiguous Code = "E_RUN_REF_AMBIGUOUS" // name matches multiple active runs (across repos)
 	ERepoNotFound    Code = "E_REPO_NOT_FOUND"    // run resolved but no valid repo path exists
 
 	// Slice 8 integration worktree error codes

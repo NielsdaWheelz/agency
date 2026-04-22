@@ -85,6 +85,12 @@ func (s *Store) IntegrationWorktreeMergePath(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "merge.json")
 }
 
+// IntegrationWorktreeVerifyRecordPath returns the path to an integration worktree's verify_record.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/verify_record.json
+func (s *Store) IntegrationWorktreeVerifyRecordPath(repoID, worktreeID string) string {
+	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "verify_record.json")
+}
+
 // IntegrationWorktreeLogsDir returns the logs directory for an integration worktree.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/logs/
 func (s *Store) IntegrationWorktreeLogsDir(repoID, worktreeID string) string {

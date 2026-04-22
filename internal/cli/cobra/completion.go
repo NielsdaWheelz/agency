@@ -326,12 +326,3 @@ func setWorktreeArgCompletion(cmd *cobra.Command, state string) {
 		return completeWorktreeRefsForState(cmd, toComplete, state)
 	}
 }
-
-func setInvocationArgCompletion(cmd *cobra.Command, state string) {
-	if cmd == nil {
-		return
-	}
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return completeInvocationRefsForState(cmd, toComplete, state)
-	}
-}

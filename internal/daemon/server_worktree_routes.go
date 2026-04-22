@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/worktrees" || r.URL.Path == "/worktrees/" {
+	if routePathEquals(r.URL.Path, "/worktrees") {
 		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}

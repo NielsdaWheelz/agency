@@ -14,8 +14,7 @@ import (
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
@@ -254,8 +253,7 @@ func (s *Server) scheduleStdinCompletionFinalize(proc *SupervisedProcess) {
 
 func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 	writeKillError := func(status int, code, message, hint string) {
 		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
 	}

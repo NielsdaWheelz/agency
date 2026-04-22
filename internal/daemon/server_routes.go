@@ -29,8 +29,7 @@ func (s *Server) newHTTPHandler() http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+	if !s.requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -38,7 +37,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	resp := HealthResponse{
 		OK:               true,
 		APIVersion:       APIVersion,
-		BuildVersion:     version.FullVersion(),
+		BuildVersion:     daemonBuildVersion(),
 		GitSHA:           version.Commit,
 		PID:              os.Getpid(),
 		DaemonInstanceID: s.InstanceID,
@@ -48,8 +47,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+	if !s.requireMethod(w, r, http.MethodPost) {
 		return
 	}
 

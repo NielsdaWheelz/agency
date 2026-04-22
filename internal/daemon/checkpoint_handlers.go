@@ -7,13 +7,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // handleCheckpointApply handles POST /invocations/{ref}/checkpoints/apply.
 func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
@@ -125,15 +123,5 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	// Return success
-	resp := CheckpointApplyResponse{
-		OK:             true,
-		APIVersion:     APIVersion,
-		BuildVersion:   version.FullVersion(),
-		RequestID:      requestID,
-		CheckpointID:   cp.ID,
-		SnapshotCommit: cp.SnapshotCommit,
-		RestoredAt:     s.Clock().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	s.writeCheckpointSuccess(w, requestID, cp.ID, cp.SnapshotCommit, s.Clock().UTC().Format("2006-01-02T15:04:05Z"))
 }

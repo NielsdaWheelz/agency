@@ -119,11 +119,8 @@ func (m model) currentLogsKind() string {
 	if strings.TrimSpace(m.logsKind) != "" {
 		return m.logsKind
 	}
-	mode := strings.TrimSpace(m.selectedMode)
-	if selected, ok := m.selectedInvocation(); ok && selected.InvocationID == m.selectedInvocationID && mode == "" {
-		mode = strings.TrimSpace(selected.Mode)
-	}
-	if mode == "headed" {
+	selected, ok := m.selectedInvocation()
+	if ok && strings.TrimSpace(selected.Mode) == "headed" {
 		return "terminal"
 	}
 	return "raw"

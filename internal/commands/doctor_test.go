@@ -134,6 +134,14 @@ func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
 	}
 }
 
+func mustCanonicalDoctorPath(t *testing.T, path string) string {
+	t.Helper()
+
+	canonicalPath, err := doctorCanonicalPath(path, "doctor test path")
+	require.NoError(t, err)
+	return canonicalPath
+}
+
 func newDoctorRunner(repoRoot string) *testutil.FakeCommandRunner {
 	runner := testutil.NewFakeCommandRunner()
 	runner.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{
@@ -169,6 +177,7 @@ func newDoctorRunner(repoRoot string) *testutil.FakeCommandRunner {
 func TestDoctor_Success(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
+	canonicalRepoRoot := mustCanonicalDoctorPath(t, repoRoot)
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
@@ -189,11 +198,11 @@ func TestDoctor_Success(t *testing.T) {
 
 	// Check key output lines
 	expectedLines := []string{
-		"repo_root: " + repoRoot,
+		"repo_root: " + canonicalRepoRoot,
 		"agency_data_dir: " + dataDir,
 		"agency_config_dir: " + configDir,
 		"user_config_path: " + filepath.Join(configDir, "config.json"),
-		"agency_json_path: " + filepath.Join(repoRoot, "agency.json"),
+		"agency_json_path: " + filepath.Join(canonicalRepoRoot, "agency.json"),
 		"agency_json_source: repo",
 		"repo_key: github:testowner/testrepo",
 		"origin_present: true",
@@ -277,15 +286,16 @@ func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
 	assert.Contains(t, output, "defaults_runner_model_source: local")
 	assert.Contains(t, output, "defaults_runner_effort: high")
 	assert.Contains(t, output, "defaults_runner_effort_source: local")
-	assert.Contains(t, output, "script_setup: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_setup.sh"))
-	assert.Contains(t, output, "script_verify: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_verify.sh"))
-	assert.Contains(t, output, "script_archive: "+filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh"))
+	assert.Contains(t, output, "script_setup: "+mustCanonicalDoctorPath(t, filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_setup.sh")))
+	assert.Contains(t, output, "script_verify: "+mustCanonicalDoctorPath(t, filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_verify.sh")))
+	assert.Contains(t, output, "script_archive: "+mustCanonicalDoctorPath(t, filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh")))
 }
 
 func TestDoctor_ManagedWorktreeUsesCanonicalRepoConfig(t *testing.T) {
 	t.Parallel()
 
 	canonicalRepoRoot, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "doctor-managed")
+	canonicalRepoRoot = mustCanonicalDoctorPath(t, canonicalRepoRoot)
 	worktreeRoot := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
 	setupTestRepoAt(t, canonicalRepoRoot)
 	writeLocalAgencyConfig(t, filepath.Join(worktreeRoot, "agency.json"))
@@ -305,9 +315,9 @@ func TestDoctor_ManagedWorktreeUsesCanonicalRepoConfig(t *testing.T) {
 	assert.Contains(t, output, "agency_json_source: repo")
 	assert.Contains(t, output, "defaults_runner_model: user-opus")
 	assert.Contains(t, output, "defaults_runner_model_source: user")
-	assert.Contains(t, output, "script_setup: "+filepath.Join(canonicalRepoRoot, "scripts", "agency_setup.sh"))
-	assert.Contains(t, output, "script_verify: "+filepath.Join(canonicalRepoRoot, "scripts", "agency_verify.sh"))
-	assert.Contains(t, output, "script_archive: "+filepath.Join(canonicalRepoRoot, "scripts", "agency_archive.sh"))
+	assert.Contains(t, output, "script_setup: "+mustCanonicalDoctorPath(t, filepath.Join(canonicalRepoRoot, "scripts", "agency_setup.sh")))
+	assert.Contains(t, output, "script_verify: "+mustCanonicalDoctorPath(t, filepath.Join(canonicalRepoRoot, "scripts", "agency_verify.sh")))
+	assert.Contains(t, output, "script_archive: "+mustCanonicalDoctorPath(t, filepath.Join(canonicalRepoRoot, "scripts", "agency_archive.sh")))
 	assert.NotContains(t, output, filepath.Join(worktreeRoot, "agency.json"))
 	assert.NotContains(t, output, "defaults_runner_model: local-opus")
 }
@@ -315,6 +325,7 @@ func TestDoctor_ManagedWorktreeUsesCanonicalRepoConfig(t *testing.T) {
 func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
+	canonicalRepoRoot := mustCanonicalDoctorPath(t, repoRoot)
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
   "version": 1,
   "scripts": {
@@ -345,9 +356,9 @@ func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
 
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(repoRoot, "agency.json"), ae.Details["path"])
+	assert.Equal(t, filepath.Join(canonicalRepoRoot, "agency.json"), ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(repoRoot)+" --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(canonicalRepoRoot)+" --repo-config --force")
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {

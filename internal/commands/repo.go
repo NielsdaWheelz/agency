@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -213,6 +214,17 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 type daemonNavSetup struct {
 	dirs   paths.Dirs
 	client *daemonclient.Client
+}
+
+func canonicalCommandDir(pathValue, label string) (string, error) {
+	absPath, err := filepath.Abs(pathValue)
+	if err != nil {
+		return "", errors.Wrap(errors.EInternal, "failed to resolve "+label, err)
+	}
+	if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		return resolvedPath, nil
+	}
+	return absPath, nil
 }
 
 func resolveCommandDirs(dataDirOverride, configDirOverride string) (paths.Dirs, error) {

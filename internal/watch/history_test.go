@@ -87,7 +87,15 @@ func TestHistoryPage_ViewContainsTurnDataAndHelp(t *testing.T) {
 			{WorktreeID: "wt-1", RepoID: "repo-1", WorktreeName: "feature-auth"},
 		},
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", Runner: "codex", Mode: "headed"},
+			{
+				InvocationID: "inv-1",
+				RepoID:       "repo-1",
+				RepoName:     "github.com/acme/one",
+				WorktreeID:   "wt-1",
+				WorktreeName: "feature-auth",
+				Runner:       "codex",
+				Mode:         "headed",
+			},
 		},
 	}
 	m.selectedIndex = 0
@@ -103,7 +111,7 @@ func TestHistoryPage_ViewContainsTurnDataAndHelp(t *testing.T) {
 	view := m.View()
 	content := view.Content
 
-	assert.Contains(t, content, "codex/headed / feature-auth / github.com/acme/one")
+	assert.Contains(t, content, "codex/headed / feature-auth (wt-1) / github.com/acme/one (repo-1)")
 	assert.Contains(t, content, "history / invocation inv-1")
 	assert.NotContains(t, content, "invocation history  inv-1")
 	assert.Contains(t, content, "Fix the bug")
@@ -163,7 +171,6 @@ func TestHistoryPageAttach_QuitsAndDefersAttach(t *testing.T) {
 	m.page = pageHistory
 	m.selectedInvocationID = "inv-1"
 	m.selectedRepoID = "repo-1"
-	m.selectedMode = "headed"
 	m.selectedSession = daemon.InvocationSessionData{
 		InvocationID:  "inv-1",
 		RepoID:        "repo-1",

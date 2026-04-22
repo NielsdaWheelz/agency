@@ -38,7 +38,7 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Path == "/repos" || r.URL.Path == "/repos/" {
+	if routePathEquals(r.URL.Path, "/repos") {
 		if !s.requireMethod(w, r, http.MethodGet) {
 			return
 		}

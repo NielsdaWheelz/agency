@@ -2,15 +2,7 @@ package verify
 
 import "fmt"
 
-// DeriveOK computes the final verification result using the locked precedence rules (v1).
-//
-// Precedence order:
-//  1. if timedOut or cancelled => false
-//  2. else if exitCode == nil => false
-//  3. else if *exitCode != 0 => false
-//  4. else if vj != nil => vj.OK (verify.json may downgrade success but never upgrades failure)
-//  5. else => true
-func DeriveOK(timedOut, cancelled bool, exitCode *int, vj *VerifyJSON) bool {
+func deriveOK(timedOut, cancelled bool, exitCode *int, vj *verifyJSON) bool {
 	// 1. Timeout or cancellation always means failure
 	if timedOut || cancelled {
 		return false
@@ -35,16 +27,7 @@ func DeriveOK(timedOut, cancelled bool, exitCode *int, vj *VerifyJSON) bool {
 	return true
 }
 
-// DeriveSummary computes the human-readable summary for the verify result.
-//
-// Summary rules:
-//   - if vj != nil and vj.Summary != "" => use it
-//   - else if timedOut => "verify timed out"
-//   - else if cancelled => "verify cancelled"
-//   - else if exitCode == nil => "verify failed (no exit code)"
-//   - else if *exitCode == 0 => "verify succeeded"
-//   - else => fmt.Sprintf("verify failed (exit %d)", *exitCode)
-func DeriveSummary(timedOut, cancelled bool, exitCode *int, vj *VerifyJSON) string {
+func deriveSummary(timedOut, cancelled bool, exitCode *int, vj *verifyJSON) string {
 	// Prefer verify.json summary if present
 	if vj != nil && vj.Summary != "" {
 		return vj.Summary

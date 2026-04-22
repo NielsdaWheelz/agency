@@ -27,13 +27,6 @@ type WatchOpts struct {
 	Output          io.Writer
 }
 
-type watchActionDispatcher struct {
-	cr              exec.CommandRunner
-	fsys            fs.FS
-	cwd             string
-	dataDirOverride string
-}
-
 type watchLaunchOptions struct {
 	initialPage     watch.InitialPage
 	invocationID    string
@@ -44,130 +37,6 @@ type watchLaunchOptions struct {
 	isInteractive   func() bool
 	dataDirOverride string
 	runWatch        func(context.Context, *daemonclient.Client, watch.RunOptions) (watch.RunResult, error)
-}
-
-func (d *watchActionDispatcher) Open(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentOpen(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
-			InvocationRef:   invocationID,
-			RepoRef:         repoID,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) PRSync(ctx context.Context, worktreeID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return WorktreePRSync(ctx, d.cr, d.fsys, d.cwd, WorktreePRSyncOpts{
-			WorktreeRef:     worktreeID,
-			RepoRef:         repoID,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Stop(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentStop(ctx, d.cr, d.fsys, d.cwd, AgentStopOpts{
-			InvocationRef: invocationID,
-			RepoRef:       repoID,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Kill(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentKill(ctx, d.cr, d.fsys, d.cwd, AgentKillOpts{
-			InvocationRef: invocationID,
-			RepoRef:       repoID,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Land(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentLand(ctx, d.cr, d.fsys, d.cwd, AgentLandOpts{
-			InvocationRef: invocationID,
-			RepoRef:       repoID,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Discard(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentDiscard(ctx, d.cr, d.fsys, d.cwd, AgentDiscardOpts{
-			InvocationRef: invocationID,
-			RepoRef:       repoID,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Recreate(ctx context.Context, invocationID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentRecreate(ctx, d.cr, d.fsys, d.cwd, AgentRecreateOpts{
-			InvocationRef:   invocationID,
-			RepoRef:         repoID,
-			Detached:        true,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Followup(ctx context.Context, invocationID, repoID, prompt string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return AgentFollowup(ctx, d.cr, d.fsys, d.cwd, AgentFollowupOpts{
-			InvocationRef:   invocationID,
-			RepoRef:         repoID,
-			Prompt:          prompt,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) PRMerge(ctx context.Context, worktreeID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return WorktreePRMerge(ctx, d.cr, d.fsys, d.cwd, WorktreePRMergeOpts{
-			WorktreeRef:     worktreeID,
-			RepoRef:         repoID,
-			Yes:             true,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) Rebase(ctx context.Context, worktreeID, repoID string) (string, error) {
-	return d.capture(func(stdout, stderr io.Writer) error {
-		return WorktreeRebase(ctx, d.cr, d.fsys, d.cwd, WorktreeRebaseOpts{
-			WorktreeRef:     worktreeID,
-			RepoRef:         repoID,
-			DataDirOverride: d.dataDirOverride,
-		}, stdout, stderr)
-	})
-}
-
-func (d *watchActionDispatcher) capture(run func(stdout, stderr io.Writer) error) (string, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	err := run(&stdout, &stderr)
-
-	output := strings.TrimSpace(stdout.String())
-	if errText := strings.TrimSpace(stderr.String()); errText != "" {
-		if output != "" {
-			output += "\n"
-		}
-		output += errText
-	}
-
-	return output, err
-}
-
-func newWatchActionDispatcher(cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string) *watchActionDispatcher {
-	return &watchActionDispatcher{
-		cr:              cr,
-		fsys:            fsys,
-		cwd:             cwd,
-		dataDirOverride: dataDirOverride,
-	}
 }
 
 func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, stdout, stderr io.Writer, opts watchLaunchOptions) error {
@@ -227,7 +96,22 @@ func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 		output = stdout
 	}
 
-	dispatcher := newWatchActionDispatcher(cr, fsys, cwd, opts.dataDirOverride)
+	capture := func(run func(stdout, stderr io.Writer) error) (string, error) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		err := run(&stdout, &stderr)
+
+		output := strings.TrimSpace(stdout.String())
+		if errText := strings.TrimSpace(stderr.String()); errText != "" {
+			if output != "" {
+				output += "\n"
+			}
+			output += errText
+		}
+
+		return output, err
+	}
+
 	runWatch := opts.runWatch
 	if runWatch == nil {
 		runWatch = watch.Run
@@ -240,18 +124,97 @@ func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 		Interval:     interval,
 		Input:        input,
 		Output:       output,
-		Open:         dispatcher.Open,
-		Stop:         dispatcher.Stop,
-		Kill:         dispatcher.Kill,
-		Land:         dispatcher.Land,
-		Discard:      dispatcher.Discard,
-		Recreate:     dispatcher.Recreate,
-		Followup:     dispatcher.Followup,
-		PRSync:       dispatcher.PRSync,
-		PRMerge:      dispatcher.PRMerge,
-		Rebase:       dispatcher.Rebase,
+		Open: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentOpen(ctx, cr, fsys, cwd, AgentOpenOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Stop: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentStop(ctx, cr, fsys, cwd, AgentStopOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Kill: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentKill(ctx, cr, fsys, cwd, AgentKillOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Land: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentLand(ctx, cr, fsys, cwd, AgentLandOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Discard: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentDiscard(ctx, cr, fsys, cwd, AgentDiscardOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Recreate: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentRecreate(ctx, cr, fsys, cwd, AgentRecreateOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					Detached:        true,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Followup: func(ctx context.Context, invocationID, repoID, prompt string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentFollowup(ctx, cr, fsys, cwd, AgentFollowupOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					Prompt:          prompt,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		PRSync: func(ctx context.Context, worktreeID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return WorktreePRSync(ctx, cr, fsys, cwd, WorktreePRSyncOpts{
+					WorktreeRef:     worktreeID,
+					RepoRef:         repoID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		PRMerge: func(ctx context.Context, worktreeID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return WorktreePRMerge(ctx, cr, fsys, cwd, WorktreePRMergeOpts{
+					WorktreeRef:     worktreeID,
+					RepoRef:         repoID,
+					Yes:             true,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Rebase: func(ctx context.Context, worktreeID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return WorktreeRebase(ctx, cr, fsys, cwd, WorktreeRebaseOpts{
+					WorktreeRef:     worktreeID,
+					RepoRef:         repoID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
 		Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
-			return dispatcher.capture(func(stdout, stderr io.Writer) error {
+			return capture(func(stdout, stderr io.Writer) error {
 				return AgentRestore(ctx, cr, fsys, cwd, AgentRestoreOpts{
 					InvocationRef:   invocationID,
 					RepoRef:         repoID,

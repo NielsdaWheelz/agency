@@ -40,10 +40,6 @@ type timelineSortableEntry struct {
 // handleGetInvocationTimeline handles GET /invocations/{ref}/timeline.
 func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	params, invalidLimit, invalidOrder := parseGetTimelineParams(r)

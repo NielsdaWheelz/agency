@@ -3,50 +3,26 @@ package watch
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
-	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/render"
 )
 
 func loadInvocationTranscript(ctx context.Context, client *daemonclient.Client, invocationID, repoID string) (string, error) {
-	if client == nil {
-		return "", errors.New(errors.EInternal, "watch runtime requires a daemon client")
-	}
-	if strings.TrimSpace(invocationID) == "" || strings.TrimSpace(repoID) == "" {
-		return "", errors.New(errors.EInvalidArgument, "transcript page requires an invocation and repo")
+	timelineEntries, err := loadAllTimelineEntries(ctx, client, invocationID, repoID, "transcript")
+	if err != nil {
+		return "", err
 	}
 
-	entries := make([]render.TranscriptEntry, 0, 128)
-	cursor := ""
-	for {
-		result, err := client.GetInvocationTimeline(ctx, invocationID, repoID, daemonclient.GetInvocationTimelineOpts{
-			Limit:  500,
-			Cursor: cursor,
+	entries := make([]render.TranscriptEntry, 0, len(timelineEntries))
+	for _, entry := range timelineEntries {
+		entries = append(entries, render.TranscriptEntry{
+			Kind:      entry.Kind,
+			Timestamp: entry.Timestamp,
+			Data:      entry.Data,
 		})
-		if err != nil {
-			return "", err
-		}
-		for _, entry := range result.Data.Entries {
-			entries = append(entries, render.TranscriptEntry{
-				Kind:      entry.Kind,
-				Timestamp: entry.Timestamp,
-				Data:      entry.Data,
-			})
-		}
-		if len(entries) > maxHistoryEntries {
-			return "", errors.New(errors.EInvalidArgument, fmt.Sprintf("interactive transcript view supports at most %d timeline entries", maxHistoryEntries))
-		}
-		if result.Data.NextCursor == "" {
-			break
-		}
-		if result.Data.NextCursor == cursor {
-			return "", errors.New(errors.EInternal, "timeline pagination cursor did not advance")
-		}
-		cursor = result.Data.NextCursor
 	}
 
 	var buf bytes.Buffer

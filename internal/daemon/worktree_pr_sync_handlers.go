@@ -7,13 +7,11 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
 // handleWorktreePRSync handles POST /worktrees/{ref}/pr/sync.
 func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, worktreeRef string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
 		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
@@ -51,7 +49,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	resp, err := s.executeWorktreePRSync(r.Context(), requestID, record, req)
+	result, err := s.executeWorktreePRSync(r.Context(), record, req)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -60,15 +58,14 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), prSyncHintFromError(err))
 		return
 	}
-	s.writeJSON(w, http.StatusOK, *resp)
+	s.writeWorktreePRSyncSuccess(w, requestID, record, result)
 }
 
 func (s *Server) executeWorktreePRSync(
 	ctx context.Context,
-	requestID string,
 	record *store.IntegrationWorktreeRecord,
 	req WorktreePRSyncRequest,
-) (*WorktreePRSyncResponse, error) {
+) (*prSyncResult, error) {
 	if record == nil || record.Meta == nil {
 		return nil, errors.New(errors.EInternal, "worktree metadata missing")
 	}
@@ -131,18 +128,7 @@ func (s *Server) executeWorktreePRSync(
 		return nil, err
 	}
 
-	return &WorktreePRSyncResponse{
-		OK:                    true,
-		APIVersion:            APIVersion,
-		BuildVersion:          version.FullVersion(),
-		RequestID:             requestID,
-		RepoID:                record.RepoID,
-		IntegrationWorktreeID: record.WorktreeID,
-		Branch:                result.Branch,
-		PRNumber:              result.PRNumber,
-		PRURL:                 result.PRURL,
-		PRAction:              result.PRAction,
-	}, nil
+	return result, nil
 }
 
 func (s *Server) performWorktreePRSync(

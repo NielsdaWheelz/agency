@@ -1,8 +1,6 @@
 package render
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -20,9 +18,6 @@ type TranscriptEntry struct {
 // TranscriptOpts controls transcript rendering behavior.
 type TranscriptOpts struct {
 	NoColor bool // caller should check NO_COLOR env and set this
-	// ExpandToolPayloads renders full tool input payloads for tool_use blocks.
-	// Default false keeps human transcripts concise.
-	ExpandToolPayloads bool
 }
 
 // ANSI escape codes for terminal styling.
@@ -153,15 +148,9 @@ func renderAssistantMessage(w io.Writer, payload TimelinePayload, opts Transcrip
 					return err
 				}
 				if input := block.Input; input != nil {
-					if opts.ExpandToolPayloads {
-						if err := renderJSONIndented(w, input, "  "); err != nil {
-							return err
-						}
-					} else {
-						_, err = fmt.Fprintln(w, opts.style(ansiDim, "  (input hidden; use raw/json to inspect)"))
-						if err != nil {
-							return err
-						}
+					_, err = fmt.Fprintln(w, opts.style(ansiDim, "  (input hidden; use raw/json to inspect)"))
+					if err != nil {
+						return err
 					}
 				}
 			}
@@ -364,21 +353,4 @@ func indentText(text, prefix string) string {
 		lines[i] = prefix + line
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderJSONIndented(w io.Writer, v interface{}, prefix string) error {
-	data, err := json.Marshal(v)
-	if err != nil {
-		_, err = fmt.Fprintf(w, "%s%v\n", prefix, v)
-		return err
-	}
-
-	var buf bytes.Buffer
-	// json.Indent's prefix applies to lines 2+; we prepend prefix to line 1.
-	if json.Indent(&buf, data, prefix, "  ") == nil {
-		_, err = fmt.Fprintln(w, prefix+buf.String())
-	} else {
-		_, err = fmt.Fprintln(w, prefix+string(data))
-	}
-	return err
 }
