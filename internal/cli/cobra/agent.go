@@ -37,7 +37,7 @@ from an integration worktree. Invocations are the execution layer: they run the
 model, stream logs, create checkpoints, and eventually land or discard work.
 
 Use:
-  agency agent start       to create a new sandbox from the active context
+  agency agent start       to create a new sandbox from local defaults or the active context fallback
   agency agent start --worktree <worktree-ref>
                            to create a new sandbox from one worktree
   agency agent ls         to list invocations
@@ -245,7 +245,7 @@ func newAgentStartCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&worktreeRef, "worktree", "", "Use this integration worktree instead of the active context or cwd")
+	cmd.Flags().StringVar(&worktreeRef, "worktree", "", "Use this integration worktree instead of local/default resolution")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner id to use")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run through the daemon without tmux attachment")

@@ -181,6 +181,59 @@ func TestGetRepoRoot_RelativePathNormalized(t *testing.T) {
 	assert.Equal(t, expected, root.Path)
 }
 
+func TestGetCurrentBranch_Success(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cr := newStubRunner()
+
+	repoRoot := "/some/project"
+	cr.On("git", []string{"branch", "--show-current"}, repoRoot, exec.CmdResult{
+		Stdout:   "main\n",
+		ExitCode: 0,
+	})
+
+	branch, ok, err := GetCurrentBranch(ctx, cr, repoRoot)
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "main", branch)
+}
+
+func TestGetCurrentBranch_DetachedHead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cr := newStubRunner()
+
+	repoRoot := "/some/project"
+	cr.On("git", []string{"branch", "--show-current"}, repoRoot, exec.CmdResult{
+		Stdout:   "\n",
+		ExitCode: 0,
+	})
+
+	branch, ok, err := GetCurrentBranch(ctx, cr, repoRoot)
+
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Empty(t, branch)
+}
+
+func TestGetCurrentBranch_MultiLineOutput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cr := newStubRunner()
+
+	repoRoot := "/some/project"
+	cr.On("git", []string{"branch", "--show-current"}, repoRoot, exec.CmdResult{
+		Stdout:   "main\nfeature\n",
+		ExitCode: 0,
+	})
+
+	_, _, err := GetCurrentBranch(ctx, cr, repoRoot)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EInternal, errors.GetCode(err))
+}
+
 func TestGetOriginInfo_Present(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

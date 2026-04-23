@@ -22,7 +22,9 @@ This document covers config paths, directory overrides, and precedence.
 
 - User config is loaded from `AGENCY_CONFIG_DIR/config.json`.
 - Repo config resolution order is: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `AGENCY_CONFIG_DIR`.
-- `agency agent start` resolves targeting in this order: explicit `--repo` and `--worktree`, then `AGENCY_CONFIG_DIR/current-context.json`, then cwd when cwd already identifies a present integration worktree.
+- Ambient targeting uses this order: explicit flag, current directory, active context, then error.
+- For `agency worktree create`, omitted `--repo` resolves from the current directory first and then from `AGENCY_CONFIG_DIR/current-context.json`; omitted `--base` resolves from the current branch of the selected checkout.
+- For `agency agent start`, omitted `--repo` resolves from the current directory first and then from `AGENCY_CONFIG_DIR/current-context.json`; omitted `--worktree` resolves from cwd only when cwd already identifies a present integration worktree, then from `AGENCY_CONFIG_DIR/current-context.json`, then errors.
 - `agency agent start` loads typed runner defaults from user `config.json`, overlays repo-scoped fields from the selected `agency.json`, and applies explicit `--model` and `--effort` last.
 - `agency agent start` resolves Claude `permission_mode` from user `config.json` only.
 - Merge, verify, and archive flows use the same canonical repo-root config resolution.

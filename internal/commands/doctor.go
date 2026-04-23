@@ -342,11 +342,14 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 }
 
 func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot string) (string, error) {
-	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, agencyexec.RunOpts{Dir: repoRoot})
+	branch, ok, err := git.GetCurrentBranch(ctx, cr, repoRoot)
 	if err != nil {
 		return "", errors.Wrap(errors.EInternal, "failed to get current branch", err)
 	}
-	return strings.TrimSpace(result.Stdout), nil
+	if !ok {
+		return "", nil
+	}
+	return branch, nil
 }
 
 // writeDoctorOutput writes the stable key: value output.

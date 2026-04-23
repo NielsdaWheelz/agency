@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -25,32 +26,29 @@ type WorktreeCreateOpts struct {
 	Editor     string
 }
 
-func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, cwd, repoRef string) (string, string, error) {
+func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, fsys fs.FS, cwd, repoRef string) (string, string, error) {
+	cwdSelection, err := inspectCWDAmbientSelection(ctx, cr, ns, cwd)
+	if err != nil {
+		return "", "", err
+	}
+
 	if strings.TrimSpace(repoRef) != "" {
 		repo, err := resolveAccessibleRepo(ctx, ns.client, repoRef)
 		if err != nil {
 			return "", "", err
 		}
-		return repo.PreferredRoot, repo.PreferredRoot, nil
-	}
-
-	cwdWorktree, cwdHasWorktree, err := findPresentWorktreeContainingCWD(ctx, ns.client, cwd)
-	if err != nil {
-		return "", "", err
-	}
-	if cwdHasWorktree {
-		repo, err := resolveAccessibleRepo(ctx, ns.client, cwdWorktree.RepoID)
+		baseRoot, err := resolveWorktreeCreateBaseRoot(ctx, ns, fsys, cwdSelection, repo)
 		if err != nil {
 			return "", "", err
 		}
-		currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-		if err != nil {
-			return "", "", err
-		}
-		return repo.PreferredRoot, currentRoot.Path, nil
+		return repo.PreferredRoot, baseRoot, nil
 	}
 
-	if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
+	if cwdSelection.HasRepo {
+		return cwdSelection.Repo.PreferredRoot, cwdSelection.RepoRoot, nil
+	}
+
+	if cwdSelection.InsideAgencyManagedTree {
 		return "", "", errors.NewWithDetails(
 			errors.EUnsafeRepoRoot,
 			"current directory is inside an agency-managed tree but not a present integration worktree",
@@ -60,21 +58,41 @@ func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *
 		)
 	}
 
-	currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
-	if err != nil {
-		return "", "", errors.NewWithDetails(
-			errors.ENoRepoContext,
-			"cannot resolve worktree create without a repo context",
-			map[string]string{
-				"hint": "run from a git checkout, or pass --repo <repo_ref>",
-			},
-		)
-	}
-	repo, err := resolveAccessibleRegisteredRepo(ctx, ns.client, currentRoot.Path)
+	currentCtx, hasCurrentCtx, err := loadActiveContextFallback(ctx, ns.client, fsys, ns.dirs.ConfigDir, true)
 	if err != nil {
 		return "", "", err
 	}
-	return repo.PreferredRoot, currentRoot.Path, nil
+	if hasCurrentCtx {
+		repo, err := resolveAccessibleRepo(ctx, ns.client, currentCtx.RepoID)
+		if err != nil {
+			return "", "", err
+		}
+		return repo.PreferredRoot, currentCtx.WorktreePath, nil
+	}
+
+	return "", "", errors.NewWithDetails(
+		errors.ENoRepoContext,
+		"cannot resolve worktree create without a repo context",
+		map[string]string{
+			"hint": "run from a git checkout, pass --repo <repo_ref>, or set an active context with `agency context use <worktree-ref>`",
+		},
+	)
+}
+
+func resolveWorktreeCreateBaseRoot(ctx context.Context, ns *daemonNavSetup, fsys fs.FS, cwdSelection cwdTargetSelection, repo daemon.RepoDTO) (string, error) {
+	if cwdSelection.HasRepo && cwdSelection.Repo.RepoID == repo.RepoID {
+		return cwdSelection.RepoRoot, nil
+	}
+
+	currentCtx, hasCurrentCtx, err := loadActiveContextFallback(ctx, ns.client, fsys, ns.dirs.ConfigDir, false)
+	if err != nil {
+		return "", err
+	}
+	if hasCurrentCtx && currentCtx.RepoID == repo.RepoID {
+		return currentCtx.WorktreePath, nil
+	}
+
+	return repo.PreferredRoot, nil
 }
 
 // WorktreeCreate creates a new integration worktree.
@@ -96,24 +114,24 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return err
 	}
 
-	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, cwd, repoRef)
+	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, fsys, cwd, repoRef)
 	if err != nil {
 		return err
 	}
 
 	if baseBranch == "" {
-		result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: baseRoot})
+		currentBranch, ok, err := git.GetCurrentBranch(ctx, cr, baseRoot)
 		if err != nil {
 			return errors.Wrap(errors.EBaseBranchNotFound, "failed to determine the current branch; pass --base explicitly", err)
 		}
-		baseBranch = strings.TrimSpace(result.Stdout)
-		if result.ExitCode != 0 || baseBranch == "" {
+		if !ok {
 			return errors.NewWithDetails(
 				errors.EBaseBranchNotFound,
 				"failed to determine the current branch; pass --base explicitly",
 				map[string]string{"repo_root": baseRoot},
 			)
 		}
+		baseBranch = currentBranch
 	}
 
 	hasCommits, err := git.HasCommits(ctx, cr, baseRoot)
@@ -124,7 +142,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return errors.New(errors.EEmptyRepo, "repository has no commits; create an initial commit first")
 	}
 
-	clean, err := git.IsClean(ctx, cr, baseRoot)
+	clean, err := git.IsCleanExcludingAgency(ctx, cr, baseRoot)
 	if err != nil {
 		return err
 	}

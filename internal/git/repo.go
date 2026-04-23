@@ -74,6 +74,27 @@ func GetRepoRoot(ctx context.Context, cr exec.CommandRunner, cwd string) (RepoRo
 	return RepoRoot{Path: absPath}, nil
 }
 
+// GetCurrentBranch returns the currently checked out branch for repoRoot.
+// Uses `git branch --show-current`. Detached HEAD returns ok=false with no error.
+func GetCurrentBranch(ctx context.Context, cr exec.CommandRunner, repoRoot string) (branch string, ok bool, err error) {
+	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, exec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		return "", false, errors.Wrap(errors.EInternal, "failed to run git branch --show-current", err)
+	}
+	if result.ExitCode != 0 {
+		return "", false, nil
+	}
+
+	branch = strings.TrimSpace(result.Stdout)
+	if branch == "" {
+		return "", false, nil
+	}
+	if strings.Contains(branch, "\n") {
+		return "", false, errors.New(errors.EInternal, "git branch --show-current returned unexpected multi-line output")
+	}
+	return branch, true, nil
+}
+
 // GetOriginInfo retrieves the remote origin URL from the repository.
 // Uses `git config --get remote.origin.url` via CommandRunner.
 //
@@ -216,6 +237,21 @@ func IsClean(ctx context.Context, cr exec.CommandRunner, repoRoot string) (bool,
 	}
 
 	// Clean = empty stdout
+	return strings.TrimSpace(result.Stdout) == "", nil
+}
+
+// IsCleanExcludingAgency checks if the working tree is clean while ignoring
+// Agency-owned metadata under .agency/.
+func IsCleanExcludingAgency(ctx context.Context, cr exec.CommandRunner, repoRoot string) (bool, error) {
+	result, err := cr.Run(ctx, "git", []string{"status", "--porcelain", "--", ":(exclude).agency"}, exec.RunOpts{Dir: repoRoot})
+	if err != nil {
+		return false, errors.Wrap(errors.EInternal, "failed to run git status --porcelain excluding .agency", err)
+	}
+
+	if result.ExitCode != 0 {
+		return false, nil
+	}
+
 	return strings.TrimSpace(result.Stdout) == "", nil
 }
 

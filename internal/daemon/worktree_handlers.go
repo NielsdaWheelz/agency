@@ -43,6 +43,10 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "name is required", "")
 		return
 	}
+	if req.BaseBranch == "" {
+		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "base_branch is required", "")
+		return
+	}
 
 	// Canonicalize repo_root: Abs -> EvalSymlinks -> git rev-parse --show-toplevel
 	repoRoot, err := filepath.Abs(req.RepoRoot)
@@ -76,18 +80,6 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		// Return the existing worktree
 		s.writeWorktreeSuccess(w, entry.WorktreeID, entry.TreePath, entry.Branch, repoIdentity.RepoID)
 		return
-	}
-
-	// Determine base branch.
-	baseBranch := req.BaseBranch
-	if baseBranch == "" {
-		result, err := s.Runner.Run(ctx, "git", []string{"-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"}, exec.RunOpts{})
-		if err != nil || result.ExitCode != 0 {
-			s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EBaseBranchNotFound),
-				"failed to determine current branch; use base_branch to specify", "")
-			return
-		}
-		baseBranch = strings.TrimSpace(result.Stdout)
 	}
 
 	// Acquire repo lock before mutation.
@@ -124,7 +116,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		Name:       req.Name,
 		RepoRoot:   repoRoot,
 		RepoID:     repoIdentity.RepoID,
-		BaseBranch: baseBranch,
+		BaseBranch: req.BaseBranch,
 	})
 	if err != nil {
 		code := errors.GetCode(err)

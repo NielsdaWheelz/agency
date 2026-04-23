@@ -53,7 +53,7 @@ func NewRootCmd() *cobra.Command {
 Primary workflow:
   1. Register a repo once so --repo works from any directory.
   2. Create an integration worktree for a task.
-  3. Optionally set an active context for that worktree.
+  3. Optionally set an active context for cross-directory fallback.
   4. Start an agent in that worktree.
   5. Use watch to inspect running sessions and history.
 

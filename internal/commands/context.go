@@ -33,6 +33,7 @@ type validatedCurrentContext struct {
 	RepoName     string
 	WorktreeID   string
 	WorktreeName string
+	WorktreePath string
 	UpdatedAt    string
 }
 
@@ -238,6 +239,7 @@ func loadValidatedCurrentContext(ctx context.Context, client *daemonclient.Clien
 		RepoName:     repoDisplayName(repo),
 		WorktreeID:   worktree.Data.WorktreeID,
 		WorktreeName: worktreeName,
+		WorktreePath: worktree.Data.TreePath,
 		UpdatedAt:    current.UpdatedAt,
 	}, nil
 }

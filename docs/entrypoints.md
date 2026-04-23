@@ -17,11 +17,11 @@ This document covers entrypoints and side effects.
 - `agency repo add` should accept an optional positional checkout path and use cwd when the path is omitted.
 - Path-targeted commands such as `agency init` and `agency doctor` should use `--path <checkout-path>` and default to cwd when `--path` is omitted.
 - `agency init --repo-config` should write repo-shared config at the registered repo canonical root, not in the current integration worktree or sandbox.
-- Repo-aware commands such as `agency worktree create` and `agency agent start` should accept explicit `--repo` selectors from any cwd and fall back to the current directory only when the selector is omitted.
-- `agency worktree create <name>` should take the worktree name positionally and default an omitted `--base` to the current branch of the selected checkout.
+- Repo-aware commands such as `agency worktree create` and `agency agent start` should accept explicit `--repo` selectors from any cwd. When `--repo` is omitted, they should resolve the repo in this order: current directory, active context, then error.
+- `agency worktree create <name>` should take the worktree name positionally and default an omitted `--base` to the current branch of the selected checkout chosen by that same precedence.
 - `agency agent start` should take no positional worktree argument.
 - `agency agent start --worktree <worktree-ref>` is the explicit worktree override and the scriptable surface from any cwd.
-- When `--worktree` is omitted, `agency agent start` should resolve the worktree from the active context first and then fall back to cwd only when cwd is inside a present agency integration worktree.
+- When `--worktree` is omitted, `agency agent start` should resolve the worktree from cwd first, but only when cwd is inside a present agency integration worktree. Otherwise it should fall back to the active context and then error.
 - `agency agent start` should default to headed mode.
 - `agency agent start` should honor explicit `--agency-config` and otherwise resolve repo-scoped runner defaults through: canonical repo-root `agency.json`, then per-repo config under `AGENCY_CONFIG_DIR`.
 - `agency agent start` should load user `config.json`, overlay repo-scoped runner-default fields from the selected `agency.json`, and apply explicit `--model` and `--effort` last.

@@ -108,6 +108,12 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 			wantCode:   "E_INVALID_REQUEST",
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name:       "missing base_branch",
+			req:        WorktreeCreateRequest{RepoRoot: "/tmp/repo", Name: "my-feature"},
+			wantCode:   "E_INVALID_REQUEST",
+			wantStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tc := range tests {

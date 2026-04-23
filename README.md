@@ -76,12 +76,12 @@ agency agent <invocation-ref> land --apply
 `agency repo add [path]` uses a positional path. Omit it only when your current directory is already inside the repo you want to register.
 `agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
 `agency context` shows the active repo/worktree. Use `agency context use <worktree-ref> --repo <repo-ref>` to set it and `agency context unset` to clear it.
-`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the active context first and then from the current directory.
+`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory first, then from the active context, and otherwise error.
 `agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
-`agency worktree create <name>` uses a positional name and defaults omitted `--base` to the current branch of the selected checkout.
+`agency worktree create <name>` uses a positional name and defaults an omitted `--base` to the current branch of the selected checkout. For omitted targeting, the selected checkout follows: explicit `--repo`, then the current directory, then the active context, then error.
 `agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` when you want an explicit override from any cwd.
-If `--worktree` is omitted, `agency agent start` resolves the worktree from the active context first and then falls back to the current integration worktree only when cwd is already inside one.
+If `--worktree` is omitted, `agency agent start` resolves the worktree from the current directory first, but only when cwd is already inside a present integration worktree. Otherwise it falls back to the active context and then errors.
 Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
 `agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
 `agency agent start` defaults to headed mode. Use `--headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.

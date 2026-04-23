@@ -9,8 +9,10 @@ This document covers configuration and code escape hatches.
 - Directory overrides are explicit: `AGENCY_DATA_DIR`, `AGENCY_CONFIG_DIR`, and `AGENCY_CACHE_DIR`.
 - CLI flags may override user defaults only on surfaces that document that precedence.
 - `--repo` is a repo ref selector, not a filesystem path.
+- `--base` is the canonical base-branch selector for `agency worktree create`.
 - `--worktree` is the explicit worktree selector for `agency agent start`.
 - `--path` is the explicit checkout-path override for path-targeted commands such as `agency init` and `agency doctor`.
+- Do not add or document alternate spellings such as `--parent` or `--wt`.
 - `agency worktree create <name>` takes the worktree name positionally.
 - `agency context use <worktree-ref>` takes the worktree ref positionally and may use `--repo` to scope lookup.
 - `agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` for an explicit target.

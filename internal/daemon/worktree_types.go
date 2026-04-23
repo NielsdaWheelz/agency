@@ -8,8 +8,8 @@ type WorktreeCreateRequest struct {
 	// Name is the human-readable name (required, validated).
 	Name string `json:"name"`
 
-	// BaseBranch is the branch to branch from (optional, defaults to current branch).
-	BaseBranch string `json:"base_branch,omitempty"`
+	// BaseBranch is the branch to branch from (required).
+	BaseBranch string `json:"base_branch"`
 
 	// IdempotencyKey is an optional UUID for idempotent create (scoped to repo_id).
 	IdempotencyKey string `json:"idempotency_key,omitempty"`

@@ -962,6 +962,29 @@ func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
+func TestAgentStart_NormalRepoUsesSameRepoActiveContextWorktree(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-same-repo-context", 1)
+	configDir := filepath.Join(env.DataDir, "config")
+	require.NoError(t, config.SaveCurrentContext(fs.NewRealFS(), configDir, config.CurrentContext{
+		RepoID:       env.RepoID,
+		RepoName:     filepath.Base(env.RepoDir),
+		WorktreeID:   env.WorktreeID,
+		WorktreeName: "start-same-repo-context",
+		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "  worktree:       start-same-repo-context ("+env.WorktreeID+")")
+	assert.Empty(t, stderr.String())
+}
+
 func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-detached", 1)
 
@@ -1303,9 +1326,13 @@ func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.
 
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(env.RepoDir, "agency.json"), ae.Details["path"])
+	expectedRepoDir := env.RepoDir
+	if resolvedRepoDir, resolveErr := filepath.EvalSymlinks(env.RepoDir); resolveErr == nil {
+		expectedRepoDir = resolvedRepoDir
+	}
+	assert.Equal(t, filepath.Join(expectedRepoDir, "agency.json"), ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(env.RepoDir)+" --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(expectedRepoDir)+" --repo-config --force")
 }
 
 func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
@@ -1456,6 +1483,53 @@ func TestAgentStart_UsesActiveContextFromUnrelatedCWD(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
+func TestAgentStart_CWDRepoWinsOverDifferentRepoActiveContext(t *testing.T) {
+	repoWithContext := testutil.SetupGitRepo(t)
+	otherRepoDir := testutil.SetupGitRepo(t)
+
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, exec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), repoWithContext, WorktreeCreateOpts{
+		Name:       "start-context-other-repo",
+		BaseBranch: "main",
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{State: "present"})
+	require.NoError(t, listErr)
+	require.Len(t, listResp.Data.Worktrees, 1)
+	worktree := listResp.Data.Worktrees[0]
+
+	require.NoError(t, config.SaveCurrentContext(fs.NewRealFS(), configDir, config.CurrentContext{
+		RepoID:       worktree.RepoID,
+		RepoName:     worktree.RepoName,
+		WorktreeID:   worktree.WorktreeID,
+		WorktreeName: worktree.WorktreeName,
+		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+	}))
+
+	stdout.Reset()
+	stderr.Reset()
+	err = AgentStart(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), otherRepoDir, AgentStartOpts{
+		Headless:      true,
+		Prompt:        "hello",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "cannot resolve agent start without a worktree")
+}
+
 func TestAgentStart_ExplicitSelectorsIgnoreInvalidActiveContext(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-ignore-context", 1)
 	configDir := filepath.Join(env.DataDir, "config")
@@ -1478,6 +1552,29 @@ func TestAgentStart_ExplicitSelectorsIgnoreInvalidActiveContext(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, stdout.String(), "  worktree:       start-ignore-context ("+env.WorktreeID+")")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentStart_LocalCWDIgnoresInvalidActiveContext(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-local-ignore-context", 1)
+	configDir := filepath.Join(env.DataDir, "config")
+	require.NoError(t, config.SaveCurrentContext(fs.NewRealFS(), configDir, config.CurrentContext{
+		RepoID:       "repo-stale",
+		RepoName:     "repo-stale",
+		WorktreeID:   "wt-stale",
+		WorktreeName: "wt-stale",
+		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.WorktreePath, AgentStartOpts{
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "  worktree:       start-local-ignore-context ("+env.WorktreeID+")")
 	assert.Empty(t, stderr.String())
 }
 

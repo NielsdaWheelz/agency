@@ -16,9 +16,10 @@ func newContextCmd() *cobra.Command {
 		Short: "Show or change the active repo/worktree context",
 		Long: `Show or change the active repo/worktree context.
 
-The active context is the default repo/worktree target for context-aware
-commands such as "agency agent start". Set it once when you want "agent start"
-to work from any cwd without repeating --repo and --worktree.
+The active context is the fallback repo/worktree target for context-aware
+commands such as "agency agent start" after explicit flags and current-directory
+resolution. Set it when you want cross-directory fallback without repeating
+--repo and --worktree.
 
 Use:
   agency context           to show the active context
@@ -70,8 +71,8 @@ func newContextUseCmd() *cobra.Command {
 		Long: `Set the active repo/worktree context.
 
 Pass --repo when cwd does not already identify the repo that owns the selected
-worktree. This is the stateful alternative to repeating --repo and --worktree
-on every "agency agent start" call.`,
+worktree. This is the stateful fallback to repeating --repo and --worktree
+from unrelated directories.`,
 		Example: `  agency context use my-feature --repo agency
   agency context use 20260420185710-eaed --repo agency`,
 		Args: cobra.ExactArgs(1),
