@@ -14,4 +14,5 @@ This document covers on-disk state, schema contracts, atomic writes, scans, and 
 - Targeted loads should fail closed on invalid JSON or schema drift.
 - Broad scans may mark broken records and continue.
 - Private runtime state uses private permissions.
+- Durable task records live under `${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/meta.json`; task directories and task events are private runtime state.
 - Daemon mutation event logs are append-only runtime records; append failures fail the mutation.

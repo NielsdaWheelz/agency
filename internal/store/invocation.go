@@ -166,6 +166,9 @@ type InvocationMeta struct {
 	// CustomEnvKeys stores environment key names that were provided at start time.
 	// Values are intentionally not persisted to avoid storing secrets at rest.
 	CustomEnvKeys []string `json:"custom_env_keys,omitempty"`
+
+	// TaskID is the high-level task that created this invocation, when any.
+	TaskID string `json:"task_id,omitempty"`
 }
 
 // InvocationFlags contains boolean flags for operational state.

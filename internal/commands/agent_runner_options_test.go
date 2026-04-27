@@ -1,9 +1,14 @@
 package commands
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -145,4 +150,61 @@ func TestResolveEffectiveRunnerArgs_ClaudeHeadlessRejectsPromptingPermissionMode
 	require.Error(t, err)
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "headless Claude requires an autonomous permission mode")
+}
+
+func TestResolveStartRunnerAndArgs_UsesSharedDefaultPrecedence(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "config")
+	repoRoot := filepath.Join(tmpDir, "repo")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.MkdirAll(repoRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{
+  "version": 3,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "user-opus",
+      "effort": "low",
+      "permission_mode": "auto"
+    }
+  },
+  "runners": {
+    "claude-code": "claude"
+  },
+  "editors": {
+    "code": "code"
+  }
+}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
+  "version": 3,
+  "scripts": {
+    "setup": {
+      "path": "scripts/setup.sh"
+    },
+    "verify": {
+      "path": "scripts/verify.sh"
+    },
+    "archive": {
+      "path": "scripts/archive.sh"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "agency-opus",
+      "effort": "max"
+    }
+  }
+}`), 0o644))
+
+	runner, args, err := resolveStartRunnerAndArgs(context.Background(), fs.NewRealFS(), repoRoot, &daemonNavSetup{
+		dirs: paths.Dirs{ConfigDir: configDir},
+	}, repoRoot, "repo-1", startRunnerConfigOpts{
+		Model: "cli-opus",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", runner)
+	assert.Equal(t, []string{"--model", "cli-opus", "--effort", "max", "--permission-mode", "auto"}, args)
 }

@@ -1,13 +1,18 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
@@ -22,6 +27,16 @@ const (
 	codexConfigArgFlag            = "--config"
 	codexReasoningEffortConfigKey = "model_reasoning_effort"
 )
+
+type startRunnerConfigOpts struct {
+	Runner           string
+	RunnerArgs       []string
+	Model            string
+	Effort           string
+	PermissionMode   string
+	AgencyConfigPath string
+	Headless         bool
+}
 
 func resolveAgentRunner(input, defaultRunner string) (string, error) {
 	runner := strings.TrimSpace(input)
@@ -44,6 +59,107 @@ func resolveAgentRunner(input, defaultRunner string) (string, error) {
 		)
 	}
 	return canonicalRunner, nil
+}
+
+func resolveStartRunnerAndArgs(ctx context.Context, fsys fs.FS, cwd string, ns *daemonNavSetup, repoRoot, repoID string, opts startRunnerConfigOpts) (string, []string, error) {
+	userCfg := config.UserConfig{}
+	userCfgLoaded := false
+	loadUserCfg := func(required bool) error {
+		if userCfgLoaded {
+			return nil
+		}
+		cfg, loadErr := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
+		if loadErr != nil {
+			if !required && errors.GetCode(loadErr) == errors.ENoUserConfig {
+				return nil
+			}
+			return loadErr
+		}
+		userCfg = cfg
+		userCfgLoaded = true
+		return nil
+	}
+	if strings.TrimSpace(opts.Runner) == "" {
+		if err := loadUserCfg(true); err != nil {
+			return "", nil, err
+		}
+	}
+	runner, err := resolveAgentRunner(opts.Runner, userCfg.Defaults.Runner)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if repoID == "" {
+		repoID, err = repoIDForRepoRoot(ctx, ns.client, repoRoot)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
+	agencyConfigPath := strings.TrimSpace(opts.AgencyConfigPath)
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
+	}
+	shouldResolveAgencyConfig := shouldResolveStartAgencyConfig(fsys, ns.dirs.ConfigDir, repoRoot, repoID, agencyConfigPath)
+
+	model := strings.TrimSpace(opts.Model)
+	effort := strings.TrimSpace(opts.Effort)
+	permissionMode := strings.TrimSpace(opts.PermissionMode)
+	if model == "" || effort == "" || permissionMode == "" {
+		if err := loadUserCfg(false); err != nil {
+			return "", nil, err
+		}
+	}
+	if shouldResolveAgencyConfig {
+		resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot, ns.dirs.ConfigDir, repoID, agencyConfigPath)
+		if err != nil {
+			return "", nil, err
+		}
+		if runnerDefaults, ok := resolvedAgencyConfig.Config.RunnerDefaults[runner]; ok {
+			if model == "" {
+				model = runnerDefaults.Model
+			}
+			if effort == "" {
+				effort = runnerDefaults.Effort
+			}
+		}
+	}
+	if model == "" {
+		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
+			model = runnerDefaults.Model
+		}
+	}
+	if effort == "" {
+		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
+			effort = runnerDefaults.Effort
+		}
+	}
+	if permissionMode == "" {
+		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
+			permissionMode = runnerDefaults.PermissionMode
+		}
+	}
+
+	runnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, model, effort, permissionMode, opts.Headless)
+	if err != nil {
+		return "", nil, err
+	}
+	return runner, runnerArgs, nil
+}
+
+func shouldResolveStartAgencyConfig(fsys fs.FS, configDir, repoRoot, repoID, agencyConfigPath string) bool {
+	if agencyConfigPath != "" {
+		return true
+	}
+	repoAgencyConfigPath := filepath.Join(repoRoot, "agency.json")
+	if _, err := fsys.Stat(repoAgencyConfigPath); err == nil || !os.IsNotExist(err) {
+		return true
+	}
+	localAgencyConfigPath := config.LocalAgencyConfigPath(configDir, repoID)
+	if _, err := fsys.Stat(localAgencyConfigPath); err == nil || !os.IsNotExist(err) {
+		return true
+	}
+	return false
 }
 
 func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effort, permissionMode string, headless bool) ([]string, error) {

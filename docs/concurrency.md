@@ -9,6 +9,7 @@ This document covers locking, TOCTOU handling, and cross-system mutation orderin
 - Repo- and worktree-mutating git operations must take the repo-level lock.
 - When a daemon mutation surface exists for a capability, that daemon surface is the single mutable owner.
 - Do not add parallel mutation paths that bypass the daemon and write the same state directly.
+- `task start` must serialize task, integration worktree, sandbox, runner/tmux, and event side effects through the daemon task-start mutation and repo-level lock.
 - `worktree pr merge` must serialize daemon-owned merge-state transitions and git/archive side effects through the repo lock.
 - Do not hold repo locks longer than the git and persistence sequence that requires serialization.
 

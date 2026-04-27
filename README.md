@@ -67,25 +67,24 @@ Use `agency init --repo-config` only when you want shareable `agency.json` and s
 agency config init
 agency repo add /path/to/myrepo
 agency init --path /path/to/myrepo
-agency worktree create my-feature --repo <repo-ref> --base main
-agency context use my-feature --repo <repo-ref>
-agency agent start --headless --prompt "Fix the auth bug"
+agency task start my-feature --repo <repo-ref> --base main --prompt "Fix the auth bug"
 agency agent <invocation-ref> land --apply
 ```
 
 `agency repo add [path]` uses a positional path. Omit it only when your current directory is already inside the repo you want to register.
 `agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
 `agency context` shows the active repo/worktree. Use `agency context use <worktree-ref> --repo <repo-ref>` to set it and `agency context unset` to clear it.
-`worktree create` and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory first, then from the active context, and otherwise error.
-`agency repo <repo-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency worktree ls`, and `agency agent ls`.
+`task start`, `worktree create`, and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory first, then from the active context, and otherwise error.
+`agency repo <repo-ref>`, `agency task <task-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency task ls`, `agency worktree ls`, and `agency agent ls`.
 `--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
-`agency worktree create <name>` uses a positional name and defaults an omitted `--base` to the current branch of the selected checkout. For omitted targeting, the selected checkout follows: explicit `--repo`, then the current directory, then the active context, then error.
+`agency task start <name>` is the high-level delegation surface: it creates one task, one integration worktree, and one primary invocation. It defaults to headless mode, so use `--prompt` or `--prompt-file`; `--mode headed` may use `--detached` and rejects prompt flags.
+`agency task start <name>` and `agency worktree create <name>` use positional names and default an omitted `--base` to the current branch of the selected checkout. For omitted targeting, the selected checkout follows: explicit `--repo`, then the current directory, then the active context, then error. `--base` is the canonical base-branch selector.
 `agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` when you want an explicit override from any cwd.
 If `--worktree` is omitted, `agency agent start` resolves the worktree from the current directory first, but only when cwd is already inside a present integration worktree. Otherwise it falls back to the active context and then errors.
 Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
-`agent start` uses agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
+`task start`, `task <task-ref> retry`, and `agent start` use agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
 `agency agent start` defaults to headed mode. Use `--headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
-For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set `permission_mode` in user `config.json` only; use `runner_defaults` or `agency agent start --model/--effort` for Claude model and effort.
+For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set `permission_mode` in user `config.json` only; use `runner_defaults` or `--model`/`--effort` on `agency task start`, `agency task <task-ref> retry`, or `agency agent start` for Claude model and effort.
 
 headed (interactive tmux):
 

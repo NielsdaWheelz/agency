@@ -17,7 +17,7 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - Archived worktrees stay discoverable through `agency worktree ls --all`, but targeted lookup by name or id prefix only considers present worktrees.
 - Archived worktrees must be addressed by exact `worktree_id`.
 - The active context points at one present integration worktree and is a fallback target for context-aware commands when explicit flags and the current directory do not already identify the target.
-- `agency agent start` and worktree PR flows honor explicit `--agency-config`; otherwise they resolve repo-shared config from the registered repo canonical root before falling back to local per-repo config.
+- `agency task start`, `agency task <task-ref> retry`, `agency agent start`, and worktree PR flows honor explicit `--agency-config`; otherwise they resolve repo-shared config from the registered repo canonical root before falling back to local per-repo config.
 - An `agency.json` inside an integration worktree or sandbox is not repo-shared config and must not override the canonical repo-root config.
 
 ## Rules
@@ -25,12 +25,13 @@ This document covers repository gating, integration worktrees, sandboxes, and la
 - Repo discovery must resolve one clean absolute repo root.
 - `agency repo add [path]` accepts a positional checkout path. Omitting the path means use cwd.
 - `agency init` and `agency doctor` default to cwd and accept `--path <checkout-path>` when targeting a different repo checkout.
-- `agency worktree <worktree-ref>` and `agency agent <invocation-ref>` are the canonical default show forms for targeted inspection.
-- `agency worktree create <name>` and `agency agent start` accept an explicit `--repo` selector from any cwd; when omitted, they resolve the repo from the current directory first and then from the active context.
-- `agency worktree create <name>` defaults an omitted `--base` to the current branch of the selected checkout chosen by explicit `--repo`, then the current directory, then the active context.
+- `agency task <task-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the canonical default show forms for targeted inspection.
+- `agency task start <name>`, `agency worktree create <name>`, and `agency agent start` accept an explicit `--repo` selector from any cwd; when omitted, they resolve the repo from the current directory first and then from the active context.
+- `agency task start <name>` creates a durable task, a new integration worktree, and a primary invocation in one daemon-owned mutation. It must not rely on ambient worktree inference for the newly-created worktree.
+- `agency task start <name>` and `agency worktree create <name>` default an omitted `--base` to the current branch of the selected checkout chosen by explicit `--repo`, then the current directory, then the active context.
 - `agency agent start --worktree <worktree-ref>` is the explicit worktree override from any cwd.
 - When `--worktree` is omitted, `agency agent start` resolves the worktree from cwd first, but only when cwd is inside a present agency integration worktree. Otherwise it falls back to the active context.
-- `agency agent start` should honor explicit `--agency-config` and otherwise resolve repo-shared config from the registered repo canonical root, then fall back to local per-repo config under `AGENCY_CONFIG_DIR`.
+- `agency task start`, `agency task <task-ref> retry`, and `agency agent start` should honor explicit `--agency-config` and otherwise resolve repo-shared config from the registered repo canonical root, then fall back to local per-repo config under `AGENCY_CONFIG_DIR`.
 - Targeted worktree actions stay target-first, for example `agency worktree <worktree-ref> open`, `agency worktree <worktree-ref> rebase`, and `agency worktree <worktree-ref> pr sync`.
 - Creating a worktree requires a registered repo when `--repo` is supplied or a git repo with commits when falling back to cwd, plus a clean base checkout and an existing base branch.
 - Integration worktrees are stable collaboration surfaces.

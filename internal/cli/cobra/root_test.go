@@ -123,6 +123,18 @@ func TestAgentCmd_ReturnsUsageError(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
+func TestTaskCmd_ReturnsUsageError(t *testing.T) {
+	_, _, err := executeCmd("task")
+	require.Error(t, err, "expected error when task called without target")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestTaskStart_RequiresName(t *testing.T) {
+	_, _, err := executeCmd("task", "start")
+	require.Error(t, err, "expected error when task start is missing name")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
 func TestAgentLS_StartFlagsAreRejected(t *testing.T) {
 	_, _, err := executeCmd("agent", "ls", "--headless")
 	require.Error(t, err, "expected start-only flags to be rejected by agent ls")
@@ -180,6 +192,12 @@ func TestCompletionWorktreeCanonicalTargets(t *testing.T) {
 func TestCompletionAgentCanonicalTargets(t *testing.T) {
 	stdout, _, err := executeCmd("__complete", "agent", "s")
 	require.NoError(t, err, "expected agent completion to succeed")
+	assert.Contains(t, stdout, "start")
+}
+
+func TestCompletionTaskCanonicalTargets(t *testing.T) {
+	stdout, _, err := executeCmd("__complete", "task", "s")
+	require.NoError(t, err, "expected task completion to succeed")
 	assert.Contains(t, stdout, "start")
 }
 

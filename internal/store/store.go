@@ -47,6 +47,32 @@ func (s *Store) RepoEventsPath(repoID string) string {
 	return filepath.Join(s.RepoDir(repoID), "events.jsonl")
 }
 
+// ----- V2 Task paths -----
+
+// TasksDir returns the tasks directory for a repo.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/
+func (s *Store) TasksDir(repoID string) string {
+	return filepath.Join(s.RepoDir(repoID), "tasks")
+}
+
+// TaskDir returns the directory for a specific task.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/
+func (s *Store) TaskDir(repoID, taskID string) string {
+	return filepath.Join(s.TasksDir(repoID), taskID)
+}
+
+// TaskMetaPath returns the path to a task's meta.json.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/meta.json
+func (s *Store) TaskMetaPath(repoID, taskID string) string {
+	return filepath.Join(s.TaskDir(repoID, taskID), "meta.json")
+}
+
+// TaskEventsPath returns the path to a task's events.jsonl.
+// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/events.jsonl
+func (s *Store) TaskEventsPath(repoID, taskID string) string {
+	return filepath.Join(s.TaskDir(repoID, taskID), "events.jsonl")
+}
+
 // ----- V2 Integration Worktree paths (Slice 8) -----
 
 // IntegrationWorktreesDir returns the integration worktrees directory for a repo.

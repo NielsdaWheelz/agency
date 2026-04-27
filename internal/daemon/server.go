@@ -12,6 +12,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/daemon/repoevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/taskevents"
 	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -42,6 +43,9 @@ type Server struct {
 
 	// WorktreeEvents appends worktree-scoped events with shared sequencing.
 	WorktreeEvents *worktreeevents.Writer
+
+	// TaskEvents appends task-scoped events with shared sequencing.
+	TaskEvents *taskevents.Writer
 
 	// RepoEvents appends repo-scoped events with shared sequencing.
 	RepoEvents repoevents.Appender
@@ -149,6 +153,9 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		return server.Clock()
 	})
 	server.WorktreeEvents = worktreeevents.NewWriter(func() time.Time {
+		return server.Clock()
+	})
+	server.TaskEvents = taskevents.NewWriter(func() time.Time {
 		return server.Clock()
 	})
 	server.RepoEvents = repoevents.NewWriter(func() time.Time {

@@ -115,7 +115,7 @@ Supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 ## Claude Startup Contract
 
 - Agency owns Claude `model`, `effort`, and `permission_mode`.
-- Set Claude `model` and `effort` through typed `runner_defaults` or `agency agent start --model/--effort`.
+- Set Claude `model` and `effort` through typed `runner_defaults` or `--model`/`--effort` on `agency task start`, `agency task <task-ref> retry`, or `agency agent start`.
 - Set Claude `permission_mode` only in user `config.json`.
 - Headed Claude starts launch interactive `claude` in tmux. Agency applies configured Claude settings without the print/stream-json startup path.
 - Headless Claude starts launch daemon-backed `claude` in print/stream-json mode. Agency owns the Claude print/stream flags and the effective permission behavior.

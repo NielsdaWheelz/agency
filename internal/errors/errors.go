@@ -145,6 +145,15 @@ const (
 	ELifecycleOwnerMismatch  Code = "E_LIFECYCLE_OWNER_MISMATCH"  // attempt to modify invocation owned by another entity
 	EPromptRequired          Code = "E_PROMPT_REQUIRED"           // headless invocation requires a prompt
 
+	// Task orchestration error codes
+	ETaskNotFound            Code = "E_TASK_NOT_FOUND"            // task does not exist
+	ETaskIDAmbiguous         Code = "E_TASK_ID_AMBIGUOUS"         // task id/prefix matches multiple
+	ETaskBroken              Code = "E_TASK_BROKEN"               // task exists but meta.json is unreadable
+	ETaskDirExists           Code = "E_TASK_DIR_EXISTS"           // task directory already exists
+	ETaskCreateFailed        Code = "E_TASK_CREATE_FAILED"        // task creation failed
+	ETaskNameExists          Code = "E_TASK_NAME_EXISTS"          // task name already used by a non-archived task
+	ETaskFingerprintConflict Code = "E_TASK_FINGERPRINT_CONFLICT" // idempotency key reused with different task request
+
 	// Daemon service manager error codes
 	EDaemonServiceInstallFailed    Code = "E_DAEMON_SERVICE_INSTALL_FAILED"    // service install operation failed
 	EDaemonServiceUninstallFailed  Code = "E_DAEMON_SERVICE_UNINSTALL_FAILED"  // service uninstall operation failed

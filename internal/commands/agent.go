@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -207,96 +205,15 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 	opts.WorktreeRef = worktreeRef
 
-	userCfg := config.UserConfig{}
-	userCfgLoaded := false
-	loadUserCfg := func(required bool) error {
-		if userCfgLoaded {
-			return nil
-		}
-
-		cfg, loadErr := config.LoadUserConfig(fsys, ns.dirs.ConfigDir)
-		if loadErr != nil {
-			if !required && errors.GetCode(loadErr) == errors.ENoUserConfig {
-				return nil
-			}
-			return loadErr
-		}
-
-		userCfg = cfg
-		userCfgLoaded = true
-		return nil
-	}
-
-	if strings.TrimSpace(opts.Runner) == "" {
-		if err := loadUserCfg(true); err != nil {
-			return fail(err)
-		}
-	}
-
-	runner, err := resolveAgentRunner(opts.Runner, userCfg.Defaults.Runner)
-	if err != nil {
-		return fail(err)
-	}
-
-	agencyConfigPath := strings.TrimSpace(opts.AgencyConfigPath)
-	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
-		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
-	}
-	shouldResolveAgencyConfig := agencyConfigPath != ""
-	if !shouldResolveAgencyConfig {
-		repoAgencyConfigPath := filepath.Join(repoRoot, "agency.json")
-		if _, err := fsys.Stat(repoAgencyConfigPath); err == nil {
-			shouldResolveAgencyConfig = true
-		} else if !os.IsNotExist(err) {
-			shouldResolveAgencyConfig = true
-		} else {
-			localAgencyConfigPath := config.LocalAgencyConfigPath(ns.dirs.ConfigDir, repoID)
-			if _, err := fsys.Stat(localAgencyConfigPath); err == nil || !os.IsNotExist(err) {
-				shouldResolveAgencyConfig = true
-			}
-		}
-	}
-
-	model := strings.TrimSpace(opts.Model)
-	effort := strings.TrimSpace(opts.Effort)
-	permissionMode := strings.TrimSpace(opts.PermissionMode)
-	if model == "" || effort == "" || permissionMode == "" {
-		if err := loadUserCfg(false); err != nil {
-			return fail(err)
-		}
-	}
-	if shouldResolveAgencyConfig {
-		resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot, ns.dirs.ConfigDir, repoID, agencyConfigPath)
-		if err != nil {
-			return fail(err)
-		}
-		runnerDefaults, ok := resolvedAgencyConfig.Config.RunnerDefaults[runner]
-		if ok {
-			if model == "" {
-				model = runnerDefaults.Model
-			}
-			if effort == "" {
-				effort = runnerDefaults.Effort
-			}
-		}
-	}
-	if model == "" {
-		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
-			model = runnerDefaults.Model
-		}
-	}
-	if effort == "" {
-		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
-			effort = runnerDefaults.Effort
-		}
-	}
-	if permissionMode == "" {
-		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
-			permissionMode = runnerDefaults.PermissionMode
-		}
-	}
-
-	effectiveRunnerArgs, err := resolveEffectiveRunnerArgs(runner, opts.RunnerArgs, model, effort, permissionMode, opts.Headless)
+	runner, effectiveRunnerArgs, err := resolveStartRunnerAndArgs(ctx, fsys, cwd, ns, repoRoot, repoID, startRunnerConfigOpts{
+		Runner:           opts.Runner,
+		RunnerArgs:       opts.RunnerArgs,
+		Model:            opts.Model,
+		Effort:           opts.Effort,
+		PermissionMode:   opts.PermissionMode,
+		AgencyConfigPath: opts.AgencyConfigPath,
+		Headless:         opts.Headless,
+	})
 	if err != nil {
 		return fail(err)
 	}

@@ -54,6 +54,9 @@ type IntegrationWorktreeMeta struct {
 
 	// State is the lifecycle state (present or archived).
 	State WorktreeState `json:"state"`
+
+	// TaskID is the high-level task that created this worktree, when any.
+	TaskID string `json:"task_id,omitempty"`
 }
 
 // NewIntegrationWorktreeMeta creates a new IntegrationWorktreeMeta with required fields set.
