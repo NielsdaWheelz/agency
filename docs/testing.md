@@ -83,8 +83,8 @@ E2E tests (~5-10%) are smoke tests for critical user paths. Build the real binar
 
 Rules:
 
-- `make check` runs the fast local subset: `gofmt`, `shfmt`, `golangci-lint`, `go vet`, `actionlint`, and `shellcheck`, plus tests and a build.
-- `make verify` runs the full gate: the fast subset plus `govulncheck`, `go mod verify`, module tidy, race tests, `goreleaser check`, E2E, completions, and a build.
+- `make check` runs the fast resource-budgeted subset: `gofmt`, `shfmt`, `golangci-lint`, `go vet`, `actionlint`, and `shellcheck`, plus tests and a build.
+- `make verify` runs the full resource-budgeted gate: the fast subset plus `govulncheck`, `go mod verify`, module tidy, race tests, `goreleaser check`, E2E, completions, and a build.
 - CI runs `make verify`.
 - Treat static-analysis failures as real failures (no `|| true`).
 - Use the repo-pinned `golangci-lint v2.11.4`.
@@ -146,7 +146,7 @@ Rules:
 - Gate with `//go:build e2e` build tag.
 - GH-backed E2E requires `AGENCY_GH_E2E=1` and a token in `GH_TOKEN` or `GITHUB_TOKEN`.
 - Local black-box CLI E2E requires `AGENCY_LOCAL_E2E=1`.
-- Run GH-backed and local E2E through the documented `make e2e*` targets, not ad hoc package-wide `go test -tags=e2e ./...` invocations.
+- Run GH-backed and local E2E through the documented `make e2e*` targets, not ad hoc package-wide E2E invocations.
 - Keep E2E in `*_e2e_test.go` files.
 - Build the real binary before running: `go build -o <tmpdir>/agency ./cmd/agency`.
 - Invoke the binary as a subprocess with `exec.Command`.
@@ -401,6 +401,9 @@ Use table-driven tests when you have 3+ cases testing the same code path with di
 - Every test gets its own `t.TempDir()`. Never share filesystem state between tests.
 - Never rely on test execution order.
 - If adding `t.Parallel()` breaks a test, the test has a design problem — fix the test.
+- Broad repo test commands must set both package parallelism (`-p`) and in-binary parallelism (`-parallel`).
+- Race-detector test commands must use a lower resource budget than non-race tests.
+- E2E test commands must run serially with `-p 1 -parallel 1`.
 
 ### Environment and Globals
 
@@ -423,8 +426,8 @@ The full repo verification surface is:
 - `shellcheck`
 - `govulncheck ./...`
 - `go mod verify`
-- `go test ./...`
-- `go test -race -count=1 ./...`
+- `go test -count=1 -p 2 -parallel 4 ./...`
+- `go test -race -count=1 -p 1 -parallel 2 ./...`
 - `goreleaser check`
 - `make e2e`
 - `go run ./cmd/agency completion ...`
@@ -435,8 +438,8 @@ The full repo verification surface is:
 ```makefile
 make check       # fast checks: fmt-check + shfmt-check + lint + vet + actionlint + shellcheck + test + build
 make verify      # full checks: fmt-check + shfmt-check + vet + lint + actionlint + shellcheck + govulncheck + go mod tidy -diff + go mod verify + race + e2e + completions + goreleaser check + build
-make test        # go test ./...
-make test-race   # go test -race -count=1 ./...
+make test        # go test -count=1 -p 2 -parallel 4 ./...
+make test-race   # go test -race -count=1 -p 1 -parallel 2 ./...
 make vet         # go vet ./...
 make lint        # golangci-lint run ./...
 make fmt         # rewrite unformatted Go files in place
@@ -450,8 +453,8 @@ make e2e-local   # local black-box CLI E2E smoke tests
 
 Command semantics:
 
-- `make check`: fast local feedback loop for routine development. It runs formatting, `go vet`, lint, unit and integration tests, and a build. It does not run race tests or E2E.
-- `make verify`: full pre-merge verification. It runs formatting, `go vet`, lint, actionlint, shfmt, shellcheck, govulncheck, `go mod tidy -diff`, `go mod verify`, race tests, E2E, completions, `goreleaser check`, and a build.
+- `make check`: fast resource-budgeted local feedback loop for routine development. It runs formatting, `go vet`, lint, unit and integration tests, and a build. It does not run race tests or E2E.
+- `make verify`: full resource-budgeted pre-merge verification. It runs formatting, `go vet`, lint, actionlint, shfmt, shellcheck, govulncheck, `go mod tidy -diff`, `go mod verify`, race tests, E2E, completions, `goreleaser check`, and a build.
 - `make vet`: standalone `go vet` target.
 - `make e2e`: primary E2E entrypoint. It always runs the deterministic S5 failure matrix, then runs the GH-backed S5 happy path when `AGENCY_GH_E2E=1` and a GH token are present; otherwise it runs local smoke E2E.
 - `make e2e-gh`: runs both S5 suites, requires `GH_TOKEN` or `GITHUB_TOKEN`, and sets `AGENCY_GH_E2E=1` for the happy-path run.
@@ -464,7 +467,8 @@ Command semantics:
 1. Run `make verify` in CI.
 2. Let `make verify` own the deterministic non-GitHub gate, including the S5 failure matrix and local smoke E2E.
 3. Run `make e2e-s5-happy` in a separate job only when `AGENCY_GH_TOKEN` is configured.
-4. Keep the GH-backed happy-path suite separate from the main verify job for attribution.
+4. Cancel stale runs for the same workflow/ref with GitHub Actions concurrency.
+5. Keep the GH-backed happy-path suite separate from the main verify job for attribution.
 
 ## 13. Golden File / Snapshot Tests
 
@@ -520,7 +524,7 @@ When modifying existing tests during cleanup:
 Before considering tests complete:
 
 - [ ] All new/changed logic has test coverage for happy path AND error paths.
-- [ ] Tests pass with `go test -race ./...`.
+- [ ] Tests pass with `go test -race -count=1 -p 1 -parallel 2 ./...`.
 - [ ] Tests pass under `make vet`.
 - [ ] Tests pass under `make verify`.
 - [ ] `t.Parallel()` is used for isolated tests; no parallel tests mutate env/globals.

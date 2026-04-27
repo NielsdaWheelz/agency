@@ -22,11 +22,11 @@ build:
 
 # Run tests
 test:
-	go test ./...
+	go test -count=1 -p 2 -parallel 4 ./...
 
 # Run tests with verbose output
 test-v:
-	go test -v ./...
+	go test -v -count=1 -p 2 -parallel 4 ./...
 
 # Run go vet
 vet:
@@ -34,7 +34,7 @@ vet:
 
 # Run tests with race detector (platforms that support it)
 test-race:
-	go test -race -count=1 ./...
+	go test -race -count=1 -p 1 -parallel 2 ./...
 
 # Run golangci-lint against all packages
 lint:
@@ -111,7 +111,7 @@ e2e-gh:
 
 # Run S5 failure-matrix e2e suite (no GH token required)
 e2e-s5-failure-matrix:
-	go test -tags=e2e ./internal/commands -run TestS5E2EWorktreePRSyncMergeFailureMatrix -count=1
+	go test -tags=e2e -count=1 -p 1 -parallel 1 ./internal/commands -run TestS5E2EWorktreePRSyncMergeFailureMatrix
 
 # Run GH-backed S5 happy-path e2e suite (requires token)
 e2e-s5-happy:
@@ -121,11 +121,11 @@ e2e-s5-happy:
 		exit 1; \
 	fi; \
 	AGENCY_GH_E2E=1 AGENCY_GH_REPO=NielsdaWheelz/agency-test GH_TOKEN="$$token" \
-		go test -tags=e2e ./internal/commands -run TestGHE2EWorktreePRSyncMerge -count=1
+		go test -tags=e2e -count=1 -p 1 -parallel 1 ./internal/commands -run TestGHE2EWorktreePRSyncMerge
 
 # Run local black-box CLI e2e smoke tests
 e2e-local:
-	AGENCY_LOCAL_E2E=1 go test -tags=e2e ./internal/commands -run TestAgentStartCLIE2E -count=1
+	AGENCY_LOCAL_E2E=1 go test -tags=e2e -count=1 -p 1 -parallel 1 ./internal/commands -run TestAgentStartCLIE2E
 
 # Validate GoReleaser configuration
 goreleaser-check:
@@ -158,7 +158,7 @@ help:
 	@echo "available targets:"
 	@echo "  actionlint     - lint GitHub Actions workflows"
 	@echo "  build          - build the agency binary"
-	@echo "  check          - run the fast local gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, test, build)"
+	@echo "  check          - run the fast resource-budgeted gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, test, build)"
 	@echo "  completions    - generate shell completion scripts"
 	@echo "  fmt            - gofmt all Go files"
 	@echo "  fmt-check      - check formatting without modifying files"
@@ -167,13 +167,13 @@ help:
 	@echo "  govulncheck    - run the Go vulnerability scanner"
 	@echo "  lint           - run golangci-lint ./..."
 	@echo "  mod-tidy-check - check go.mod/go.sum are tidy"
-	@echo "  test           - run tests"
-	@echo "  test-v         - run tests with verbose output"
-	@echo "  test-race      - run tests with race detector"
+	@echo "  test           - run resource-budgeted tests"
+	@echo "  test-v         - run resource-budgeted tests with verbose output"
+	@echo "  test-race      - run resource-budgeted tests with race detector"
 	@echo "  shellcheck     - lint shell scripts"
 	@echo "  shfmt          - format shell scripts"
 	@echo "  shfmt-check    - check shell formatting without modifying files"
-	@echo "  verify         - run the full gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, govulncheck, mod tidy, mod verify, race, goreleaser, e2e, completions, build)"
+	@echo "  verify         - run the full resource-budgeted gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, govulncheck, mod tidy, mod verify, race, goreleaser, e2e, completions, build)"
 	@echo "  vet            - run go vet"
 	@echo "  e2e            - run e2e (failure-matrix + local smoke by default; set AGENCY_GH_E2E=1 for GH happy path)"
 	@echo "  e2e-gh         - run both S5 e2e suites (requires GH_TOKEN/GITHUB_TOKEN)"
