@@ -31,6 +31,17 @@ func executeCmd(args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
+func setIsolatedCompletionEnv(t *testing.T) (string, string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	configDir := filepath.Join(tmpDir, "config")
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	return dataDir, configDir
+}
+
 func TestRoot_UnknownCommand(t *testing.T) {
 	_, _, err := executeCmd("nonexistent")
 	require.Error(t, err, "expected error for unknown command")
@@ -178,27 +189,53 @@ func TestCompletionCmd_MissingArg(t *testing.T) {
 }
 
 func TestCompletionRepoCanonicalTargets(t *testing.T) {
+	dataDir, configDir := setIsolatedCompletionEnv(t)
+
 	stdout, _, err := executeCmd("__complete", "repo", "a")
 	require.NoError(t, err, "expected repo completion to succeed")
 	assert.Contains(t, stdout, "add")
+	assert.NoDirExists(t, dataDir)
+	assert.NoDirExists(t, configDir)
 }
 
 func TestCompletionWorktreeCanonicalTargets(t *testing.T) {
+	dataDir, configDir := setIsolatedCompletionEnv(t)
+
 	stdout, _, err := executeCmd("__complete", "worktree", "c")
 	require.NoError(t, err, "expected worktree completion to succeed")
 	assert.Contains(t, stdout, "create")
+	assert.NoDirExists(t, dataDir)
+	assert.NoDirExists(t, configDir)
 }
 
 func TestCompletionAgentCanonicalTargets(t *testing.T) {
+	dataDir, configDir := setIsolatedCompletionEnv(t)
+
 	stdout, _, err := executeCmd("__complete", "agent", "s")
 	require.NoError(t, err, "expected agent completion to succeed")
 	assert.Contains(t, stdout, "start")
+	assert.NoDirExists(t, dataDir)
+	assert.NoDirExists(t, configDir)
 }
 
 func TestCompletionTaskCanonicalTargets(t *testing.T) {
+	dataDir, configDir := setIsolatedCompletionEnv(t)
+
 	stdout, _, err := executeCmd("__complete", "task", "s")
 	require.NoError(t, err, "expected task completion to succeed")
 	assert.Contains(t, stdout, "start")
+	assert.NoDirExists(t, dataDir)
+	assert.NoDirExists(t, configDir)
+}
+
+func TestCompletion_DynamicRepoFlagWithoutDaemonReturnsHelp(t *testing.T) {
+	dataDir, configDir := setIsolatedCompletionEnv(t)
+
+	stdout, _, err := executeCmd("__complete", "agent", "start", "--repo", "ag")
+	require.NoError(t, err, "expected repo completion without daemon to fall back to active help")
+	assert.Contains(t, stdout, "register a repo first with: agency repo add /path/to/repo")
+	assert.NoDirExists(t, dataDir)
+	assert.NoDirExists(t, configDir)
 }
 
 func TestCompletion_DynamicRepoFlag(t *testing.T) {
@@ -224,7 +261,7 @@ func TestCompletion_EnumFlag(t *testing.T) {
 func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Client) {
 	t.Helper()
 
-	dataDir, err := os.MkdirTemp("", "agency-complete-data-*")
+	dataDir, err := os.MkdirTemp("/tmp", "acd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 
@@ -257,17 +294,21 @@ func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Clie
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- srv.Serve(listener) }()
 
-	client := daemonclient.NewClient(socketPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, client.WaitForReady(ctx, 5*time.Second), "daemon not ready")
-
 	t.Cleanup(func() {
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutCancel()
 		_ = srv.Shutdown(shutCtx)
-		<-serveDone
+		select {
+		case <-serveDone:
+		case <-time.After(5 * time.Second):
+			t.Error("completion test daemon did not stop")
+		}
 	})
+
+	client := daemonclient.NewClient(socketPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.WaitForReady(ctx, 5*time.Second), "daemon not ready")
 
 	return dataDir, configDir, client
 }

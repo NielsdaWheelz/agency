@@ -1,12 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
@@ -24,10 +25,14 @@ func TestMain(m *testing.M) {
 	}
 
 	fakeRunnerBin := filepath.Join(tmpDir, "claude-code")
-	cmd := exec.Command("go", "build", "-o", fakeRunnerBin, "./testdata/fakerunner")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to build fakerunner:", err)
+	result, err := agencyexec.NewRealRunner().Run(context.Background(), "go", []string{"build", "-o", fakeRunnerBin, "./testdata/fakerunner"}, agencyexec.RunOpts{})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to start fakerunner build:", err)
+		_ = os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+	if result.ExitCode != 0 {
+		fmt.Fprintf(os.Stderr, "failed to build fakerunner:\n%s%s", result.Stdout, result.Stderr)
 		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
 	}

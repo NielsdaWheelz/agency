@@ -5,13 +5,10 @@ package commands_test
 import (
 	"context"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
@@ -366,13 +364,12 @@ func buildCommand(t *testing.T, repoRoot, outputPath, target string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	cmd := osexec.CommandContext(ctx, "go", "build", "-o", outputPath, target)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
+	result, err := agencyexec.NewRealRunner().Run(ctx, "go", []string{"build", "-o", outputPath, target}, agencyexec.RunOpts{Dir: repoRoot})
 	if ctx.Err() != nil {
 		require.FailNowf(t, "go build timed out", "target=%s", target)
 	}
-	require.NoErrorf(t, err, "go build failed for %s: %s", target, string(out))
+	require.NoErrorf(t, err, "go build failed to start for %s", target)
+	require.Equalf(t, 0, result.ExitCode, "go build failed for %s\nstdout:\n%s\nstderr:\n%s", target, result.Stdout, result.Stderr)
 }
 
 func runAgencyCLI(t *testing.T, agencyBin, cwd string, env map[string]string, args ...string) cliRunResult {
@@ -381,57 +378,20 @@ func runAgencyCLI(t *testing.T, agencyBin, cwd string, env map[string]string, ar
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	cmd := osexec.CommandContext(ctx, agencyBin, args...)
-	cmd.Dir = cwd
-	cmd.Env = mergeEnv(os.Environ(), env)
-
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		var exitErr *osexec.ExitError
-		if ok := stderrors.As(err, &exitErr); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			require.NoError(t, err)
-		}
-	}
+	result, err := agencyexec.NewRealRunner().Run(ctx, agencyBin, args, agencyexec.RunOpts{
+		Dir: cwd,
+		Env: env,
+	})
 	if ctx.Err() != nil {
 		require.FailNowf(t, "agency CLI command timed out", "args=%v", args)
 	}
+	require.NoError(t, err)
 
 	return cliRunResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+		ExitCode: result.ExitCode,
 	}
-}
-
-func mergeEnv(base []string, overrides map[string]string) []string {
-	envMap := map[string]string{}
-	for _, kv := range base {
-		key, value, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		envMap[key] = value
-	}
-	for k, v := range overrides {
-		envMap[k] = v
-	}
-	keys := make([]string, 0, len(envMap))
-	for k := range envMap {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, k+"="+envMap[k])
-	}
-	return out
 }
 
 func readLaunchCapture(t *testing.T, capturePath string) launchCapture {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -35,6 +37,9 @@ func StartDaemonBackground(logPath string) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return errors.Wrap(errors.EDaemonStartFailed, "failed to get executable path", err)
+	}
+	if strings.HasSuffix(filepath.Base(exePath), ".test") {
+		return errors.New(errors.EDaemonStartFailed, "refusing to autostart daemon from Go test binary")
 	}
 
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

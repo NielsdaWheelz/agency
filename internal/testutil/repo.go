@@ -1,10 +1,13 @@
 package testutil
 
 import (
+	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 )
 
 // SetupGitRepo creates a real git repo with a tracked README and initial commit.
@@ -25,10 +28,11 @@ func SetupGitRepo(t *testing.T) string {
 
 func run(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	result, err := agencyexec.NewRealRunner().Run(context.Background(), name, args, agencyexec.RunOpts{Dir: dir})
 	if err != nil {
-		t.Fatalf("%s %v failed: %v\n%s", name, args, err, out)
+		t.Fatalf("%s %v failed to start: %v", name, args, err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("%s %v exited %d\n%s", name, args, result.ExitCode, strings.TrimSpace(result.Stdout+"\n"+result.Stderr))
 	}
 }

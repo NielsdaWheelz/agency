@@ -71,9 +71,18 @@ Use:
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		switch len(args) {
 		case 0:
-			candidates := []string{"add\tRegister a repository", "ls\tList registered repositories"}
+			candidates := []string{}
+			if toComplete == "" || strings.HasPrefix("add", toComplete) {
+				candidates = append(candidates, "add\tRegister a repository")
+			}
+			if toComplete == "" || strings.HasPrefix("ls", toComplete) {
+				candidates = append(candidates, "ls\tList registered repositories")
+			}
+			if len(candidates) > 0 {
+				return candidates, cobra.ShellCompDirectiveNoFileComp
+			}
 			repoRefs, directive := completeRepoRefs(cmd, args, toComplete)
-			return append(candidates, repoRefs...), directive
+			return repoRefs, directive
 		case 1:
 			if args[0] == "add" || args[0] == "ls" {
 				return nil, cobra.ShellCompDirectiveNoFileComp

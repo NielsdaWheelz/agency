@@ -116,9 +116,9 @@ func completionClient(cmd *cobra.Command) (context.Context, *daemonclient.Client
 	dirs := paths.ResolveDirs(completionEnv{}, homeDir)
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 
-	client, err := daemonclient.EnsureDaemonRunning(ctx, st.DaemonSocketPath(), st.DaemonLogPath())
-	if err != nil {
-		return nil, nil, err
+	client := daemonclient.NewClient(st.DaemonSocketPath())
+	if !client.IsRunning(ctx) {
+		return nil, nil, errors.New(errors.EDaemonNotRunning, "daemon is not running")
 	}
 	if err := client.CheckAPIVersion(ctx); err != nil {
 		return nil, nil, err
