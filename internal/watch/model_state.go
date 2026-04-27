@@ -30,6 +30,70 @@ func (m model) selectedReviewFile() (reviewFile, bool) {
 	return m.reviewFiles[idx], true
 }
 
+func (m model) selectedRepo() (daemon.RepoDTO, bool) {
+	if m.selectedRepoIndex <= 0 || m.selectedRepoIndex > len(m.snapshot.Repos) {
+		return daemon.RepoDTO{}, false
+	}
+	return m.snapshot.Repos[m.selectedRepoIndex-1], true
+}
+
+func (m model) selectedWorktree() (daemon.WorktreeDTO, bool) {
+	if m.selectedWorktreeIndex <= 0 || m.selectedWorktreeIndex > len(m.snapshot.Worktrees) {
+		return daemon.WorktreeDTO{}, false
+	}
+	return m.snapshot.Worktrees[m.selectedWorktreeIndex-1], true
+}
+
+func (m *model) moveWorkspaceSelection(delta int) {
+	switch m.workspaceFocus {
+	case workspacePaneRepos:
+		m.selectedRepoIndex = clamp(m.selectedRepoIndex+delta, 0, len(m.snapshot.Repos))
+	case workspacePaneWorktrees:
+		m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex+delta, 0, len(m.snapshot.Worktrees))
+	case workspacePaneAgents:
+		m.moveSelection(delta)
+	case "":
+		m.workspaceFocus = workspacePaneAgents
+		m.moveSelection(delta)
+	}
+}
+
+func (m *model) moveWorkspaceSelectionToTop() {
+	switch m.workspaceFocus {
+	case workspacePaneRepos:
+		m.selectedRepoIndex = 0
+	case workspacePaneWorktrees:
+		m.selectedWorktreeIndex = 0
+	case workspacePaneAgents:
+		if len(m.snapshot.Invocations) > 0 {
+			m.selectedIndex = 0
+			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
+			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
+		}
+	case "":
+		m.workspaceFocus = workspacePaneAgents
+		m.moveWorkspaceSelectionToTop()
+	}
+}
+
+func (m *model) moveWorkspaceSelectionToBottom() {
+	switch m.workspaceFocus {
+	case workspacePaneRepos:
+		m.selectedRepoIndex = len(m.snapshot.Repos)
+	case workspacePaneWorktrees:
+		m.selectedWorktreeIndex = len(m.snapshot.Worktrees)
+	case workspacePaneAgents:
+		if len(m.snapshot.Invocations) > 0 {
+			m.selectedIndex = len(m.snapshot.Invocations) - 1
+			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
+			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+		}
+	case "":
+		m.workspaceFocus = workspacePaneAgents
+		m.moveWorkspaceSelectionToBottom()
+	}
+}
+
 func (m *model) moveSelection(delta int) {
 	if len(m.snapshot.Invocations) == 0 {
 		m.selectedIndex = 0
@@ -43,12 +107,48 @@ func (m *model) moveSelection(delta int) {
 	m.selectedRepoID = m.snapshot.Invocations[next].RepoID
 }
 
-func (m *model) reconcileSelection() {
+func (m *model) reconcileSelection() bool {
+	oldRepoID := m.activeRepoID
+	oldWorktreeID := m.activeWorktreeID
+
+	if m.activeRepoID != "" {
+		found := false
+		for _, repo := range m.snapshot.Repos {
+			if repo.RepoID == m.activeRepoID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.activeRepoID = ""
+			m.activeWorktreeID = ""
+		}
+	}
+
+	if m.activeWorktreeID != "" {
+		found := false
+		for _, wt := range m.snapshot.Worktrees {
+			if wt.WorktreeID == m.activeWorktreeID && (m.activeRepoID == "" || wt.RepoID == m.activeRepoID) {
+				found = true
+				if m.activeRepoID == "" {
+					m.activeRepoID = wt.RepoID
+				}
+				break
+			}
+		}
+		if !found {
+			m.activeWorktreeID = ""
+		}
+	}
+
+	m.selectedRepoIndex = clamp(m.selectedRepoIndex, 0, len(m.snapshot.Repos))
+	m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex, 0, len(m.snapshot.Worktrees))
+
 	if len(m.snapshot.Invocations) == 0 {
 		m.selectedIndex = 0
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
-		return
+		return oldRepoID != m.activeRepoID || oldWorktreeID != m.activeWorktreeID
 	}
 
 	if m.selectedInvocationID != "" {
@@ -56,14 +156,17 @@ func (m *model) reconcileSelection() {
 			if inv.InvocationID == m.selectedInvocationID {
 				m.selectedIndex = idx
 				m.selectedRepoID = inv.RepoID
-				return
+				return oldRepoID != m.activeRepoID || oldWorktreeID != m.activeWorktreeID
 			}
 		}
+		m.selectedIndex = 0
+	} else {
+		m.selectedIndex = clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
 	}
 
-	m.selectedIndex = clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
 	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
 	m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+	return oldRepoID != m.activeRepoID || oldWorktreeID != m.activeWorktreeID
 }
 
 func (m *model) reconcileHistorySelection() {

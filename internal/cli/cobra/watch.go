@@ -25,14 +25,15 @@ The watch runtime composes workspace, history, and logs pages from
 daemon-owned read APIs.
 
 Keyboard shortcuts:
-  - up/down (or k/j): move selection
-  - enter: attach to selected live headed invocation
+  - tab / shift+tab: move focus across Repos, Worktrees, and Agents
+  - up/down (or k/j): move selection in the focused pane
+  - enter: apply repo/worktree scope, or run the selected agent default action
+  - b/esc: broaden workspace scope; go back from history/logs
   - o: open selected invocation sandbox
   - p: sync PR for selected invocation's worktree
   - h: open history for the selected invocation
   - l: open raw logs for the selected invocation
   - x: open the action menu, including recreate when a headed session is missing
-  - b/esc: go back from history/logs
   - r: refresh now
   - q: exit watch
 

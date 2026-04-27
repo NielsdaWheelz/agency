@@ -34,6 +34,14 @@ const (
 	pageLogs       watchPage = "logs"
 )
 
+type workspacePane string
+
+const (
+	workspacePaneRepos     workspacePane = "repos"
+	workspacePaneWorktrees workspacePane = "worktrees"
+	workspacePaneAgents    workspacePane = "agents"
+)
+
 type actionKind string
 
 const (
@@ -73,8 +81,10 @@ var (
 type refreshTickMsg time.Time
 
 type snapshotLoadedMsg struct {
-	snapshot Snapshot
-	err      error
+	repoID     string
+	worktreeID string
+	snapshot   Snapshot
+	err        error
 }
 
 type historyLoadedMsg struct {
@@ -131,10 +141,15 @@ type model struct {
 	width  int
 	height int
 
-	snapshot             Snapshot
-	selectedIndex        int
-	selectedInvocationID string
-	selectedRepoID       string
+	snapshot              Snapshot
+	workspaceFocus        workspacePane
+	activeRepoID          string
+	activeWorktreeID      string
+	selectedRepoIndex     int
+	selectedWorktreeIndex int
+	selectedIndex         int
+	selectedInvocationID  string
+	selectedRepoID        string
 
 	workspaceLoading bool
 	workspaceError   string
@@ -235,6 +250,7 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 		sessionLoader:        sessionLoader,
 		page:                 page,
 		backPage:             pageWorkspace,
+		workspaceFocus:       workspacePaneAgents,
 		selectedInvocationID: strings.TrimSpace(opts.InvocationID),
 		selectedRepoID:       strings.TrimSpace(opts.RepoID),
 		open:                 opts.Open,
@@ -294,6 +310,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
 
 	case snapshotLoadedMsg:
+		if strings.TrimSpace(msg.repoID) != strings.TrimSpace(m.activeRepoID) ||
+			strings.TrimSpace(msg.worktreeID) != strings.TrimSpace(m.activeWorktreeID) {
+			return m, nil
+		}
 		m.workspaceLoading = false
 		if msg.err != nil {
 			m.workspaceError = msg.err.Error()
@@ -301,7 +321,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.snapshot = msg.snapshot
 		m.workspaceError = ""
-		m.reconcileSelection()
+		if m.reconcileSelection() {
+			m.workspaceLoading = true
+			return m, m.loadWorkspaceSnapshotCmd()
+		}
 		return m, m.refreshSelectedSessionCmd()
 
 	case historyLoadedMsg:

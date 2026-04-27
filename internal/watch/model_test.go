@@ -48,6 +48,29 @@ func TestModel_WorkspaceSelection_ReconcilesByInvocationID(t *testing.T) {
 	assert.Equal(t, "repo-2", nextModel.selectedRepoID)
 }
 
+func TestModel_WorkspaceSelection_SelectsFirstAgentWhenPreviousSelectionDisappears(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.selectedInvocationID = "inv-missing"
+	m.selectedIndex = 3
+	m.workspaceLoading = true
+
+	next, _ := m.Update(snapshotLoadedMsg{
+		snapshot: Snapshot{
+			Invocations: []daemon.InvocationDTO{
+				{InvocationID: "inv-1", RepoID: "repo-1"},
+				{InvocationID: "inv-2", RepoID: "repo-2"},
+			},
+		},
+	})
+	nextModel := next.(model)
+
+	assert.Equal(t, 0, nextModel.selectedIndex)
+	assert.Equal(t, "inv-1", nextModel.selectedInvocationID)
+	assert.Equal(t, "repo-1", nextModel.selectedRepoID)
+}
+
 func TestModel_WorkspaceNavigation_TracksSelectedInvocationIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -68,6 +91,126 @@ func TestModel_WorkspaceNavigation_TracksSelectedInvocationIdentity(t *testing.T
 	assert.Equal(t, 1, nextModel.selectedIndex)
 	assert.Equal(t, "inv-2", nextModel.selectedInvocationID)
 	assert.Equal(t, "repo-2", nextModel.selectedRepoID)
+}
+
+func TestModel_WorkspaceFocusCyclesAcrossResourcePanes(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+}
+
+func TestModel_WorkspaceEnterScopesRepoAndWorktree(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{
+			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
+			{RepoID: "repo-2", RepoKey: "github.com/acme/two"},
+		},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-old", RepoID: "repo-1"}},
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-old", RepoID: "repo-1", WorktreeID: "wt-old"},
+		},
+	}
+	m.workspaceFocus = workspacePaneRepos
+	m.selectedRepoIndex = 2
+	m.selectedInvocationID = "inv-old"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, "repo-2", nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Worktrees)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+	assert.Empty(t, nextModel.selectedInvocationID)
+
+	nextModel.snapshot.Repos = m.snapshot.Repos
+	nextModel.snapshot.Worktrees = []daemon.WorktreeDTO{{WorktreeID: "wt-2", RepoID: "repo-2", WorktreeName: "auth"}}
+	nextModel.workspaceLoading = false
+	nextModel.selectedWorktreeIndex = 1
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "repo-2", nextModel.activeRepoID)
+	assert.Equal(t, "wt-2", nextModel.activeWorktreeID)
+	assert.Equal(t, 2, nextModel.selectedRepoIndex)
+	assert.Equal(t, workspacePaneAgents, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+}
+
+func TestModel_WorkspaceBroadensWorktreeThenRepo(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.activeRepoID = "repo-1"
+	m.activeWorktreeID = "wt-1"
+	m.workspaceFocus = workspacePaneAgents
+	m.snapshot = Snapshot{
+		Repos:       []daemon.RepoDTO{{RepoID: "repo-1"}},
+		Worktrees:   []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1"}},
+		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"}},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "b"})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, "repo-1", nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+	assert.Empty(t, nextModel.selectedInvocationID)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Empty(t, nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Worktrees)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+}
+
+func TestModel_WorkspaceSnapshotInvalidScopeTriggersReload(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.activeRepoID = "repo-missing"
+	m.workspaceLoading = true
+
+	next, cmd := m.Update(snapshotLoadedMsg{
+		repoID: "repo-missing",
+		snapshot: Snapshot{
+			Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
+		},
+	})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.True(t, nextModel.workspaceLoading)
+	assert.Empty(t, nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
 }
 
 func TestModel_PageSwitchingBetweenWorkspaceHistoryAndLogs(t *testing.T) {
@@ -285,7 +428,7 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 		PRMerge:  func(context.Context, string, string) (string, error) { return "", nil },
 		Rebase:   func(context.Context, string, string) (string, error) { return "", nil },
 	})
-	m.width = 240
+	m.width = 420
 	m.height = 28
 	m.snapshot = Snapshot{
 		Repos:     []daemon.RepoDTO{{RepoID: repoID, RepoKey: "github.com/acme/one"}},
@@ -330,8 +473,10 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	m.actionMenuOpen = true
 
 	view := m.View()
-	assert.Contains(t, view.Content, "agents")
-	assert.Contains(t, view.Content, "selected")
+	assert.Contains(t, view.Content, "Repos")
+	assert.Contains(t, view.Content, "Worktrees")
+	assert.Contains(t, view.Content, "Agents")
+	assert.Contains(t, view.Content, "Selected")
 	assert.Contains(t, view.Content, "STATE")
 	assert.Contains(t, view.Content, "AGENT")
 	assert.Contains(t, view.Content, "Agent:      agent auth ("+invocationID+")")
@@ -361,7 +506,7 @@ func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
 			return daemon.InvocationSessionData{}, nil
 		},
 	})
-	m.width = 180
+	m.width = 360
 	m.height = 28
 	m.snapshot = Snapshot{
 		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},

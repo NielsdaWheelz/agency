@@ -10,6 +10,30 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isQuitKey(msg):
 		return m, tea.Quit
+	case msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift):
+		switch m.workspaceFocus {
+		case workspacePaneRepos:
+			m.workspaceFocus = workspacePaneAgents
+		case workspacePaneWorktrees:
+			m.workspaceFocus = workspacePaneRepos
+		case workspacePaneAgents:
+			m.workspaceFocus = workspacePaneWorktrees
+		case "":
+			m.workspaceFocus = workspacePaneAgents
+		}
+		return m, nil
+	case msg.Code == tea.KeyTab:
+		switch m.workspaceFocus {
+		case workspacePaneRepos:
+			m.workspaceFocus = workspacePaneWorktrees
+		case workspacePaneWorktrees:
+			m.workspaceFocus = workspacePaneAgents
+		case workspacePaneAgents:
+			m.workspaceFocus = workspacePaneRepos
+		case "":
+			m.workspaceFocus = workspacePaneAgents
+		}
+		return m, nil
 	case isRefreshKey(msg):
 		if m.workspaceLoading {
 			return m, nil
@@ -17,25 +41,54 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.workspaceLoading = true
 		return m, m.loadWorkspaceSnapshotCmd()
 	case isUpKey(msg):
-		m.moveSelection(-1)
-		return m, m.loadSelectedSessionForSelectionCmd()
+		m.moveWorkspaceSelection(-1)
+		if m.workspaceFocus == workspacePaneAgents {
+			return m, m.loadSelectedSessionForSelectionCmd()
+		}
+		return m, nil
 	case isDownKey(msg):
-		m.moveSelection(1)
-		return m, m.loadSelectedSessionForSelectionCmd()
+		m.moveWorkspaceSelection(1)
+		if m.workspaceFocus == workspacePaneAgents {
+			return m, m.loadSelectedSessionForSelectionCmd()
+		}
+		return m, nil
 	case isTopKey(msg):
-		if len(m.snapshot.Invocations) > 0 {
-			m.selectedIndex = 0
-			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
-			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
+		m.moveWorkspaceSelectionToTop()
+		if m.workspaceFocus == workspacePaneAgents {
+			return m, m.loadSelectedSessionForSelectionCmd()
 		}
-		return m, m.loadSelectedSessionForSelectionCmd()
+		return m, nil
 	case isBottomKey(msg):
-		if len(m.snapshot.Invocations) > 0 {
-			m.selectedIndex = len(m.snapshot.Invocations) - 1
-			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
-			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+		m.moveWorkspaceSelectionToBottom()
+		if m.workspaceFocus == workspacePaneAgents {
+			return m, m.loadSelectedSessionForSelectionCmd()
 		}
-		return m, m.loadSelectedSessionForSelectionCmd()
+		return m, nil
+	case msg.Code == tea.KeyEsc || msg.Text == "b":
+		if strings.TrimSpace(m.activeWorktreeID) != "" {
+			m.activeWorktreeID = ""
+			m.workspaceFocus = workspacePaneWorktrees
+			m.snapshot.Invocations = nil
+			m.selectedIndex = 0
+			m.selectedInvocationID = ""
+			m.selectedRepoID = ""
+			m.workspaceLoading = true
+			return m, m.loadWorkspaceSnapshotCmd()
+		}
+		if strings.TrimSpace(m.activeRepoID) != "" {
+			m.activeRepoID = ""
+			m.activeWorktreeID = ""
+			m.workspaceFocus = workspacePaneRepos
+			m.snapshot.Worktrees = nil
+			m.snapshot.Invocations = nil
+			m.selectedWorktreeIndex = 0
+			m.selectedIndex = 0
+			m.selectedInvocationID = ""
+			m.selectedRepoID = ""
+			m.workspaceLoading = true
+			return m, m.loadWorkspaceSnapshotCmd()
+		}
+		return m, nil
 	case msg.Text == "h":
 		if strings.TrimSpace(m.selectedInvocationID) == "" {
 			m.lastActionError = true
@@ -66,6 +119,56 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.Text == "x":
 		return m.openActionMenu()
 	case isEnterKey(msg):
+		switch m.workspaceFocus {
+		case workspacePaneRepos:
+			if m.selectedRepoIndex == 0 {
+				m.activeRepoID = ""
+				m.activeWorktreeID = ""
+			} else {
+				repo, ok := m.selectedRepo()
+				if !ok {
+					return m, nil
+				}
+				m.activeRepoID = repo.RepoID
+				m.activeWorktreeID = ""
+			}
+			m.workspaceFocus = workspacePaneWorktrees
+			m.selectedWorktreeIndex = 0
+			m.snapshot.Worktrees = nil
+			m.snapshot.Invocations = nil
+			m.selectedIndex = 0
+			m.selectedInvocationID = ""
+			m.selectedRepoID = ""
+			m.workspaceLoading = true
+			return m, m.loadWorkspaceSnapshotCmd()
+		case workspacePaneWorktrees:
+			if m.selectedWorktreeIndex == 0 {
+				m.activeWorktreeID = ""
+			} else {
+				wt, ok := m.selectedWorktree()
+				if !ok {
+					return m, nil
+				}
+				m.activeRepoID = wt.RepoID
+				m.activeWorktreeID = wt.WorktreeID
+				for idx, repo := range m.snapshot.Repos {
+					if repo.RepoID == wt.RepoID {
+						m.selectedRepoIndex = idx + 1
+						break
+					}
+				}
+			}
+			m.workspaceFocus = workspacePaneAgents
+			m.snapshot.Invocations = nil
+			m.selectedIndex = 0
+			m.selectedInvocationID = ""
+			m.selectedRepoID = ""
+			m.workspaceLoading = true
+			return m, m.loadWorkspaceSnapshotCmd()
+		case workspacePaneAgents:
+		case "":
+			m.workspaceFocus = workspacePaneAgents
+		}
 		if m.canStartAction(actionAttach) {
 			return m.startInvocationAction(actionAttach)
 		}
@@ -316,7 +419,7 @@ func (m model) updateLogsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func isQuitKey(msg tea.KeyPressMsg) bool {
-	return msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" || msg.Text == "q"
+	return msg.String() == "ctrl+c" || msg.Text == "q"
 }
 
 func isBackKey(msg tea.KeyPressMsg) bool {

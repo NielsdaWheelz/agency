@@ -13,9 +13,11 @@ import (
 func (m *model) loadWorkspaceSnapshotCmd() tea.Cmd {
 	ctx := m.ctx
 	client := m.client
+	repoID := strings.TrimSpace(m.activeRepoID)
+	worktreeID := strings.TrimSpace(m.activeWorktreeID)
 	return func() tea.Msg {
-		snapshot, err := loadWorkspaceSnapshot(ctx, client)
-		return snapshotLoadedMsg{snapshot: snapshot, err: err}
+		snapshot, err := loadWorkspaceSnapshot(ctx, client, repoID, worktreeID)
+		return snapshotLoadedMsg{repoID: repoID, worktreeID: worktreeID, snapshot: snapshot, err: err}
 	}
 }
 

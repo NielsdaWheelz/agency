@@ -10,6 +10,12 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 - `agency watch` and `agency agent <invocation-ref> history` should open explicit pages of that one runtime.
 - `watch` is a terminal UI over daemon state, not a source of truth.
 - The runtime should expose workspace, history, transcript, and logs pages over the same read model.
+- The `agency watch` workspace page is a resource browser with `Repos`, `Worktrees`, `Agents`, and read-only `Selected` panes.
+- Repos and worktrees narrow the agent list; they are not top-level modes or tabs.
+- Agents remain the action target, and the selected pane only displays selected agent details.
+- Workspace focus cycles through `Repos`, `Worktrees`, and `Agents` with `tab` and `shift+tab`.
+- In the workspace, `enter` applies scope in repo/worktree panes and runs the selected agent default action in the agent pane.
+- `b` and `esc` broaden workspace scope by clearing worktree scope before repo scope.
 - `agency agent <invocation-ref> history` is the canonical invocation inspection surface for turns, checkpoints, transcripts, and logs.
 - `agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations, not a parallel inspection workflow.
 - `agency agent <invocation-ref> attach` and `agency watch` must use the same daemon-authored headed-session facts instead of local tmux/session heuristics.

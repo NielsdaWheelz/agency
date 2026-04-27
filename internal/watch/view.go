@@ -23,6 +23,7 @@ func (m model) renderWorkspace() string {
 
 	headerParts := []string{
 		"agency watch",
+		m.workspaceScopeLabel(),
 		fmt.Sprintf("agents:%d", len(m.snapshot.Invocations)),
 		fmt.Sprintf("worktrees:%d", len(m.snapshot.Worktrees)),
 		fmt.Sprintf("repos:%d", len(m.snapshot.Repos)),
@@ -60,38 +61,118 @@ func (m model) renderWorkspace() string {
 	if m.workspaceError != "" {
 		lines = append(lines, errorStyle.Render("refresh error: "+truncateWithEllipsis(m.workspaceError, width-4)+" (auto-retrying)"))
 	}
-	lines = append(lines, warningStyle.Render("j/k move • enter default • d review • x actions • h history • l logs • o open • p pr sync • r refresh • q quit"))
+	switch m.workspaceFocus {
+	case workspacePaneRepos:
+		lines = append(lines, warningStyle.Render("tab focus • j/k move • enter scope repo • b/esc broaden • r refresh • q quit"))
+	case workspacePaneWorktrees:
+		lines = append(lines, warningStyle.Render("tab focus • j/k move • enter scope worktree • b/esc broaden • r refresh • q quit"))
+	case workspacePaneAgents:
+		lines = append(lines, warningStyle.Render("tab focus • j/k move • enter default • d review • x actions • h history • l logs • o open • p pr sync • b/esc broaden • r refresh • q quit"))
+	case "":
+		lines = append(lines, warningStyle.Render("tab focus • j/k move • enter default • r refresh • q quit"))
+	}
 	return strings.Join(lines, "\n")
 }
 
 func (m model) renderWorkspacePanels(width, contentHeight int) string {
-	leftWidth := width * 3 / 5
-	if leftWidth < minPanelWidth {
-		leftWidth = minPanelWidth
-	}
-	rightWidth := width - leftWidth - 1
-	if rightWidth < minPanelWidth {
-		rightWidth = minPanelWidth
-		leftWidth = width - rightWidth - 1
-	}
-
-	if leftWidth < minPanelWidth {
+	repoWidth := max(18, width/7)
+	worktreeWidth := max(24, width/5)
+	detailsWidth := max(34, width/4)
+	agentsWidth := width - repoWidth - worktreeWidth - detailsWidth - 3
+	if width < 120 || agentsWidth < 40 {
 		panelWidth := max(1, width-2)
-		leftHeight := max(6, contentHeight/2)
-		rightHeight := max(6, contentHeight-leftHeight)
-		leftPanel := panelStyle.Width(panelWidth).Height(leftHeight).Render(m.renderInvocationsPanel(max(1, panelWidth-2), max(6, leftHeight-2)))
-		rightPanel := panelStyle.Width(panelWidth).Height(rightHeight).Render(m.renderDetailsPanel(max(1, panelWidth-2)))
-		return lipgloss.JoinVertical(lipgloss.Left, leftPanel, rightPanel)
+		listHeight := max(6, contentHeight/4)
+		detailHeight := max(8, contentHeight-listHeight*3)
+		reposPanel := panelStyle.Width(panelWidth).Height(listHeight).Render(m.renderReposPanel(max(1, panelWidth-2), max(4, listHeight-2)))
+		worktreesPanel := panelStyle.Width(panelWidth).Height(listHeight).Render(m.renderWorktreesPanel(max(1, panelWidth-2), max(4, listHeight-2)))
+		agentsPanel := panelStyle.Width(panelWidth).Height(listHeight).Render(m.renderAgentsPanel(max(1, panelWidth-2), max(4, listHeight-2)))
+		detailsPanel := panelStyle.Width(panelWidth).Height(detailHeight).Render(m.renderDetailsPanel(max(1, panelWidth-2)))
+		return lipgloss.JoinVertical(lipgloss.Left, reposPanel, worktreesPanel, agentsPanel, detailsPanel)
 	}
 
-	leftPanel := panelStyle.Width(leftWidth).Height(contentHeight).Render(m.renderInvocationsPanel(max(1, leftWidth-2), max(6, contentHeight-2)))
-	rightPanel := panelStyle.Width(rightWidth).Height(contentHeight).Render(m.renderDetailsPanel(max(1, rightWidth-2)))
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	reposPanel := panelStyle.Width(repoWidth).Height(contentHeight).Render(m.renderReposPanel(max(1, repoWidth-2), max(6, contentHeight-2)))
+	worktreesPanel := panelStyle.Width(worktreeWidth).Height(contentHeight).Render(m.renderWorktreesPanel(max(1, worktreeWidth-2), max(6, contentHeight-2)))
+	agentsPanel := panelStyle.Width(agentsWidth).Height(contentHeight).Render(m.renderAgentsPanel(max(1, agentsWidth-2), max(6, contentHeight-2)))
+	detailsPanel := panelStyle.Width(detailsWidth).Height(contentHeight).Render(m.renderDetailsPanel(max(1, detailsWidth-2)))
+	return lipgloss.JoinHorizontal(lipgloss.Top, reposPanel, worktreesPanel, agentsPanel, detailsPanel)
 }
 
-func (m model) renderInvocationsPanel(width, height int) string {
+func (m model) renderReposPanel(width, height int) string {
+	lines := []string{m.workspacePaneTitle(workspacePaneRepos, "Repos"), ""}
+
+	maxRows := max(3, height-3)
+	start, end := windowForSelection(len(m.snapshot.Repos)+1, m.selectedRepoIndex, maxRows)
+	for idx := start; idx < end; idx++ {
+		label := "all repos"
+		active := strings.TrimSpace(m.activeRepoID) == ""
+		if idx > 0 {
+			repo := m.snapshot.Repos[idx-1]
+			name := strings.TrimSpace(repo.RepoKey)
+			if name == "" {
+				name = strings.TrimSpace(repo.RepoName)
+			}
+			label = m.repoDisplay(name, repo.RepoID)
+			active = repo.RepoID == m.activeRepoID
+		}
+
+		prefix := "  "
+		if idx == m.selectedRepoIndex {
+			prefix = "> "
+		}
+		if active {
+			prefix = prefix[:1] + "*"
+		}
+		row := truncateWithEllipsis(prefix+" "+label, width)
+		if idx == m.selectedRepoIndex && m.workspaceFocus == workspacePaneRepos {
+			row = selectedRowStyle.Render(row)
+		}
+		lines = append(lines, row)
+	}
+	if len(m.snapshot.Repos) == 0 {
+		lines = append(lines, dimStyle.Render("  no repos"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderWorktreesPanel(width, height int) string {
+	lines := []string{m.workspacePaneTitle(workspacePaneWorktrees, "Worktrees"), ""}
+
+	maxRows := max(3, height-3)
+	start, end := windowForSelection(len(m.snapshot.Worktrees)+1, m.selectedWorktreeIndex, maxRows)
+	for idx := start; idx < end; idx++ {
+		label := "all worktrees"
+		active := strings.TrimSpace(m.activeWorktreeID) == ""
+		if idx > 0 {
+			wt := m.snapshot.Worktrees[idx-1]
+			label = m.worktreeDisplay(wt.WorktreeName, wt.WorktreeID)
+			if strings.TrimSpace(m.activeRepoID) == "" {
+				label += " / " + m.repoDisplay(wt.RepoName, wt.RepoID)
+			}
+			active = wt.WorktreeID == m.activeWorktreeID
+		}
+
+		prefix := "  "
+		if idx == m.selectedWorktreeIndex {
+			prefix = "> "
+		}
+		if active {
+			prefix = prefix[:1] + "*"
+		}
+		row := truncateWithEllipsis(prefix+" "+label, width)
+		if idx == m.selectedWorktreeIndex && m.workspaceFocus == workspacePaneWorktrees {
+			row = selectedRowStyle.Render(row)
+		}
+		lines = append(lines, row)
+	}
+	if len(m.snapshot.Worktrees) == 0 {
+		lines = append(lines, dimStyle.Render("  no worktrees"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderAgentsPanel(width, height int) string {
 	if len(m.snapshot.Invocations) == 0 {
-		return "agents\n\n(no agents found)"
+		return strings.Join([]string{m.workspacePaneTitle(workspacePaneAgents, "Agents"), "", "  no agents"}, "\n")
 	}
 
 	stateWidth := 10
@@ -101,7 +182,7 @@ func (m model) renderInvocationsPanel(width, height int) string {
 	latestWidth := max(12, width-stateWidth-agentWidth-worktreeWidth-repoWidth-8)
 
 	lines := []string{
-		"agents",
+		m.workspacePaneTitle(workspacePaneAgents, "Agents"),
 		"",
 		dimStyle.Render(fmt.Sprintf("  %-*s %-*s %-*s %-*s %s", stateWidth, "STATE", agentWidth, "AGENT", worktreeWidth, "WORKTREE", repoWidth, "REPO", "LATEST")),
 	}
@@ -125,7 +206,7 @@ func (m model) renderInvocationsPanel(width, height int) string {
 			truncateWithEllipsis(m.latestSummary(inv), latestWidth),
 		)
 		row = truncateWithEllipsis(row, width)
-		if idx == m.selectedIndex {
+		if idx == m.selectedIndex && m.workspaceFocus == workspacePaneAgents {
 			row = selectedRowStyle.Render(row)
 		}
 		lines = append(lines, row)
@@ -140,7 +221,7 @@ func (m model) renderInvocationsPanel(width, height int) string {
 }
 
 func (m model) renderDetailsPanel(width int) string {
-	lines := []string{"selected", ""}
+	lines := []string{"Selected", ""}
 
 	selected, ok := m.selectedInvocation()
 	if !ok {
@@ -328,6 +409,43 @@ func (m model) renderSessionDetailLines(width int, selected daemon.InvocationDTO
 	}
 
 	return lines
+}
+
+func (m model) workspaceScopeLabel() string {
+	repoLabel := "all repos"
+	if strings.TrimSpace(m.activeRepoID) != "" {
+		repoLabel = m.repoDisplay("", m.activeRepoID)
+		for _, repo := range m.snapshot.Repos {
+			if repo.RepoID == m.activeRepoID {
+				name := strings.TrimSpace(repo.RepoKey)
+				if name == "" {
+					name = strings.TrimSpace(repo.RepoName)
+				}
+				repoLabel = m.repoDisplay(name, repo.RepoID)
+				break
+			}
+		}
+	}
+
+	worktreeLabel := "all worktrees"
+	if strings.TrimSpace(m.activeWorktreeID) != "" {
+		worktreeLabel = m.worktreeDisplay("", m.activeWorktreeID)
+		for _, wt := range m.snapshot.Worktrees {
+			if wt.WorktreeID == m.activeWorktreeID {
+				worktreeLabel = m.worktreeDisplay(wt.WorktreeName, wt.WorktreeID)
+				break
+			}
+		}
+	}
+
+	return repoLabel + " / " + worktreeLabel
+}
+
+func (m model) workspacePaneTitle(pane workspacePane, title string) string {
+	if m.workspaceFocus == pane {
+		return "> " + title
+	}
+	return title
 }
 
 func (m model) selectedActionTarget() string {

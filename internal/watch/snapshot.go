@@ -20,9 +20,12 @@ type Snapshot struct {
 	UpdatedAt   time.Time
 }
 
-func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client) (Snapshot, error) {
+func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client, repoID, worktreeID string) (Snapshot, error) {
 	if client == nil {
 		return Snapshot{}, errors.New(errors.EInternal, "watch runtime requires a daemon client")
+	}
+	if worktreeID != "" && repoID == "" {
+		return Snapshot{}, errors.New(errors.EInternal, "worktree-scoped workspace load requires repo scope")
 	}
 
 	reposResult, err := client.ListRepos(ctx)
@@ -30,12 +33,12 @@ func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client) (Sn
 		return Snapshot{}, err
 	}
 
-	worktrees, err := loadAllWorkspaceWorktrees(ctx, client)
+	worktrees, err := loadAllWorkspaceWorktrees(ctx, client, repoID)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	invocations, err := loadAllWorkspaceInvocations(ctx, client)
+	invocations, err := loadAllWorkspaceInvocations(ctx, client, repoID, worktreeID)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -48,12 +51,13 @@ func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client) (Sn
 	}, nil
 }
 
-func loadAllWorkspaceWorktrees(ctx context.Context, client *daemonclient.Client) ([]daemon.WorktreeDTO, error) {
+func loadAllWorkspaceWorktrees(ctx context.Context, client *daemonclient.Client, repoID string) ([]daemon.WorktreeDTO, error) {
 	worktrees := make([]daemon.WorktreeDTO, 0, 128)
 	cursor := ""
 
 	for {
 		result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+			RepoID: repoID,
 			State:  "all",
 			Limit:  workspacePageLimit,
 			Cursor: cursor,
@@ -73,15 +77,17 @@ func loadAllWorkspaceWorktrees(ctx context.Context, client *daemonclient.Client)
 	}
 }
 
-func loadAllWorkspaceInvocations(ctx context.Context, client *daemonclient.Client) ([]daemon.InvocationDTO, error) {
+func loadAllWorkspaceInvocations(ctx context.Context, client *daemonclient.Client, repoID, worktreeID string) ([]daemon.InvocationDTO, error) {
 	invocations := make([]daemon.InvocationDTO, 0, 128)
 	cursor := ""
 
 	for {
 		result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-			State:  "all",
-			Limit:  workspacePageLimit,
-			Cursor: cursor,
+			RepoID:      repoID,
+			WorktreeRef: worktreeID,
+			State:       "all",
+			Limit:       workspacePageLimit,
+			Cursor:      cursor,
 		})
 		if err != nil {
 			return nil, err

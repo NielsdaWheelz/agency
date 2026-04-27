@@ -87,12 +87,46 @@ func TestLoadWorkspaceSnapshot_DrainsPagination(t *testing.T) {
 		}
 	})))
 
-	snapshot, err := loadWorkspaceSnapshot(context.Background(), client)
+	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "", "")
 	require.NoError(t, err)
 
 	require.Len(t, snapshot.Repos, 1)
 	require.Len(t, snapshot.Worktrees, 3)
 	require.Len(t, snapshot.Invocations, 2)
+}
+
+func TestLoadWorkspaceSnapshot_UsesRepoAndWorktreeScope(t *testing.T) {
+	t.Parallel()
+
+	client := daemonclient.NewClient(startFakeDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos":
+			writeDaemonOK(t, w, daemon.ListReposData{
+				Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
+			})
+		case "/worktrees":
+			assert.Equal(t, "repo-1", r.URL.Query().Get("repo_id"))
+			assert.Equal(t, "all", r.URL.Query().Get("state"))
+			writeDaemonOK(t, w, daemon.ListWorktreesData{
+				Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1", WorktreeName: "auth"}},
+			})
+		case "/invocations":
+			assert.Equal(t, "repo-1", r.URL.Query().Get("repo_id"))
+			assert.Equal(t, "wt-1", r.URL.Query().Get("worktree_ref"))
+			assert.Equal(t, "all", r.URL.Query().Get("state"))
+			writeDaemonOK(t, w, daemon.ListInvocationsData{
+				Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})))
+
+	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "repo-1", "wt-1")
+	require.NoError(t, err)
+
+	require.Len(t, snapshot.Worktrees, 1)
+	require.Len(t, snapshot.Invocations, 1)
 }
 
 func TestLoadWorkspaceSnapshot_CursorMustAdvance(t *testing.T) {
@@ -121,7 +155,7 @@ func TestLoadWorkspaceSnapshot_CursorMustAdvance(t *testing.T) {
 		}
 	})))
 
-	_, err := loadWorkspaceSnapshot(context.Background(), client)
+	_, err := loadWorkspaceSnapshot(context.Background(), client, "", "")
 	require.Error(t, err)
 
 	ae, ok := agencyerrors.AsAgencyError(err)
@@ -154,7 +188,7 @@ func TestLoadWorkspaceSnapshot_SortsBySortKeyThenStartedAt(t *testing.T) {
 		}
 	})))
 
-	snapshot, err := loadWorkspaceSnapshot(context.Background(), client)
+	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "", "")
 	require.NoError(t, err)
 
 	require.Len(t, snapshot.Invocations, 3)

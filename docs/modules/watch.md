@@ -10,7 +10,13 @@ This document covers `internal/watch`.
 - It may expose explicit pages, but should not split into separate TUI runtimes.
 - It should compose daemon read APIs into one snapshot.
 - It should not own persistence or mutation policy.
-- The workspace page should be a dense operator surface over invocations, not a prose-heavy status dump.
+- The workspace page should be a dense operator surface over agents, repos, and worktrees, not a prose-heavy status dump.
+- The workspace browser uses `Repos`, `Worktrees`, `Agents`, and read-only `Selected` panes in that order.
+- Repos and worktrees are scope controls; agents remain the primary operating target.
+- The workspace starts at all repos, all worktrees, with focus on `Agents`.
+- `tab` and `shift+tab` move focus across the list panes; `Selected` is not a focus target.
+- `enter` applies repo/worktree scope in the parent panes and runs the selected agent default action in `Agents`.
+- `b` and `esc` broaden scope by clearing worktree scope, then repo scope; `r` reloads the workspace snapshot.
 - Workspace rows should stay single-line and table-like so the selected agent, worktree, repo, state, and latest activity are easy to scan.
 - Workspace pages should use one canonical invocation `state`: `starting`, `running`, `waiting`, `stopping`, `succeeded`, or `failed`.
 - `waiting` covers both turn-complete idle and waiting-for-user cases.
@@ -19,6 +25,7 @@ This document covers `internal/watch`.
 - Human-readable labels such as invocation names, worktree names, and repo labels should be primary in the UI; canonical ids stay visible but secondary.
 - Page headers should make the current agent, worktree, and repo obvious before showing transcript, logs, or history content.
 - The workspace detail pane should prefer a small set of high-signal fields: context, state, reason, latest activity, actions, and ids.
+- Workspace browser snapshot loading should use daemon reads scoped by the active repo and worktree; avoid parallel UI filtering for those scopes.
 - For headed invocations, the workspace detail pane may also show daemon-authored session facts: session status, tmux session name, connected tmux clients, attach command, and recreate availability.
 - Action handling should stay explicit and local to the runtime; avoid generic menu or command frameworks when a direct key/action flow is sufficient.
 - History, transcript, and log views should be read-model pages over canonical daemon reads, not parallel UI stacks.
