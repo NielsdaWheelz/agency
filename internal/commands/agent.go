@@ -13,6 +13,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // AgentStartOpts holds options for the agent start command.
@@ -26,8 +27,8 @@ type AgentStartOpts struct {
 	// Runner is the canonical runner id (claude-code, codex, amp, opencode, cursor, droid).
 	Runner string
 
-	// Headless indicates whether to run in headless mode.
-	Headless bool
+	// Mode is the execution mode (headed or headless).
+	Mode string
 
 	// InvocationName is an optional human-readable label.
 	InvocationName string
@@ -142,29 +143,43 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if fsys == nil {
 		fsys = fs.NewRealFS()
 	}
-	if !opts.Headless && !opts.Detached {
-		isInteractive := opts.IsInteractive
-		if isInteractive == nil {
-			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-		}
-		if !isInteractive() {
-			return fail(errors.NewWithDetails(
-				errors.ENotInteractive,
-				"headed start requires an interactive terminal",
-				map[string]string{
-					"hint": "re-run in an interactive terminal or pass --detached",
-				},
-			))
-		}
-	}
 
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return fail(err)
+	mode := strings.TrimSpace(opts.Mode)
+	if mode == "" {
+		mode = string(store.RunnerModeHeaded)
+	}
+	headless := mode == string(store.RunnerModeHeadless)
+	switch mode {
+	case string(store.RunnerModeHeadless):
+		if opts.Detached {
+			return fail(errors.NewWithDetails(errors.EUsage, "--detached is only valid with --mode headed", map[string]string{"hint": "omit --detached or pass --mode headed"}))
+		}
+	case string(store.RunnerModeHeaded):
+		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
+			return fail(errors.NewWithDetails(errors.EUsage, "headed agent start does not accept a prompt", map[string]string{"hint": "omit --prompt/--prompt-file or use --mode headless"}))
+		}
+		if !opts.Detached {
+			isInteractive := opts.IsInteractive
+			if isInteractive == nil {
+				isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
+			}
+			if !isInteractive() {
+				return fail(errors.NewWithDetails(
+					errors.ENotInteractive,
+					"headed start requires an interactive terminal",
+					map[string]string{
+						"hint": "re-run in an interactive terminal or pass --detached",
+					},
+				))
+			}
+		}
+	default:
+		return fail(errors.New(errors.EInvalidArgument, "mode must be headless or headed"))
 	}
 
 	headlessPrompt := ""
-	if opts.Headless {
+	if headless {
+		var err error
 		headlessPrompt, err = resolveBoundedPromptInput(
 			opts.Prompt,
 			opts.PromptFile,
@@ -175,6 +190,11 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		if err != nil {
 			return fail(err)
 		}
+	}
+
+	ns, err := setupDaemonNav(ctx, fsys, "")
+	if err != nil {
+		return fail(err)
 	}
 
 	repo, cwdSelection, err := resolveAgentStartRepo(ctx, cr, ns, cwd, repoRef)
@@ -196,14 +216,14 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		Effort:           opts.Effort,
 		PermissionMode:   opts.PermissionMode,
 		AgencyConfigPath: opts.AgencyConfigPath,
-		Headless:         opts.Headless,
+		Headless:         headless,
 	})
 	if err != nil {
 		return fail(err)
 	}
 	opts.RunnerArgs = effectiveRunnerArgs
 
-	if opts.Headless {
+	if headless {
 		return fail(agentStartHeadlessControlPlane(ctx, repoRoot, ns.client, opts, runner, headlessPrompt, stdout, stderr))
 	}
 

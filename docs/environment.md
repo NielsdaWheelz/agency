@@ -23,7 +23,7 @@ This document covers config paths, directory overrides, and precedence.
 - Ambient targeting uses this order: explicit flag, current directory, then error.
 - For `agency task start`, omitted `--repo` resolves from the current directory; omitted `--base` resolves from the current branch of the selected checkout.
 - For `agency worktree create`, omitted `--repo` resolves from the current directory; omitted `--base` resolves from the current branch of the selected checkout.
-- For `agency agent start`, omitted `--repo` resolves from the current directory; omitted `--worktree` resolves from cwd only when cwd already identifies a present integration worktree. Otherwise `--worktree` is required.
+- For `agency agent start`, omitted `--repo` resolves from the current directory; omitted `--worktree` resolves from cwd only when cwd already identifies a present integration worktree. Otherwise `--worktree` is required. Omitted `--mode` defaults to `headed`.
 - `agency task start`, `agency task <task-ref> retry`, and `agency agent start` load typed runner defaults from user `config.json`, overlay repo-scoped fields from the selected `agency.json`, and apply explicit `--model` and `--effort` last.
 - `agency task start`, `agency task <task-ref> retry`, and `agency agent start` resolve Claude `permission_mode` from user `config.json` only.
 - Merge, verify, and archive flows use the same canonical repo-root config resolution.

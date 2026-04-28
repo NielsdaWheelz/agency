@@ -82,7 +82,7 @@ agency agent <invocation-ref> land --apply
 If `--worktree` is omitted, `agency agent start` resolves the worktree from the current directory only when cwd is already inside a present integration worktree. Otherwise `--worktree` is required.
 Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
 `task start`, `task <task-ref> retry`, and `agent start` use agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
-`agency agent start` defaults to headed mode. Use `--headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
+`agency agent start` defaults to `--mode headed`. Use `--mode headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
 For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set `permission_mode` in user `config.json` only; use `runner_defaults` or `--model`/`--effort` on `agency task start`, `agency task <task-ref> retry`, or `agency agent start` for Claude model and effort.
 
 headed (interactive tmux):
@@ -98,7 +98,7 @@ For `claude-code`, headed mode launches interactive Claude in tmux and applies A
 headless (fire-and-forget):
 
 ```bash
-agency agent start --worktree my-feature --repo <repo-ref> --headless --prompt "Fix auth edge cases" --model claude-opus-4-7[1m] --effort max
+agency agent start --worktree my-feature --repo <repo-ref> --mode headless --prompt "Fix auth edge cases" --model claude-opus-4-7[1m] --effort max
 agency agent <invocation-ref> history                 # interactive invocation history/transcript/logs UI (same runtime; tty only)
 agency agent <invocation-ref> history --json          # machine-readable timeline output
 agency agent <invocation-ref> history logs --follow   # raw invocation logs
@@ -141,7 +141,7 @@ agency repo <repo-ref> rm --yes
 automation-friendly mutation json:
 
 ```bash
-agency agent start --worktree my-feature --repo <repo-ref> --headless --prompt "fix bug" --json
+agency agent start --worktree my-feature --repo <repo-ref> --mode headless --prompt "fix bug" --json
 agency agent <invocation-ref> stop --json
 agency agent <invocation-ref> kill --json
 agency agent <invocation-ref> land --json

@@ -18,6 +18,7 @@ This document covers configuration and code escape hatches.
 - `agency worktree create <name>` takes the worktree name positionally.
 - `agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` for an explicit target.
 - `agency agent start` requires `--worktree` when cwd is not inside a present integration worktree.
+- `--mode` is the canonical mode selector for `agency task start`, `agency task <task-ref> retry`, and `agency agent start`.
 - `--agency-config` is the explicit override for the selected agency config file.
 - `agency task start`, `agency task <task-ref> retry`, and `agency agent start` accept `--agency-config` and use it before repo-shared and per-repo agency config.
 - Daemon APIs that accept an agency config override require an absolute path.

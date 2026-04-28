@@ -147,15 +147,27 @@ func TestTaskStart_RequiresName(t *testing.T) {
 }
 
 func TestAgentLS_StartFlagsAreRejected(t *testing.T) {
-	_, _, err := executeCmd("agent", "ls", "--headless")
+	_, _, err := executeCmd("agent", "ls", "--mode", "headless")
 	require.Error(t, err, "expected start-only flags to be rejected by agent ls")
-	assert.Contains(t, err.Error(), "unknown flag: --headless")
+	assert.Contains(t, err.Error(), "unknown flag: --mode")
 }
 
 func TestAgentTarget_StartFlagsAreRejected(t *testing.T) {
-	_, _, err := executeCmd("agent", "inv-1", "--headless")
+	_, _, err := executeCmd("agent", "inv-1", "--mode", "headless")
 	require.Error(t, err, "expected start-only flags to be rejected by target-first agent commands")
+	assert.Contains(t, err.Error(), "unknown flag: --mode")
+}
+
+func TestAgentStart_HeadlessFlagRejected(t *testing.T) {
+	_, _, err := executeCmd("agent", "start", "--headless")
+	require.Error(t, err, "expected legacy headless flag to be rejected")
 	assert.Contains(t, err.Error(), "unknown flag: --headless")
+}
+
+func TestAgentStart_InvalidModeReturnsInvalidArgument(t *testing.T) {
+	_, _, err := executeCmd("agent", "start", "--mode", "bogus")
+	require.Error(t, err, "expected invalid mode to be rejected")
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
 func TestWatchCmd_NonInteractiveReturnsENotInteractive(t *testing.T) {
@@ -256,6 +268,17 @@ func TestCompletion_EnumFlag(t *testing.T) {
 	stdout, _, err := executeCmd("__complete", "agent", "inv-1", "history", "l")
 	require.NoError(t, err, "expected nested target-first completion to succeed")
 	assert.Contains(t, stdout, "logs")
+}
+
+func TestCompletionAgentStartModeFlag(t *testing.T) {
+	dataDir, configDir := setIsolatedCompletionEnv(t)
+
+	stdout, _, err := executeCmd("__complete", "agent", "start", "--mode", "")
+	require.NoError(t, err, "expected agent start mode completion to succeed")
+	assert.Contains(t, stdout, "headed")
+	assert.Contains(t, stdout, "headless")
+	assert.NoDirExists(t, dataDir)
+	assert.NoDirExists(t, configDir)
 }
 
 func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Client) {

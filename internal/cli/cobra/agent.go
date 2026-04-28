@@ -189,7 +189,7 @@ func newAgentStartCmd() *cobra.Command {
 	var worktreeRef string
 	var jsonOut bool
 	var runner string
-	var headless bool
+	var mode string
 	var name string
 	var detached bool
 	var prompt string
@@ -226,7 +226,7 @@ func newAgentStartCmd() *cobra.Command {
 				RepoRef:            repoRef,
 				WorktreeRef:        worktreeRef,
 				Runner:             runner,
-				Headless:           headless,
+				Mode:               strings.TrimSpace(mode),
 				InvocationName:     name,
 				Detached:           detached,
 				Prompt:             prompt,
@@ -248,7 +248,7 @@ func newAgentStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&worktreeRef, "worktree", "", "Use this integration worktree instead of local/default resolution")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner id to use")
-	cmd.Flags().BoolVar(&headless, "headless", false, "Run through the daemon without tmux attachment")
+	cmd.Flags().StringVar(&mode, "mode", "headed", "Agent mode (headed or headless)")
 	cmd.Flags().StringVar(&name, "name", "", "Optional invocation name")
 	cmd.Flags().BoolVar(&detached, "detached", false, "Create the tmux session but do not attach")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless prompt text")
@@ -260,6 +260,7 @@ func newAgentStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&permissionMode, "permission-mode", "", "Claude permission mode override")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from headless checkpoint snapshots")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
+	_ = cmd.RegisterFlagCompletionFunc("mode", completeRunnerModes)
 
 	return cmd
 }

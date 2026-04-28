@@ -48,7 +48,7 @@ func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
 		RepoRef:     repoID,
 		WorktreeRef: "start-json",
-		Headless:    true,
+		Mode:        "headless",
 		JSON:        true,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "json failure mode should not return a human-formatted error")
@@ -69,7 +69,7 @@ func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testin
 		RepoRef:     repoID,
 		WorktreeRef: "does-not-exist",
 		Runner:      "claude-code",
-		Headless:    true,
+		Mode:        "headless",
 		Prompt:      "hello",
 		JSON:        true,
 	}, &stdout, &stderr)

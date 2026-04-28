@@ -927,8 +927,8 @@ func TestAgentStart_NormalRepoRequiresWorktree(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
-		Headless: true,
-		Prompt:   "hello",
+		Mode:   "headless",
+		Prompt: "hello",
 	}, &stdout, &stderr)
 
 	require.Error(t, err)
@@ -940,12 +940,53 @@ func TestAgentStart_UnrelatedCWDRequiresRepo(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), exec.NewRealRunner(), env.FS, t.TempDir(), AgentStartOpts{
-		Headless: true,
-		Prompt:   "hello",
+		Mode:   "headless",
+		Prompt: "hello",
 	}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENoRepoContext, errors.GetCode(err))
+}
+
+func TestAgentStart_HeadlessPromptRequiredBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode: "headless",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
+}
+
+func TestAgentStart_InvalidModeBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode:   "bogus",
+		Prompt: "hello",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestAgentStart_HeadedPromptRejectedBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode:     "headed",
+		Prompt:   "hello",
+		Detached: true,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentStart_HeadlessDetachedRejectedBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode:     "headless",
+		Prompt:   "hello",
+		Detached: true,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
 func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
@@ -982,6 +1023,7 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-detached",
 		Runner:        "claude-code",
+		Mode:          "headed",
 		Detached:      true,
 		IsInteractive: func() bool { return false },
 	}, &stdout, &stderr)
@@ -1236,7 +1278,7 @@ func TestAgentStart_HeadlessClaudeDefaultsPermissionModeToBypassPermissions(t *t
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-headless-default-permission-mode",
 		Runner:        "claude-code",
-		Headless:      true,
+		Mode:          "headless",
 		Prompt:        "headless default permissions",
 		IsInteractive: func() bool { return false },
 	}, &stdout, &stderr)
@@ -1259,7 +1301,7 @@ func TestAgentStart_HeadlessClaudeRejectsPromptingPermissionModes(t *testing.T) 
 		RepoRef:        env.RepoID,
 		WorktreeRef:    "start-headless-invalid-permission-mode",
 		Runner:         "claude-code",
-		Headless:       true,
+		Mode:           "headless",
 		Prompt:         "headless invalid permissions",
 		PermissionMode: "default",
 		IsInteractive:  func() bool { return false },

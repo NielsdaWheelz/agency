@@ -90,7 +90,7 @@ mutation.`,
 	registerRepoFlagCompletion(cmd)
 	registerRunnerFlagCompletion(startCmd)
 	registerRunnerFlagCompletion(cmd)
-	_ = cmd.RegisterFlagCompletionFunc("mode", completeTaskModes)
+	_ = cmd.RegisterFlagCompletionFunc("mode", completeRunnerModes)
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		for i, arg := range args {
@@ -205,11 +205,11 @@ func newTaskStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&permissionMode, "permission-mode", "", "Claude permission mode override")
 	cmd.Flags().BoolVar(&noIncludeUntracked, "no-include-untracked", false, "Exclude untracked files from headless checkpoint snapshots")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
-	_ = cmd.RegisterFlagCompletionFunc("mode", completeTaskModes)
+	_ = cmd.RegisterFlagCompletionFunc("mode", completeRunnerModes)
 	return cmd
 }
 
-func completeTaskModes(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+func completeRunnerModes(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	values := []string{"headless", "headed"}
 	candidates := make([]string, 0, len(values))
 	for _, value := range values {

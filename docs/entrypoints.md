@@ -24,7 +24,7 @@ This document covers entrypoints and side effects.
 - `agency agent start` should take no positional worktree argument.
 - `agency agent start --worktree <worktree-ref>` is the explicit worktree override and the scriptable surface from any cwd.
 - When `--worktree` is omitted, `agency agent start` should resolve the worktree from cwd only when cwd is inside a present agency integration worktree. Otherwise `--worktree` is required.
-- `agency agent start` should default to headed mode.
+- `agency agent start` defaults to `--mode headed`; `--mode headless` requires `--prompt` or `--prompt-file`.
 - `agency task start`, `agency task <task-ref> retry`, and `agency agent start` should honor explicit `--agency-config` and otherwise resolve repo-scoped runner defaults through: canonical repo-root `agency.json`, then per-repo config under `AGENCY_CONFIG_DIR`.
 - `agency task start`, `agency task <task-ref> retry`, and `agency agent start` should load user `config.json`, overlay repo-scoped runner-default fields from the selected `agency.json`, and apply explicit `--model` and `--effort` last.
 - `agency task start`, `agency task <task-ref> retry`, and `agency agent start` should source `runner_defaults.claude-code.permission_mode` from user `config.json` only.
