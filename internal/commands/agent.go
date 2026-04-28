@@ -67,23 +67,23 @@ type AgentStartOpts struct {
 	TmuxAttachFn  func(sessionName string) error
 }
 
-func resolveAgentStartRepo(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, fsys fs.FS, cwd, repoRef string) (daemon.RepoDTO, cwdTargetSelection, bool, error) {
+func resolveAgentStartRepo(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, cwd, repoRef string) (daemon.RepoDTO, cwdTargetSelection, error) {
 	cwdSelection, err := inspectCWDAmbientSelection(ctx, cr, ns, cwd)
 	if err != nil {
-		return daemon.RepoDTO{}, cwdTargetSelection{}, false, err
+		return daemon.RepoDTO{}, cwdTargetSelection{}, err
 	}
 
 	if strings.TrimSpace(repoRef) != "" {
 		repo, err := resolveAccessibleRepo(ctx, ns.client, repoRef)
-		return repo, cwdSelection, false, err
+		return repo, cwdSelection, err
 	}
 
 	if cwdSelection.HasRepo {
-		return cwdSelection.Repo, cwdSelection, false, nil
+		return cwdSelection.Repo, cwdSelection, nil
 	}
 
 	if cwdSelection.InsideAgencyManagedTree {
-		return daemon.RepoDTO{}, cwdTargetSelection{}, false, errors.NewWithDetails(
+		return daemon.RepoDTO{}, cwdTargetSelection{}, errors.NewWithDetails(
 			errors.EUnsafeRepoRoot,
 			"current directory is inside an agency-managed tree but not a present integration worktree",
 			map[string]string{
@@ -92,25 +92,16 @@ func resolveAgentStartRepo(ctx context.Context, cr exec.CommandRunner, ns *daemo
 		)
 	}
 
-	currentCtx, hasCurrentCtx, err := loadActiveContextFallback(ctx, ns.client, fsys, ns.dirs.ConfigDir, true)
-	if err != nil {
-		return daemon.RepoDTO{}, cwdTargetSelection{}, false, err
-	}
-	if hasCurrentCtx {
-		repo, err := resolveAccessibleRepo(ctx, ns.client, currentCtx.RepoID)
-		return repo, cwdSelection, true, err
-	}
-
-	return daemon.RepoDTO{}, cwdTargetSelection{}, false, errors.NewWithDetails(
+	return daemon.RepoDTO{}, cwdTargetSelection{}, errors.NewWithDetails(
 		errors.ENoRepoContext,
 		"cannot resolve agent start without a repo context",
 		map[string]string{
-			"hint": "run from a git checkout, pass --repo, or set an active context with `agency context use <worktree-ref>`",
+			"hint": "run from a git checkout or pass --repo",
 		},
 	)
 }
 
-func resolveAgentStartWorktree(ctx context.Context, ns *daemonNavSetup, fsys fs.FS, repoID, worktreeRef string, cwdSelection cwdTargetSelection, repoFromCurrentContext bool) (string, error) {
+func resolveAgentStartWorktree(ctx context.Context, ns *daemonNavSetup, repoID, worktreeRef string, cwdSelection cwdTargetSelection) (string, error) {
 	switch {
 	case strings.TrimSpace(worktreeRef) != "":
 		result, err := ns.client.GetWorktree(ctx, worktreeRef, repoID)
@@ -125,18 +116,11 @@ func resolveAgentStartWorktree(ctx context.Context, ns *daemonNavSetup, fsys fs.
 	case cwdSelection.HasWorktree && cwdSelection.Worktree.RepoID == repoID:
 		return cwdSelection.Worktree.WorktreeID, nil
 	default:
-		currentCtx, hasCurrentCtx, err := loadActiveContextFallback(ctx, ns.client, fsys, ns.dirs.ConfigDir, repoFromCurrentContext)
-		if err != nil {
-			return "", err
-		}
-		if hasCurrentCtx && currentCtx.RepoID == repoID {
-			return currentCtx.WorktreeID, nil
-		}
 		return "", errors.NewWithDetails(
 			errors.EUsage,
 			"cannot resolve agent start without a worktree",
 			map[string]string{
-				"hint": "pass --worktree <worktree-ref>, set an active context with `agency context use <worktree-ref>`, or run this command from the integration worktree you want to use",
+				"hint": "pass --worktree <worktree-ref> or run this command from the integration worktree you want to use",
 			},
 		)
 	}
@@ -193,13 +177,13 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 	}
 
-	repo, cwdSelection, repoFromCurrentContext, err := resolveAgentStartRepo(ctx, cr, ns, fsys, cwd, repoRef)
+	repo, cwdSelection, err := resolveAgentStartRepo(ctx, cr, ns, cwd, repoRef)
 	if err != nil {
 		return fail(err)
 	}
 	repoRoot := repo.PreferredRoot
 	repoID := repo.RepoID
-	worktreeRef, err = resolveAgentStartWorktree(ctx, ns, fsys, repoID, worktreeRef, cwdSelection, repoFromCurrentContext)
+	worktreeRef, err = resolveAgentStartWorktree(ctx, ns, repoID, worktreeRef, cwdSelection)
 	if err != nil {
 		return fail(err)
 	}

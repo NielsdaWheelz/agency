@@ -9,7 +9,7 @@ This document covers repository-wide package organization and ownership boundari
 - `cmd/agency/` is the binary entrypoint.
 - `internal/cli/cobra/` owns Cobra command wiring and flag parsing.
 - `internal/commands/` owns the canonical user-facing command contracts, including ambient target inference.
-- `internal/config/` owns user config, repo config, current-context files, and config resolution.
+- `internal/config/` owns user config, repo config, and config resolution.
 - `internal/daemon/` owns daemon lifecycle, handlers, reconciliation, streaming, checkpointing, landing flows, and the durable worktree PR merge lifecycle.
 - `internal/daemonclient/` owns the daemon transport client.
 - `internal/integrationworktree/`, `internal/invocation/`, `internal/mergeflow/`, and `internal/verify/` own domain logic below the command boundary.

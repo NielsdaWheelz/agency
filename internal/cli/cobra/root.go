@@ -24,9 +24,6 @@ func NewRootCmd() *cobra.Command {
 	agentCmd := newAgentCmd()
 	agentCmd.GroupID = "workflow"
 
-	contextCmd := newContextCmd()
-	contextCmd.GroupID = "workflow"
-
 	watchCmd := newWatchCmd()
 	watchCmd.GroupID = "workflow"
 
@@ -88,7 +85,6 @@ Setup commands like init and doctor operate on one checkout path. If you omit
 		taskCmd,
 		worktreeCmd,
 		agentCmd,
-		contextCmd,
 		watchCmd,
 		configCmd,
 		initCmd,

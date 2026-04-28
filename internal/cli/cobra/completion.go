@@ -317,12 +317,3 @@ func registerLogKindFlagCompletion(cmd *cobra.Command) {
 		panic(err)
 	}
 }
-
-func setWorktreeArgCompletion(cmd *cobra.Command, state string) {
-	if cmd == nil {
-		return
-	}
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return completeWorktreeRefsForState(cmd, toComplete, state)
-	}
-}

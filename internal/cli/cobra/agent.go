@@ -37,7 +37,7 @@ from an integration worktree. Invocations are the execution layer: they run the
 model, stream logs, create checkpoints, and eventually land or discard work.
 
 Use:
-  agency agent start       to create a new sandbox from local defaults or the active context fallback
+  agency agent start       to create a new sandbox from the current integration worktree
   agency agent start --worktree <worktree-ref>
                            to create a new sandbox from one worktree
   agency agent ls         to list invocations

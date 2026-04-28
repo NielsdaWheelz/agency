@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -682,6 +681,52 @@ func TestWorktreeCreate_DefaultsRepoAndBaseFromCWD(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
+func TestWorktreeCreate_ExplicitRepoWorksFromUnrelatedCWD(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, regErr)
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), t.TempDir(), WorktreeCreateOpts{
+		RepoRef:    reg.Data.RepoID,
+		Name:       "explicit-repo-unrelated-cwd",
+		BaseBranch: "main",
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Created integration worktree 'explicit-repo-unrelated-cwd'")
+	assert.Empty(t, stderr.String())
+}
+
+func TestWorktreeCreate_UnrelatedCWDRequiresRepo(t *testing.T) {
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), t.TempDir(), WorktreeCreateOpts{
+		Name: "missing-repo-context",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepoContext, errors.GetCode(err))
+}
+
 func TestWorktreeCreate_DefaultBaseRequiresCurrentBranch(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
 	detach, err := agencyexec.NewRealRunner().Run(context.Background(), "git", []string{"checkout", "--detach"}, agencyexec.RunOpts{Dir: repoDir})
@@ -704,63 +749,6 @@ func TestWorktreeCreate_DefaultBaseRequiresCurrentBranch(t *testing.T) {
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EBaseBranchNotFound, errors.GetCode(err))
-}
-
-func TestWorktreeCreate_UsesActiveContextFromUnrelatedCWD(t *testing.T) {
-	repoDir := testutil.SetupGitRepo(t)
-	dataDir, err := os.MkdirTemp("", "wd")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
-	configDir := filepath.Join(dataDir, "config")
-	require.NoError(t, os.MkdirAll(configDir, 0o755))
-
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
-	t.Setenv("AGENCY_CONFIG_DIR", configDir)
-	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
-
-	var stdout, stderr bytes.Buffer
-	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name: "context-base",
-	}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
-	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{State: "present"})
-	require.NoError(t, listErr)
-	require.Len(t, listResp.Data.Worktrees, 1)
-	baseWorktree := listResp.Data.Worktrees[0]
-
-	require.NoError(t, config.SaveCurrentContext(fs.NewRealFS(), configDir, config.CurrentContext{
-		RepoID:       baseWorktree.RepoID,
-		RepoName:     baseWorktree.RepoName,
-		WorktreeID:   baseWorktree.WorktreeID,
-		WorktreeName: baseWorktree.WorktreeName,
-		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
-	}))
-
-	stdout.Reset()
-	stderr.Reset()
-	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), t.TempDir(), WorktreeCreateOpts{
-		Name: "context-child",
-	}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	listResp, listErr = client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{State: "present"})
-	require.NoError(t, listErr)
-
-	var child daemon.WorktreeDTO
-	found := false
-	for _, worktree := range listResp.Data.Worktrees {
-		if worktree.WorktreeName != "context-child" {
-			continue
-		}
-		child = worktree
-		found = true
-		break
-	}
-	require.True(t, found, "expected context-child worktree to be created")
-	assert.Equal(t, baseWorktree.Branch, child.BaseBranch)
-	assert.Empty(t, stderr.String())
 }
 
 func TestWorktreeCreate_ExplicitMissingBaseBranchFailsBeforeCreate(t *testing.T) {

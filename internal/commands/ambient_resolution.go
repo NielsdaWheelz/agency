@@ -4,10 +4,8 @@ import (
 	"context"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
@@ -61,20 +59,4 @@ func inspectCWDAmbientSelection(ctx context.Context, cr exec.CommandRunner, ns *
 		RepoRoot: currentRoot.Path,
 		HasRepo:  true,
 	}, nil
-}
-
-func loadActiveContextFallback(ctx context.Context, client *daemonclient.Client, fsys fs.FS, configDir string, strict bool) (*validatedCurrentContext, bool, error) {
-	current, err := loadValidatedCurrentContext(ctx, client, fsys, configDir)
-	if err != nil {
-		switch errors.GetCode(err) {
-		case errors.ENoContext:
-			return nil, false, nil
-		case errors.EInvalidContext:
-			if !strict {
-				return nil, false, nil
-			}
-		}
-		return nil, false, err
-	}
-	return current, true, nil
 }

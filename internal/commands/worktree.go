@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -26,7 +25,7 @@ type WorktreeCreateOpts struct {
 	Editor     string
 }
 
-func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, fsys fs.FS, cwd, repoRef string) (string, string, error) {
+func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, cwd, repoRef string) (string, string, error) {
 	cwdSelection, err := inspectCWDAmbientSelection(ctx, cr, ns, cwd)
 	if err != nil {
 		return "", "", err
@@ -37,11 +36,10 @@ func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *
 		if err != nil {
 			return "", "", err
 		}
-		baseRoot, err := resolveWorktreeCreateBaseRoot(ctx, ns, fsys, cwdSelection, repo)
-		if err != nil {
-			return "", "", err
+		if cwdSelection.HasRepo && cwdSelection.Repo.RepoID == repo.RepoID {
+			return repo.PreferredRoot, cwdSelection.RepoRoot, nil
 		}
-		return repo.PreferredRoot, baseRoot, nil
+		return repo.PreferredRoot, repo.PreferredRoot, nil
 	}
 
 	if cwdSelection.HasRepo {
@@ -58,41 +56,13 @@ func resolveWorktreeCreateRoots(ctx context.Context, cr exec.CommandRunner, ns *
 		)
 	}
 
-	currentCtx, hasCurrentCtx, err := loadActiveContextFallback(ctx, ns.client, fsys, ns.dirs.ConfigDir, true)
-	if err != nil {
-		return "", "", err
-	}
-	if hasCurrentCtx {
-		repo, err := resolveAccessibleRepo(ctx, ns.client, currentCtx.RepoID)
-		if err != nil {
-			return "", "", err
-		}
-		return repo.PreferredRoot, currentCtx.WorktreePath, nil
-	}
-
 	return "", "", errors.NewWithDetails(
 		errors.ENoRepoContext,
 		"cannot resolve worktree create without a repo context",
 		map[string]string{
-			"hint": "run from a git checkout, pass --repo <repo_ref>, or set an active context with `agency context use <worktree-ref>`",
+			"hint": "run from a git checkout or pass --repo <repo_ref>",
 		},
 	)
-}
-
-func resolveWorktreeCreateBaseRoot(ctx context.Context, ns *daemonNavSetup, fsys fs.FS, cwdSelection cwdTargetSelection, repo daemon.RepoDTO) (string, error) {
-	if cwdSelection.HasRepo && cwdSelection.Repo.RepoID == repo.RepoID {
-		return cwdSelection.RepoRoot, nil
-	}
-
-	currentCtx, hasCurrentCtx, err := loadActiveContextFallback(ctx, ns.client, fsys, ns.dirs.ConfigDir, false)
-	if err != nil {
-		return "", err
-	}
-	if hasCurrentCtx && currentCtx.RepoID == repo.RepoID {
-		return currentCtx.WorktreePath, nil
-	}
-
-	return repo.PreferredRoot, nil
 }
 
 // WorktreeCreate creates a new integration worktree.
@@ -114,7 +84,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return err
 	}
 
-	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, fsys, cwd, repoRef)
+	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, cwd, repoRef)
 	if err != nil {
 		return err
 	}

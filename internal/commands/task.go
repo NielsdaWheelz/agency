@@ -156,7 +156,7 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return fail(err)
 	}
-	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, fsys, cwd, strings.TrimSpace(opts.RepoRef))
+	repoRoot, baseRoot, err := resolveWorktreeCreateRoots(ctx, cr, ns, cwd, strings.TrimSpace(opts.RepoRef))
 	if err != nil {
 		return fail(err)
 	}
@@ -514,7 +514,7 @@ func resolveTaskCommandRepoData(ctx context.Context, cr exec.CommandRunner, fsys
 	if err != nil {
 		return nil, daemon.RepoDTO{}, err
 	}
-	repo, _, _, err := resolveAgentStartRepo(ctx, cr, ns, fsys, cwd, repoRef)
+	repo, _, err := resolveAgentStartRepo(ctx, cr, ns, cwd, repoRef)
 	if err != nil {
 		return nil, daemon.RepoDTO{}, err
 	}
