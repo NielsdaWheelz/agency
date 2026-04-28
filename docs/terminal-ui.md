@@ -7,13 +7,17 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 ## Rules
 
 - `internal/watch` owns the only Bubble Tea runtime in the codebase.
-- `agency watch` and `agency agent <invocation-ref> history` should open explicit pages of that one runtime.
+- `agency watch` and `agency agent <invocation-ref> history` open explicit pages of that same runtime.
 - `watch` is a terminal UI over daemon state, not a source of truth.
 - The runtime should expose workspace, history, transcript, and logs pages over the same read model.
-- The `agency watch` workspace page is a resource browser with `Repos`, `Worktrees`, `Agents`, and read-only `Selected` panes.
+- The `agency watch` workspace page is one responsive compact surface.
+- Agents are the primary action target.
 - Repos and worktrees narrow the agent list; they are not top-level modes or tabs.
-- Agents remain the action target, and the selected pane only displays selected agent details.
-- Workspace focus cycles through `Repos`, `Worktrees`, and `Agents` with `tab` and `shift+tab`.
+- Present worktrees are shown by default.
+- Archived worktrees appear only through an explicit archived or all-worktrees toggle.
+- Narrow layouts may reflow, collapse, or shorten panes, but must not fall back to the legacy stacked workspace.
+- Read-only detail panes display selected agent details and are not focus targets.
+- Workspace focus cycles through interactive panes with `tab` and `shift+tab`.
 - In the workspace, `enter` applies scope in repo/worktree panes and runs the selected agent default action in the agent pane.
 - `b` and `esc` broaden workspace scope by clearing worktree scope before repo scope.
 - `agency agent <invocation-ref> history` is the canonical invocation inspection surface for turns, checkpoints, transcripts, and logs.
@@ -27,7 +31,7 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 - If the UI needs more detail, show `reason` or the pending question text next to the state instead of inventing a second state label.
 - Do not expose separate semantic, display, or readiness state layers in the UI.
 - Do not show `blocked` as a primary user-facing state.
-- Snapshot loading should compose daemon read APIs rather than reconstruct state from raw files.
+- Snapshot loading should compose daemon read APIs, including worktree archival mode, rather than reconstruct state from raw files.
 - Interactive terminal checks belong at the command boundary before launching the UI.
 - Invocation history UI should live in `internal/watch`, not in a second TUI package.
 - UI actions should delegate to canonical command contracts instead of duplicating policy.

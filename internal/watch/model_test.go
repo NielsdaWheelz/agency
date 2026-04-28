@@ -2,11 +2,13 @@ package watch
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -108,10 +110,20 @@ func TestModel_WorkspaceFocusCyclesAcrossResourcePanes(t *testing.T) {
 	nextModel = next.(model)
 	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
 
-	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneAgents, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	require.Nil(t, cmd)
 	nextModel = next.(model)
 	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneAgents, nextModel.workspaceFocus)
 }
 
 func TestModel_WorkspaceEnterScopesRepoAndWorktree(t *testing.T) {
@@ -412,6 +424,99 @@ func TestModel_ActionOpenSuccessUsesConfiguredOutput(t *testing.T) {
 	assert.False(t, nextModel.lastActionError)
 }
 
+func TestModel_WorkspaceStateTogglesReload(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.activeWorktreeID = "wt-archived"
+	m.snapshot = Snapshot{
+		Worktrees: []daemon.WorktreeDTO{
+			{WorktreeID: "wt-present", State: "present"},
+			{WorktreeID: "wt-archived", State: "archived"},
+		},
+		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1"}},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, "archived", nextModel.worktreeStateFilter)
+	assert.True(t, nextModel.workspaceLoading)
+	assert.Empty(t, nextModel.snapshot.Worktrees)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "all", nextModel.worktreeStateFilter)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "present", nextModel.worktreeStateFilter)
+	assert.Empty(t, nextModel.activeWorktreeID)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "all", nextModel.invocationStateFilter)
+	assert.True(t, nextModel.workspaceLoading)
+}
+
+func TestModel_WorkspaceView_FiltersArchivedWorktreesByDefault(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.width = 160
+	m.height = 30
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
+		Worktrees: []daemon.WorktreeDTO{
+			{WorktreeID: "wt-present", WorktreeName: "live-work", RepoID: "repo-1", State: "present"},
+			{WorktreeID: "wt-archived", WorktreeName: "old-work", RepoID: "repo-1", State: "archived"},
+		},
+		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-present"}},
+	}
+
+	content := m.View().Content
+	assert.Contains(t, content, "live-work")
+	assert.NotContains(t, content, "old-work")
+	assert.Contains(t, content, "worktrees:present")
+
+	m.worktreeStateFilter = "all"
+	content = m.View().Content
+	assert.Contains(t, content, "old-work")
+	assert.Contains(t, content, "[archived]")
+	assert.Contains(t, content, "worktrees:all")
+}
+
+func TestModel_WorkspaceView_CompactLayoutDoesNotStackEveryPane(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.width = 100
+	m.height = 24
+	m.snapshot = Snapshot{
+		Repos:     []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", WorktreeName: "auth", RepoID: "repo-1", State: "present"}},
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", InvocationName: "agent auth", RepoID: "repo-1", WorktreeID: "wt-1", State: "running"},
+		},
+	}
+
+	content := m.View().Content
+	assert.Contains(t, content, "Agents")
+	assert.NotContains(t, content, "Repos")
+	assert.NotContains(t, content, "Worktrees")
+	assert.NotContains(t, content, "Selected")
+	assert.LessOrEqual(t, len(strings.Split(content, "\n")), m.height)
+}
+
 func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing.T) {
 	t.Parallel()
 
@@ -556,10 +661,36 @@ func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {
 	truncated := truncateWithEllipsis(value, 7)
 	assert.Equal(t, "café...", truncated)
 	assert.True(t, utf8.ValidString(truncated))
+	assert.LessOrEqual(t, lipgloss.Width(truncated), 7)
 
 	tiny := truncateWithEllipsis("🙂🙂🙂🙂", 3)
-	assert.Equal(t, "🙂🙂🙂", tiny)
 	assert.True(t, utf8.ValidString(tiny))
+	assert.LessOrEqual(t, lipgloss.Width(tiny), 3)
+
+	wide := truncateWithEllipsis("古古古古", 5)
+	assert.Equal(t, "古...", wide)
+	assert.True(t, utf8.ValidString(wide))
+	assert.LessOrEqual(t, lipgloss.Width(wide), 5)
+
+	row := model{
+		snapshot: Snapshot{
+			Invocations: []daemon.InvocationDTO{
+				{
+					InvocationID:   "inv-wide",
+					InvocationName: "古古古古古古古",
+					WorktreeID:     "wt-wide",
+					WorktreeName:   "🙂🙂🙂🙂",
+					RepoID:         "repo-wide",
+					RepoName:       "github.com/acme/repo",
+					State:          "running",
+				},
+			},
+		},
+		selectedInvocationID: "inv-wide",
+	}
+	for _, line := range strings.Split(row.renderAgentsPanel(40, 12), "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), 40)
+	}
 }
 
 func TestShortID_UTF8Safe(t *testing.T) {

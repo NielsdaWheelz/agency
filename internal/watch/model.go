@@ -81,10 +81,12 @@ var (
 type refreshTickMsg time.Time
 
 type snapshotLoadedMsg struct {
-	repoID     string
-	worktreeID string
-	snapshot   Snapshot
-	err        error
+	repoID          string
+	worktreeID      string
+	worktreeState   string
+	invocationState string
+	snapshot        Snapshot
+	err             error
 }
 
 type historyLoadedMsg struct {
@@ -145,6 +147,13 @@ type model struct {
 	workspaceFocus        workspacePane
 	activeRepoID          string
 	activeWorktreeID      string
+	worktreeStateFilter   string
+	invocationStateFilter string
+	workspaceLayoutMode   string
+	workspaceFilterInput  bool
+	repoFilter            string
+	worktreeFilter        string
+	agentFilter           string
 	selectedRepoIndex     int
 	selectedWorktreeIndex int
 	selectedIndex         int
@@ -244,26 +253,28 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 	}
 
 	return model{
-		ctx:                  ctx,
-		client:               client,
-		interval:             interval,
-		sessionLoader:        sessionLoader,
-		page:                 page,
-		backPage:             pageWorkspace,
-		workspaceFocus:       workspacePaneAgents,
-		selectedInvocationID: strings.TrimSpace(opts.InvocationID),
-		selectedRepoID:       strings.TrimSpace(opts.RepoID),
-		open:                 opts.Open,
-		stop:                 opts.Stop,
-		kill:                 opts.Kill,
-		land:                 opts.Land,
-		discard:              opts.Discard,
-		recreate:             opts.Recreate,
-		followup:             opts.Followup,
-		prSync:               opts.PRSync,
-		prMerge:              opts.PRMerge,
-		rebase:               opts.Rebase,
-		restore:              opts.Restore,
+		ctx:                   ctx,
+		client:                client,
+		interval:              interval,
+		sessionLoader:         sessionLoader,
+		page:                  page,
+		backPage:              pageWorkspace,
+		workspaceFocus:        workspacePaneAgents,
+		worktreeStateFilter:   "present",
+		invocationStateFilter: "unresolved",
+		selectedInvocationID:  strings.TrimSpace(opts.InvocationID),
+		selectedRepoID:        strings.TrimSpace(opts.RepoID),
+		open:                  opts.Open,
+		stop:                  opts.Stop,
+		kill:                  opts.Kill,
+		land:                  opts.Land,
+		discard:               opts.Discard,
+		recreate:              opts.Recreate,
+		followup:              opts.Followup,
+		prSync:                opts.PRSync,
+		prMerge:               opts.PRMerge,
+		rebase:                opts.Rebase,
+		restore:               opts.Restore,
 	}
 }
 
@@ -310,8 +321,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
 
 	case snapshotLoadedMsg:
+		msgWorktreeState := strings.TrimSpace(msg.worktreeState)
+		if msgWorktreeState == "" {
+			msgWorktreeState = strings.TrimSpace(m.worktreeStateFilter)
+		}
+		msgInvocationState := strings.TrimSpace(msg.invocationState)
+		if msgInvocationState == "" {
+			msgInvocationState = strings.TrimSpace(m.invocationStateFilter)
+		}
 		if strings.TrimSpace(msg.repoID) != strings.TrimSpace(m.activeRepoID) ||
-			strings.TrimSpace(msg.worktreeID) != strings.TrimSpace(m.activeWorktreeID) {
+			strings.TrimSpace(msg.worktreeID) != strings.TrimSpace(m.activeWorktreeID) ||
+			msgWorktreeState != strings.TrimSpace(m.worktreeStateFilter) ||
+			msgInvocationState != strings.TrimSpace(m.invocationStateFilter) {
 			return m, nil
 		}
 		m.workspaceLoading = false

@@ -3,15 +3,18 @@ package watch
 import (
 	"strings"
 
+	"github.com/mattn/go-runewidth"
+
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 )
 
 func (m model) selectedInvocation() (daemon.InvocationDTO, bool) {
-	if len(m.snapshot.Invocations) == 0 {
+	invocations := m.visibleInvocations()
+	if len(invocations) == 0 {
 		return daemon.InvocationDTO{}, false
 	}
-	idx := clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
-	return m.snapshot.Invocations[idx], true
+	idx := clamp(m.selectedIndex, 0, len(invocations)-1)
+	return invocations[idx], true
 }
 
 func (m model) selectedTurn() (daemon.Turn, bool) {
@@ -31,25 +34,89 @@ func (m model) selectedReviewFile() (reviewFile, bool) {
 }
 
 func (m model) selectedRepo() (daemon.RepoDTO, bool) {
-	if m.selectedRepoIndex <= 0 || m.selectedRepoIndex > len(m.snapshot.Repos) {
+	repos := m.visibleRepos()
+	if m.selectedRepoIndex <= 0 || m.selectedRepoIndex > len(repos) {
 		return daemon.RepoDTO{}, false
 	}
-	return m.snapshot.Repos[m.selectedRepoIndex-1], true
+	return repos[m.selectedRepoIndex-1], true
 }
 
 func (m model) selectedWorktree() (daemon.WorktreeDTO, bool) {
-	if m.selectedWorktreeIndex <= 0 || m.selectedWorktreeIndex > len(m.snapshot.Worktrees) {
+	worktrees := m.visibleWorktrees()
+	if m.selectedWorktreeIndex <= 0 || m.selectedWorktreeIndex > len(worktrees) {
 		return daemon.WorktreeDTO{}, false
 	}
-	return m.snapshot.Worktrees[m.selectedWorktreeIndex-1], true
+	return worktrees[m.selectedWorktreeIndex-1], true
+}
+
+func (m model) visibleRepos() []daemon.RepoDTO {
+	filter := strings.ToLower(strings.TrimSpace(m.repoFilter))
+	if filter == "" {
+		return m.snapshot.Repos
+	}
+	repos := make([]daemon.RepoDTO, 0, len(m.snapshot.Repos))
+	for _, repo := range m.snapshot.Repos {
+		name := strings.TrimSpace(repo.RepoKey)
+		if name == "" {
+			name = strings.TrimSpace(repo.RepoName)
+		}
+		text := strings.ToLower(name + " " + repo.RepoID)
+		if strings.Contains(text, filter) {
+			repos = append(repos, repo)
+		}
+	}
+	return repos
+}
+
+func (m model) visibleWorktrees() []daemon.WorktreeDTO {
+	filter := strings.ToLower(strings.TrimSpace(m.worktreeFilter))
+	state := strings.TrimSpace(m.worktreeStateFilter)
+	if state == "" {
+		state = "present"
+	}
+	worktrees := make([]daemon.WorktreeDTO, 0, len(m.snapshot.Worktrees))
+	for _, wt := range m.snapshot.Worktrees {
+		if state != "all" && strings.TrimSpace(wt.State) != "" && strings.TrimSpace(wt.State) != state {
+			continue
+		}
+		if filter != "" {
+			text := strings.ToLower(wt.WorktreeName + " " + wt.WorktreeID + " " + wt.RepoName + " " + wt.RepoID + " " + wt.State)
+			if !strings.Contains(text, filter) {
+				continue
+			}
+		}
+		worktrees = append(worktrees, wt)
+	}
+	return worktrees
+}
+
+func (m model) visibleInvocations() []daemon.InvocationDTO {
+	filter := strings.ToLower(strings.TrimSpace(m.agentFilter))
+	if filter == "" {
+		return m.snapshot.Invocations
+	}
+	invocations := make([]daemon.InvocationDTO, 0, len(m.snapshot.Invocations))
+	for _, inv := range m.snapshot.Invocations {
+		text := strings.ToLower(strings.Join([]string{
+			m.invocationState(inv),
+			m.agentDisplay(inv),
+			m.worktreeDisplay(inv.WorktreeName, inv.WorktreeID),
+			m.repoDisplay(inv.RepoName, inv.RepoID),
+			m.latestSummary(inv),
+		}, " "))
+		if strings.Contains(text, filter) {
+			invocations = append(invocations, inv)
+		}
+	}
+	return invocations
 }
 
 func (m *model) moveWorkspaceSelection(delta int) {
 	switch m.workspaceFocus {
 	case workspacePaneRepos:
-		m.selectedRepoIndex = clamp(m.selectedRepoIndex+delta, 0, len(m.snapshot.Repos))
+		m.selectedRepoIndex = clamp(m.selectedRepoIndex+delta, 0, len(m.visibleRepos()))
 	case workspacePaneWorktrees:
-		m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex+delta, 0, len(m.snapshot.Worktrees))
+		m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex+delta, 0, len(m.visibleWorktrees()))
 	case workspacePaneAgents:
 		m.moveSelection(delta)
 	case "":
@@ -65,10 +132,11 @@ func (m *model) moveWorkspaceSelectionToTop() {
 	case workspacePaneWorktrees:
 		m.selectedWorktreeIndex = 0
 	case workspacePaneAgents:
-		if len(m.snapshot.Invocations) > 0 {
+		invocations := m.visibleInvocations()
+		if len(invocations) > 0 {
 			m.selectedIndex = 0
-			m.selectedInvocationID = m.snapshot.Invocations[0].InvocationID
-			m.selectedRepoID = m.snapshot.Invocations[0].RepoID
+			m.selectedInvocationID = invocations[0].InvocationID
+			m.selectedRepoID = invocations[0].RepoID
 		}
 	case "":
 		m.workspaceFocus = workspacePaneAgents
@@ -79,14 +147,15 @@ func (m *model) moveWorkspaceSelectionToTop() {
 func (m *model) moveWorkspaceSelectionToBottom() {
 	switch m.workspaceFocus {
 	case workspacePaneRepos:
-		m.selectedRepoIndex = len(m.snapshot.Repos)
+		m.selectedRepoIndex = len(m.visibleRepos())
 	case workspacePaneWorktrees:
-		m.selectedWorktreeIndex = len(m.snapshot.Worktrees)
+		m.selectedWorktreeIndex = len(m.visibleWorktrees())
 	case workspacePaneAgents:
-		if len(m.snapshot.Invocations) > 0 {
-			m.selectedIndex = len(m.snapshot.Invocations) - 1
-			m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
-			m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+		invocations := m.visibleInvocations()
+		if len(invocations) > 0 {
+			m.selectedIndex = len(invocations) - 1
+			m.selectedInvocationID = invocations[m.selectedIndex].InvocationID
+			m.selectedRepoID = invocations[m.selectedIndex].RepoID
 		}
 	case "":
 		m.workspaceFocus = workspacePaneAgents
@@ -95,16 +164,17 @@ func (m *model) moveWorkspaceSelectionToBottom() {
 }
 
 func (m *model) moveSelection(delta int) {
-	if len(m.snapshot.Invocations) == 0 {
+	invocations := m.visibleInvocations()
+	if len(invocations) == 0 {
 		m.selectedIndex = 0
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
 		return
 	}
-	next := clamp(m.selectedIndex+delta, 0, len(m.snapshot.Invocations)-1)
+	next := clamp(m.selectedIndex+delta, 0, len(invocations)-1)
 	m.selectedIndex = next
-	m.selectedInvocationID = m.snapshot.Invocations[next].InvocationID
-	m.selectedRepoID = m.snapshot.Invocations[next].RepoID
+	m.selectedInvocationID = invocations[next].InvocationID
+	m.selectedRepoID = invocations[next].RepoID
 }
 
 func (m *model) reconcileSelection() bool {
@@ -141,10 +211,14 @@ func (m *model) reconcileSelection() bool {
 		}
 	}
 
-	m.selectedRepoIndex = clamp(m.selectedRepoIndex, 0, len(m.snapshot.Repos))
-	m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex, 0, len(m.snapshot.Worktrees))
+	repos := m.visibleRepos()
+	worktrees := m.visibleWorktrees()
+	invocations := m.visibleInvocations()
 
-	if len(m.snapshot.Invocations) == 0 {
+	m.selectedRepoIndex = clamp(m.selectedRepoIndex, 0, len(repos))
+	m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex, 0, len(worktrees))
+
+	if len(invocations) == 0 {
 		m.selectedIndex = 0
 		m.selectedInvocationID = ""
 		m.selectedRepoID = ""
@@ -152,7 +226,7 @@ func (m *model) reconcileSelection() bool {
 	}
 
 	if m.selectedInvocationID != "" {
-		for idx, inv := range m.snapshot.Invocations {
+		for idx, inv := range invocations {
 			if inv.InvocationID == m.selectedInvocationID {
 				m.selectedIndex = idx
 				m.selectedRepoID = inv.RepoID
@@ -161,11 +235,11 @@ func (m *model) reconcileSelection() bool {
 		}
 		m.selectedIndex = 0
 	} else {
-		m.selectedIndex = clamp(m.selectedIndex, 0, len(m.snapshot.Invocations)-1)
+		m.selectedIndex = clamp(m.selectedIndex, 0, len(invocations)-1)
 	}
 
-	m.selectedInvocationID = m.snapshot.Invocations[m.selectedIndex].InvocationID
-	m.selectedRepoID = m.snapshot.Invocations[m.selectedIndex].RepoID
+	m.selectedInvocationID = invocations[m.selectedIndex].InvocationID
+	m.selectedRepoID = invocations[m.selectedIndex].RepoID
 	return oldRepoID != m.activeRepoID || oldWorktreeID != m.activeWorktreeID
 }
 
@@ -297,14 +371,21 @@ func truncateWithEllipsis(value string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	runes := []rune(value)
-	if len(runes) <= maxWidth {
+	if runewidth.StringWidth(value) <= maxWidth {
 		return value
 	}
 	if maxWidth <= 3 {
-		return string(runes[:maxWidth])
+		return runewidth.Truncate(value, maxWidth, "")
 	}
-	return string(runes[:maxWidth-3]) + "..."
+	return runewidth.Truncate(value, maxWidth, "...")
+}
+
+func padRight(value string, width int) string {
+	value = truncateWithEllipsis(value, width)
+	if padding := width - runewidth.StringWidth(value); padding > 0 {
+		return value + strings.Repeat(" ", padding)
+	}
+	return value
 }
 
 func shortID(value string, maxLen int) string {

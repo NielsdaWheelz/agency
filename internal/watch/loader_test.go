@@ -56,6 +56,8 @@ func TestLoadWorkspaceSnapshot_DrainsPagination(t *testing.T) {
 				Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
 			})
 		case r.URL.Path == "/worktrees" && r.URL.Query().Get("cursor") == "":
+			assert.Equal(t, "present", r.URL.Query().Get("state"))
+			assert.Equal(t, "500", r.URL.Query().Get("limit"))
 			writeDaemonOK(t, w, daemon.ListWorktreesData{
 				Worktrees: []daemon.WorktreeDTO{
 					{WorktreeID: "wt-1", RepoID: "repo-1", WorktreeName: "alpha"},
@@ -64,12 +66,16 @@ func TestLoadWorkspaceSnapshot_DrainsPagination(t *testing.T) {
 				NextCursor: "wt-next-1",
 			})
 		case r.URL.Path == "/worktrees" && r.URL.Query().Get("cursor") == "wt-next-1":
+			assert.Equal(t, "present", r.URL.Query().Get("state"))
+			assert.Equal(t, "500", r.URL.Query().Get("limit"))
 			writeDaemonOK(t, w, daemon.ListWorktreesData{
 				Worktrees: []daemon.WorktreeDTO{
 					{WorktreeID: "wt-3", RepoID: "repo-1", WorktreeName: "gamma"},
 				},
 			})
 		case r.URL.Path == "/invocations" && r.URL.Query().Get("cursor") == "":
+			assert.Equal(t, "unresolved", r.URL.Query().Get("state"))
+			assert.Equal(t, "500", r.URL.Query().Get("limit"))
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{
 					{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1", SortKey: daemon.SortKeyRunning},
@@ -77,6 +83,8 @@ func TestLoadWorkspaceSnapshot_DrainsPagination(t *testing.T) {
 				NextCursor: "inv-next-1",
 			})
 		case r.URL.Path == "/invocations" && r.URL.Query().Get("cursor") == "inv-next-1":
+			assert.Equal(t, "unresolved", r.URL.Query().Get("state"))
+			assert.Equal(t, "500", r.URL.Query().Get("limit"))
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{
 					{InvocationID: "inv-2", RepoID: "repo-1", WorktreeID: "wt-2", SortKey: daemon.SortKeyWaiting},
@@ -87,7 +95,7 @@ func TestLoadWorkspaceSnapshot_DrainsPagination(t *testing.T) {
 		}
 	})))
 
-	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "", "")
+	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "", "", "", "")
 	require.NoError(t, err)
 
 	require.Len(t, snapshot.Repos, 1)
@@ -106,14 +114,14 @@ func TestLoadWorkspaceSnapshot_UsesRepoAndWorktreeScope(t *testing.T) {
 			})
 		case "/worktrees":
 			assert.Equal(t, "repo-1", r.URL.Query().Get("repo_id"))
-			assert.Equal(t, "all", r.URL.Query().Get("state"))
+			assert.Equal(t, "present", r.URL.Query().Get("state"))
 			writeDaemonOK(t, w, daemon.ListWorktreesData{
 				Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1", WorktreeName: "auth"}},
 			})
 		case "/invocations":
 			assert.Equal(t, "repo-1", r.URL.Query().Get("repo_id"))
 			assert.Equal(t, "wt-1", r.URL.Query().Get("worktree_ref"))
-			assert.Equal(t, "all", r.URL.Query().Get("state"))
+			assert.Equal(t, "unresolved", r.URL.Query().Get("state"))
 			writeDaemonOK(t, w, daemon.ListInvocationsData{
 				Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"}},
 			})
@@ -122,7 +130,7 @@ func TestLoadWorkspaceSnapshot_UsesRepoAndWorktreeScope(t *testing.T) {
 		}
 	})))
 
-	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "repo-1", "wt-1")
+	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "repo-1", "wt-1", "", "")
 	require.NoError(t, err)
 
 	require.Len(t, snapshot.Worktrees, 1)
@@ -155,7 +163,7 @@ func TestLoadWorkspaceSnapshot_CursorMustAdvance(t *testing.T) {
 		}
 	})))
 
-	_, err := loadWorkspaceSnapshot(context.Background(), client, "", "")
+	_, err := loadWorkspaceSnapshot(context.Background(), client, "", "", "", "")
 	require.Error(t, err)
 
 	ae, ok := agencyerrors.AsAgencyError(err)
@@ -188,7 +196,7 @@ func TestLoadWorkspaceSnapshot_SortsBySortKeyThenStartedAt(t *testing.T) {
 		}
 	})))
 
-	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "", "")
+	snapshot, err := loadWorkspaceSnapshot(context.Background(), client, "", "", "", "")
 	require.NoError(t, err)
 
 	require.Len(t, snapshot.Invocations, 3)

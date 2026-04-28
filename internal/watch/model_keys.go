@@ -7,6 +7,10 @@ import (
 )
 
 func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.workspaceFilterInput {
+		return m.updateWorkspaceFilterKey(msg)
+	}
+
 	switch {
 	case isQuitKey(msg):
 		return m, tea.Quit
@@ -40,6 +44,53 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.workspaceLoading = true
 		return m, m.loadWorkspaceSnapshotCmd()
+	case msg.Text == "/":
+		m.workspaceFilterInput = true
+		return m, nil
+	case msg.Text == "s":
+		switch m.invocationStateFilter {
+		case "unresolved":
+			m.invocationStateFilter = "all"
+		case "all":
+			m.invocationStateFilter = "finished"
+		default:
+			m.invocationStateFilter = "unresolved"
+		}
+		m.snapshot.Invocations = nil
+		m.selectedIndex = 0
+		m.selectedInvocationID = ""
+		m.selectedRepoID = ""
+		m.workspaceLoading = true
+		return m, m.loadWorkspaceSnapshotCmd()
+	case msg.Text == "a":
+		switch m.worktreeStateFilter {
+		case "present":
+			m.worktreeStateFilter = "archived"
+		case "archived":
+			m.worktreeStateFilter = "all"
+		default:
+			m.worktreeStateFilter = "present"
+			m.activeWorktreeID = ""
+		}
+		m.snapshot.Worktrees = nil
+		m.snapshot.Invocations = nil
+		m.selectedWorktreeIndex = 0
+		m.selectedIndex = 0
+		m.selectedInvocationID = ""
+		m.selectedRepoID = ""
+		m.workspaceLoading = true
+		return m, m.loadWorkspaceSnapshotCmd()
+	case msg.Text == "z":
+		switch m.workspaceLayoutMode {
+		case "":
+			m.workspaceLayoutMode = "focused"
+		case "focused":
+			m.workspaceLayoutMode = "detail"
+			m.workspaceFocus = workspacePaneAgents
+		default:
+			m.workspaceLayoutMode = ""
+		}
+		return m, nil
 	case isUpKey(msg):
 		m.moveWorkspaceSelection(-1)
 		if m.workspaceFocus == workspacePaneAgents {
@@ -180,6 +231,54 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m model) updateWorkspaceFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
+		m.workspaceFilterInput = false
+		return m, nil
+	}
+	if msg.Code == tea.KeyEnter {
+		m.workspaceFilterInput = false
+		m.reconcileSelection()
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "backspace", "ctrl+h":
+		switch m.workspaceFocus {
+		case workspacePaneRepos:
+			m.repoFilter = trimLastRune(m.repoFilter)
+		case workspacePaneWorktrees:
+			m.worktreeFilter = trimLastRune(m.worktreeFilter)
+		default:
+			m.agentFilter = trimLastRune(m.agentFilter)
+		}
+	case "ctrl+u":
+		switch m.workspaceFocus {
+		case workspacePaneRepos:
+			m.repoFilter = ""
+		case workspacePaneWorktrees:
+			m.worktreeFilter = ""
+		default:
+			m.agentFilter = ""
+		}
+	default:
+		if msg.Text == "" {
+			return m, nil
+		}
+		switch m.workspaceFocus {
+		case workspacePaneRepos:
+			m.repoFilter += msg.Text
+		case workspacePaneWorktrees:
+			m.worktreeFilter += msg.Text
+		default:
+			m.agentFilter += msg.Text
+		}
+	}
+
+	m.reconcileSelection()
+	return m, nil
 }
 
 func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -448,4 +547,12 @@ func isTopKey(msg tea.KeyPressMsg) bool {
 
 func isBottomKey(msg tea.KeyPressMsg) bool {
 	return msg.Code == tea.KeyEnd || msg.Text == "G"
+}
+
+func trimLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
 }

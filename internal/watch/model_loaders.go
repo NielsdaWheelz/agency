@@ -15,9 +15,11 @@ func (m *model) loadWorkspaceSnapshotCmd() tea.Cmd {
 	client := m.client
 	repoID := strings.TrimSpace(m.activeRepoID)
 	worktreeID := strings.TrimSpace(m.activeWorktreeID)
+	worktreeState := strings.TrimSpace(m.worktreeStateFilter)
+	invocationState := strings.TrimSpace(m.invocationStateFilter)
 	return func() tea.Msg {
-		snapshot, err := loadWorkspaceSnapshot(ctx, client, repoID, worktreeID)
-		return snapshotLoadedMsg{repoID: repoID, worktreeID: worktreeID, snapshot: snapshot, err: err}
+		snapshot, err := loadWorkspaceSnapshot(ctx, client, repoID, worktreeID, worktreeState, invocationState)
+		return snapshotLoadedMsg{repoID: repoID, worktreeID: worktreeID, worktreeState: worktreeState, invocationState: invocationState, snapshot: snapshot, err: err}
 	}
 }
 
