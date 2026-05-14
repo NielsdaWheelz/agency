@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -66,7 +67,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 
 	var req TaskStartRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "invalid request body: "+err.Error(), "", "")
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "invalid request body: "+err.Error(), "", "")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -85,15 +86,15 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ClientRequestID == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "client_request_id is required", "provide a UUID for idempotency", "")
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "client_request_id is required", "provide a UUID for idempotency", "")
 		return
 	}
 	if req.RepoRoot == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "repo_root is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "repo_root is required", "", req.ClientRequestID)
 		return
 	}
 	if req.Name == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "name is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "name is required", "", req.ClientRequestID)
 		return
 	}
 	if err := core.ValidateName(req.Name); err != nil {
@@ -101,11 +102,11 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.BaseBranch == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "base_branch is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "base_branch is required", "", req.ClientRequestID)
 		return
 	}
 	if req.Runner == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "runner is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "runner is required", "", req.ClientRequestID)
 		return
 	}
 
@@ -187,16 +188,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	fingerprint := taskStartFingerprint(repoRoot, execCtx.CheckoutRoot, req, requestEnv)
-	if existing, exists, conflict := s.findTaskByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); exists {
-		if conflict {
-			writeErr(http.StatusConflict, errors.ETaskFingerprintConflict, "client_request_id was already used for a different task start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
-			return
-		}
-		if existing.Meta == nil || existing.Broken {
-			writeErr(http.StatusConflict, errors.ETaskBroken, "task idempotency record exists but meta.json is unreadable", "inspect task state before retrying", req.ClientRequestID)
-			return
-		}
-		s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, existing.Meta, true)
+	if s.writeTaskStartIdempotencyResult(w, requestID, req.ClientRequestID, repoIdentity.RepoID, fingerprint, false) {
 		return
 	}
 
@@ -212,16 +204,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = unlock() }()
 
-	if existing, exists, conflict := s.findTaskByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); exists {
-		if conflict {
-			writeErr(http.StatusConflict, errors.ETaskFingerprintConflict, "client_request_id was already used for a different task start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
-			return
-		}
-		if existing.Meta == nil || existing.Broken {
-			writeErr(http.StatusConflict, errors.ETaskBroken, "task idempotency record exists but meta.json is unreadable", "inspect task state before retrying", req.ClientRequestID)
-			return
-		}
-		s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, existing.Meta, true)
+	if s.writeTaskStartIdempotencyResult(w, requestID, req.ClientRequestID, repoIdentity.RepoID, fingerprint, true) {
 		return
 	}
 
@@ -351,9 +334,9 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	var invMeta *store.InvocationMeta
 	envKeys := sortedEnvKeys(requestEnv)
 	if headless {
-		invMeta, err = s.startTaskHeadlessInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, wtRecord, req, envKeys, gitEnv)
+		invMeta, err = s.startTaskHeadlessInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, fingerprint, wtRecord, req, envKeys, gitEnv)
 	} else {
-		invMeta, err = s.startTaskHeadedInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, wtRecord, req, envKeys, gitEnv)
+		invMeta, err = s.startTaskHeadedInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, fingerprint, wtRecord, req, envKeys, gitEnv)
 	}
 	if err != nil {
 		fail := normalizeTaskStartFailure(err)
@@ -365,21 +348,23 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.markTaskRunning(repoIdentity.RepoID, taskID, invMeta); err != nil {
-		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
-		s.markTaskFailed(repoIdentity.RepoID, taskID, "task_running_update", fail)
+	if err := s.appendTaskEvent(repoIdentity.RepoID, taskID, "agency.task_running", map[string]any{
+		"invocation_id": invMeta.InvocationID,
+		"worktree_id":   wtCreate.WorktreeID,
+	}); err != nil {
+		fail := newTaskStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), "")
+		s.abortStartedTaskInvocation(repoIdentity.RepoID, invMeta, "task_event_running_failed")
+		s.markTaskFailed(repoIdentity.RepoID, taskID, "task_event_running", fail)
 		if latest, readErr := s.Store.ReadTaskMeta(repoIdentity.RepoID, taskID); readErr == nil {
 			taskMeta = latest
 		}
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, taskMeta)
 		return
 	}
-	if err := s.appendTaskEvent(repoIdentity.RepoID, taskID, "agency.task_running", map[string]any{
-		"invocation_id": invMeta.InvocationID,
-		"worktree_id":   wtCreate.WorktreeID,
-	}); err != nil {
-		fail := newTaskStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), "")
-		s.markTaskFailed(repoIdentity.RepoID, taskID, "task_event_running", fail)
+	if err := s.markTaskRunning(repoIdentity.RepoID, taskID, invMeta); err != nil {
+		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
+		s.abortStartedTaskInvocation(repoIdentity.RepoID, invMeta, "task_running_update_failed")
+		s.markTaskFailed(repoIdentity.RepoID, taskID, "task_running_update", fail)
 		if latest, readErr := s.Store.ReadTaskMeta(repoIdentity.RepoID, taskID); readErr == nil {
 			taskMeta = latest
 		}
@@ -391,7 +376,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, taskMeta, false)
 }
 
-func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
+func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repoID, taskID, requestFingerprint string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
 	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
 		IntegrationWorktreeID:   wtRecord.WorktreeID,
@@ -404,6 +389,8 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 		CheckoutRoot:            req.CheckoutRoot,
 		ExecutionProfile:        req.ExecutionProfile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
+		ClientRequestID:         req.ClientRequestID,
+		RequestFingerprint:      requestFingerprint,
 		Env:                     gitEnv,
 	})
 	if err != nil {
@@ -437,12 +424,7 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 	promptSHA := hex.EncodeToString(promptHash[:])
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
 	claim := func(pid, pgid int) error {
-		if err := s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys); err != nil {
-			return err
-		}
-		return s.Store.UpdateInvocationMeta(repoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
-			meta.TaskID = taskID
-		})
+		return s.claimTaskHeadlessInvocationStart(repoID, createResult.InvocationID, taskID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys)
 	}
 	_, _, err = s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq, gitEnv, claim)
 	if err != nil {
@@ -461,7 +443,7 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 	return meta, nil
 }
 
-func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
+func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID, taskID, requestFingerprint string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
 	if err != nil {
 		return nil, taskStartFailureFromError(http.StatusBadRequest, errors.EInvocationInvalidMode, err, "")
@@ -479,6 +461,8 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 		CheckoutRoot:            req.CheckoutRoot,
 		ExecutionProfile:        req.ExecutionProfile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
+		ClientRequestID:         req.ClientRequestID,
+		RequestFingerprint:      requestFingerprint,
 		Env:                     gitEnv,
 	})
 	if err != nil {
@@ -547,14 +531,9 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 	}
 
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, envKeys); err != nil {
+	if err := s.claimTaskHeadedInvocation(repoID, createResult.InvocationID, taskID, req.Runner, sessionName, runnerArgs, envKeys); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to update invocation meta: "+err.Error(), "")
-	}
-	if err := s.Store.UpdateInvocationMeta(repoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
-		meta.TaskID = taskID
-	}); err != nil {
-		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
 	}
 
 	streamLogPath := s.Store.InvocationStreamLogPath(repoID, createResult.InvocationID)
@@ -688,6 +667,129 @@ func (s *Server) findTaskByClientRequestID(repoID, clientRequestID, fingerprint 
 	return nil, false, false
 }
 
+func (s *Server) writeTaskStartIdempotencyResult(w http.ResponseWriter, requestID, clientRequestID, repoID, fingerprint string, finalizeIncomplete bool) bool {
+	existing, exists, conflict := s.findTaskByClientRequestID(repoID, clientRequestID, fingerprint)
+	if !exists {
+		return false
+	}
+	if conflict {
+		s.writeTaskStartError(w, http.StatusConflict, requestID, errors.ETaskFingerprintConflict, "client_request_id was already used for a different task start request", "retry with the original request or choose a new client_request_id", clientRequestID, nil)
+		return true
+	}
+	if existing.Meta == nil || existing.Broken {
+		s.writeTaskStartError(w, http.StatusConflict, requestID, errors.ETaskBroken, "task idempotency record exists but meta.json is unreadable", "inspect task state before retrying", clientRequestID, nil)
+		return true
+	}
+
+	meta := existing.Meta
+	switch meta.State {
+	case store.TaskStateRunning, store.TaskStateArchived:
+		s.writeTaskStartSuccess(w, requestID, clientRequestID, meta, true)
+		return true
+	case store.TaskStateFailed:
+		if !finalizeIncomplete {
+			return false
+		}
+		repaired, repairErr := s.repairTaskStartFromClaimedInvocation(repoID, meta, clientRequestID, fingerprint)
+		if repairErr != nil {
+			code := errors.GetCode(repairErr)
+			if code == "" {
+				code = errors.EPersistFailed
+			}
+			s.writeTaskStartError(w, http.StatusInternalServerError, requestID, code, repairErr.Error(), "inspect task state before retrying", clientRequestID, meta)
+			return true
+		}
+		if repaired != nil {
+			s.writeTaskStartSuccess(w, requestID, clientRequestID, repaired, true)
+			return true
+		}
+		code := errors.ETaskCreateFailed
+		if meta.ErrorCode != "" {
+			code = errors.Code(meta.ErrorCode)
+		}
+		message := meta.Error
+		if message == "" {
+			message = "task start request previously failed"
+		}
+		s.writeTaskStartError(w, http.StatusConflict, requestID, code, message, "inspect task state before retrying", clientRequestID, meta)
+		return true
+	case store.TaskStateStarting:
+		if !finalizeIncomplete {
+			return false
+		}
+		repaired, repairErr := s.repairTaskStartFromClaimedInvocation(repoID, meta, clientRequestID, fingerprint)
+		if repairErr != nil {
+			code := errors.GetCode(repairErr)
+			if code == "" {
+				code = errors.EPersistFailed
+			}
+			s.writeTaskStartError(w, http.StatusInternalServerError, requestID, code, repairErr.Error(), "inspect task state before retrying", clientRequestID, meta)
+			return true
+		}
+		if repaired != nil {
+			s.writeTaskStartSuccess(w, requestID, clientRequestID, repaired, true)
+			return true
+		}
+		fail := newTaskStartFailure(http.StatusConflict, errors.ETaskCreateFailed, "task start request was already accepted but no running invocation was recorded", "inspect task state before retrying")
+		s.markTaskFailed(repoID, meta.TaskID, "task_start_incomplete", fail)
+		if latest, err := s.Store.ReadTaskMeta(repoID, meta.TaskID); err == nil {
+			meta = latest
+		}
+		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, clientRequestID, meta)
+		return true
+	default:
+		s.writeTaskStartError(w, http.StatusConflict, requestID, errors.ETaskCreateFailed, "task start idempotency record has unsupported state", "inspect task state before retrying", clientRequestID, meta)
+		return true
+	}
+}
+
+func (s *Server) repairTaskStartFromClaimedInvocation(repoID string, meta *store.TaskMeta, clientRequestID, fingerprint string) (*store.TaskMeta, error) {
+	invMeta, ok, err := s.findClaimedTaskInvocation(repoID, meta.TaskID, clientRequestID, fingerprint)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if err := s.appendTaskEventOnceByInvocationID(repoID, meta.TaskID, "agency.task_running", invMeta.InvocationID, map[string]any{
+		"invocation_id": invMeta.InvocationID,
+		"worktree_id":   invMeta.IntegrationWorktreeID,
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.markTaskRunning(repoID, meta.TaskID, invMeta); err != nil {
+		return nil, err
+	}
+	return s.Store.ReadTaskMeta(repoID, meta.TaskID)
+}
+
+func (s *Server) findClaimedTaskInvocation(repoID, taskID, clientRequestID, fingerprint string) (*store.InvocationMeta, bool, error) {
+	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, record := range records {
+		if record.Broken || record.Meta == nil {
+			continue
+		}
+		meta := record.Meta
+		if meta.TaskID != taskID || meta.ClientRequestID != clientRequestID || meta.RequestFingerprint != fingerprint {
+			continue
+		}
+		switch meta.Status {
+		case store.InvocationStatusRunning:
+			if strings.HasPrefix(meta.FailureReason, "task_") || strings.HasPrefix(meta.FailureReason, "retry_") {
+				continue
+			}
+			return meta, true, nil
+		case store.InvocationStatusFinished:
+			return meta, true, nil
+		case store.InvocationStatusFailed:
+			if meta.ExitReason != "start_failed" && !strings.HasPrefix(meta.FailureReason, "task_") && !strings.HasPrefix(meta.FailureReason, "retry_") {
+				return meta, true, nil
+			}
+		}
+	}
+	return nil, false, nil
+}
+
 func (s *Server) checkTaskNameUniqueness(repoID, name string) error {
 	records, err := store.ScanTasksForRepo(s.Store.DataDir, repoID)
 	if err != nil {
@@ -722,6 +824,19 @@ func (s *Server) appendTaskEvent(repoID, taskID, kind string, data map[string]an
 	return err
 }
 
+func (s *Server) appendTaskEventOnceByInvocationID(repoID, taskID, kind, invocationID string, data map[string]any) error {
+	if s.TaskEvents == nil {
+		s.TaskEvents = taskevents.NewWriter(func() time.Time {
+			return s.Clock()
+		})
+	}
+	_, err := s.TaskEvents.Append(s.Store.TaskEventsPath(repoID, taskID), taskID, kind, data, taskevents.AppendOptions{
+		IdempotencyDataKey:   "invocation_id",
+		IdempotencyDataValue: invocationID,
+	})
+	return err
+}
+
 func (s *Server) updateTaskWorktree(repoID, taskID string, wtMeta *store.IntegrationWorktreeMeta, wtCreate *integrationworktree.CreateResult) error {
 	return s.Store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		meta.WorktreeID = wtCreate.WorktreeID
@@ -743,6 +858,104 @@ func (s *Server) markTaskRunning(repoID, taskID string, invMeta *store.Invocatio
 		meta.Error = ""
 		meta.UpdatedAt = s.Clock().UTC().Format(time.RFC3339)
 	})
+}
+
+func (s *Server) claimTaskHeadlessInvocationStart(repoID, invocationID, taskID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) error {
+	now := s.nowRFC3339()
+	daemonPID := os.Getpid()
+	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.Runner = runner
+		meta.PID = &pid
+		meta.PGID = &pgid
+		meta.DaemonPID = &daemonPID
+		meta.DaemonInstanceID = s.InstanceID
+		meta.ClaimedAt = now
+		meta.LifecycleOwner = daemonLifecycleOwner
+		meta.PromptPath = promptPath
+		meta.PromptSHA256 = promptSHA
+		meta.RunnerArgs = runnerArgs
+		meta.CustomEnvKeys = envKeys
+		meta.TaskID = taskID
+		meta.FinishedAt = ""
+		meta.ExitReason = ""
+		meta.FailureReason = ""
+		meta.ExitCode = nil
+		meta.StopRequestedAt = ""
+		meta.OrphanedAt = ""
+		meta.Flags.NeedsAttention = false
+		meta.Flags.Orphaned = false
+	})
+}
+
+func (s *Server) claimTaskHeadedInvocation(repoID, invocationID, taskID, runner, sessionName string, runnerArgs, envKeys []string) error {
+	now := s.nowRFC3339()
+	daemonPID := os.Getpid()
+	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.Runner = runner
+		meta.RunnerArgs = runnerArgs
+		meta.CustomEnvKeys = envKeys
+		meta.TmuxSession = sessionName
+		meta.PID = nil
+		meta.PGID = nil
+		meta.DaemonPID = &daemonPID
+		meta.DaemonInstanceID = s.InstanceID
+		meta.ClaimedAt = now
+		meta.LifecycleOwner = daemonLifecycleOwner
+		meta.TaskID = taskID
+		meta.FinishedAt = ""
+		meta.ExitReason = ""
+		meta.FailureReason = ""
+		meta.ExitCode = nil
+		meta.StopRequestedAt = ""
+		meta.OrphanedAt = ""
+		meta.Flags.NeedsAttention = false
+		meta.Flags.Orphaned = false
+	})
+}
+
+func (s *Server) abortStartedTaskInvocation(repoID string, invMeta *store.InvocationMeta, failureReason string) {
+	if invMeta == nil {
+		return
+	}
+	if invMeta.Mode == store.RunnerModeHeaded {
+		sessionName := invMeta.TmuxSession
+		if sessionName == "" {
+			sessionName = tmux.SessionName(invMeta.InvocationID)
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.TmuxClient.KillSession(cleanupCtx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
+			s.recordInvocationWarning(repoID, invMeta.InvocationID, "task_abort_tmux_kill_failed", err.Error(), map[string]any{
+				"session_name": sessionName,
+			})
+			_ = s.Store.UpdateInvocationMeta(repoID, invMeta.InvocationID, func(meta *store.InvocationMeta) {
+				meta.Flags.NeedsAttention = true
+				meta.FailureReason = failureReason
+			})
+			return
+		}
+		s.failInvocationStart(repoID, invMeta.InvocationID, failureReason, true)
+		s.clearInvocationProcess(invMeta.InvocationID)
+		return
+	}
+
+	s.mu.RLock()
+	proc, supervised := s.processes[invMeta.InvocationID]
+	s.mu.RUnlock()
+	if supervised && proc != nil {
+		proc.exitReason.Store("killed")
+		proc.failureReason.Store(failureReason)
+	}
+	s.failInvocationStart(repoID, invMeta.InvocationID, failureReason, true)
+	pgid := safeIntPtr(invMeta.PGID)
+	if pgid <= 0 {
+		pgid = safeIntPtr(invMeta.PID)
+	}
+	if pgid > 0 {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
 }
 
 func (s *Server) markTaskFailed(repoID, taskID, phase string, failure taskStartFailure) {

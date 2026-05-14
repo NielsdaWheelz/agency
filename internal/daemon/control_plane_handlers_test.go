@@ -202,6 +202,173 @@ func TestControlPlaneStartFingerprintIgnoresProfileEnvValues(t *testing.T) {
 	assert.NotEqual(t, first, fourth)
 }
 
+func TestFindInvocationByClientRequestIDIgnoresTaskInvocations(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	meta := store.NewInvocationMeta("inv-task", "", "wt-1", "/sandbox", "/checkout", "work", "agency/sandbox-inv-task", "base", "codex", store.RunnerModeHeadless, time.Now())
+	meta.TaskID = "task-1"
+	meta.ClientRequestID = "shared-request"
+	meta.RequestFingerprint = "task-fingerprint"
+	_, err := st.EnsureInvocationDir("repo-1", "inv-task")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteInvocationMeta("repo-1", "inv-task", meta))
+
+	record, exists, conflict, err := s.findInvocationByClientRequestID("repo-1", "shared-request", "agent-fingerprint")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.False(t, conflict)
+	assert.Nil(t, record)
+}
+
+func TestControlPlaneStart_DurableIdempotencyDoesNotReplayIncompleteOrFailedInvocation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	testutil.HermeticGitEnv(t)
+	env := setupGitRepo(t)
+	dataDir := t.TempDir()
+	configDir := filepath.Join(dataDir, "config")
+	writeTestUserConfig(t, configDir)
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+
+	createBody, err := json.Marshal(WorktreeCreateRequest{
+		RepoRoot:   env.RepoPath,
+		Name:       "direct-idempotency",
+		BaseBranch: "main",
+	})
+	require.NoError(t, err)
+	createReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(createBody))
+	createW := httptest.NewRecorder()
+	s.newHTTPHandler().ServeHTTP(createW, createReq)
+
+	var createResp WorktreeCreateResponse
+	require.NoError(t, json.Unmarshal(createW.Body.Bytes(), &createResp))
+	require.True(t, createResp.OK, "create worktree failed: %s %s", createResp.ErrorCode, createResp.Message)
+
+	repoRoot := env.RepoPath
+	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		repoRoot = resolved
+	}
+	tests := []struct {
+		name        string
+		status      store.InvocationStatus
+		failure     string
+		wantMessage string
+	}{
+		{
+			name:        "starting",
+			status:      store.InvocationStatusStarting,
+			wantMessage: "has not reached running state",
+		},
+		{
+			name:        "failed",
+			status:      store.InvocationStatusFailed,
+			failure:     "runner failed before claim",
+			wantMessage: "runner failed before claim",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			request := ControlPlaneStartRequest{
+				ClientRequestID:  "direct-" + tc.name,
+				RepoRoot:         env.RepoPath,
+				WorktreeRef:      "direct-idempotency",
+				Runner:           "claude-code",
+				Prompt:           "test",
+				ExecutionProfile: createResp.ExecutionProfile,
+			}
+			fingerprint := controlPlaneStartFingerprint(repoRoot, createResp.WorktreeID, createResp.CheckoutRoot, store.RunnerModeHeadless, request, nil)
+			invocationID := "inv-direct-" + tc.name
+			_, err := st.EnsureInvocationDir(createResp.RepoID, invocationID)
+			require.NoError(t, err)
+			meta := store.NewInvocationMeta(
+				invocationID,
+				"",
+				createResp.WorktreeID,
+				filepath.Join(createResp.CheckoutRoot, "sandboxes", invocationID),
+				createResp.CheckoutRoot,
+				createResp.ExecutionProfile,
+				"agency/sandbox-"+invocationID,
+				"abc123",
+				"claude-code",
+				store.RunnerModeHeadless,
+				time.Now(),
+			)
+			meta.Status = tc.status
+			meta.ClientRequestID = request.ClientRequestID
+			meta.RequestFingerprint = fingerprint
+			meta.FailureReason = tc.failure
+			require.NoError(t, st.WriteInvocationMeta(createResp.RepoID, invocationID, meta))
+
+			body, err := json.Marshal(request)
+			require.NoError(t, err)
+			httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			s.newHTTPHandler().ServeHTTP(w, httpReq)
+
+			require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+			var resp ControlPlaneStartResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.False(t, resp.OK)
+			assert.Equal(t, string(errors.EInvocationStartFailed), resp.ErrorCode)
+			assert.Contains(t, resp.Message, tc.wantMessage)
+		})
+	}
+
+	request := ControlPlaneStartRequest{
+		ClientRequestID:  "direct-finished",
+		RepoRoot:         env.RepoPath,
+		WorktreeRef:      "direct-idempotency",
+		Runner:           "claude-code",
+		Prompt:           "test",
+		ExecutionProfile: createResp.ExecutionProfile,
+	}
+	fingerprint := controlPlaneStartFingerprint(repoRoot, createResp.WorktreeID, createResp.CheckoutRoot, store.RunnerModeHeadless, request, nil)
+	_, err = st.EnsureInvocationDir(createResp.RepoID, "inv-direct-finished")
+	require.NoError(t, err)
+	meta := store.NewInvocationMeta(
+		"inv-direct-finished",
+		"",
+		createResp.WorktreeID,
+		filepath.Join(createResp.CheckoutRoot, "sandboxes", "inv-direct-finished"),
+		createResp.CheckoutRoot,
+		createResp.ExecutionProfile,
+		"agency/sandbox-inv-direct-finished",
+		"abc123",
+		"claude-code",
+		store.RunnerModeHeadless,
+		time.Now(),
+	)
+	meta.Status = store.InvocationStatusFinished
+	meta.ClientRequestID = request.ClientRequestID
+	meta.RequestFingerprint = fingerprint
+	meta.ClaimedAt = time.Now().UTC().Format(time.RFC3339)
+	require.NoError(t, st.WriteInvocationMeta(createResp.RepoID, "inv-direct-finished", meta))
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(createResp.RepoID, createResp.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.newHTTPHandler().ServeHTTP(w, httpReq)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp ControlPlaneStartResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.OK)
+	assert.True(t, resp.AlreadyRunning)
+	assert.Equal(t, "inv-direct-finished", resp.InvocationID)
+}
+
 func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
 	t.Parallel()
 

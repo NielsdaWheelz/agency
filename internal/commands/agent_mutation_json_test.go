@@ -160,6 +160,35 @@ func TestAgentLand_JSONFailureEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
+func TestAgentLand_CleanupModeHumanOutputDoesNotRequireHeads(t *testing.T) {
+	repoDir, dataDir, repoID, worktreeID, cr, fsys := setupAgentTestEnvShort(t, "land-cleanup")
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
+
+	invocationID := "20260302171900-lnd2"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.LandingStatus = store.LandingStatusLanded
+		meta.FinishedAt = "2026-03-02T17:19:00Z"
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLand(context.Background(), cr, fsys, repoDir, AgentLandOpts{
+		InvocationRef: invocationID,
+		RepoRef:       repoID,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	assert.Contains(t, out, "Successfully completed landing cleanup for invocation "+invocationID)
+	assert.Contains(t, out, "mode:        cleanup")
+	assert.NotContains(t, out, "head_before")
+	assert.NotContains(t, out, "head_after")
+	assert.Empty(t, stderr.String())
+}
+
 func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "discard-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)

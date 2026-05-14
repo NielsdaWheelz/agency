@@ -274,7 +274,11 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		return fail(err)
 	}
 
-	merge, err := waitForWorktreeMergeTerminal(ctx, ns.client, opts.WorktreeRef, repoCtx.RepoID, func(update string) {
+	pollRef := strings.TrimSpace(resp.IntegrationWorktreeID)
+	if pollRef == "" {
+		pollRef = opts.WorktreeRef
+	}
+	merge, err := waitForWorktreeMergeTerminal(ctx, ns.client, pollRef, repoCtx.RepoID, func(update string) {
 		if opts.JSON || strings.TrimSpace(update) == "" {
 			return
 		}

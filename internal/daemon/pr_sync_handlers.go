@@ -317,11 +317,11 @@ func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDi
 		Env: env,
 	})
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "git fetch origin failed to start", err)
+		return errors.Wrap(errors.EGitFetchFailed, "git fetch origin failed to start", err)
 	}
 	if result.ExitCode != 0 {
 		return errors.NewWithDetails(
-			errors.EInternal,
+			errors.EGitFetchFailed,
 			fmt.Sprintf("git fetch origin failed: %s", strings.TrimSpace(result.Stderr)),
 			map[string]string{"exit_code": fmt.Sprintf("%d", result.ExitCode)},
 		)
@@ -649,6 +649,8 @@ func prSyncHTTPStatusForCode(code errors.Code) int {
 		return http.StatusConflict
 	case errors.EGitPushFailed:
 		return http.StatusConflict
+	case errors.EGitFetchFailed:
+		return http.StatusBadGateway
 	case errors.EBaseNotFound:
 		return http.StatusBadRequest
 	case errors.EEmptyDiff:

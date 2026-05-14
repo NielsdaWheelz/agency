@@ -67,9 +67,33 @@ func (s *Server) findInvocationByClientRequestID(repoID, clientRequestID, finger
 		if record.Meta == nil || record.Meta.ClientRequestID != clientRequestID {
 			continue
 		}
+		if record.Meta.TaskID != "" {
+			continue
+		}
 		return record, true, record.Meta.RequestFingerprint != fingerprint, nil
 	}
 	return nil, false, false, nil
+}
+
+func (s *Server) findInvocationRecordByClientRequestID(repoID, clientRequestID string) (*store.InvocationRecord, bool, error) {
+	if clientRequestID == "" {
+		return nil, false, nil
+	}
+	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range records {
+		record := &records[i]
+		if record.Meta == nil || record.Meta.ClientRequestID != clientRequestID {
+			continue
+		}
+		if record.Meta.TaskID != "" {
+			continue
+		}
+		return record, true, nil
+	}
+	return nil, false, nil
 }
 
 func worktreeIdempotencyKey(repoID, idempotencyKey string) string {

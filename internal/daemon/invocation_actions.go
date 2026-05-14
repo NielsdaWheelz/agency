@@ -18,13 +18,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
@@ -112,7 +112,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		pgid = safeIntPtr(meta.PID)
 	}
 	if pgid <= 0 {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "no PGID available to signal", "invocation may not have started properly")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "no PGID available to signal", "invocation may not have started properly")
 		return
 	}
 
@@ -150,7 +150,7 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 		}
 	} else {
 		time.Sleep(5 * time.Second)
-		if !s.PIDChecker(pgid) {
+		if !isProcessGroupAlive(pgid) {
 			s.failInvocationStopped(repoID, invocationID, "stopped")
 			return
 		}
@@ -170,7 +170,7 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 		}
 	} else {
 		time.Sleep(2 * time.Second)
-		if !s.PIDChecker(pgid) {
+		if !isProcessGroupAlive(pgid) {
 			s.failInvocationStopped(repoID, invocationID, "stopped")
 			return
 		}
@@ -182,6 +182,14 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 	}
 
 	s.failInvocationStoppedWithKill(repoID, invocationID)
+}
+
+func isProcessGroupAlive(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || err == syscall.EPERM
 }
 
 const (
@@ -266,13 +274,13 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		writeKillError(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		writeKillError(http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		writeKillError(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		writeKillError(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 

@@ -45,25 +45,25 @@ func (s *Server) handleHeadedHook(w http.ResponseWriter, r *http.Request, invoca
 		return
 	}
 	if meta.Mode != store.RunnerModeHeaded {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "headed hook ingestion requires a headed invocation", "", nil)
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "headed hook ingestion requires a headed invocation", "", nil)
 		return
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, stream.MaxLineSize))
 	if err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "failed to read hook payload: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "failed to read hook payload: "+err.Error(), "", nil)
 		return
 	}
 
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid hook payload JSON: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid hook payload JSON: "+err.Error(), "", nil)
 		return
 	}
 
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, body); err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid hook payload JSON: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid hook payload JSON: "+err.Error(), "", nil)
 		return
 	}
 

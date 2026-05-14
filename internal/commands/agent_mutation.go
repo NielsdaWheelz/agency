@@ -202,9 +202,16 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		})
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Successfully landed invocation %s\n", invocationID)
+	if resp.AppliedMode == daemon.LandingModeCleanup {
+		_, _ = fmt.Fprintf(stdout, "Successfully completed landing cleanup for invocation %s\n", invocationID)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Successfully landed invocation %s\n", invocationID)
+	}
 	_, _ = fmt.Fprintf(stdout, "  mode:        %s\n", resp.AppliedMode)
 	_, _ = fmt.Fprintf(stdout, "  commits:     %d\n", resp.CommitsLanded)
+	if resp.AppliedMode == daemon.LandingModeCleanup || len(resp.IntegrationHeadBefore) < 12 || len(resp.IntegrationHeadAfter) < 12 {
+		return nil
+	}
 	_, _ = fmt.Fprintf(stdout, "  head_before: %s\n", resp.IntegrationHeadBefore[:12])
 	_, _ = fmt.Fprintf(stdout, "  head_after:  %s\n", resp.IntegrationHeadAfter[:12])
 

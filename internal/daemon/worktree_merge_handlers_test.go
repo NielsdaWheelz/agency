@@ -36,7 +36,7 @@ func TestHandleWorktreeMerge_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	var resp WorktreePRMergeResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
-	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
 	assert.Equal(t, "repo_id query parameter is required", resp.Message)
 }
 
@@ -456,6 +456,88 @@ func TestHandleWorktreeMerge_ResumesArchiveWhenPRAlreadyMerged(t *testing.T) {
 	require.Contains(t, fakeRunner.Calls, filepath.Join(canonicalRepoRoot, "scripts", "archive.sh"))
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
 	assert.False(t, strings.Contains(strings.Join(fakeRunner.Calls, "\n"), "gh pr merge 77 -R test/agent-repo --squash --delete-branch"))
+}
+
+func TestHandleWorktreeMerge_AllowsExactArchivedIDCleanupRetry(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+	setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+	fakeRunner.Responses["gh pr list --head test:agency/alpha --state all --json number,url,state"] = testutil.FakeResponse{
+		Stdout:   `[{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"MERGED"}]`,
+		ExitCode: 0,
+	}
+	fakeRunner.Responses["gh pr view 77 -R test/agent-repo --json number,url,state,isDraft,mergeable,headRefName"] = testutil.FakeResponse{
+		Stdout:   `{"number":77,"url":"https://github.com/test/agent-repo/pull/77","state":"MERGED","isDraft":false,"mergeable":"MERGEABLE","headRefName":"agency/alpha"}`,
+		ExitCode: 0,
+	}
+
+	require.NoError(t, os.RemoveAll(workspaceRoot))
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, worktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+	mergeMeta := store.NewIntegrationWorktreeMergeMeta(env.RepoID, worktreeID, "attempt-old", "request-old", "squash", true, "", time.Now())
+	mergeMeta.Status = store.WorktreeMergeStatusFailed
+	mergeMeta.Stage = store.WorktreeMergeStageArchive
+	mergeMeta.ErrorCode = string(errors.EPersistFailed)
+	mergeMeta.ErrorMessage = "success event append failed after archive"
+	require.NoError(t, env.Store.WriteIntegrationWorktreeMerge(env.RepoID, worktreeID, mergeMeta))
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+
+	mergeMeta = requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusSucceeded
+	})
+	assert.Equal(t, store.WorktreeMergeStageCompleted, mergeMeta.Stage)
+	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
+	require.NoError(t, err)
+	assert.Equal(t, store.WorktreeStateArchived, meta.State)
+}
+
+func TestHandleWorktreeMerge_RejectsArchivedRetryBeforeArchiveStage(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	workspaceRoot, _, worktreeID := setupWorktreeMergeReadyState(t, env, "")
+	require.NoError(t, os.RemoveAll(workspaceRoot))
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, worktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+	mergeMeta := store.NewIntegrationWorktreeMergeMeta(env.RepoID, worktreeID, "attempt-old", "request-old", "squash", true, "", time.Now())
+	mergeMeta.Status = store.WorktreeMergeStatusFailed
+	mergeMeta.Stage = store.WorktreeMergeStageVerify
+	mergeMeta.ErrorCode = string(errors.EScriptFailed)
+	mergeMeta.ErrorMessage = "verify failed"
+	require.NoError(t, env.Store.WriteIntegrationWorktreeMerge(env.RepoID, worktreeID, mergeMeta))
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	resp := decodeWorktreePRMergeResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EWorktreeNotFound), resp.ErrorCode)
+	assert.Len(t, fakeRunner.Calls, 0)
 }
 
 func TestHandleWorktreeMerge_FailsWhenArchiveCleanupRemoveFails(t *testing.T) {

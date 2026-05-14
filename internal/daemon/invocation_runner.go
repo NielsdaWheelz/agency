@@ -116,10 +116,16 @@ func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProc
 		Runner:             proc.Runner,
 		Prompt:             prompt,
 		RunnerArgs:         append([]string(nil), proc.RunnerArgs...),
-		Env:                copyStringMap(proc.Env),
 		ExecutionProfile:   meta.ExecutionProfile,
 		NoIncludeUntracked: proc.NoIncludeUntracked,
 	}
+	requestEnv := map[string]string{}
+	for _, key := range meta.CustomEnvKeys {
+		if value, ok := proc.Env[key]; ok {
+			requestEnv[key] = value
+		}
+	}
+	req.Env = envForLaunch(profileEnv, requestEnv)
 	resumeSessionID := proc.GetResumeSessionID()
 	args, err := runners.BuildResumeArgs(proc.Runner, prompt, resumeSessionID, req.RunnerArgs)
 	if err != nil {

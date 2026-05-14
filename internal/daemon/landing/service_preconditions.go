@@ -72,10 +72,6 @@ func (s *Service) validateLandPreconditions(meta *store.InvocationMeta) error {
 		)
 	}
 
-	if meta.LandingStatus == store.LandingStatusLanded {
-		return errors.New(errors.ELandAlreadyLanded, "invocation has already been landed")
-	}
-
 	if meta.LandingStatus == store.LandingStatusDiscarded {
 		return errors.New(errors.ELandAlreadyDiscarded, "invocation has already been discarded")
 	}

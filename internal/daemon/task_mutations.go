@@ -18,7 +18,7 @@ func (s *Server) handleTaskArchive(w http.ResponseWriter, r *http.Request, taskR
 	requestID := getOrCreateRequestID(r)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "repo_id query parameter is required", "pass ?repo_id=<repo_id>", "", nil)
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidRequest, "repo_id query parameter is required", "pass ?repo_id=<repo_id>", "", nil)
 		return
 	}
 	record, err := s.resolveTaskRecord(repoID, taskRef, true)
@@ -56,16 +56,16 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	requestID := getOrCreateRequestID(r)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "repo_id query parameter is required", "pass ?repo_id=<repo_id>", "", nil)
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidRequest, "repo_id query parameter is required", "pass ?repo_id=<repo_id>", "", nil)
 		return
 	}
 	var req TaskRetryRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "invalid request body: "+err.Error(), "", req.ClientRequestID, nil)
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidRequest, "invalid request body: "+err.Error(), "", req.ClientRequestID, nil)
 		return
 	}
 	if req.ClientRequestID == "" {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "client_request_id is required", "provide a UUID for idempotency", "", nil)
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidRequest, "client_request_id is required", "provide a UUID for idempotency", "", nil)
 		return
 	}
 	record, err := s.resolveTaskRecord(repoID, taskRef, true)
@@ -160,7 +160,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 	retryFingerprint := taskRetryFingerprint(meta, mode, runner, req, requestEnv)
-	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint) {
+	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint, false) {
 		return
 	}
 
@@ -177,7 +177,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		s.writeTaskStartError(w, http.StatusInternalServerError, requestID, errors.GetCode(err), err.Error(), "", req.ClientRequestID, meta)
 		return
 	}
-	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint) {
+	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint, true) {
 		return
 	}
 	if err := s.reserveTaskRetryRequest(repoID, meta, req.ClientRequestID, retryFingerprint); err != nil {
@@ -188,8 +188,10 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, meta.WorktreeID)
 	if err != nil {
 		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EWorktreeBroken, err, "")
-		s.markTaskFailed(repoID, meta.TaskID, "retry_worktree_read", fail)
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
+		if latest, readErr := s.Store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
+			meta = latest
+		}
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
@@ -219,30 +221,41 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	var invMeta *store.InvocationMeta
 	envKeys := sortedEnvKeys(requestEnv)
 	if headless {
-		invMeta, err = s.startTaskHeadlessInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, wtRecord, startReq, envKeys, gitEnv)
+		invMeta, err = s.startTaskHeadlessInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, retryFingerprint, wtRecord, startReq, envKeys, gitEnv)
 	} else {
-		invMeta, err = s.startTaskHeadedInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, wtRecord, startReq, envKeys, gitEnv)
+		invMeta, err = s.startTaskHeadedInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, retryFingerprint, wtRecord, startReq, envKeys, gitEnv)
 	}
 	if err != nil {
 		fail := normalizeTaskStartFailure(err)
-		s.markTaskFailed(repoID, meta.TaskID, "retry_invocation_start", fail)
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
+		if latest, readErr := s.Store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
+			meta = latest
+		}
+		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
+		return
+	}
+	if err := s.appendTaskEventOnceByInvocationID(repoID, meta.TaskID, "agency.task_retried", invMeta.InvocationID, map[string]any{
+		"invocation_id":     invMeta.InvocationID,
+		"checkout_root":     invMeta.CheckoutRoot,
+		"execution_profile": invMeta.ExecutionProfile,
+	}); err != nil {
+		fail := newTaskStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), "")
+		s.abortStartedTaskInvocation(repoID, invMeta, "task_retry_event_failed")
+		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
+		if latest, readErr := s.Store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
+			meta = latest
+		}
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
 	if err := s.markTaskRetryRunning(repoID, meta.TaskID, req.ClientRequestID, invMeta); err != nil {
 		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
-		s.markTaskFailed(repoID, meta.TaskID, "retry_task_update", fail)
+		s.abortStartedTaskInvocation(repoID, invMeta, "retry_task_update_failed")
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
+		if latest, readErr := s.Store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
+			meta = latest
+		}
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
-		return
-	}
-	if err := s.appendTaskEvent(repoID, meta.TaskID, "agency.task_retried", map[string]any{
-		"invocation_id":     invMeta.InvocationID,
-		"checkout_root":     invMeta.CheckoutRoot,
-		"execution_profile": invMeta.ExecutionProfile,
-	}); err != nil {
-		s.writeTaskStartError(w, http.StatusInternalServerError, requestID, errors.EPersistFailed, "failed to append task event: "+err.Error(), "", req.ClientRequestID, meta)
 		return
 	}
 	latest, _ := s.Store.ReadTaskMeta(repoID, meta.TaskID)
@@ -280,7 +293,7 @@ func taskRetryFingerprint(meta *store.TaskMeta, mode, runner string, req TaskRet
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestID string, meta *store.TaskMeta, clientRequestID, fingerprint string) bool {
+func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestID string, meta *store.TaskMeta, clientRequestID, fingerprint string, finalizeIncomplete bool) bool {
 	record, ok := meta.RetryRequests[clientRequestID]
 	if !ok {
 		return false
@@ -290,6 +303,22 @@ func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestI
 		return true
 	}
 	if record.InvocationID == "" {
+		if !finalizeIncomplete {
+			return false
+		}
+		repaired, repairErr := s.repairTaskRetryFromClaimedInvocation(meta.RepoID, meta, clientRequestID, fingerprint)
+		if repairErr != nil {
+			code := errors.GetCode(repairErr)
+			if code == "" {
+				code = errors.EPersistFailed
+			}
+			s.writeTaskStartError(w, http.StatusInternalServerError, requestID, code, repairErr.Error(), "inspect task state before retrying", clientRequestID, meta)
+			return true
+		}
+		if repaired != nil {
+			s.writeTaskStartSuccess(w, requestID, clientRequestID, repaired, true)
+			return true
+		}
 		code := errors.ETaskCreateFailed
 		message := "retry request was already accepted but no invocation was recorded"
 		if record.Error != "" {
@@ -298,7 +327,14 @@ func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestI
 		if record.ErrorCode != "" {
 			code = errors.Code(record.ErrorCode)
 		}
-		s.writeTaskStartError(w, http.StatusConflict, requestID, code, message, "inspect task state before retrying", clientRequestID, meta)
+		fail := newTaskStartFailure(http.StatusConflict, code, message, "inspect task state before retrying")
+		if record.State == "starting" && finalizeIncomplete {
+			s.markTaskRetryFailed(meta.RepoID, meta.TaskID, clientRequestID, fail)
+			if latest, err := s.Store.ReadTaskMeta(meta.RepoID, meta.TaskID); err == nil {
+				meta = latest
+			}
+		}
+		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, clientRequestID, meta)
 		return true
 	}
 	respMeta := *meta
@@ -309,6 +345,24 @@ func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestI
 	}
 	s.writeTaskStartSuccess(w, requestID, clientRequestID, &respMeta, true)
 	return true
+}
+
+func (s *Server) repairTaskRetryFromClaimedInvocation(repoID string, meta *store.TaskMeta, clientRequestID, fingerprint string) (*store.TaskMeta, error) {
+	invMeta, ok, err := s.findClaimedTaskInvocation(repoID, meta.TaskID, clientRequestID, fingerprint)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if err := s.appendTaskEventOnceByInvocationID(repoID, meta.TaskID, "agency.task_retried", invMeta.InvocationID, map[string]any{
+		"invocation_id":     invMeta.InvocationID,
+		"checkout_root":     invMeta.CheckoutRoot,
+		"execution_profile": invMeta.ExecutionProfile,
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.markTaskRetryRunning(repoID, meta.TaskID, clientRequestID, invMeta); err != nil {
+		return nil, err
+	}
+	return s.Store.ReadTaskMeta(repoID, meta.TaskID)
 }
 
 func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, clientRequestID, fingerprint string) error {

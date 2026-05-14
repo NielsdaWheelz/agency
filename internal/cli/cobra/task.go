@@ -47,14 +47,26 @@ mutation.`,
 				taskRef := args[0]
 				switch {
 				case len(args) == 1:
+					if err := validateTaskTargetFlags(cmd, "<task-ref>", "json"); err != nil {
+						return err
+					}
 					return runTaskShow(cmd, taskRef, repoRef, jsonOut)
 				case len(args) == 2:
 					switch args[1] {
 					case "archive":
+						if err := validateTaskTargetFlags(cmd, "archive", "json"); err != nil {
+							return err
+						}
 						return runTaskArchive(cmd, taskRef, repoRef, jsonOut)
 					case "watch":
+						if err := validateTaskTargetFlags(cmd, "watch"); err != nil {
+							return err
+						}
 						return runTaskWatch(cmd, taskRef, repoRef)
 					case "retry":
+						if err := validateTaskTargetFlags(cmd, "retry", "json", "mode", "runner", "name", "detached", "prompt", "prompt-file", "agency-config", "execution-profile", "runner-arg", "model", "effort", "permission-mode", "no-include-untracked"); err != nil {
+							return err
+						}
 						return runTaskRetry(cmd, commands.TaskRetryOpts{
 							TaskRef:            taskRef,
 							RepoRef:            repoRef,
@@ -145,6 +157,19 @@ mutation.`,
 		}
 	}
 	return cmd
+}
+
+func validateTaskTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
+	allowedFlags := make(map[string]bool, len(allowed))
+	for _, flag := range allowed {
+		allowedFlags[flag] = true
+	}
+	for _, flag := range []string{"json", "mode", "runner", "name", "detached", "prompt", "prompt-file", "agency-config", "execution-profile", "runner-arg", "model", "effort", "permission-mode", "no-include-untracked"} {
+		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
+			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency task "+action)
+		}
+	}
+	return nil
 }
 
 func newTaskStartCmd() *cobra.Command {

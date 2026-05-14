@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -29,34 +30,34 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	// Parse request body
 	var req WorktreeCreateRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	// 1. Validate required fields
 	if req.RepoRoot == "" {
-		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_root is required", "")
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "repo_root is required", "")
 		return
 	}
 	if req.Name == "" {
-		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "name is required", "")
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "name is required", "")
 		return
 	}
 	if req.BaseBranch == "" {
-		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "base_branch is required", "")
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "base_branch is required", "")
 		return
 	}
 
 	// Canonicalize repo_root: Abs -> EvalSymlinks -> git rev-parse --show-toplevel
 	repoRoot, err := filepath.Abs(req.RepoRoot)
 	if err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest),
 			"failed to resolve repo_root: "+err.Error(), "")
 		return
 	}
 	repoRoot, err = filepath.EvalSymlinks(repoRoot)
 	if err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest),
 			"failed to resolve repo_root symlinks: "+err.Error(), "")
 		return
 	}
@@ -247,15 +248,38 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	// Parse request body
 	var req WorktreeRmRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreeRmError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	// Get repo_id from query params (required for resolution)
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeWorktreeRmError(w, http.StatusBadRequest, "E_INVALID_REQUEST",
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.EInvalidRequest),
 			"repo_id query parameter is required", "")
+		return
+	}
+
+	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	record, err := wtSvc.Resolve(repoID, worktreeRef, true)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeWorktreeRmError(w, http.StatusNotFound, string(code),
+			err.Error(), "run 'agency worktree ls' to see available worktrees")
+		return
+	}
+
+	if record.Broken || record.Meta == nil {
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.EWorktreeBroken),
+			"worktree exists but meta.json is unreadable", "remove manually")
+		return
+	}
+
+	if record.Meta.State == store.WorktreeStateArchived {
+		s.writeWorktreeRmSuccess(w)
 		return
 	}
 
@@ -300,37 +324,34 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 	defer func() { _ = unlock() }()
 
-	// Resolve worktree by id/name/prefix
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
-	record, err := wtSvc.Resolve(repoID, worktreeRef, false)
+	latestMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, record.WorktreeID)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
-			code = errors.EInternal
+			code = errors.EWorktreeBroken
 		}
-		s.writeWorktreeRmError(w, http.StatusNotFound, string(code),
-			err.Error(), "run 'agency worktree ls' to see available worktrees")
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "inspect or recreate the worktree")
 		return
 	}
-
-	if record.Broken {
-		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.EWorktreeBroken),
-			"worktree exists but meta.json is unreadable", "remove manually")
-		return
-	}
-
-	// Check if already archived (idempotent rm)
+	record.Meta = latestMeta
 	if record.Meta.State == store.WorktreeStateArchived {
-		// Already archived - return success (idempotent)
 		s.writeWorktreeRmSuccess(w)
 		return
 	}
 
-	// Verify tree contains INTEGRATION_MARKER
-	if !integrationworktree.HasIntegrationMarker(record.Meta.TreePath) {
+	treeMissing := false
+	if info, err := s.FS.Stat(record.Meta.TreePath); err != nil {
+		if os.IsNotExist(err) {
+			treeMissing = true
+		} else {
+			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
+				"failed to inspect worktree tree: "+err.Error(), "")
+			return
+		}
+	} else if !info.IsDir() {
 		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.ENotAnIntegrationWorktree),
-			"tree missing .agency/INTEGRATION_MARKER - not an integration worktree",
-			"this safety check prevents accidentally deleting user-managed worktrees")
+			"worktree path is not a directory",
+			"this safety check prevents accidentally deleting user-managed paths")
 		return
 	}
 
@@ -358,17 +379,6 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 			"run 'agency agent ls --worktree "+worktreeRef+"' and land or discard each invocation")
 		return
 	}
-
-	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EExecutionProfileNotFound
-		}
-		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
-		return
-	}
-	worktreeEnv := prSyncNonInteractiveEnv(profileEnv)
 
 	if req.Force && len(unresolved) > 0 {
 		discardSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
@@ -398,6 +408,38 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 			}
 		}
 	}
+
+	if treeMissing {
+		if err := s.Store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+			m.State = store.WorktreeStateArchived
+		}); err != nil {
+			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
+				"worktree tree is missing and metadata archive failed: "+err.Error(),
+				"inspect worktree metadata before retrying")
+			return
+		}
+		s.writeWorktreeRmSuccess(w)
+		return
+	}
+
+	// Verify tree contains INTEGRATION_MARKER
+	if !integrationworktree.HasIntegrationMarker(record.Meta.TreePath) {
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.ENotAnIntegrationWorktree),
+			"tree missing .agency/INTEGRATION_MARKER - not an integration worktree",
+			"this safety check prevents accidentally deleting user-managed worktrees")
+		return
+	}
+
+	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EExecutionProfileNotFound
+		}
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
+		return
+	}
+	worktreeEnv := prSyncNonInteractiveEnv(profileEnv)
 
 	// Check if tree is dirty (unless force)
 	if !req.Force {

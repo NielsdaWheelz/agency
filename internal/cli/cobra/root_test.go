@@ -158,6 +158,34 @@ func TestAgentTarget_StartFlagsAreRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown flag: --mode")
 }
 
+func TestAgentTarget_ActionFlagsAreRejectedOutsideAction(t *testing.T) {
+	_, _, err := executeCmd("agent", "inv-1", "history", "--apply")
+	require.Error(t, err, "expected land-only flag to be rejected by history")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "--apply is not valid")
+}
+
+func TestWorktreeTarget_ActionFlagsAreRejectedOutsideAction(t *testing.T) {
+	_, _, err := executeCmd("worktree", "wt-1", "pr", "sync", "--squash")
+	require.Error(t, err, "expected merge-only flag to be rejected by pr sync")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "--squash is not valid")
+}
+
+func TestTaskTarget_ActionFlagsAreRejectedOutsideAction(t *testing.T) {
+	_, _, err := executeCmd("task", "task-1", "watch", "--prompt", "retry")
+	require.Error(t, err, "expected retry-only flag to be rejected by watch")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "--prompt is not valid")
+}
+
+func TestRepoTarget_ActionFlagsAreRejectedOutsideAction(t *testing.T) {
+	_, _, err := executeCmd("repo", "add", "--yes")
+	require.Error(t, err, "expected rm-only flag to be rejected by add")
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "--yes is not valid")
+}
+
 func TestAgentStart_HeadlessFlagRejected(t *testing.T) {
 	_, _, err := executeCmd("agent", "start", "--headless")
 	require.Error(t, err, "expected legacy headless flag to be rejected")

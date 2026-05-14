@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -196,4 +198,79 @@ func TestHandleDiscardUsesInvocationProfileEnv(t *testing.T) {
 			assert.Equal(t, "personal", runner.CallEnvs[i]["AGENCY_SELECTED_PROFILE"])
 		}
 	}
+}
+
+func TestStopInvocationForDiscardUsesProcessGroupLivenessWhenLeaderExited(t *testing.T) {
+	pgid := startOrphanedIgnoringSignalProcessGroup(t)
+
+	dataDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), dataDir)
+	s.PIDChecker = func(int) bool {
+		t.Fatal("discard liveness must check the process group, not the process id")
+		return false
+	}
+
+	const repoID = "repo-1"
+	const invocationID = "inv-orphaned-group"
+	_, err := st.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	meta := store.NewInvocationMeta(invocationID, "", "wt-1", "/sandbox", "/checkouts/repo-1", "work", "agency/sandbox-"+invocationID, "abc123", "claude-code", store.RunnerModeHeadless, time.Now())
+	meta.Status = store.InvocationStatusRunning
+	meta.PGID = &pgid
+	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = s.stopInvocationForDiscard(ctx, repoID, invocationID)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return !isProcessGroupAlive(pgid)
+	}, 2*time.Second, 20*time.Millisecond)
+
+	updated, err := st.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusFailed, updated.Status)
+	assert.Equal(t, "discarded", updated.ExitReason)
+	assert.Equal(t, "discarded", updated.FailureReason)
+	assert.Nil(t, updated.PID)
+}
+
+func TestIsProcessGroupAliveDetectsGroupAfterLeaderExited(t *testing.T) {
+	pgid := startOrphanedIgnoringSignalProcessGroup(t)
+
+	assert.False(t, IsPIDAlive(pgid), "group leader process should be gone")
+	assert.True(t, isProcessGroupAlive(pgid), "process group should still contain a live child")
+}
+
+func startOrphanedIgnoringSignalProcessGroup(t *testing.T) int {
+	t.Helper()
+
+	const shell = "/bin/sh"
+	if _, err := os.Stat(shell); err != nil {
+		t.Skipf("%s unavailable: %v", shell, err)
+	}
+	pid, err := syscall.ForkExec(shell, []string{
+		"sh",
+		"-c",
+		`trap "" INT TERM HUP; while :; do sleep 1; done & exit 0`,
+	}, &syscall.ProcAttr{
+		Files: []uintptr{0, 1, 2},
+		Sys:   &syscall.SysProcAttr{Setpgid: true},
+	})
+	require.NoError(t, err)
+	pgid := pid
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	})
+
+	var status syscall.WaitStatus
+	_, err = syscall.Wait4(pid, &status, 0, nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return !IsPIDAlive(pgid) && isProcessGroupAlive(pgid)
+	}, time.Second, 10*time.Millisecond)
+
+	return pgid
 }

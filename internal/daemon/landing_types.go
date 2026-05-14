@@ -9,6 +9,9 @@ const (
 
 	// LandingModeApplyPatch indicates a patch was applied (no commits).
 	LandingModeApplyPatch LandingMode = "apply_patch"
+
+	// LandingModeCleanup indicates a prior land only needed cleanup retry.
+	LandingModeCleanup LandingMode = "cleanup"
 )
 
 // LandRequest is the request body for POST /invocations/{id}/land.

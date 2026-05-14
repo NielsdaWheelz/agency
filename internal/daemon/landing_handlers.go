@@ -22,14 +22,14 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeLandError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "", nil)
+		s.writeLandError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "", nil)
 		return
 	}
 
 	// Parse request body
 	var req LandRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeLandError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", nil)
+		s.writeLandError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", nil)
 		return
 	}
 
@@ -128,14 +128,14 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeDiscardError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	// Parse request body (currently empty, but allow for future expansion)
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeDiscardError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
@@ -304,7 +304,7 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 			}
 		} else {
 			<-waitCtx.Done()
-			if !s.PIDChecker(pgid) {
+			if !isProcessGroupAlive(pgid) {
 				return nil
 			}
 		}

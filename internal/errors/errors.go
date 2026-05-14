@@ -153,6 +153,7 @@ const (
 	EDaemonServiceNotInstalled     Code = "E_DAEMON_SERVICE_NOT_INSTALLED"     // service is not installed
 
 	EUnsafeRepoRoot      Code = "E_UNSAFE_REPO_ROOT"     // repo_root is inside an agency-managed worktree
+	EInvalidRequest      Code = "E_INVALID_REQUEST"      // request body, route, or required field is invalid
 	EPromptTooLarge      Code = "E_PROMPT_TOO_LARGE"     // prompt exceeds 256 KB
 	EDaemonIncompatible  Code = "E_DAEMON_INCOMPATIBLE"  // CLI api_version does not match daemon api_version
 	ERunnerArgConflict   Code = "E_RUNNER_ARG_CONFLICT"  // user-supplied args include reserved flags

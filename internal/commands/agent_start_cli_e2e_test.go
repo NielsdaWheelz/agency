@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,8 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
@@ -377,6 +381,157 @@ func TestAgentStartCLIE2E_CWDFallbacks(t *testing.T) {
 	require.Equalf(t, 0, fromWorktree.ExitCode, "agent start from worktree cwd failed\nstdout:\n%s\nstderr:\n%s", fromWorktree.Stdout, fromWorktree.Stderr)
 
 	_ = runAgencyCLI(t, agencyBin, repoDir, env, "daemon", "stop", "--force")
+}
+
+func TestAgentStartCLIE2E_TargetFirstActionGrammar(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+	if os.Getenv("AGENCY_LOCAL_E2E") == "" {
+		t.Skip("set AGENCY_LOCAL_E2E=1 to enable local CLI e2e tests")
+	}
+
+	repoRoot := repoRootFromCaller(t)
+	agencyBin, _ := buildE2EBinaries(t, repoRoot)
+
+	tmpDir := mustMkdirTemp(t, "agency-e2e-grammar-*")
+	dataDir := filepath.Join(tmpDir, "data")
+	configDir := filepath.Join(tmpDir, "config")
+	cacheDir := filepath.Join(tmpDir, "cache")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.MkdirAll(cacheDir, 0o755))
+
+	env := map[string]string{
+		"AGENCY_DATA_DIR":     dataDir,
+		"AGENCY_CONFIG_DIR":   configDir,
+		"AGENCY_CACHE_DIR":    cacheDir,
+		"GIT_CONFIG_NOSYSTEM": os.Getenv("GIT_CONFIG_NOSYSTEM"),
+		"GIT_CONFIG_GLOBAL":   os.Getenv("GIT_CONFIG_GLOBAL"),
+		"GIT_AUTHOR_NAME":     os.Getenv("GIT_AUTHOR_NAME"),
+		"GIT_AUTHOR_EMAIL":    os.Getenv("GIT_AUTHOR_EMAIL"),
+		"GIT_COMMITTER_NAME":  os.Getenv("GIT_COMMITTER_NAME"),
+		"GIT_COMMITTER_EMAIL": os.Getenv("GIT_COMMITTER_EMAIL"),
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PROMPT_DISABLED":  "1",
+		"AGENCY_LOCAL_E2E":    "1",
+	}
+	cwd := mustMkdirTemp(t, "agency-e2e-cwd-*")
+
+	historyHelp := runAgencyCLI(t, agencyBin, cwd, env, "agent", "abc", "history", "--help")
+	require.Equalf(t, 0, historyHelp.ExitCode, "agent history help failed\nstdout:\n%s\nstderr:\n%s", historyHelp.Stdout, historyHelp.Stderr)
+	assert.Contains(t, historyHelp.Stdout, "agency agent <invocation-ref> history")
+	assert.Contains(t, historyHelp.Stdout, "agency agent <invocation-ref> history logs")
+	assert.Contains(t, historyHelp.Stdout, "history uses --json, --last, --limit, and --cursor")
+
+	mergeHelp := runAgencyCLI(t, agencyBin, cwd, env, "worktree", "foo", "pr", "merge", "--help")
+	require.Equalf(t, 0, mergeHelp.ExitCode, "worktree pr merge help failed\nstdout:\n%s\nstderr:\n%s", mergeHelp.Stdout, mergeHelp.Stderr)
+	assert.Contains(t, mergeHelp.Stdout, "agency worktree <worktree-ref> pr merge")
+	assert.Contains(t, mergeHelp.Stdout, "--agency-config string")
+	assert.Contains(t, mergeHelp.Stdout, "--no-delete-branch")
+	assert.Contains(t, mergeHelp.Stdout, "pr merge uses --squash, --merge, --rebase, --no-delete-branch, --yes, and --agency-config")
+
+	landRequests, landDecodeErrors := startE2ELandDaemon(t, dataDir)
+	land := runAgencyCLI(t, agencyBin, cwd, env,
+		"agent", "inv-1", "land",
+		"--repo", "repo-1",
+		"--apply",
+		"--require-base",
+		"--json",
+	)
+	require.Equalf(t, 0, land.ExitCode, "agent land failed\nstdout:\n%s\nstderr:\n%s", land.Stdout, land.Stderr)
+	assert.NotContains(t, land.Stderr, "unknown flag")
+
+	var landResp agentMutationResponse
+	require.NoError(t, json.Unmarshal([]byte(land.Stdout), &landResp), "invalid land json: %s", land.Stdout)
+	assert.True(t, landResp.OK)
+	assert.Equal(t, "inv-1", landResp.InvocationID)
+
+	select {
+	case req := <-landRequests:
+		assert.True(t, req.Apply)
+		assert.True(t, req.RequireBase)
+	case <-time.After(3 * time.Second):
+		t.Fatal("fake daemon did not receive land request")
+	}
+	select {
+	case err := <-landDecodeErrors:
+		require.NoError(t, err)
+	default:
+	}
+}
+
+func startE2ELandDaemon(t *testing.T, dataDir string) (<-chan daemon.LandRequest, <-chan error) {
+	t.Helper()
+
+	st := store.NewStore(agencyfs.NewRealFS(), dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o755))
+	_ = os.Remove(socketPath)
+
+	landRequests := make(chan daemon.LandRequest, 1)
+	decodeErrors := make(chan error, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/health":
+			_ = json.NewEncoder(w).Encode(daemon.HealthResponse{
+				OK:         true,
+				APIVersion: daemon.APIVersion,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/repo-1":
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK:         true,
+				APIVersion: daemon.APIVersion,
+				RequestID:  "repo-req",
+				Data: daemon.RepoDTO{
+					RepoID:                  "repo-1",
+					RepoName:                "repo",
+					RepoKey:                 "github.com/test/repo",
+					PreferredRootAccessible: true,
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/invocations/inv-1/land" && r.URL.Query().Get("repo_id") == "repo-1":
+			var req daemon.LandRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				decodeErrors <- err
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			landRequests <- req
+			_ = json.NewEncoder(w).Encode(daemon.LandResponse{
+				OK:                    true,
+				APIVersion:            daemon.APIVersion,
+				RequestID:             "land-req",
+				InvocationID:          "inv-1",
+				AppliedMode:           daemon.LandingModeApplyPatch,
+				IntegrationHeadBefore: "1111111111111111111111111111111111111111",
+				IntegrationHeadAfter:  "2222222222222222222222222222222222222222",
+				CommitsLanded:         1,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	server := &http.Server{Handler: handler}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		err := <-done
+		if err != nil && err != http.ErrServerClosed {
+			t.Errorf("fake daemon serve failed: %v", err)
+		}
+		_ = os.Remove(socketPath)
+	})
+
+	return landRequests, decodeErrors
 }
 
 func buildE2EBinaries(t *testing.T, repoRoot string) (agencyBin string, fakeRunnerBin string) {

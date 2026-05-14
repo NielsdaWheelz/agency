@@ -38,6 +38,59 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 	return nil
 }
 
+func (s *Service) landCleanupNeeded(ctx context.Context, repoRoot, invocationID string, meta *store.InvocationMeta, env map[string]string) (bool, error) {
+	if meta.SandboxPath != "" {
+		if _, err := os.Stat(meta.SandboxPath); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, fmt.Errorf("sandbox stat: %w", err)
+		}
+	}
+
+	if _, err := os.Stat(repoRoot); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("repo root stat: %w", err)
+	}
+
+	if meta.SandboxBranch != "" {
+		result, err := s.runner.Run(ctx, "git", []string{
+			"-C", repoRoot,
+			"show-ref", "--quiet", "--verify", "refs/heads/" + meta.SandboxBranch,
+		}, exec.RunOpts{Env: env})
+		if err != nil {
+			return false, fmt.Errorf("branch lookup: %w", err)
+		}
+		if result.ExitCode == 0 {
+			return true, nil
+		}
+		if result.ExitCode != 1 {
+			msg := fmt.Sprintf("branch lookup exited %d", result.ExitCode)
+			if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
+				msg += ": " + stderr
+			}
+			return false, errors.New(msg)
+		}
+	}
+
+	result, err := s.runner.Run(ctx, "git", []string{
+		"-C", repoRoot,
+		"for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/agency/snapshots/%s/", invocationID),
+	}, exec.RunOpts{Env: env})
+	if err != nil {
+		return false, fmt.Errorf("list snapshot refs: %w", err)
+	}
+	if result.ExitCode != 0 {
+		msg := fmt.Sprintf("list snapshot refs exited %d", result.ExitCode)
+		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
+			msg += ": " + stderr
+		}
+		return false, errors.New(msg)
+	}
+	return strings.TrimSpace(result.Stdout) != "", nil
+}
+
 func (s *Service) cleanupSnapshotRefs(ctx context.Context, repoRoot, invocationID string, env map[string]string) error {
 	refPrefix := fmt.Sprintf("refs/agency/snapshots/%s/", invocationID)
 
@@ -141,16 +194,20 @@ func (s *Service) deleteGitBranchIfPresent(ctx context.Context, repoRoot, branch
 	ref := "refs/heads/" + branch
 	result, err := s.runner.Run(ctx, "git", []string{
 		"-C", repoRoot,
-		"show-ref", "--verify", ref,
+		"show-ref", "--quiet", "--verify", ref,
 	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return fmt.Errorf("branch lookup: %w", err)
 	}
-	if result.ExitCode != 0 {
-		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-			return fmt.Errorf("branch lookup exited %d: %s", result.ExitCode, stderr)
-		}
+	if result.ExitCode == 1 {
 		return nil
+	}
+	if result.ExitCode != 0 {
+		msg := fmt.Sprintf("branch lookup exited %d", result.ExitCode)
+		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
+			msg += ": " + stderr
+		}
+		return errors.New(msg)
 	}
 
 	result, err = s.runner.Run(ctx, "git", []string{

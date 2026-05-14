@@ -15,6 +15,7 @@ import (
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/shutdown", s.handleShutdown)
+	mux.HandleFunc("/invocations", s.handleInvocations)
 	mux.HandleFunc("/invocations/", s.handleInvocations)
 	mux.HandleFunc("/tasks/", s.handleTasks)
 	mux.HandleFunc("/tasks", s.handleTasks)

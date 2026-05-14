@@ -23,23 +23,23 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	var req ControlPlaneStartRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", "")
 		return
 	}
 	if req.ClientRequestID == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "client_request_id is required", "provide a UUID for idempotency", "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "client_request_id is required", "provide a UUID for idempotency", "")
 		return
 	}
 	if req.RepoRoot == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "repo_root is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_root is required", "", req.ClientRequestID)
 		return
 	}
 	if req.WorktreeRef == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "worktree_ref is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "worktree_ref is required", "", req.ClientRequestID)
 		return
 	}
 	if req.Runner == "" {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "runner is required", "", req.ClientRequestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "runner is required", "", req.ClientRequestID)
 		return
 	}
 	if req.Prompt == "" {
@@ -84,6 +84,41 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 
 	requestEnv := req.Env
+	if record, exists, err := s.findInvocationRecordByClientRequestID(repoIdentity.RepoID, req.ClientRequestID); err != nil {
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID)
+		return
+	} else if exists {
+		if record.Meta == nil || record.Broken {
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID)
+			return
+		}
+		if s.directStartRequestConflictsWithRecord(repoIdentity.RepoID, repoRoot, store.RunnerModeHeadless, req, requestEnv, record.Meta) {
+			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
+			return
+		}
+		switch record.Meta.Status {
+		case store.InvocationStatusRunning, store.InvocationStatusStopping, store.InvocationStatusFinished:
+		case store.InvocationStatusStarting:
+			writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
+			return
+		case store.InvocationStatusFailed:
+			if directStartFailedBeforeClaim(record.Meta) {
+				message := strings.TrimSpace(record.Meta.FailureReason)
+				if message == "" {
+					message = "invocation start previously failed"
+				}
+				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
+				return
+			}
+		default:
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record has unsupported invocation status", "inspect invocation state before retrying", req.ClientRequestID)
+			return
+		}
+		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
+		s.writeControlPlaneSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+		return
+	}
+
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
 	if err != nil {
 		code := errors.GetCode(err)
@@ -113,6 +148,18 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		}
 		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
 		if err == nil {
+			if meta.Status == store.InvocationStatusStarting {
+				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
+				return
+			}
+			if meta.Status == store.InvocationStatusFailed && directStartFailedBeforeClaim(meta) {
+				message := strings.TrimSpace(meta.FailureReason)
+				if message == "" {
+					message = "invocation start previously failed"
+				}
+				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
+				return
+			}
 			s.writeControlPlaneSuccess(w, entry.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 			return
 		}
@@ -129,6 +176,24 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		}
 		if record.Meta == nil || record.Broken {
 			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID)
+			return
+		}
+		switch record.Meta.Status {
+		case store.InvocationStatusRunning, store.InvocationStatusStopping, store.InvocationStatusFinished:
+		case store.InvocationStatusStarting:
+			writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
+			return
+		case store.InvocationStatusFailed:
+			if directStartFailedBeforeClaim(record.Meta) {
+				message := strings.TrimSpace(record.Meta.FailureReason)
+				if message == "" {
+					message = "invocation start previously failed"
+				}
+				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
+				return
+			}
+		default:
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record has unsupported invocation status", "inspect invocation state before retrying", req.ClientRequestID)
 			return
 		}
 		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)

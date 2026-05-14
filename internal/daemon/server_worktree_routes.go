@@ -3,6 +3,8 @@ package daemon
 import (
 	"net/http"
 	"strings"
+
+	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +31,7 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 
 	worktreeRef, action := splitRouteRefAction(remaining)
 	if worktreeRef == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "worktree ref required", "")
+		s.writeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "worktree ref required", "")
 		return
 	}
 

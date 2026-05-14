@@ -167,6 +167,30 @@ func pathContains(root, path string) bool {
 	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)))
 }
 
+func (s *Server) directStartRequestConflictsWithRecord(repoID, repoRoot string, mode store.RunnerMode, req ControlPlaneStartRequest, requestEnv map[string]string, meta *store.InvocationMeta) bool {
+	if explicitProfile := strings.TrimSpace(req.ExecutionProfile); explicitProfile != "" && explicitProfile != meta.ExecutionProfile {
+		return true
+	}
+
+	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtRecord, err := wtSvc.Resolve(repoID, req.WorktreeRef, true)
+	if err != nil {
+		if req.WorktreeRef != meta.IntegrationWorktreeID {
+			return true
+		}
+	} else if wtRecord.WorktreeID != meta.IntegrationWorktreeID {
+		return true
+	}
+
+	replayReq := req
+	replayReq.ExecutionProfile = meta.ExecutionProfile
+	return meta.RequestFingerprint != controlPlaneStartFingerprint(repoRoot, meta.IntegrationWorktreeID, meta.CheckoutRoot, mode, replayReq, requestEnv)
+}
+
+func directStartFailedBeforeClaim(meta *store.InvocationMeta) bool {
+	return meta.ExitReason == "start_failed" || meta.ClaimedAt == ""
+}
+
 func (s *Server) ensureRepoRegistered(repoIdentity identity.RepoIdentity, repoRoot string) error {
 	idx, err := s.Store.LoadRepoIndex()
 	if err != nil {
@@ -219,12 +243,12 @@ func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, e
 func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot string, writeErr controlPlaneStartErrorWriter) (string, identity.RepoIdentity, bool) {
 	repoRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "failed to resolve repo_root: "+err.Error(), "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "failed to resolve repo_root: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
 	repoRoot, err = filepath.EvalSymlinks(repoRoot)
 	if err != nil {
-		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "failed to resolve repo_root symlinks: "+err.Error(), "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "failed to resolve repo_root symlinks: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
 	insideManagedTree, err := s.isInsideAgencyManagedTree(repoRoot)

@@ -18,7 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestHandleWorktreeRebase_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
+func TestHandleWorktreeRebase_MissingRepoIDReturnsInvalidRequest(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -28,7 +28,7 @@ func TestHandleWorktreeRebase_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	var resp WorktreeRebaseResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
-	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
 	assert.Equal(t, "repo_id query parameter is required", resp.Message)
 }
 
@@ -88,7 +88,38 @@ func TestHandleWorktreeRebase_RebaseConflictAbortsAndReturnsTypedError(t *testin
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
 	assert.Equal(t, string(errors.ERebaseConflict), resp.ErrorCode)
+	assert.Contains(t, resp.Hint, "rebase was rolled back")
 	assert.Contains(t, fakeRunner.Calls, "git rebase --abort")
+}
+
+func TestHandleWorktreeRebase_FetchFailureReturnsTypedError(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	_ = setupWorktreeMutationReadyState(t, env)
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{
+		ExitCode: 128,
+		Stderr:   "fatal: could not fetch origin",
+	}
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/wt-1/rebase?repo_id="+env.RepoID,
+		[]byte(`{}`),
+	)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+
+	var resp WorktreeRebaseResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EGitFetchFailed), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "git fetch origin failed")
 }
 
 func TestHandleWorktreeRebase_Success(t *testing.T) {

@@ -14,7 +14,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	requestID := prepareRequestID(w, r)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
@@ -24,7 +24,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 			w,
 			http.StatusBadRequest,
 			requestID,
-			string(errors.EInvalidArgument),
+			string(errors.EInvalidRequest),
 			decodeErr,
 			"",
 		)

@@ -504,6 +504,23 @@ func TestHandleWorktreeRm_Idempotent(t *testing.T) {
 	assert.True(t, rmResp2.OK, "second rm should succeed (idempotent), got error: %s - %s", rmResp2.ErrorCode, rmResp2.Message)
 }
 
+func TestHandleWorktreeRm_ArchivedExactIDDoesNotRequireRepoRoot(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	writeWorktreeMergeRepoRecord(t, env, filepath.Join(t.TempDir(), "missing"), filepath.Join(t.TempDir(), "also-missing"))
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/rm?repo_id="+env.RepoID, []byte(`{}`))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.OK)
+}
+
 func TestWorktreeIdempotencyKey(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -556,6 +573,82 @@ func TestUnresolvedInvocationsForWorktree_UnknownLandingStatusIsCorrupt(t *testi
 	_, err := s.unresolvedInvocationsForWorktree("repo-1", "wt-a")
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestHandleWorktreeRm_MissingTreeArchivesWithoutMarkerDirtyOrGitRemove(t *testing.T) {
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+	repoRoot := t.TempDir()
+	writeWorktreeMergeRepoRecord(t, env, repoRoot, repoRoot)
+
+	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(meta.TreePath))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.LandingStatus = store.LandingStatusLanded
+	}))
+
+	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/rm?repo_id="+env.RepoID, []byte(`{}`))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.OK)
+	assert.Empty(t, fakeRunner.Calls)
+
+	meta, err = env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
+	require.NoError(t, err)
+	assert.Equal(t, store.WorktreeStateArchived, meta.State)
+}
+
+func TestHandleWorktreeRm_MissingTreeStillBlocksActiveMerge(t *testing.T) {
+	env := setupReadTestEnv(t)
+	repoRoot := t.TempDir()
+	writeWorktreeMergeRepoRecord(t, env, repoRoot, repoRoot)
+
+	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(meta.TreePath))
+
+	proc, attached, err := env.Server.beginWorktreeMerge(env.RepoID, "wt-1", "attempt-1", "request-1", normalizedMergeRequest{Strategy: mergeStrategySquash})
+	require.NoError(t, err)
+	require.False(t, attached)
+	t.Cleanup(func() { env.Server.releaseWorktreeMerge(proc) })
+
+	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/rm?repo_id="+env.RepoID, []byte(`{}`))
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+
+	var resp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EWorktreeMergeActive), resp.ErrorCode)
+
+	meta, err = env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
+	require.NoError(t, err)
+	assert.Equal(t, store.WorktreeStatePresent, meta.State)
+}
+
+func TestHandleWorktreeRm_MissingTreeStillBlocksUnresolvedInvocations(t *testing.T) {
+	env := setupReadTestEnv(t)
+	repoRoot := t.TempDir()
+	writeWorktreeMergeRepoRecord(t, env, repoRoot, repoRoot)
+
+	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(meta.TreePath))
+
+	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/rm?repo_id="+env.RepoID, []byte(`{}`))
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+
+	var resp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EWorktreeHasUnresolvedInvocations), resp.ErrorCode)
+
+	meta, err = env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
+	require.NoError(t, err)
+	assert.Equal(t, store.WorktreeStatePresent, meta.State)
 }
 
 func TestHandleWorktrees_Routing(t *testing.T) {

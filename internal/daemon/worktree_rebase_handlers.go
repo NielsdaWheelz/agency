@@ -23,12 +23,12 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	if decodeErr := decodeWorktreeRebaseRequest(r.Body); decodeErr != "" {
-		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), decodeErr, "")
+		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), decodeErr, "")
 		return
 	}
 
@@ -181,10 +181,11 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		details := map[string]string{
 			"rebase_target": rebaseTarget,
 			"stderr":        strings.TrimSpace(rebaseResult.Stderr),
-			"hint":          "resolve the rebase conflicts locally, then retry",
+			"hint":          "the rebase was rolled back; rebase locally to resolve conflicts, then retry",
 		}
 		if abortFailed {
 			details["abort_failed"] = "true"
+			details["hint"] = "resolve the rebase conflicts locally, then retry; automatic rollback failed"
 		}
 		return errors.NewWithDetails(
 			errors.ERebaseConflict,
@@ -212,6 +213,8 @@ func worktreeRebaseHTTPStatusForCode(code errors.Code) int {
 		return http.StatusConflict
 	case errors.EDirtyWorktree, errors.ERebaseConflict:
 		return http.StatusConflict
+	case errors.EGitFetchFailed:
+		return http.StatusBadGateway
 	case errors.EInvalidArgument:
 		return http.StatusBadRequest
 	case errors.EPersistFailed:

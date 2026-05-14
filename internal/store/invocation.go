@@ -6,11 +6,34 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
+
+// invocationMetaLocks serializes read-modify-write updates per meta path.
+var invocationMetaLocks sync.Map // map[string]*sync.Mutex
+
+func invocationMetaLock(metaPath string) *sync.Mutex {
+	lock, _ := invocationMetaLocks.LoadOrStore(invocationMetaLockKey(metaPath), &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func invocationMetaLockKey(metaPath string) string {
+	clean := filepath.Clean(metaPath)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(clean)); err == nil {
+		return filepath.Join(parent, filepath.Base(clean))
+	}
+	return clean
+}
 
 // InvocationStatus represents the lifecycle status of an invocation.
 type InvocationStatus string
@@ -349,6 +372,9 @@ func (s *Store) WriteInvocationMeta(repoID, invocationID string, meta *Invocatio
 // UpdateInvocationMeta reads, updates, and writes meta.json atomically.
 func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(*InvocationMeta)) error {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
+	lock := invocationMetaLock(metaPath)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// Read current meta
 	meta, err := s.ReadInvocationMeta(repoID, invocationID)

@@ -1,6 +1,10 @@
 package daemon
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/NielsdaWheelz/agency/internal/errors"
+)
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	if routePathEquals(r.URL.Path, "/tasks") {
@@ -26,7 +30,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 	taskRef, action := splitRouteRefAction(remaining)
 	if taskRef == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "task ref required", "")
+		s.writeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "task ref required", "")
 		return
 	}
 

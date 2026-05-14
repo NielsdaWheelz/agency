@@ -22,13 +22,13 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "", requestID)
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", "", requestID)
 		return
 	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "repo_id query parameter is required", "", "", requestID)
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "repo_id query parameter is required", "", "", requestID)
 		return
 	}
 

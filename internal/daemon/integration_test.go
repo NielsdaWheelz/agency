@@ -24,6 +24,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
+	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
@@ -791,6 +792,7 @@ func TestDaemonControlPlaneStart_PersistsRestartProfile(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "runtime profile was not persisted in invocation meta")
 
 	_, _ = env.Client.Kill(ctx, repoID, resp.InvocationID)
+	waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
 }
 
 func TestDaemonControlPlaneStart_MaterializesProfileEnv(t *testing.T) {
@@ -944,6 +946,7 @@ func TestDaemonIdempotency(t *testing.T) {
 
 	// Clean up the first invocation.
 	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
+	waitForInvocationTerminal(t, env.Store, resp1.RepoID, resp1.InvocationID, 5*time.Second)
 
 	// The key point: the first start worked and returned valid fields.
 	assert.NotEmpty(t, resp1.InvocationID, "expected invocation_id to be set")
@@ -988,6 +991,7 @@ func TestDaemonNameCollision(t *testing.T) {
 
 	// Clean up.
 	_, _ = env.Client.Kill(ctx, resp1.RepoID, resp1.InvocationID)
+	waitForInvocationTerminal(t, env.Store, resp1.RepoID, resp1.InvocationID, 5*time.Second)
 }
 
 func TestDaemonRunnerCrash(t *testing.T) {
@@ -1232,6 +1236,7 @@ func TestDaemonCheckpointApplyWhileRunning(t *testing.T) {
 
 	// Clean up: kill the invocation.
 	_, _ = env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
+	waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
 }
 
 // 5.2 TestDaemonCheckpointApplyNotFound
@@ -1804,6 +1809,7 @@ func TestDaemonLandWhileRunning(t *testing.T) {
 
 	// Clean up.
 	_, _ = env.Client.Kill(ctx, startResp.RepoID, startResp.InvocationID)
+	waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
 }
 
 func TestDaemonLandAlreadyLanded(t *testing.T) {
@@ -2073,6 +2079,72 @@ func TestDaemonDiscardAlreadyDiscarded(t *testing.T) {
 // Headed invocation tests.
 // ---------------------------------------------------------------------------
 
+type chmodInvocationDirAfterPipePaneTmux struct {
+	*testutil.FakeTmuxClient
+	dataDir string
+	dirs    []string
+}
+
+func (f *chmodInvocationDirAfterPipePaneTmux) PipePane(ctx context.Context, target, logPath string) error {
+	if err := f.FakeTmuxClient.PipePane(ctx, target, logPath); err != nil {
+		return err
+	}
+	sessionTarget, _, _ := strings.Cut(target, ":")
+	invocationID := strings.TrimPrefix(sessionTarget, "agency_")
+	matches, _ := filepath.Glob(filepath.Join(f.dataDir, "repos", "*", "invocations", invocationID))
+	for _, dir := range matches {
+		_ = os.Chmod(dir, 0o500)
+		f.dirs = append(f.dirs, dir)
+	}
+	return nil
+}
+
+func (f *chmodInvocationDirAfterPipePaneTmux) restoreInvocationDirs() {
+	for _, dir := range f.dirs {
+		_ = os.Chmod(dir, 0o700)
+	}
+}
+
+func scanAllTestTasks(t *testing.T, st *store.Store, dataDir string) []*store.TaskMeta {
+	t.Helper()
+	repoDirs, err := os.ReadDir(filepath.Join(dataDir, "repos"))
+	require.NoError(t, err)
+	var metas []*store.TaskMeta
+	for _, repoDir := range repoDirs {
+		if !repoDir.IsDir() {
+			continue
+		}
+		records, err := store.ScanTasksForRepo(st.DataDir, repoDir.Name())
+		require.NoError(t, err)
+		for _, record := range records {
+			if record.Meta != nil {
+				metas = append(metas, record.Meta)
+			}
+		}
+	}
+	return metas
+}
+
+func scanAllTestInvocations(t *testing.T, st *store.Store, dataDir string) []*store.InvocationMeta {
+	t.Helper()
+	repoDirs, err := os.ReadDir(filepath.Join(dataDir, "repos"))
+	require.NoError(t, err)
+	var metas []*store.InvocationMeta
+	for _, repoDir := range repoDirs {
+		if !repoDir.IsDir() {
+			continue
+		}
+		records, err := store.ScanInvocationsForRepo(st.DataDir, repoDir.Name())
+		require.NoError(t, err)
+		for _, record := range records {
+			if record.Meta != nil {
+				metas = append(metas, record.Meta)
+			}
+		}
+	}
+	return metas
+}
+
 func TestDaemonHeadedStartHappyPath(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -2281,6 +2353,49 @@ func TestDaemonTaskStartHeadedEnv(t *testing.T) {
 	assert.Equal(t, []string{"AGENCY_TASK_HEADED_ENV"}, meta.CustomEnvKeys)
 
 	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonTaskStartHeadedClaimFailureKillsUnlinkedTmuxSession(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := &chmodInvocationDirAfterPipePaneTmux{
+		FakeTmuxClient: testutil.NewFakeTmuxClient(),
+		dataDir:        env.DataDir,
+	}
+	env.Server.TmuxClient = fakeTmux
+	t.Cleanup(fakeTmux.restoreInvocationDirs)
+
+	repoRoot := setupTestGitRepo(t)
+	_, err := env.Client.TaskStart(ctx, daemonclient.TaskStartOpts{
+		RepoRoot:   repoRoot,
+		Name:       "task-headed-claim-fail",
+		BaseBranch: "main",
+		Mode:       "headed",
+		Runner:     "claude-code",
+	})
+	require.Error(t, err)
+	assert.Equal(t, agencyerrors.EInternal, agencyerrors.GetCode(err))
+	fakeTmux.restoreInvocationDirs()
+
+	fakeTmux.Mu.Lock()
+	assert.Len(t, fakeTmux.KillSessionCalls, 1)
+	assert.Empty(t, fakeTmux.Sessions)
+	fakeTmux.Mu.Unlock()
+
+	tasks := scanAllTestTasks(t, env.Store, env.DataDir)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, store.TaskStateFailed, tasks[0].State)
+	assert.Empty(t, tasks[0].PrimaryInvocationID)
+
+	invocations := scanAllTestInvocations(t, env.Store, env.DataDir)
+	require.Len(t, invocations, 1)
+	assert.NotEqual(t, store.InvocationStatusRunning, invocations[0].Status)
+	assert.Empty(t, invocations[0].TaskID)
 }
 
 func TestDaemonTaskRetry_MaterializesProfileEnv(t *testing.T) {

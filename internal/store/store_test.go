@@ -2,8 +2,10 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,105 @@ func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.Stat(preparedPath)
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestUpdateInvocationMetaConcurrentPreservesIndependentUpdates(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+	const invocationID = "inv-concurrent"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	meta := NewInvocationMeta(invocationID, "", "wt-1", "/sandbox", "/checkouts/repo123", "work", "agency/sandbox-"+invocationID, "abc123", "claude-code", RunnerModeHeadless, time.Now())
+	require.NoError(t, s.WriteInvocationMeta(repoID, invocationID, meta))
+
+	const updates = 50
+	start := make(chan struct{})
+	errs := make(chan error, updates)
+	var wg sync.WaitGroup
+	for i := 0; i < updates; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- s.UpdateInvocationMeta(repoID, invocationID, func(m *InvocationMeta) {
+				time.Sleep(time.Millisecond)
+				m.RunnerArgs = append(m.RunnerArgs, fmt.Sprintf("arg-%02d", i))
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	updated, err := s.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	require.Len(t, updated.RunnerArgs, updates)
+	seen := make(map[string]bool, updates)
+	for _, arg := range updated.RunnerArgs {
+		seen[arg] = true
+	}
+	for i := 0; i < updates; i++ {
+		assert.True(t, seen[fmt.Sprintf("arg-%02d", i)])
+	}
+}
+
+func TestUpdateInvocationMetaLockCanonicalizesSymlinkedDataDir(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	linkDir := filepath.Join(root, "link")
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+	require.NoError(t, os.Symlink(dataDir, linkDir))
+
+	const repoID = "repo123"
+	const invocationID = "inv-symlink-lock"
+	s1 := NewStore(fs.NewRealFS(), dataDir, nil)
+	s2 := NewStore(fs.NewRealFS(), linkDir, nil)
+	_, err := s1.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	meta := NewInvocationMeta(invocationID, "", "wt-1", "/sandbox", "/checkouts/repo123", "work", "agency/sandbox-"+invocationID, "abc123", "claude-code", RunnerModeHeadless, time.Now())
+	require.NoError(t, s1.WriteInvocationMeta(repoID, invocationID, meta))
+	assert.Equal(t, invocationMetaLockKey(s1.InvocationMetaPath(repoID, invocationID)), invocationMetaLockKey(s2.InvocationMetaPath(repoID, invocationID)))
+
+	const updates = 40
+	start := make(chan struct{})
+	errs := make(chan error, updates)
+	var wg sync.WaitGroup
+	for i := 0; i < updates; i++ {
+		i := i
+		st := s1
+		if i%2 == 1 {
+			st = s2
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- st.UpdateInvocationMeta(repoID, invocationID, func(m *InvocationMeta) {
+				time.Sleep(time.Millisecond)
+				m.RunnerArgs = append(m.RunnerArgs, fmt.Sprintf("arg-%02d", i))
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	updated, err := s1.ReadInvocationMeta(repoID, invocationID)
+	require.NoError(t, err)
+	require.Len(t, updated.RunnerArgs, updates)
 }
 
 func TestReadInvocationMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {

@@ -15,19 +15,19 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	// Parse request body
 	var req CheckpointApplyRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	if req.CheckpointID <= 0 {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "checkpoint_id must be positive", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "checkpoint_id must be positive", "")
 		return
 	}
 

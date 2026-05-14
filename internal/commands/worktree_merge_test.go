@@ -123,7 +123,7 @@ func TestWorktreePRMerge_JSONSuccessIncludesDurableMergeFields(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreePRMerge(context.Background(), cr, fsys, repoDir, WorktreePRMergeOpts{
-		WorktreeRef:     worktreeID,
+		WorktreeRef:     "merge-json",
 		RepoRef:         repoID,
 		Yes:             true,
 		JSON:            true,

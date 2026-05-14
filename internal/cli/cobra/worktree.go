@@ -26,7 +26,7 @@ func newWorktreeCmd() *cobra.Command {
 	lsCmd := newWorktreeLSCmd()
 
 	cmd := &cobra.Command{
-		Use:   "worktree",
+		Use:   "worktree [create|ls|<worktree-ref> [action]]",
 		Short: "Manage integration worktrees",
 		Long: `Manage integration worktrees.
 
@@ -42,7 +42,13 @@ Use:
   agency worktree <worktree-ref> open
                            to open one worktree
   agency worktree <worktree-ref> pr sync
-                           to push and sync one pull request`,
+                           to push and sync one pull request
+  agency worktree <worktree-ref> pr merge
+                           to verify, merge, and archive one pull request
+
+Target action flags:
+  pr sync uses --allow-dirty and --force-with-lease.
+  pr merge uses --squash, --merge, --rebase, --no-delete-branch, --yes, and --agency-config.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
@@ -53,18 +59,36 @@ Use:
 				worktreeRef := args[0]
 				switch {
 				case len(args) == 1:
+					if err := validateWorktreeTargetFlags(cmd, "<worktree-ref>", "json"); err != nil {
+						return err
+					}
 					return runWorktreeShow(cmd, worktreeRef, repoRef, jsonOut)
 				case len(args) == 2:
 					switch args[1] {
 					case "path":
+						if err := validateWorktreeTargetFlags(cmd, "path"); err != nil {
+							return err
+						}
 						return runWorktreePath(cmd, worktreeRef, repoRef)
 					case "open":
+						if err := validateWorktreeTargetFlags(cmd, "open", "editor"); err != nil {
+							return err
+						}
 						return runWorktreeOpen(cmd, worktreeRef, repoRef, editor)
 					case "shell":
+						if err := validateWorktreeTargetFlags(cmd, "shell"); err != nil {
+							return err
+						}
 						return runWorktreeShell(cmd, worktreeRef, repoRef)
 					case "rm":
+						if err := validateWorktreeTargetFlags(cmd, "rm", "force", "yes"); err != nil {
+							return err
+						}
 						return runWorktreeRm(cmd, worktreeRef, repoRef, force, yes)
 					case "rebase":
+						if err := validateWorktreeTargetFlags(cmd, "rebase", "json"); err != nil {
+							return err
+						}
 						return runWorktreeRebase(cmd, worktreeRef, repoRef, jsonOut)
 					case "pr":
 						return errors.New(errors.EUsage, "use 'agency worktree <worktree-ref> pr sync' or 'agency worktree <worktree-ref> pr merge'")
@@ -74,8 +98,14 @@ Use:
 				case len(args) == 3 && args[1] == "pr":
 					switch args[2] {
 					case "sync":
+						if err := validateWorktreeTargetFlags(cmd, "pr sync", "json", "allow-dirty", "force-with-lease"); err != nil {
+							return err
+						}
 						return runWorktreePRSync(cmd, worktreeRef, repoRef, jsonOut, allowDirty, forceWithLease)
 					case "merge":
+						if err := validateWorktreeTargetFlags(cmd, "pr merge", "json", "squash", "merge", "rebase", "no-delete-branch", "yes", "agency-config"); err != nil {
+							return err
+						}
 						return runWorktreePRMerge(cmd, worktreeRef, repoRef, jsonOut, squash, mergeStrategy, rebaseStrategy, noDeleteBranch, yes, agencyConfigPath)
 					default:
 						return errors.New(errors.EUsage, "unknown command \""+args[2]+"\" for \"agency worktree "+worktreeRef+" pr\"")
@@ -95,17 +125,17 @@ Use:
 	cmd.AddCommand(createCmd, lsCmd)
 
 	cmd.PersistentFlags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use")
 	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm removal in non-interactive mode")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm destructive or non-interactive actions without prompting")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
 	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
 	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
 	cmd.Flags().BoolVar(&mergeStrategy, "merge", false, "Use regular merge strategy")
 	cmd.Flags().BoolVar(&rebaseStrategy, "rebase", false, "Use rebase merge strategy")
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
-	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "load agency config from this file")
+	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
 	cmd.MarkFlagsMutuallyExclusive("squash", "merge", "rebase")
 	lsCmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
 	registerRepoFlagCompletion(cmd)
@@ -153,6 +183,19 @@ Use:
 	}
 
 	return cmd
+}
+
+func validateWorktreeTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
+	allowedFlags := make(map[string]bool, len(allowed))
+	for _, flag := range allowed {
+		allowedFlags[flag] = true
+	}
+	for _, flag := range []string{"json", "editor", "force", "yes", "allow-dirty", "force-with-lease", "squash", "merge", "rebase", "no-delete-branch", "agency-config"} {
+		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
+			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency worktree "+action)
+		}
+	}
+	return nil
 }
 
 func newWorktreeCreateCmd() *cobra.Command {

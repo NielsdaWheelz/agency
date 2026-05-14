@@ -39,6 +39,9 @@ Use:
 				_ = cmd.Help()
 				return errors.New(errors.EUsage, "specify 'add', 'ls', or a repo ref")
 			case args[0] == "add":
+				if err := validateRepoTargetFlags(cmd, "add", "json"); err != nil {
+					return err
+				}
 				if len(args) > 2 {
 					return errors.New(errors.EUsage, "too many arguments for \"agency repo add\"")
 				}
@@ -48,6 +51,9 @@ Use:
 				}
 				return runRepoAdd(cmd, path, jsonOutput)
 			case args[0] == "ls":
+				if err := validateRepoTargetFlags(cmd, "ls", "json"); err != nil {
+					return err
+				}
 				if len(args) > 1 {
 					return errors.New(errors.EUsage, "too many arguments for \"agency repo ls\"")
 				}
@@ -55,9 +61,15 @@ Use:
 			default:
 				repoRef := args[0]
 				if len(args) == 1 {
+					if err := validateRepoTargetFlags(cmd, "<repo-ref>", "json"); err != nil {
+						return err
+					}
 					return runRepoShow(cmd, repoRef, jsonOutput)
 				}
 				if len(args) == 2 && args[1] == "rm" {
+					if err := validateRepoTargetFlags(cmd, "rm", "json", "yes"); err != nil {
+						return err
+					}
 					return runRepoRm(cmd, repoRef, yes, jsonOutput)
 				}
 				return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency repo\"")
@@ -102,6 +114,19 @@ Use:
 	}
 
 	return cmd
+}
+
+func validateRepoTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
+	allowedFlags := make(map[string]bool, len(allowed))
+	for _, flag := range allowed {
+		allowedFlags[flag] = true
+	}
+	for _, flag := range []string{"json", "yes"} {
+		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
+			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency repo "+action)
+		}
+	}
+	return nil
 }
 
 func runRepoAdd(cmd *cobra.Command, path string, jsonOutput bool) error {

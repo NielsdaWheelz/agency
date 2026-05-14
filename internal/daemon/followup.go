@@ -25,18 +25,18 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 	// Enforce explicit repo scoping for mutating operations.
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeFollowUpError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "", "")
+		s.writeFollowUpError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "", "")
 		return
 	}
 
 	var req ControlPlaneFollowUpRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeFollowUpError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
+		s.writeFollowUpError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", "")
 		return
 	}
 
 	if req.ClientRequestID == "" {
-		s.writeFollowUpError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "client_request_id is required", "provide a stable request identity for idempotent retries", "")
+		s.writeFollowUpError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "client_request_id is required", "provide a stable request identity for idempotent retries", "")
 		return
 	}
 	if req.Prompt == "" {

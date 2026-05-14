@@ -42,7 +42,7 @@ func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
 	assert.Empty(t, status)
 }
 
-func TestHandleWorktreePRSync_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
+func TestHandleWorktreePRSync_MissingRepoIDReturnsInvalidRequest(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -52,7 +52,7 @@ func TestHandleWorktreePRSync_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	var resp WorktreePRSyncResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
-	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
 	assert.Equal(t, "repo_id query parameter is required", resp.Message)
 }
 
@@ -72,7 +72,7 @@ func TestHandleWorktreePRSync_StrictDecodeFailures(t *testing.T) {
 	var resp WorktreePRSyncResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
-	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
 	assert.Equal(t, `invalid request body: unknown field "unknown"`, resp.Message)
 }
 
@@ -121,6 +121,38 @@ func TestHandleWorktreePRSync_ParsesForceWithLeaseWhenContentLengthUnknown(t *te
 	assert.Equal(t, string(errors.EGitPushFailed), resp.ErrorCode)
 	assert.Contains(t, fakeRunner.Calls, "git push --force-with-lease -u origin agency/alpha")
 	assert.NotContains(t, fakeRunner.Calls, "git push -u origin agency/alpha")
+}
+
+func TestHandleWorktreePRSync_FetchFailureReturnsTypedError(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	_ = setupWorktreeMutationReadyState(t, env)
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+	fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+	fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{
+		ExitCode: 128,
+		Stderr:   "fatal: could not read from remote repository",
+	}
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/wt-1/pr/sync?repo_id="+env.RepoID,
+		[]byte(`{}`),
+	)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+
+	var resp WorktreePRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EGitFetchFailed), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "git fetch origin failed")
 }
 
 func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *testing.T) {

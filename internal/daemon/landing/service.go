@@ -26,6 +26,9 @@ const (
 
 	// ModeApplyPatch indicates a patch was applied (no commits).
 	ModeApplyPatch Mode = "apply_patch"
+
+	// ModeCleanup indicates a prior successful land only needed cleanup retry.
+	ModeCleanup Mode = "cleanup"
 )
 
 // LandResult contains the result of a successful land operation.
@@ -105,6 +108,30 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 
 	if err := s.validateLandPreconditions(meta); err != nil {
 		return nil, err
+	}
+	if meta.LandingStatus == store.LandingStatusLanded {
+		needed, err := s.landCleanupNeeded(ctx, opts.RepoRoot, opts.InvocationID, meta, opts.Env)
+		if err != nil {
+			return nil, errors.Wrap(errors.ELandFailed, "failed to inspect landed cleanup state: "+err.Error(), err)
+		}
+		if !needed {
+			return nil, errors.New(errors.ELandAlreadyLanded, "invocation has already been landed")
+		}
+		if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
+			if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_failed", map[string]any{
+				"invocation_id": opts.InvocationID,
+				"error":         err.Error(),
+			}); emitErr != nil {
+				return nil, emitErr
+			}
+			return nil, errors.Wrap(errors.ELandFailed, "land cleanup failed", err)
+		}
+		if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_succeeded", map[string]any{
+			"invocation_id": opts.InvocationID,
+		}); err != nil {
+			return nil, err
+		}
+		return &LandResult{Mode: ModeCleanup}, nil
 	}
 	if err := s.ensureLandPathsExist(meta.SandboxPath, wtMeta.TreePath); err != nil {
 		return nil, err

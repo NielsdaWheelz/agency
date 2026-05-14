@@ -623,6 +623,23 @@ func TestHandleListInvocations_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHandleListInvocations_ExactPathDoesNotRedirect(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Location"))
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+	assert.Len(t, data.Invocations, 3)
+}
+
 func TestHandleListInvocations_StateFilter(t *testing.T) {
 	t.Parallel()
 
@@ -1172,6 +1189,20 @@ func TestResponseEnvelope_RequestID(t *testing.T) {
 		assert.Equal(t, custom, requestID)
 		assert.Equal(t, custom, w.Header().Get("X-Request-ID"))
 	})
+}
+
+func TestHandleInvocationRouteMissingRefReturnsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	req := httptest.NewRequest(http.MethodGet, "/invocations//stop?repo_id="+env.RepoID, nil)
+	w := httptest.NewRecorder()
+	env.Server.handleInvocations(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
+	assert.Equal(t, "invocation ref required", resp.Message)
 }
 
 func TestResponseEnvelope_ErrorFormat(t *testing.T) {

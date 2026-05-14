@@ -3,9 +3,19 @@ package daemon
 import (
 	"net/http"
 	"strings"
+
+	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
+	if routePathEquals(r.URL.Path, "/invocations") {
+		if !s.requireMethod(w, r, http.MethodGet) {
+			return
+		}
+		s.handleListInvocations(w, r)
+		return
+	}
+
 	remaining, ok := trimRoutePrefix(r.URL.Path, "/invocations/")
 	if !ok {
 		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
@@ -37,7 +47,7 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 
 	invocationRef, action := splitRouteRefAction(remaining)
 	if invocationRef == "" {
-		s.writeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invocation ref required", "")
+		s.writeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invocation ref required", "")
 		return
 	}
 

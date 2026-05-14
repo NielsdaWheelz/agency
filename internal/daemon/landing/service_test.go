@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -837,6 +838,30 @@ func TestLand_EventAppendFailureStopsOperation(t *testing.T) {
 	assert.Len(t, h.runner.Calls, 0, "land should fail before any git command when event append fails")
 }
 
+func TestLand_LandedCleanupBranchLookupFailureDoesNotReportAlreadyLanded(t *testing.T) {
+	t.Parallel()
+
+	h := setupHarness(t)
+	require.NoError(t, os.RemoveAll(h.sandboxPath))
+	require.NoError(t, h.store.UpdateInvocationMeta("test-repo", "test-inv", func(meta *store.InvocationMeta) {
+		meta.LandingStatus = store.LandingStatusLanded
+	}))
+	h.runner.Responses[fmt.Sprintf("git -C %s show-ref --quiet --verify refs/heads/agency/sandbox-test", h.integrationPath)] = testutil.FakeResponse{
+		Stderr:   "fatal: not a git repository",
+		ExitCode: 128,
+	}
+
+	_, err := h.svc.Land(context.Background(), landing.LandOpts{
+		RepoID:       "test-repo",
+		InvocationID: "test-inv",
+		RepoRoot:     h.integrationPath,
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.ELandFailed, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "branch lookup exited 128")
+	assert.NotEqual(t, errors.ELandAlreadyLanded, errors.GetCode(err))
+}
+
 func TestDiscard_EventsUseMonotonicInvocationSequence(t *testing.T) {
 	t.Parallel()
 
@@ -888,4 +913,22 @@ func TestDiscard_CleanupFailureDoesNotSucceed(t *testing.T) {
 	meta, readErr := h.store.ReadInvocationMeta("test-repo", "test-inv")
 	require.NoError(t, readErr)
 	assert.Equal(t, store.LandingStatusPending, meta.LandingStatus)
+}
+
+func TestDiscard_BranchLookupUnexpectedExitDoesNotLookAbsent(t *testing.T) {
+	t.Parallel()
+
+	h := setupHarness(t)
+	h.runner.Responses["git -C /nonexistent show-ref --quiet --verify refs/heads/agency/sandbox-test"] = testutil.FakeResponse{
+		ExitCode: 128,
+	}
+
+	err := h.svc.Discard(context.Background(), landing.DiscardOpts{
+		RepoID:       "test-repo",
+		InvocationID: "test-inv",
+		RepoRoot:     "/nonexistent",
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.ELandFailed, errors.GetCode(err))
+	assert.Contains(t, fmt.Sprint(stderrors.Unwrap(err)), "branch lookup exited 128")
 }

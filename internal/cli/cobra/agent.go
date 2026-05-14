@@ -24,11 +24,13 @@ func newAgentCmd() *cobra.Command {
 	var follow bool
 	var offset int64
 	var checkpointID int
+	var apply bool
+	var requireBase bool
 	startCmd := newAgentStartCmd()
 	lsCmd := newAgentLSCmd()
 
 	cmd := &cobra.Command{
-		Use:   "agent",
+		Use:   "agent [start|ls|<invocation-ref> [action]]",
 		Short: "Manage agent invocations",
 		Long: `Manage agent invocations.
 
@@ -44,11 +46,18 @@ Use:
   agency agent <invocation-ref>
                            to show one invocation
   agency agent <invocation-ref> history
-                           to inspect one invocation
+                           to inspect one invocation timeline
+  agency agent <invocation-ref> history logs
+                           to inspect one invocation's raw logs
   agency agent <invocation-ref> clients
                            to inspect headed tmux clients
   agency agent <invocation-ref> land
-                           to apply sandbox changes back to integration`,
+                           to apply sandbox changes back to integration
+
+Target action flags:
+  history uses --json, --last, --limit, and --cursor.
+  history logs uses --kind, --follow, and --offset.
+  land uses --apply and --require-base.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
@@ -59,38 +68,86 @@ Use:
 				invocationRef := args[0]
 				switch {
 				case len(args) == 1:
+					if err := validateAgentTargetFlags(cmd, "<invocation-ref>", "json"); err != nil {
+						return err
+					}
 					return runAgentShow(cmd, invocationRef, repoRef, jsonOut)
 				case len(args) == 2:
 					switch args[1] {
 					case "check":
+						if err := validateAgentTargetFlags(cmd, "check"); err != nil {
+							return err
+						}
 						return runAgentCheck(cmd, invocationRef, repoRef)
 					case "diff":
+						if err := validateAgentTargetFlags(cmd, "diff", "json", "turn", "turn-range"); err != nil {
+							return err
+						}
 						return runAgentDiff(cmd, invocationRef, repoRef, jsonOut, turnID, turnRange)
 					case "history":
+						if err := validateAgentTargetFlags(cmd, "history", "json", "last", "limit", "cursor"); err != nil {
+							return err
+						}
 						return runAgentHistory(cmd, invocationRef, repoRef, jsonOut, last, limit, cursor)
 					case "open":
+						if err := validateAgentTargetFlags(cmd, "open"); err != nil {
+							return err
+						}
 						return runAgentOpen(cmd, invocationRef, repoRef)
 					case "path":
+						if err := validateAgentTargetFlags(cmd, "path"); err != nil {
+							return err
+						}
 						return runAgentPath(cmd, invocationRef, repoRef)
 					case "shell":
+						if err := validateAgentTargetFlags(cmd, "shell"); err != nil {
+							return err
+						}
 						return runAgentShell(cmd, invocationRef, repoRef)
 					case "attach":
+						if err := validateAgentTargetFlags(cmd, "attach"); err != nil {
+							return err
+						}
 						return runAgentAttach(cmd, invocationRef, repoRef)
 					case "clients":
+						if err := validateAgentTargetFlags(cmd, "clients"); err != nil {
+							return err
+						}
 						return runAgentClients(cmd, invocationRef, repoRef)
 					case "stop":
+						if err := validateAgentTargetFlags(cmd, "stop", "json"); err != nil {
+							return err
+						}
 						return runAgentStop(cmd, invocationRef, repoRef, jsonOut)
 					case "kill":
+						if err := validateAgentTargetFlags(cmd, "kill", "json"); err != nil {
+							return err
+						}
 						return runAgentKill(cmd, invocationRef, repoRef, jsonOut)
 					case "land":
-						return runAgentLand(cmd, invocationRef, repoRef, jsonOut)
+						if err := validateAgentTargetFlags(cmd, "land", "json", "apply", "require-base"); err != nil {
+							return err
+						}
+						return runAgentLand(cmd, invocationRef, repoRef, apply, requireBase, jsonOut)
 					case "discard":
+						if err := validateAgentTargetFlags(cmd, "discard", "json"); err != nil {
+							return err
+						}
 						return runAgentDiscard(cmd, invocationRef, repoRef, jsonOut)
 					case "followup":
+						if err := validateAgentTargetFlags(cmd, "followup", "json", "prompt", "prompt-file"); err != nil {
+							return err
+						}
 						return runAgentFollowup(cmd, invocationRef, repoRef, prompt, promptFile, jsonOut)
 					case "recreate":
+						if err := validateAgentTargetFlags(cmd, "recreate", "json", "detached"); err != nil {
+							return err
+						}
 						return runAgentRecreate(cmd, invocationRef, repoRef, detached, jsonOut)
 					case "restore":
+						if err := validateAgentTargetFlags(cmd, "restore", "json", "checkpoint", "turn"); err != nil {
+							return err
+						}
 						return runAgentRestore(cmd, invocationRef, repoRef, checkpointID, turnID, jsonOut)
 					default:
 						return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency agent\"")
@@ -98,6 +155,9 @@ Use:
 				case len(args) == 3 && args[1] == "history":
 					if args[2] != "logs" {
 						return errors.New(errors.EUsage, "unknown command \""+args[2]+"\" for \"agency agent "+invocationRef+" history\"")
+					}
+					if err := validateAgentTargetFlags(cmd, "history logs", "kind", "follow", "offset"); err != nil {
+						return err
 					}
 					return runAgentHistoryLogs(cmd, invocationRef, repoRef, kind, follow, offset)
 				default:
@@ -119,9 +179,9 @@ Use:
 
 	cmd.PersistentFlags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
-	cmd.Flags().BoolVar(&detached, "detached", false, "Create the tmux session but do not attach")
-	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless prompt text")
-	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read the headless prompt from this file")
+	cmd.Flags().BoolVar(&detached, "detached", false, "Create or recreate the tmux session but do not attach")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline prompt text for headless start or followup")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read prompt text for headless start or followup from this file")
 	cmd.Flags().StringVar(&turnID, "turn", "", "Timeline entry id to anchor diff context")
 	cmd.Flags().StringVar(&turnRange, "turn-range", "", "Inclusive turn range (<start_entry_id>..<end_entry_id>)")
 	cmd.Flags().BoolVar(&last, "last", false, "Show only the last timeline entry")
@@ -131,6 +191,8 @@ Use:
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
+	cmd.Flags().BoolVar(&apply, "apply", false, "Land uncommitted sandbox changes by applying a patch")
+	cmd.Flags().BoolVar(&requireBase, "require-base", false, "Fail if the integration worktree moved since the invocation base")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.MarkFlagsMutuallyExclusive("last", "cursor")
 	lsCmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
@@ -183,6 +245,19 @@ Use:
 	}
 
 	return cmd
+}
+
+func validateAgentTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
+	allowedFlags := make(map[string]bool, len(allowed))
+	for _, flag := range allowed {
+		allowedFlags[flag] = true
+	}
+	for _, flag := range []string{"json", "detached", "prompt", "prompt-file", "turn", "turn-range", "last", "limit", "cursor", "kind", "follow", "offset", "checkpoint", "apply", "require-base"} {
+		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
+			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency agent "+action)
+		}
+	}
+	return nil
 }
 
 func newAgentStartCmd() *cobra.Command {
@@ -473,7 +548,7 @@ func runAgentKill(cmd *cobra.Command, invocationRef string, repoRef string, json
 	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func runAgentLand(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool) error {
+func runAgentLand(cmd *cobra.Command, invocationRef string, repoRef string, apply bool, requireBase bool, jsonOut bool) error {
 	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 	if err != nil {
 		return err
@@ -482,6 +557,8 @@ func runAgentLand(cmd *cobra.Command, invocationRef string, repoRef string, json
 	return commands.AgentLand(ctx, cr, fsys, cwd, commands.AgentLandOpts{
 		InvocationRef: invocationRef,
 		RepoRef:       repoRef,
+		Apply:         apply,
+		RequireBase:   requireBase,
 		JSON:          jsonOut,
 	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
