@@ -17,6 +17,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
 // fakeRunnerPath returns the path to the compiled fake runner binary.
@@ -38,10 +39,11 @@ type testDaemonEnv struct {
 }
 
 type fakeRunnerLaunchCapture struct {
-	Args           []string `json:"args"`
-	CWD            string   `json:"cwd"`
-	Mode           string   `json:"mode"`
-	FirstStdinLine string   `json:"first_stdin_line,omitempty"`
+	Args           []string          `json:"args"`
+	CWD            string            `json:"cwd"`
+	Mode           string            `json:"mode"`
+	FirstStdinLine string            `json:"first_stdin_line,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
 }
 
 // startTestDaemon boots a real daemon server on a temp Unix socket and
@@ -54,30 +56,9 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 
-	// Write config.json pointing the canonical runners at the fake runner binary.
-	// Must include "defaults" for LoadUserConfig validation to pass.
-	runnerPath := fakeRunnerPath(t)
-	cfg := map[string]any{
-		"version": 4,
-		"defaults": map[string]string{
-			"runner":            "claude-code",
-			"editor":            "code",
-			"execution_profile": "personal",
-		},
-		"runners": map[string]string{
-			"claude-code": runnerPath,
-			"codex":       runnerPath,
-			"amp":         runnerPath,
-			"opencode":    runnerPath,
-			"cursor":      runnerPath,
-			"droid":       runnerPath,
-		},
-		"execution_profiles": map[string]any{
-			"personal": map[string]any{"env": map[string]string{}},
-		},
-	}
-	cfgBytes, _ := json.Marshal(cfg)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644), "write config.json")
+	writeDaemonUserConfig(t, configDir, map[string]map[string]string{
+		"personal": testutil.GitIdentityEnv(),
+	})
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
@@ -126,6 +107,39 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	}
 }
 
+func writeDaemonUserConfig(t *testing.T, configDir string, profiles map[string]map[string]string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
+
+	profileData := map[string]any{}
+	for name, env := range profiles {
+		profileData[name] = map[string]any{"env": env}
+	}
+	if _, ok := profileData["personal"]; !ok {
+		profileData["personal"] = map[string]any{"env": testutil.GitIdentityEnv()}
+	}
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": fakeRunnerPath(t),
+			"codex":       fakeRunnerPath(t),
+			"amp":         fakeRunnerPath(t),
+			"opencode":    fakeRunnerPath(t),
+			"cursor":      fakeRunnerPath(t),
+			"droid":       fakeRunnerPath(t),
+		},
+		"execution_profiles": profileData,
+	}
+	cfgBytes, _ := json.Marshal(cfg)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644), "write config.json")
+}
+
 // setupTestGitRepo creates a temporary git repo with one initial commit.
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
@@ -137,14 +151,14 @@ func setupTestGitRepo(t *testing.T) string {
 // test can use t.Parallel().
 func hermeticGitEnv(t *testing.T) map[string]string {
 	t.Helper()
-	return map[string]string{
+	env := map[string]string{
 		"GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
-		"GIT_AUTHOR_NAME":     "Test User",
-		"GIT_AUTHOR_EMAIL":    "test@test.com",
-		"GIT_COMMITTER_NAME":  "Test User",
-		"GIT_COMMITTER_EMAIL": "test@test.com",
 	}
+	for k, v := range testutil.GitIdentityEnv() {
+		env[k] = v
+	}
+	return env
 }
 
 // setupTestGitRepoParallel creates a temp git repo without touching process
@@ -254,7 +268,7 @@ func waitForInvocationTerminal(t *testing.T, st *store.Store, repoID, invocation
 func gitExec(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cr := exec.NewRealRunner()
-	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir})
+	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir, Env: hermeticGitEnv(t)})
 	require.NoError(t, err, "git %s", strings.Join(args, " "))
 	require.Equal(t, 0, result.ExitCode, "git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
 	return strings.TrimSpace(result.Stdout)

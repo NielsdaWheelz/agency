@@ -151,7 +151,7 @@ Supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `curs
 - The daemon resolves the final profile and materializes runner env for headed, headless, retry, and recreate launches.
 - For headless runner launches and daemon-owned noninteractive Git/`gh`/script flows, profile env overlays the daemon process environment and daemon-owned safety env wins for safety-sensitive keys.
 - Headed tmux launches receive the resolved profile env plus explicit request env; headed recreate materializes the current profile env only and does not resurrect old request env values from the daemon process.
-- Agency persists profile labels and env key names for explainability. It does not persist env values.
+- Agency persists profile labels and explicit request/custom env key names for explainability. It does not persist profile env key names or any env values.
 - Use profile env for account-specific state such as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, `GH_TOKEN`, `GIT_SSH_COMMAND`, or Git author variables.
 - Agency does not infer Git identity from runner identity. Put Git and `gh` env in the same profile when they should move together.
 

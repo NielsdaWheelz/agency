@@ -183,6 +183,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ExecutionProfile = execCtx.Profile
 	req.CheckoutRoot = execCtx.CheckoutRoot
+	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	fingerprint := taskStartFingerprint(repoRoot, execCtx.CheckoutRoot, req, requestEnv)
@@ -224,7 +225,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
+	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot, gitEnv)
 	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
 		writeErr(http.StatusInternalServerError, errors.EInternal, "failed to register repo: "+err.Error(), "", req.ClientRequestID)
 		return
@@ -298,6 +299,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:       req.BaseBranch,
 		CheckoutRoot:     execCtx.CheckoutRoot,
 		ExecutionProfile: execCtx.Profile,
+		Env:              gitEnv,
 	})
 	if err != nil {
 		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EWorktreeCreateFailed, err, "")
@@ -347,10 +349,11 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var invMeta *store.InvocationMeta
+	envKeys := sortedEnvKeys(requestEnv)
 	if headless {
-		invMeta, err = s.startTaskHeadlessInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, wtRecord, req)
+		invMeta, err = s.startTaskHeadlessInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, wtRecord, req, envKeys, gitEnv)
 	} else {
-		invMeta, err = s.startTaskHeadedInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, wtRecord, req)
+		invMeta, err = s.startTaskHeadedInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, wtRecord, req, envKeys, gitEnv)
 	}
 	if err != nil {
 		fail := normalizeTaskStartFailure(err)
@@ -388,7 +391,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, taskMeta, false)
 }
 
-func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest) (*store.InvocationMeta, error) {
+func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
 	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
 		IntegrationWorktreeID:   wtRecord.WorktreeID,
@@ -401,6 +404,7 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 		CheckoutRoot:            req.CheckoutRoot,
 		ExecutionProfile:        req.ExecutionProfile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
+		Env:                     gitEnv,
 	})
 	if err != nil {
 		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EInvocationCreateFailed, err, "")
@@ -408,13 +412,13 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 
 	logsDir := s.Store.InvocationLogsDir(repoID, createResult.InvocationID)
 	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
-		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "start_failed")
+		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "start_failed", gitEnv)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to create logs directory: "+err.Error(), "")
 	}
 
 	promptPath := s.Store.InvocationPromptPath(repoID, createResult.InvocationID)
 	if err := s.FS.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
-		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "start_failed")
+		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "start_failed", gitEnv)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to write prompt file: "+err.Error(), "")
 	}
 
@@ -429,9 +433,9 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 		ClientRequestID:    req.ClientRequestID,
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	}
-	pid, pgid, err := s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq)
+	pid, pgid, err := s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq, gitEnv)
 	if err != nil {
-		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "spawn_failed")
+		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "spawn_failed", gitEnv)
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerStartFailed
@@ -441,7 +445,6 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
-	envKeys := sortedEnvKeys(req.Env)
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
 	if err := s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys); err != nil {
 		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
@@ -459,7 +462,7 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 	return meta, nil
 }
 
-func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest) (*store.InvocationMeta, error) {
+func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
 	if err != nil {
 		return nil, taskStartFailureFromError(http.StatusBadRequest, errors.EInvocationInvalidMode, err, "")
@@ -477,6 +480,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 		CheckoutRoot:            req.CheckoutRoot,
 		ExecutionProfile:        req.ExecutionProfile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
+		Env:                     gitEnv,
 	})
 	if err != nil {
 		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EInvocationCreateFailed, err, "")
@@ -492,7 +496,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 		s.failInvocationStart(repoID, createResult.InvocationID, "start_failed", true)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.ERunnerNotFound, "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured")
 	}
-	if err := s.installHeadedRunnerHooks(ctx, repoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath); err != nil {
+	if err := s.installHeadedRunnerHooks(ctx, repoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath, gitEnv); err != nil {
 		s.failInvocationStart(repoID, createResult.InvocationID, "start_failed", true)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written")
 	}
@@ -544,7 +548,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 	}
 
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, sortedEnvKeys(req.Env)); err != nil {
+	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, envKeys); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to update invocation meta: "+err.Error(), "")
 	}
@@ -561,6 +565,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 	eventsPath := s.Store.InvocationEventsPath(repoID, createResult.InvocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
+	cpConfig.Env = gitEnv
 	if s.CheckpointDebounceOverride != nil {
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
 		cpConfig.DriftInterval = *s.CheckpointDebounceOverride

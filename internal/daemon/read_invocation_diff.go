@@ -73,8 +73,13 @@ func (s *Server) handleGetInvocationDiff(w http.ResponseWriter, r *http.Request,
 func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvocation, params GetDiffParams) (*InvocationDiffData, error) {
 	sandboxPath := record.Meta.SandboxPath
 	baseCommit := record.Meta.BaseCommit
+	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
+	if err != nil {
+		return nil, err
+	}
+	gitEnv := prSyncNonInteractiveEnv(profileEnv)
 
-	tipResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "HEAD"}, exec.RunOpts{})
+	tipResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "HEAD"}, exec.RunOpts{Env: gitEnv})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox HEAD: %w", err)
 	}
@@ -99,7 +104,7 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 		TurnContext:      turnContext,
 	}
 
-	logResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "log", "--oneline", diffFrom + ".." + diffTo}, exec.RunOpts{})
+	logResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "log", "--oneline", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
 	if err == nil && strings.TrimSpace(logResult.Stdout) != "" {
 		data.HasCommits = true
 
@@ -117,11 +122,11 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 			committedRange.Commits = append(committedRange.Commits, commit)
 		}
 
-		statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat", diffFrom + ".." + diffTo}, exec.RunOpts{})
+		statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
 		committedRange.Diffstat = extractDiffstat(statResult.Stdout)
 
 		if params.IncludePatch {
-			patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", diffFrom + ".." + diffTo}, exec.RunOpts{})
+			patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
 			patch := patchResult.Stdout
 			committedRange.PatchBytes = len(patch)
 			if len(patch) > params.MaxPatchBytes {
@@ -135,16 +140,16 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 	}
 
 	if params.IncludeUncommitted && !hasTurnSelector(params) {
-		statusResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "status", "--porcelain"}, exec.RunOpts{})
+		statusResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "status", "--porcelain"}, exec.RunOpts{Env: gitEnv})
 		if err == nil && strings.TrimSpace(statusResult.Stdout) != "" {
 			data.HasUncommitted = true
 
 			workingTree := &DiffRange{}
-			statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat"}, exec.RunOpts{})
+			statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat"}, exec.RunOpts{Env: gitEnv})
 			workingTree.Diffstat = extractDiffstat(statResult.Stdout)
 
 			if params.IncludePatch {
-				patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff"}, exec.RunOpts{})
+				patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff"}, exec.RunOpts{Env: gitEnv})
 				patch := patchResult.Stdout
 				workingTree.PatchBytes = len(patch)
 				if len(patch) > params.MaxPatchBytes {

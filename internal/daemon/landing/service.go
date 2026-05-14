@@ -85,6 +85,7 @@ type LandOpts struct {
 	RepoID       string
 	InvocationID string
 	RepoRoot     string
+	Env          map[string]string
 	Apply        bool
 	RequireBase  bool
 }
@@ -112,7 +113,7 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		return nil, err
 	}
 
-	headBefore, err := s.getHeadCommit(ctx, wtMeta.TreePath)
+	headBefore, err := s.getHeadCommit(ctx, wtMeta.TreePath, opts.Env)
 	if err != nil {
 		return nil, s.emitLandFailure(
 			opts.RepoID,
@@ -125,7 +126,7 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		return nil, s.emitLandFailure(opts.RepoID, opts.InvocationID, err.Error(), err)
 	}
 
-	commitCount, err := s.countCommits(ctx, opts.RepoRoot, meta.BaseCommit, meta.SandboxBranch)
+	commitCount, err := s.countCommits(ctx, opts.RepoRoot, meta.BaseCommit, meta.SandboxBranch, opts.Env)
 	if err != nil {
 		return nil, s.emitLandFailure(
 			opts.RepoID,
@@ -149,18 +150,20 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		}
 	}
 
-	if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta); err != nil {
-		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_warning", map[string]any{
-			"invocation_id": opts.InvocationID,
-			"warning":       err.Error(),
-		}); emitErr != nil {
-			return nil, emitErr
-		}
-	}
-
 	if err := s.finalizeLand(opts.RepoID, opts.InvocationID, meta.IntegrationWorktreeID, result); err != nil {
 		return nil, err
 	}
+
+	if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
+		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_failed", map[string]any{
+			"invocation_id": opts.InvocationID,
+			"error":         err.Error(),
+		}); emitErr != nil {
+			return nil, emitErr
+		}
+		return nil, errors.Wrap(errors.ELandFailed, "land cleanup failed", err)
+	}
+
 	return result, nil
 }
 
@@ -169,7 +172,7 @@ func (s *Service) landForState(ctx context.Context, opts LandOpts, meta *store.I
 		return s.landCherryPick(ctx, opts, meta, integrationPath, headBefore, commitCount)
 	}
 
-	dirty, err := s.isSandboxDirty(ctx, meta.SandboxPath)
+	dirty, err := s.isSandboxDirty(ctx, meta.SandboxPath, opts.Env)
 	if err != nil {
 		return nil, s.emitLandFailure(
 			opts.RepoID,
@@ -206,6 +209,7 @@ type DiscardOpts struct {
 	RepoID       string
 	InvocationID string
 	RepoRoot     string
+	Env          map[string]string
 	StopCallback func(ctx context.Context, repoID, invocationID string) error
 }
 
@@ -233,27 +237,29 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 		meta.Status == store.InvocationStatusStopping {
 		if opts.StopCallback != nil {
 			if err := opts.StopCallback(ctx, opts.RepoID, opts.InvocationID); err != nil {
-				if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_stop_warning", map[string]any{
+				if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_stop_failed", map[string]any{
 					"invocation_id": opts.InvocationID,
-					"warning":       err.Error(),
+					"error":         err.Error(),
 				}); emitErr != nil {
 					return emitErr
 				}
+				return errors.Wrap(errors.ELandFailed, "discard stop failed", err)
 			}
 		}
 	}
 
-	if err := s.cleanupSandbox(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta); err != nil {
-		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_cleanup_warning", map[string]any{
+	if err := s.cleanupSandbox(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
+		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_cleanup_failed", map[string]any{
 			"invocation_id": opts.InvocationID,
-			"warning":       err.Error(),
+			"error":         err.Error(),
 		}); emitErr != nil {
 			return emitErr
 		}
+		return errors.Wrap(errors.ELandFailed, "discard cleanup failed", err)
 	}
 
 	now := s.clock().UTC().Format(time.RFC3339)
-	_ = s.store.UpdateInvocationMeta(opts.RepoID, opts.InvocationID, func(m *store.InvocationMeta) {
+	if err := s.store.UpdateInvocationMeta(opts.RepoID, opts.InvocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusDiscarded
 		if m.FinishedAt == "" {
 			m.FinishedAt = now
@@ -264,7 +270,9 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 			m.Status = store.InvocationStatusFailed
 			m.ExitReason = "discarded"
 		}
-	})
+	}); err != nil {
+		return errors.Wrap(errors.ELandFailed, "failed to update invocation meta after discard", err)
+	}
 
 	return s.emitEvent(opts.RepoID, opts.InvocationID, "agency.discard_succeeded", map[string]any{
 		"invocation_id": opts.InvocationID,

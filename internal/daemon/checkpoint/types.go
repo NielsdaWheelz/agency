@@ -281,6 +281,9 @@ type Config struct {
 	// DriftInterval is the minimum time between fsnotify-based drift checkpoints.
 	// If zero, defaults to 60 seconds. Only applies when semantic triggers are active.
 	DriftInterval time.Duration
+
+	// Env overlays every git command the checkpoint engine runs.
+	Env map[string]string
 }
 
 // DefaultConfig returns the default checkpoint configuration.

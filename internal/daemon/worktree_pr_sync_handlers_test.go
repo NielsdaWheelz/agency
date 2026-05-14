@@ -195,5 +195,16 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 		prBody, err := os.ReadFile(prBodyPath)
 		require.NoError(t, err)
 		assert.Equal(t, "## summary\nready for mutation\n\n## how to test\ngo test ./...\n", string(prBody))
+
+		var sawPush bool
+		for i, call := range fakeRunner.Calls {
+			if call == "git push -u origin agency/alpha" {
+				sawPush = true
+				assert.Equal(t, "Test User", fakeRunner.CallEnvs[i]["GIT_AUTHOR_NAME"])
+				assert.Equal(t, "0", fakeRunner.CallEnvs[i]["GIT_TERMINAL_PROMPT"])
+				assert.Equal(t, "1", fakeRunner.CallEnvs[i]["GH_PROMPT_DISABLED"])
+			}
+		}
+		assert.True(t, sawPush, "expected git push to run")
 	})
 }

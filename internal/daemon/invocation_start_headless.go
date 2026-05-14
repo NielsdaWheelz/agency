@@ -94,6 +94,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 	req.ExecutionProfile = execCtx.Profile
+	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headless", func(status int, code, message, hint string) {
@@ -156,6 +157,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		NoIncludeUntracked:      req.NoIncludeUntracked,
 		ClientRequestID:         req.ClientRequestID,
 		RequestFingerprint:      fingerprint,
+		Env:                     gitEnv,
 	})
 	if err != nil {
 		code := errors.GetCode(err)
@@ -168,21 +170,21 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	logsDir := s.Store.InvocationLogsDir(repoIdentity.RepoID, createResult.InvocationID)
 	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
+		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed", gitEnv)
 		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 
 	promptPath := s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
 	if err := s.FS.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed")
+		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed", gitEnv)
 		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 
-	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, prep.wtRecord.WorktreeID, req)
+	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, prep.wtRecord.WorktreeID, req, gitEnv)
 	if err != nil {
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "spawn_failed")
+		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "spawn_failed", gitEnv)
 		code := errors.GetCode(err)
 		if code == "" {
 			code = errors.ERunnerStartFailed
@@ -195,7 +197,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
-	envKeys := sortedEnvKeys(req.Env)
+	envKeys := sortedEnvKeys(requestEnv)
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
 
 	if err := s.claimHeadlessInvocationStart(

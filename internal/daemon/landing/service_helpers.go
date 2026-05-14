@@ -10,11 +10,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
 
-func (s *Service) getHeadCommit(ctx context.Context, treePath string) (string, error) {
+func (s *Service) getHeadCommit(ctx context.Context, treePath string, env map[string]string) (string, error) {
 	result, err := s.runner.Run(ctx, "git", []string{
 		"-C", treePath,
 		"rev-parse", "HEAD",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return "", err
 	}
@@ -24,11 +24,11 @@ func (s *Service) getHeadCommit(ctx context.Context, treePath string) (string, e
 	return strings.TrimSpace(result.Stdout), nil
 }
 
-func (s *Service) countCommits(ctx context.Context, repoRoot, baseCommit, sandboxBranch string) (int, error) {
+func (s *Service) countCommits(ctx context.Context, repoRoot, baseCommit, sandboxBranch string, env map[string]string) (int, error) {
 	result, err := s.runner.Run(ctx, "git", []string{
 		"-C", repoRoot,
 		"rev-list", "--count", fmt.Sprintf("%s..%s", baseCommit, sandboxBranch),
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return 0, err
 	}
@@ -43,11 +43,11 @@ func (s *Service) countCommits(ctx context.Context, repoRoot, baseCommit, sandbo
 	return count, nil
 }
 
-func (s *Service) isSandboxDirty(ctx context.Context, sandboxPath string) (bool, error) {
+func (s *Service) isSandboxDirty(ctx context.Context, sandboxPath string, env map[string]string) (bool, error) {
 	result, err := s.runner.Run(ctx, "git", []string{
 		"-C", sandboxPath,
 		"status", "--porcelain", "--", ":(exclude).agency",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return false, err
 	}
@@ -57,11 +57,11 @@ func (s *Service) isSandboxDirty(ctx context.Context, sandboxPath string) (bool,
 	return strings.TrimSpace(result.Stdout) != "", nil
 }
 
-func (s *Service) getConflictFiles(ctx context.Context, treePath string) ([]string, error) {
+func (s *Service) getConflictFiles(ctx context.Context, treePath string, env map[string]string) ([]string, error) {
 	result, err := s.runner.Run(ctx, "git", []string{
 		"-C", treePath,
 		"diff", "--name-only", "--diff-filter=U",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return nil, err
 	}

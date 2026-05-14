@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"syscall"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // handleLand handles POST /invocations/{ref}/land.
@@ -65,6 +67,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		RepoID:       mutation.record.RepoID,
 		InvocationID: mutation.record.InvocationID,
 		RepoRoot:     mutation.repoRoot,
+		Env:          mutation.landEnv,
 		Apply:        req.Apply,
 		RequireBase:  req.RequireBase,
 	})
@@ -147,6 +150,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		RepoID:       mutation.record.RepoID,
 		InvocationID: mutation.record.InvocationID,
 		RepoRoot:     mutation.repoRoot,
+		Env:          mutation.discardEnv,
 		StopCallback: s.stopInvocationForDiscard,
 	})
 	if err != nil {
@@ -171,10 +175,12 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 }
 
 type landingMutation struct {
-	record   *resolvedInvocation
-	repoRoot string
-	service  *landing.Service
-	unlock   func() error
+	record     *resolvedInvocation
+	repoRoot   string
+	landEnv    map[string]string
+	discardEnv map[string]string
+	service    *landing.Service
+	unlock     func() error
 }
 
 func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, requestID, invocationID, repoID, lockName string, writeError func(http.ResponseWriter, int, string, string, string, string)) (*landingMutation, bool) {
@@ -197,8 +203,32 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to read integration worktree meta: "+err.Error(), "")
 		return nil, false
 	}
+	profileEnv, err := s.executionProfileEnv(wtMeta.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EExecutionProfileNotFound
+		}
+		writeError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+		return nil, false
+	}
 
-	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath)
+	landEnv := prSyncNonInteractiveEnv(profileEnv)
+	discardEnv := landEnv
+	if record.Meta.ExecutionProfile != wtMeta.ExecutionProfile {
+		invocationProfileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
+		if err != nil {
+			code := errors.GetCode(err)
+			if code == "" {
+				code = errors.EExecutionProfileNotFound
+			}
+			writeError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+			return nil, false
+		}
+		discardEnv = prSyncNonInteractiveEnv(invocationProfileEnv)
+	}
+
+	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath, landEnv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to get repo root: "+err.Error(), "")
 		return nil, false
@@ -211,10 +241,12 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 	}
 
 	return &landingMutation{
-		record:   record,
-		repoRoot: repoRoot.Path,
-		service:  landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents),
-		unlock:   unlock,
+		record:     record,
+		repoRoot:   repoRoot.Path,
+		landEnv:    landEnv,
+		discardEnv: discardEnv,
+		service:    landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents),
+		unlock:     unlock,
 	}, true
 }
 
@@ -256,6 +288,9 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 		if err == syscall.ESRCH {
 			return nil // Already gone
 		}
+		if err != nil {
+			return fmt.Errorf("send SIGINT to runner process group %d: %w", pgid, err)
+		}
 
 		// Wait 5s
 		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -275,25 +310,36 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 		}
 
 		// SIGKILL
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			return fmt.Errorf("send SIGKILL to runner process group %d: %w", pgid, err)
+		}
 
 		// Update meta if not supervised
 		if !supervised {
 			now := s.Clock().UTC().Format(time.RFC3339)
-			_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+			if err := s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 				m.Status = store.InvocationStatusFailed
 				m.ExitReason = "discarded"
 				m.FailureReason = "discarded"
 				m.FinishedAt = now
 				m.PID = nil
 				m.LifecycleOwner = ""
-			})
+			}); err != nil {
+				return fmt.Errorf("update discarded invocation metadata: %w", err)
+			}
 		}
 
 		return nil
 	}
 
-	// For headed mode, we would use tmux kill-session
-	// This is handled elsewhere - headed invocations are managed by CLI
+	if meta.Mode == store.RunnerModeHeaded {
+		sessionName := meta.TmuxSession
+		if sessionName == "" {
+			sessionName = tmux.SessionName(invocationID)
+		}
+		if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
+			return fmt.Errorf("kill tmux session %s: %w", sessionName, err)
+		}
+	}
 	return nil
 }

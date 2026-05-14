@@ -42,14 +42,18 @@ func (s *Service) ensureLandingBase(opts LandOpts, meta *store.InvocationMeta, h
 
 func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *LandResult) error {
 	now := s.clock().UTC().Format(time.RFC3339)
-	_ = s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+	if err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusLanded
 		m.FinishedAt = now
-	})
+	}); err != nil {
+		return errors.Wrap(errors.ELandFailed, "failed to update invocation meta after land", err)
+	}
 
-	_ = s.store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
+	if err := s.store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.LastUsedAt = now
-	})
+	}); err != nil {
+		return errors.Wrap(errors.ELandFailed, "failed to update integration worktree meta after land", err)
+	}
 
 	return s.emitEvent(repoID, invocationID, "agency.land_succeeded", map[string]any{
 		"invocation_id": invocationID,

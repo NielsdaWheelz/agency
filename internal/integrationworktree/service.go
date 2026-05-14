@@ -60,6 +60,9 @@ type CreateOpts struct {
 	// ExecutionProfile is the profile label selected for this worktree.
 	ExecutionProfile string
 
+	// Env is the noninteractive Git environment for this worktree's profile.
+	Env map[string]string
+
 	// IdempotencyKey records create-request idempotency, when provided.
 	IdempotencyKey string
 
@@ -150,12 +153,12 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		if gitWorktreeCreated {
 			// Remove worktree (best-effort)
 			args := []string{"-C", opts.RepoRoot, "worktree", "remove", "--force", treePath}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{})
+			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if branchCreated {
 			// Delete branch (best-effort)
 			args := []string{"-C", opts.RepoRoot, "branch", "-D", branch}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{})
+			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if recordDirCreated {
 			// Remove record directory (best-effort)
@@ -201,7 +204,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		opts.BaseBranch,
 	}
 
-	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{})
+	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
@@ -270,6 +273,9 @@ type RemoveOpts struct {
 
 	// Force forces removal even if the worktree is dirty.
 	Force bool
+
+	// Env is the noninteractive Git environment for this worktree's profile.
+	Env map[string]string
 }
 
 // Remove removes an integration worktree.
@@ -296,7 +302,7 @@ func (s *Service) Remove(ctx context.Context, repoID, worktreeID string, opts Re
 	}
 
 	if !opts.Force {
-		clean, err := git.IsClean(ctx, s.CR, meta.TreePath)
+		clean, err := git.IsClean(ctx, s.CR, meta.TreePath, opts.Env)
 		if err != nil {
 			return err
 		}
@@ -320,7 +326,7 @@ func (s *Service) Remove(ctx context.Context, repoID, worktreeID string, opts Re
 	}
 	args = append(args, meta.TreePath)
 
-	result, runErr := s.CR.Run(ctx, "git", args, exec.RunOpts{})
+	result, runErr := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 	if runErr != nil {
 		return errors.WrapWithDetails(
 			errors.EWorktreeRemoveFailed,

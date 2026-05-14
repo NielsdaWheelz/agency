@@ -169,7 +169,7 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	baseBranch := strings.TrimSpace(opts.BaseBranch)
 	if baseBranch == "" {
-		currentBranch, ok, err := git.GetCurrentBranch(ctx, cr, baseRoot)
+		currentBranch, ok, err := git.GetCurrentBranch(ctx, cr, baseRoot, nil)
 		if err != nil {
 			return fail(errors.Wrap(errors.EBaseBranchNotFound, "failed to determine the current branch; pass --base explicitly", err))
 		}
@@ -178,21 +178,21 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		}
 		baseBranch = currentBranch
 	}
-	hasCommits, err := git.HasCommits(ctx, cr, baseRoot)
+	hasCommits, err := git.HasCommits(ctx, cr, baseRoot, nil)
 	if err != nil {
 		return fail(err)
 	}
 	if !hasCommits {
 		return fail(errors.New(errors.EEmptyRepo, "repository has no commits; create an initial commit first"))
 	}
-	clean, err := git.IsCleanExcludingAgency(ctx, cr, baseRoot)
+	clean, err := git.IsCleanExcludingAgency(ctx, cr, baseRoot, nil)
 	if err != nil {
 		return fail(err)
 	}
 	if !clean {
 		return fail(errors.New(errors.EBaseDirty, "the checkout used to resolve --base is dirty; commit or stash changes first"))
 	}
-	branchExists, err := git.BranchExists(ctx, cr, baseRoot, baseBranch)
+	branchExists, err := git.BranchExists(ctx, cr, baseRoot, baseBranch, nil)
 	if err != nil {
 		return fail(err)
 	}

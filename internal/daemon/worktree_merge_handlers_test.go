@@ -112,6 +112,16 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 	assert.Equal(t, store.WorktreeStateArchived, meta.State)
 	require.Contains(t, fakeRunner.Calls, filepath.Join(canonicalRepoRoot, "scripts", "archive.sh"))
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
+	var sawArchive bool
+	for i, call := range fakeRunner.Calls {
+		if call == filepath.Join(canonicalRepoRoot, "scripts", "archive.sh") {
+			sawArchive = true
+			assert.Equal(t, "Test User", fakeRunner.CallEnvs[i]["GIT_AUTHOR_NAME"])
+			assert.Equal(t, "0", fakeRunner.CallEnvs[i]["GIT_TERMINAL_PROMPT"])
+			assert.Equal(t, "1", fakeRunner.CallEnvs[i]["GH_PROMPT_DISABLED"])
+		}
+	}
+	assert.True(t, sawArchive, "expected archive script to run")
 }
 
 func TestHandleWorktreeMerge_UsesLocalAgencyConfigWhenCanonicalRepoHasNone(t *testing.T) {

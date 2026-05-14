@@ -861,3 +861,31 @@ func TestDiscard_EventsUseMonotonicInvocationSequence(t *testing.T) {
 	assert.Equal(t, float64(1), events[0]["seq"])
 	assert.Equal(t, float64(2), events[1]["seq"])
 }
+
+func TestDiscard_CleanupFailureDoesNotSucceed(t *testing.T) {
+	t.Parallel()
+
+	h := setupHarness(t)
+	h.runner.Responses["git -C /nonexistent worktree remove --force "+h.sandboxPath] = testutil.FakeResponse{
+		Stderr:   "remove failed",
+		ExitCode: 128,
+	}
+
+	err := h.svc.Discard(context.Background(), landing.DiscardOpts{
+		RepoID:       "test-repo",
+		InvocationID: "test-inv",
+		RepoRoot:     "/nonexistent",
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.ELandFailed, errors.GetCode(err))
+
+	eventsPath := h.store.InvocationEventsPath("test-repo", "test-inv")
+	events := readInvocationEventsAsMaps(t, eventsPath)
+	require.Len(t, events, 2)
+	assert.Equal(t, "agency.discard_started", events[0]["kind"])
+	assert.Equal(t, "agency.discard_cleanup_failed", events[1]["kind"])
+
+	meta, readErr := h.store.ReadInvocationMeta("test-repo", "test-inv")
+	require.NoError(t, readErr)
+	assert.Equal(t, store.LandingStatusPending, meta.LandingStatus)
+}

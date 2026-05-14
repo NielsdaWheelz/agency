@@ -13,7 +13,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
-func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocationID, runner string, runnerArgs []string, sandboxPath string) error {
+func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocationID, runner string, runnerArgs []string, sandboxPath string, env map[string]string) error {
 	if runner != runners.RunnerClaudeCode && runner != runners.RunnerCodex {
 		return nil
 	}
@@ -58,7 +58,7 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 		if err := writeClaudeHeadedHookConfig(settingsPath, command, skipDangerousModePrompt); err != nil {
 			return err
 		}
-		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".claude/settings.local.json"}); err != nil {
+		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".claude/settings.local.json"}, env); err != nil {
 			s.recordInvocationWarning(repoID, invocationID, "headed_hook_git_exclude_failed", err.Error(), map[string]any{
 				"path": ".claude/settings.local.json",
 			})
@@ -71,7 +71,7 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 		if err := writeCodexHeadedHookConfig(hooksPath, command); err != nil {
 			return err
 		}
-		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".codex/hooks.json"}); err != nil {
+		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".codex/hooks.json"}, env); err != nil {
 			s.recordInvocationWarning(repoID, invocationID, "headed_hook_git_exclude_failed", err.Error(), map[string]any{
 				"path": ".codex/hooks.json",
 			})
@@ -184,8 +184,8 @@ func appendHeadedHook(hooks map[string]any, event, matcher, command string) {
 	hooks[event] = append(groups, group)
 }
 
-func (s *Server) excludeSandboxFiles(ctx context.Context, sandboxPath string, patterns []string) error {
-	result, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "--git-path", "info/exclude"}, exec.RunOpts{})
+func (s *Server) excludeSandboxFiles(ctx context.Context, sandboxPath string, patterns []string, env map[string]string) error {
+	result, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "--git-path", "info/exclude"}, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}

@@ -110,6 +110,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 	req.ExecutionProfile = execCtx.Profile
+	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headed", func(status int, code, message, hint string) {
@@ -172,6 +173,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		NoIncludeUntracked:      req.NoIncludeUntracked,
 		ClientRequestID:         req.ClientRequestID,
 		RequestFingerprint:      fingerprint,
+		Env:                     gitEnv,
 	})
 	if err != nil {
 		code := errors.GetCode(err)
@@ -194,7 +196,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", req.ClientRequestID, requestID)
 		return
 	}
-	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath); err != nil {
+	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath, gitEnv); err != nil {
 		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", req.ClientRequestID, requestID)
 		return
@@ -253,7 +255,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	}
 
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	if err := s.claimHeadedInvocation(repoIdentity.RepoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, sortedEnvKeys(req.Env)); err != nil {
+	if err := s.claimHeadedInvocation(repoIdentity.RepoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, sortedEnvKeys(requestEnv)); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", req.ClientRequestID, requestID)
 		return
@@ -266,6 +268,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	eventsPath := s.Store.InvocationEventsPath(repoIdentity.RepoID, createResult.InvocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
+	cpConfig.Env = gitEnv
 	if s.CheckpointDebounceOverride != nil {
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
 		cpConfig.DriftInterval = *s.CheckpointDebounceOverride

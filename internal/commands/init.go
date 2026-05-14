@@ -55,7 +55,7 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	if opts.Path != "" {
 		targetPath = opts.Path
 	}
-	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)
+	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath, nil)
 	if err != nil {
 		if opts.Path != "" {
 			return errors.NewWithDetails(
@@ -88,7 +88,7 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		)
 	}
 
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path, nil)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	if opts.RepoConfig {
 		registeredRoot, err := registeredRepoRootFromStore(store.NewStore(fsys, dirs.DataDir, time.Now), repoIdentity.RepoID)

@@ -787,12 +787,64 @@ func TestDaemonControlPlaneStart_PersistsRestartProfile(t *testing.T) {
 		if len(meta.RunnerArgs) != 1 || meta.RunnerArgs[0] != "--allowed-extra" {
 			return false
 		}
-		return len(meta.CustomEnvKeys) == 2 &&
-			meta.CustomEnvKeys[0] == "CUSTOM_FLAG" &&
-			meta.CustomEnvKeys[1] == "FAKE_RUNNER_MODE"
+		return reflect.DeepEqual(meta.CustomEnvKeys, []string{"CUSTOM_FLAG", "FAKE_RUNNER_MODE"})
 	}, 5*time.Second, 50*time.Millisecond, "runtime profile was not persisted in invocation meta")
 
 	_, _ = env.Client.Kill(ctx, repoID, resp.InvocationID)
+}
+
+func TestDaemonControlPlaneStart_MaterializesProfileEnv(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	profileEnv := testutil.GitIdentityEnv()
+	profileEnv["AGENCY_PROFILE_TOKEN"] = "from-profile"
+	profileEnv["AGENCY_OVERRIDE_TOKEN"] = "from-profile"
+	profileEnv["GH_PROMPT_DISABLED"] = "from-profile"
+	writeDaemonUserConfig(t, filepath.Join(env.DataDir, "config"), map[string]map[string]string{
+		"personal": profileEnv,
+	})
+
+	repoRoot := setupTestGitRepo(t)
+	wtID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "start-profile-env")
+
+	capturePath := filepath.Join(t.TempDir(), "launch.json")
+	resp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: wtID,
+		Runner:      "claude-code",
+		Prompt:      "profile env",
+		Env: map[string]string{
+			"AGENCY_OVERRIDE_TOKEN":        "from-request",
+			"AGENCY_REQUEST_TOKEN":         "from-request",
+			"CI":                           "from-request",
+			"GIT_TERMINAL_PROMPT":          "from-request",
+			"FAKE_RUNNER_CAPTURE_ENV_KEYS": "AGENCY_PROFILE_TOKEN,AGENCY_OVERRIDE_TOKEN,AGENCY_REQUEST_TOKEN,CI,GIT_TERMINAL_PROMPT,GH_PROMPT_DISABLED",
+			"FAKE_RUNNER_CAPTURE_PATH":     capturePath,
+			"FAKE_RUNNER_MODE":             "exit-ok",
+		},
+	})
+	require.NoError(t, err, "start")
+	require.True(t, resp.OK, "start failed: %s - %s", resp.ErrorCode, resp.Message)
+	waitForInvocationTerminal(t, env.Store, repoID, resp.InvocationID, 5*time.Second)
+
+	capture := readFakeRunnerLaunchCapture(t, capturePath)
+	assert.Equal(t, "from-profile", capture.Env["AGENCY_PROFILE_TOKEN"])
+	assert.Equal(t, "from-request", capture.Env["AGENCY_OVERRIDE_TOKEN"])
+	assert.Equal(t, "from-request", capture.Env["AGENCY_REQUEST_TOKEN"])
+	assert.Equal(t, "1", capture.Env["CI"])
+	assert.Equal(t, "0", capture.Env["GIT_TERMINAL_PROMPT"])
+	assert.Equal(t, "1", capture.Env["GH_PROMPT_DISABLED"])
+
+	meta, err := env.Store.ReadInvocationMeta(repoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.NotContains(t, meta.CustomEnvKeys, "AGENCY_PROFILE_TOKEN")
+	assert.Contains(t, meta.CustomEnvKeys, "AGENCY_OVERRIDE_TOKEN")
+	assert.Contains(t, meta.CustomEnvKeys, "AGENCY_REQUEST_TOKEN")
 }
 
 func TestDaemonControlPlaneStartAndStop(t *testing.T) {
@@ -2035,6 +2087,10 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 		"AGENCY_HEADED_MODE":   "start",
 		"AGENCY_HEADED_SECRET": "secret-value",
 	}
+	expectedEnv := testutil.GitIdentityEnv()
+	for k, v := range startEnv {
+		expectedEnv[k] = v
+	}
 	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: "headed-happy",
@@ -2071,7 +2127,7 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 		call := fakeTmux.NewSessionCalls[0]
 		assert.Equal(t, resp.SandboxPath, call.CWD)
 		assert.Contains(t, call.Argv[0], fakeRunnerPath(t))
-		assert.Equal(t, startEnv, call.Env)
+		assert.Equal(t, expectedEnv, call.Env)
 	}
 	fakeTmux.Mu.Unlock()
 
@@ -2091,9 +2147,19 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 	env.Server.TmuxClient = fakeTmux
 
 	repoRoot := setupTestGitRepo(t)
+
+	startProfileEnv := testutil.GitIdentityEnv()
+	startProfileEnv["AGENCY_RECREATE_PROFILE_TOKEN"] = "before-recreate"
+	writeDaemonUserConfig(t, filepath.Join(env.DataDir, "config"), map[string]map[string]string{
+		"personal": startProfileEnv,
+	})
+
 	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-recreate")
 
 	const recreateEnvKey = "AGENCY_RECREATE_SECRET"
+	expectedStartEnv := testutil.GitIdentityEnv()
+	expectedStartEnv["AGENCY_RECREATE_PROFILE_TOKEN"] = "before-recreate"
+	expectedStartEnv[recreateEnvKey] = "from-start-request"
 	startResp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: "headed-recreate",
@@ -2107,7 +2173,7 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 
 	fakeTmux.Mu.Lock()
 	require.Len(t, fakeTmux.NewSessionCalls, 1)
-	assert.Equal(t, map[string]string{recreateEnvKey: "from-start-request"}, fakeTmux.NewSessionCalls[0].Env)
+	assert.Equal(t, expectedStartEnv, fakeTmux.NewSessionCalls[0].Env)
 	delete(fakeTmux.Sessions, startResp.TmuxSession)
 	callsBefore := len(fakeTmux.NewSessionCalls)
 	fakeTmux.Mu.Unlock()
@@ -2118,6 +2184,12 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 		meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		meta.LifecycleOwner = ""
 	}))
+
+	recreateProfileEnv := testutil.GitIdentityEnv()
+	recreateProfileEnv["AGENCY_RECREATE_PROFILE_TOKEN"] = "after-recreate"
+	writeDaemonUserConfig(t, filepath.Join(env.DataDir, "config"), map[string]map[string]string{
+		"personal": recreateProfileEnv,
+	})
 
 	resp, err := env.Client.RecreateHeaded(ctx, startResp.InvocationID, startResp.RepoID)
 	require.NoError(t, err, "recreate headed")
@@ -2135,7 +2207,7 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 	assert.Equal(t, startResp.TmuxSession, call.Name)
 	assert.Equal(t, startResp.SandboxPath, call.CWD)
 	assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
-	assert.Empty(t, call.Env)
+	assert.Equal(t, recreateProfileEnv, call.Env)
 
 	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
 	require.NoError(t, err)
@@ -2170,6 +2242,10 @@ func TestDaemonTaskStartHeadedEnv(t *testing.T) {
 	taskEnv := map[string]string{
 		"AGENCY_TASK_HEADED_ENV": "task-value",
 	}
+	expectedTaskEnv := testutil.GitIdentityEnv()
+	for k, v := range taskEnv {
+		expectedTaskEnv[k] = v
+	}
 	resp, err := env.Client.TaskStart(ctx, daemonclient.TaskStartOpts{
 		RepoRoot:   repoRoot,
 		Name:       "task-headed-env",
@@ -2193,7 +2269,7 @@ func TestDaemonTaskStartHeadedEnv(t *testing.T) {
 	assert.Equal(t, resp.SandboxPath, call.CWD)
 	assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
 	assert.Equal(t, []string{"--allowed-extra"}, call.Argv[1:])
-	assert.Equal(t, taskEnv, call.Env)
+	assert.Equal(t, expectedTaskEnv, call.Env)
 
 	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
 	require.NoError(t, err)
@@ -2201,6 +2277,60 @@ func TestDaemonTaskStartHeadedEnv(t *testing.T) {
 	assert.Equal(t, []string{"AGENCY_TASK_HEADED_ENV"}, meta.CustomEnvKeys)
 
 	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonTaskRetry_MaterializesProfileEnv(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	repoRoot := setupTestGitRepo(t)
+	startResp, err := env.Client.TaskStart(ctx, daemonclient.TaskStartOpts{
+		RepoRoot:   repoRoot,
+		Name:       "task-retry-profile-env",
+		BaseBranch: "main",
+		Mode:       string(store.RunnerModeHeadless),
+		Runner:     "claude-code",
+		Prompt:     "initial task run",
+		Env:        map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
+	})
+	require.NoError(t, err, "task start")
+	require.True(t, startResp.OK, "task start failed: %s - %s", startResp.ErrorCode, startResp.Message)
+	waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
+
+	profileEnv := testutil.GitIdentityEnv()
+	profileEnv["AGENCY_RETRY_PROFILE_TOKEN"] = "from-profile"
+	writeDaemonUserConfig(t, filepath.Join(env.DataDir, "config"), map[string]map[string]string{
+		"personal": profileEnv,
+	})
+
+	capturePath := filepath.Join(t.TempDir(), "retry-launch.json")
+	retryResp, err := env.Client.RetryTask(ctx, startResp.TaskID, startResp.RepoID, daemonclient.TaskRetryOpts{
+		Mode:   string(store.RunnerModeHeadless),
+		Runner: "claude-code",
+		Prompt: "retry task run",
+		Env: map[string]string{
+			"FAKE_RUNNER_CAPTURE_ENV_KEYS": "AGENCY_RETRY_PROFILE_TOKEN,AGENCY_RETRY_REQUEST_TOKEN",
+			"FAKE_RUNNER_CAPTURE_PATH":     capturePath,
+			"FAKE_RUNNER_MODE":             "exit-ok",
+			"AGENCY_RETRY_REQUEST_TOKEN":   "from-request",
+		},
+	})
+	require.NoError(t, err, "task retry")
+	require.True(t, retryResp.OK, "task retry failed: %s - %s", retryResp.ErrorCode, retryResp.Message)
+	waitForInvocationTerminal(t, env.Store, retryResp.RepoID, retryResp.InvocationID, 5*time.Second)
+
+	capture := readFakeRunnerLaunchCapture(t, capturePath)
+	assert.Equal(t, "from-profile", capture.Env["AGENCY_RETRY_PROFILE_TOKEN"])
+	assert.Equal(t, "from-request", capture.Env["AGENCY_RETRY_REQUEST_TOKEN"])
+
+	meta, err := env.Store.ReadInvocationMeta(retryResp.RepoID, retryResp.InvocationID)
+	require.NoError(t, err)
+	assert.NotContains(t, meta.CustomEnvKeys, "AGENCY_RETRY_PROFILE_TOKEN")
+	assert.Contains(t, meta.CustomEnvKeys, "AGENCY_RETRY_REQUEST_TOKEN")
 }
 
 func TestDaemonHeadedStart_TargetRunnerSetLaunchArgs(t *testing.T) {

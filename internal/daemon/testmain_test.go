@@ -74,8 +74,8 @@ func writeTestUserConfig(t *testing.T, configDir string) {
 			"droid":       runnerPath,
 		},
 		"execution_profiles": map[string]any{
-			"personal": map[string]any{"env": map[string]string{}},
-			"work":     map[string]any{"env": map[string]string{}},
+			"personal": map[string]any{"env": testutil.GitIdentityEnv()},
+			"work":     map[string]any{"env": testutil.GitIdentityEnv()},
 		},
 	}
 	data, err := json.Marshal(cfg)

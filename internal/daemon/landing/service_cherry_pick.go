@@ -17,7 +17,7 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 		fmt.Sprintf("%s..%s", meta.BaseCommit, meta.SandboxBranch),
 	}
 
-	result, err := s.runner.Run(ctx, "git", cherryPickArgs, exec.RunOpts{})
+	result, err := s.runner.Run(ctx, "git", cherryPickArgs, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		return nil, s.emitLandFailure(
 			opts.RepoID,
@@ -28,9 +28,25 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 	}
 
 	if result.ExitCode != 0 {
-		conflictFiles, conflictErr := s.getConflictFiles(ctx, integrationPath)
+		conflictFiles, conflictErr := s.getConflictFiles(ctx, integrationPath, opts.Env)
 		if conflictErr == nil && len(conflictFiles) > 0 {
-			_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "cherry-pick", "--abort"}, exec.RunOpts{})
+			abortResult, abortErr := s.runner.Run(ctx, "git", []string{"-C", integrationPath, "cherry-pick", "--abort"}, exec.RunOpts{Env: opts.Env})
+			if abortErr != nil {
+				return nil, s.emitLandFailure(
+					opts.RepoID,
+					opts.InvocationID,
+					"failed to abort conflicted cherry-pick: "+abortErr.Error(),
+					errors.Wrap(errors.ELandFailed, "failed to abort conflicted cherry-pick", abortErr),
+				)
+			}
+			if abortResult.ExitCode != 0 {
+				return nil, s.emitLandFailure(
+					opts.RepoID,
+					opts.InvocationID,
+					"failed to abort conflicted cherry-pick: "+abortResult.Stderr,
+					errors.New(errors.ELandFailed, "failed to abort conflicted cherry-pick: "+abortResult.Stderr),
+				)
+			}
 
 			if err := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.conflict_detected", map[string]any{
 				"invocation_id": opts.InvocationID,
@@ -58,7 +74,7 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 		)
 	}
 
-	headAfter, err := s.getHeadCommit(ctx, integrationPath)
+	headAfter, err := s.getHeadCommit(ctx, integrationPath, opts.Env)
 	if err != nil {
 		return nil, errors.Wrap(errors.ELandFailed, "failed to capture new integration HEAD", err)
 	}

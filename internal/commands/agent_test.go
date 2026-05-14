@@ -386,6 +386,23 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	cr := testutil.NewFakeCommandRunner()
 	configDir := filepath.Join(dataTmp, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0755))
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": "claude-code",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
 	srv := daemon.NewServer(st, cr, fsys, configDir)
 	fakeTmux := testutil.NewFakeTmuxClient()
 	srv.TmuxClient = fakeTmux

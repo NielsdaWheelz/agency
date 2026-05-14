@@ -110,7 +110,7 @@ This document owns execution-profile selection, runner environment materializati
 - Headless runner env precedence is daemon process environment, resolved execution-profile env, explicit request env overrides, then daemon-owned safety env.
 - Headed tmux starts receive resolved execution-profile env plus explicit request env; headed recreate receives current execution-profile env only.
 - Daemon-owned noninteractive Git/`gh`/verify/archive cleanup flows use the persisted worktree profile env plus daemon-owned safety env.
-- Agency persists env key names for explainability. It does not persist env values.
+- Agency persists explicit request/custom env key names for explainability. It does not persist profile env key names or any env values.
 - If Git, SSH, or `gh` identity should follow the same account, set the relevant variables in the profile env, such as `GH_CONFIG_DIR`, `GH_TOKEN`, `GIT_SSH_COMMAND`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL`.
 
 ## Store

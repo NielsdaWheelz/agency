@@ -80,6 +80,7 @@ func NewEngineWithWriter(
 	if eventWriter == nil {
 		eventWriter = invocationevents.NewWriter(clock)
 	}
+	config.Env = gitEnv(config.Env, nil)
 	return &Engine{
 		invocationID:   invocationID,
 		repoID:         repoID,
@@ -95,6 +96,20 @@ func NewEngineWithWriter(
 		watchedDirs:    make(map[string]bool),
 		done:           make(chan struct{}),
 	}
+}
+
+func gitEnv(base, extra map[string]string) map[string]string {
+	if len(base) == 0 && len(extra) == 0 {
+		return nil
+	}
+	env := make(map[string]string, len(base)+len(extra))
+	for k, v := range base {
+		env[k] = v
+	}
+	for k, v := range extra {
+		env[k] = v
+	}
+	return env
 }
 
 // ParseGitIgnoredDirs parses the output of `git ls-files --others --ignored

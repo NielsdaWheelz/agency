@@ -1785,6 +1785,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	// 3. Set up daemon + store with invocation pointing to this repo
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
+	writeTestUserConfig(t, configDir)
 	repoID := "test-repo-diff"
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)

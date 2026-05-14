@@ -26,7 +26,7 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 		return nil, err
 	}
 
-	headAfter, err := s.getHeadCommit(ctx, integrationPath)
+	headAfter, err := s.getHeadCommit(ctx, integrationPath, opts.Env)
 	if err != nil {
 		return nil, errors.Wrap(errors.ELandFailed, "failed to capture new integration HEAD", err)
 	}
@@ -88,7 +88,7 @@ func (s *Service) stageLandingPatch(ctx context.Context, opts LandOpts, sandboxP
 }
 
 func (s *Service) stageSandboxChanges(ctx context.Context, opts LandOpts, sandboxPath string) error {
-	_, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "add", "-A", "--", ":(exclude).agency"}, exec.RunOpts{})
+	_, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "add", "-A", "--", ":(exclude).agency"}, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		return s.emitLandFailure(
 			opts.RepoID,
@@ -104,7 +104,7 @@ func (s *Service) generateLandingDiff(ctx context.Context, opts LandOpts, sandbo
 	diffResult, err := s.runner.Run(ctx, "git", []string{
 		"-C", sandboxPath,
 		"diff", "--cached", baseCommit, "--", ":(exclude).agency",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		return exec.CmdResult{}, s.emitLandFailure(
 			opts.RepoID,
@@ -128,7 +128,7 @@ func (s *Service) applyLandingPatch(ctx context.Context, opts LandOpts, integrat
 	applyResult, err := s.runner.Run(ctx, "git", []string{
 		"-C", integrationPath,
 		"apply", "--index", patchPath,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		return s.resetLandingTreeAndFail(ctx, opts, integrationPath, "failed to apply patch: "+err.Error(), errors.Wrap(errors.ELandFailed, "failed to apply patch", err))
 	}
@@ -143,7 +143,7 @@ func (s *Service) commitLandingPatch(ctx context.Context, opts LandOpts, integra
 	commitResult, err := s.runner.Run(ctx, "git", []string{
 		"-C", integrationPath,
 		"commit", "-m", commitMsg,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		return s.resetLandingTreeAndFail(ctx, opts, integrationPath, "failed to commit: "+err.Error(), errors.Wrap(errors.ELandFailed, "failed to commit applied changes", err))
 	}
@@ -154,6 +154,28 @@ func (s *Service) commitLandingPatch(ctx context.Context, opts LandOpts, integra
 }
 
 func (s *Service) resetLandingTreeAndFail(ctx context.Context, opts LandOpts, integrationPath, reason string, operationErr error) error {
-	_, _ = s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{})
+	result, resetErr := s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{Env: opts.Env})
+	if resetErr != nil {
+		return s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to reset integration worktree after land failure: "+resetErr.Error(),
+			errors.WrapWithDetails(errors.ELandFailed, "failed to reset integration worktree after land failure", resetErr, map[string]string{
+				"operation_error": operationErr.Error(),
+			}),
+		)
+	}
+	if result.ExitCode != 0 {
+		return s.emitLandFailure(
+			opts.RepoID,
+			opts.InvocationID,
+			"failed to reset integration worktree after land failure: "+result.Stderr,
+			errors.NewWithDetails(errors.ELandFailed, "failed to reset integration worktree after land failure", map[string]string{
+				"exit_code":       fmt.Sprintf("%d", result.ExitCode),
+				"operation_error": operationErr.Error(),
+				"stderr":          strings.TrimSpace(result.Stderr),
+			}),
+		)
+	}
 	return s.emitLandFailure(opts.RepoID, opts.InvocationID, reason, operationErr)
 }

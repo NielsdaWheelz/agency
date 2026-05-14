@@ -95,20 +95,29 @@ func loadMaxStreamSeq(path string) uint64 {
 	return maxSeq
 }
 
-func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest) (int, int, error) {
+func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, gitEnv map[string]string) (int, int, error) {
 	args, err := runners.BuildHeadlessArgs(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to build runner args: %w", err)
 	}
-	return s.startRunnerWithArgs(ctx, repoID, result, repoRoot, integrationWorktreeID, req, args, "")
+	return s.startRunnerWithArgs(ctx, repoID, result, repoRoot, integrationWorktreeID, req, args, "", gitEnv)
 }
 
 func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProcess, prompt string) (int, int, error) {
+	meta, err := s.Store.ReadInvocationMeta(proc.RepoID, proc.InvocationID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to read invocation meta: %w", err)
+	}
+	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to resolve execution profile env: %w", err)
+	}
 	req := ControlPlaneStartRequest{
 		Runner:             proc.Runner,
 		Prompt:             prompt,
 		RunnerArgs:         append([]string(nil), proc.RunnerArgs...),
 		Env:                copyStringMap(proc.Env),
+		ExecutionProfile:   meta.ExecutionProfile,
 		NoIncludeUntracked: proc.NoIncludeUntracked,
 	}
 	resumeSessionID := proc.GetResumeSessionID()
@@ -119,10 +128,10 @@ func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProc
 	return s.startRunnerWithArgs(ctx, proc.RepoID, &invocation.CreateResult{
 		InvocationID: proc.InvocationID,
 		SandboxPath:  proc.SandboxPath,
-	}, proc.RepoRoot, proc.IntegrationWorktreeID, req, args, resumeSessionID)
+	}, proc.RepoRoot, proc.IntegrationWorktreeID, req, args, resumeSessionID, prSyncNonInteractiveEnv(profileEnv))
 }
 
-func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, args []string, resumeSessionID string) (int, int, error) {
+func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, args []string, resumeSessionID string, gitEnv map[string]string) (int, int, error) {
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to load user config: %w", err)
@@ -205,6 +214,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	eventsPath := s.Store.InvocationEventsPath(repoID, result.InvocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
+	cpConfig.Env = gitEnv
 	if s.CheckpointDebounceOverride != nil {
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
 		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
@@ -335,13 +345,13 @@ func createFollowUpRelay(runner string) (*os.File, relay.FollowUpRelay, error) {
 	}
 }
 
-func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string) {
+func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string, env map[string]string) {
 	s.failInvocationStart(repoID, result.InvocationID, failureReason, true)
 
 	args := []string{"-C", repoRoot, "worktree", "remove", "--force", result.SandboxPath}
-	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
+	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
 	args = []string{"-C", repoRoot, "branch", "-D", result.SandboxBranch}
-	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{})
+	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
 }
 
 func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedProc *exec.StartedProcess, rawFile, stderrFile, streamFile *os.File) {

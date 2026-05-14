@@ -237,13 +237,13 @@ func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot strin
 		return "", identity.RepoIdentity{}, false
 	}
 
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
+	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot, nil)
 	if err != nil {
 		writeErr(http.StatusBadRequest, string(errors.ENoRepo), "repo_root is not inside a git repository: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
 	repoRoot = gitRoot.Path
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
+	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot, nil)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 	return repoRoot, repoIdentity, true
 }

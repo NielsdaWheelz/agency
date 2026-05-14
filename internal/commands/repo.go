@@ -74,7 +74,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 	}
 
 	// Try CWD-based auto-registration
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd, nil)
 	if err != nil {
 		// Not in a repo — error with hints
 		if opts.AllowAllRepos {

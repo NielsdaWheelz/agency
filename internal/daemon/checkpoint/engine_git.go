@@ -14,7 +14,7 @@ func (e *Engine) getGitDir(ctx context.Context) (string, error) {
 	result, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
 		"rev-parse", "--git-dir",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil {
 		return "", err
 	}
@@ -33,7 +33,7 @@ func (e *Engine) checkDenylist(ctx context.Context) ([]string, error) {
 	result, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
 		"ls-files", "-o", "--exclude-standard",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (e *Engine) computeDiffstat(ctx context.Context, base, commit string) strin
 	result, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
 		"diff", "--stat", "--stat-width=80", base + ".." + commit,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil || result.ExitCode != 0 {
 		return ""
 	}
@@ -124,7 +124,7 @@ func (e *Engine) computeChangedPaths(ctx context.Context, base, commit string, m
 	result, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
 		"diff", "--name-status", "--find-renames", base + ".." + commit,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil || result.ExitCode != 0 {
 		return nil, 0, false
 	}

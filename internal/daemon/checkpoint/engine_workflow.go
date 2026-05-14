@@ -249,7 +249,7 @@ func (e *Engine) getCurrentSandboxHead(ctx context.Context) (string, error) {
 	headResult, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
 		"rev-parse", "HEAD",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil {
 		return "", fmt.Errorf("failed to get HEAD: %w", err)
 	}
@@ -285,7 +285,7 @@ func (e *Engine) writeCheckpointTree(ctx context.Context, tempIndexPath string, 
 		}
 	}
 
-	env := map[string]string{"GIT_INDEX_FILE": tempIndexPath}
+	env := gitEnv(e.config.Env, map[string]string{"GIT_INDEX_FILE": tempIndexPath})
 	if err := e.stageCheckpointIndex(ctx, includeUntracked, env); err != nil {
 		return "", err
 	}
@@ -345,7 +345,7 @@ func (e *Engine) createCheckpointCommit(ctx context.Context, treeHash string, ch
 		"commit-tree", treeHash,
 		"-p", "HEAD",
 		"-m", commitMessage,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil {
 		return "", fmt.Errorf("failed to run git commit-tree: %w", err)
 	}
@@ -359,7 +359,7 @@ func (e *Engine) createCheckpointRef(ctx context.Context, snapshotRef, snapshotC
 	updateRefResult, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.repoRoot,
 		"update-ref", snapshotRef, snapshotCommit,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil {
 		return fmt.Errorf("failed to run git update-ref: %w", err)
 	}

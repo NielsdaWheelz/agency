@@ -157,6 +157,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	}
 	req.ExecutionProfile = execCtx.Profile
 	req.CheckoutRoot = execCtx.CheckoutRoot
+	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 	retryFingerprint := taskRetryFingerprint(meta, mode, runner, req, requestEnv)
 	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint) {
@@ -216,10 +217,11 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	}
 	var invMeta *store.InvocationMeta
+	envKeys := sortedEnvKeys(requestEnv)
 	if headless {
-		invMeta, err = s.startTaskHeadlessInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, wtRecord, startReq)
+		invMeta, err = s.startTaskHeadlessInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, wtRecord, startReq, envKeys, gitEnv)
 	} else {
-		invMeta, err = s.startTaskHeadedInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, wtRecord, startReq)
+		invMeta, err = s.startTaskHeadedInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, wtRecord, startReq, envKeys, gitEnv)
 	}
 	if err != nil {
 		fail := normalizeTaskStartFailure(err)

@@ -125,7 +125,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		targetPath = repo.PreferredRoot
 	}
 
-	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)
+	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath, nil)
 	if err != nil {
 		if opts.Path != "" {
 			return errors.NewWithDetails(
@@ -146,7 +146,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path, nil)
 
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
 	repoRoot.Path, err = registeredRepoRootFromStore(store.NewStore(fsys, dirs.DataDir, time.Now), repoIdentity.RepoID)
@@ -154,7 +154,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 	repoRoot.Path = doctorDisplayPath(repoRoot.Path)
-	originInfo = git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	originInfo = git.GetOriginInfo(ctx, cr, repoRoot.Path, nil)
 
 	agencyConfigPath := opts.AgencyConfigPath
 	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
@@ -398,7 +398,7 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 }
 
 func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot string) (string, error) {
-	branch, ok, err := git.GetCurrentBranch(ctx, cr, repoRoot)
+	branch, ok, err := git.GetCurrentBranch(ctx, cr, repoRoot, nil)
 	if err != nil {
 		return "", errors.Wrap(errors.EInternal, "failed to get current branch", err)
 	}

@@ -106,7 +106,7 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, absRoot)
+	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, absRoot, nil)
 	if err != nil {
 		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoNotAGitRepo),
 			"not a git repository: "+err.Error(),
@@ -122,7 +122,7 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originInfo := git.GetOriginInfo(ctx, s.Runner, canonicalRoot)
+	originInfo := git.GetOriginInfo(ctx, s.Runner, canonicalRoot, nil)
 	repoIdentity := identity.DeriveRepoIdentity(canonicalRoot, originInfo.URL)
 
 	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "repo register")

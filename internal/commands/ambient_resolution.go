@@ -41,7 +41,7 @@ func inspectCWDAmbientSelection(ctx context.Context, cr exec.CommandRunner, ns *
 		return cwdTargetSelection{InsideAgencyManagedTree: true}, nil
 	}
 
-	currentRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	currentRoot, err := git.GetRepoRoot(ctx, cr, cwd, nil)
 	if err != nil {
 		if errors.GetCode(err) == errors.ENoRepo {
 			return cwdTargetSelection{}, nil

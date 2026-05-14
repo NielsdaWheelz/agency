@@ -173,6 +173,35 @@ func TestControlPlaneStart_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestControlPlaneStartFingerprintIgnoresProfileEnvValues(t *testing.T) {
+	t.Parallel()
+
+	requestEnv := map[string]string{"REQUEST_TOKEN": "old"}
+	req := ControlPlaneStartRequest{
+		RepoRoot:         "/repo",
+		WorktreeRef:      "wt-1",
+		Runner:           "claude-code",
+		Prompt:           "same prompt",
+		ExecutionProfile: "personal",
+		Env:              envForLaunch(map[string]string{"PROFILE_TOKEN": "old"}, requestEnv),
+	}
+	first := controlPlaneStartFingerprint("/repo", "wt-1", "/checkout", store.RunnerModeHeadless, req, requestEnv)
+
+	req.Env = envForLaunch(map[string]string{"PROFILE_TOKEN": "new"}, requestEnv)
+	second := controlPlaneStartFingerprint("/repo", "wt-1", "/checkout", store.RunnerModeHeadless, req, requestEnv)
+	assert.Equal(t, first, second)
+
+	changedRequestEnv := map[string]string{"REQUEST_TOKEN": "new"}
+	req.Env = envForLaunch(map[string]string{"PROFILE_TOKEN": "new"}, changedRequestEnv)
+	third := controlPlaneStartFingerprint("/repo", "wt-1", "/checkout", store.RunnerModeHeadless, req, changedRequestEnv)
+	assert.Equal(t, first, third)
+
+	changedRequestEnv["REQUEST_TOKEN_2"] = "new"
+	req.Env = envForLaunch(map[string]string{"PROFILE_TOKEN": "new"}, changedRequestEnv)
+	fourth := controlPlaneStartFingerprint("/repo", "wt-1", "/checkout", store.RunnerModeHeadless, req, changedRequestEnv)
+	assert.NotEqual(t, first, fourth)
+}
+
 func TestControlPlaneStart_RunnerTargetSetPassesValidation(t *testing.T) {
 	t.Parallel()
 

@@ -74,7 +74,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Derive git root via git rev-parse --show-toplevel
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
+	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot, nil)
 	if err != nil {
 		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.ENoRepo),
 			"repo_root is not inside a git repository: "+err.Error(), "")
@@ -83,7 +83,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	repoRoot = gitRoot.Path
 
 	// Derive repo identity.
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
+	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot, nil)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, "", "")
 	if err != nil {
@@ -209,6 +209,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:         req.BaseBranch,
 		CheckoutRoot:       execCtx.CheckoutRoot,
 		ExecutionProfile:   execCtx.Profile,
+		Env:                prSyncNonInteractiveEnv(execCtx.ProfileEnv),
 		IdempotencyKey:     req.IdempotencyKey,
 		RequestFingerprint: fingerprint,
 	})
@@ -358,13 +359,34 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
+	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EExecutionProfileNotFound
+		}
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
+		return
+	}
+	worktreeEnv := prSyncNonInteractiveEnv(profileEnv)
+
 	if req.Force && len(unresolved) > 0 {
 		discardSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
 		for _, invocation := range unresolved {
+			profileEnv, err := s.executionProfileEnv(invocation.Meta.ExecutionProfile)
+			if err != nil {
+				code := errors.GetCode(err)
+				if code == "" {
+					code = errors.EExecutionProfileNotFound
+				}
+				s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
+				return
+			}
 			if err := discardSvc.Discard(ctx, landing.DiscardOpts{
 				RepoID:       repoID,
 				InvocationID: invocation.InvocationID,
 				RepoRoot:     repoRoot,
+				Env:          prSyncNonInteractiveEnv(profileEnv),
 				StopCallback: s.stopInvocationForDiscard,
 			}); err != nil {
 				code := errors.GetCode(err)
@@ -379,9 +401,11 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 
 	// Check if tree is dirty (unless force)
 	if !req.Force {
-		clean, err := git.IsClean(ctx, s.Runner, record.Meta.TreePath)
+		clean, err := git.IsClean(ctx, s.Runner, record.Meta.TreePath, worktreeEnv)
 		if err != nil {
-			// Can't determine cleanliness - proceed anyway
+			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
+				"failed to check worktree cleanliness: "+err.Error(), "")
+			return
 		} else if !clean {
 			s.writeWorktreeRmError(w, http.StatusConflict, string(errors.EDirtyWorktree),
 				"worktree has uncommitted changes",
@@ -400,7 +424,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	removeCtx, cancel := context.WithTimeout(ctx, worktreeRmGitRemoveTimeout)
 	defer cancel()
 
-	result, runErr := s.Runner.Run(removeCtx, "git", args, exec.RunOpts{})
+	result, runErr := s.Runner.Run(removeCtx, "git", args, exec.RunOpts{Env: worktreeEnv})
 	if runErr != nil {
 		if stderrors.Is(runErr, context.DeadlineExceeded) {
 			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
@@ -430,9 +454,12 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	err = s.Store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.State = store.WorktreeStateArchived
 	})
-	// Log but don't fail - worktree is already removed
-	// Next rm attempt will detect archived state and succeed (idempotent)
-	_ = err
+	if err != nil {
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
+			"failed to archive worktree metadata after git remove: "+err.Error(),
+			"inspect worktree metadata before retrying")
+		return
+	}
 
 	s.writeWorktreeRmSuccess(w)
 }

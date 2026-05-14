@@ -198,6 +198,70 @@ func TestCreateInvalidName(t *testing.T) {
 	}
 }
 
+func TestCreate_PassesEnvToGit(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+	cr := testutil.NewFakeCommandRunner()
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+
+	env := map[string]string{"GH_CONFIG_DIR": "/tmp/agency-gh", "GIT_SSH_COMMAND": "ssh -F /tmp/work"}
+	result, err := svc.Create(context.Background(), CreateOpts{
+		Name:             "env-create",
+		RepoRoot:         "/repo/root",
+		RepoID:           "repo-1",
+		BaseBranch:       "main",
+		CheckoutRoot:     filepath.Join(dataDir, "checkouts", "repo-1"),
+		ExecutionProfile: "work",
+		Env:              env,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotEmpty(t, cr.Calls)
+	assert.Contains(t, cr.Calls[0], "worktree add")
+	assert.Equal(t, env, cr.CallEnvs[0])
+}
+
+func TestRemove_PassesEnvToGit(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	fsys := fs.NewRealFS()
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+	repoID := "repo-1"
+	wtID := "20260201120000-env"
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+	treePath := filepath.Join(checkoutRoot, "worktrees", "env-remove-env")
+	meta := store.NewIntegrationWorktreeMeta(
+		wtID, "env-remove", repoID,
+		"agency/env-remove-env", "main",
+		treePath, checkoutRoot, "work", now,
+	)
+	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+
+	cr := testutil.NewFakeCommandRunner()
+	svc := NewService(st, cr, fsys, func() time.Time { return now })
+
+	env := map[string]string{"GH_CONFIG_DIR": "/tmp/agency-gh", "GIT_SSH_COMMAND": "ssh -F /tmp/work"}
+	err = svc.Remove(context.Background(), repoID, wtID, RemoveOpts{
+		RepoRoot: "/repo/root",
+		Env:      env,
+	})
+	require.NoError(t, err)
+	require.Len(t, cr.CallEnvs, 2)
+	assert.Equal(t, env, cr.CallEnvs[0])
+	assert.Equal(t, env, cr.CallEnvs[1])
+}
+
 func TestHasIntegrationMarker(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

@@ -133,7 +133,7 @@ func (e *Engine) isDirty(ctx context.Context) (bool, error) {
 	result, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
 		"status", "--porcelain",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: e.config.Env})
 	if err != nil {
 		return false, err
 	}

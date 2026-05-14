@@ -66,6 +66,7 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
+	writeTestUserConfig(t, configDir)
 	repoID := "test-repo-turn-diff"
 	invocationID := "inv-turn-1"
 

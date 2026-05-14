@@ -194,6 +194,7 @@ func setupWorktreeRmTimeoutEnv(t *testing.T) *worktreeRmTimeoutEnv {
 
 	dataDir := t.TempDir()
 	configDir := t.TempDir()
+	writeTestUserConfig(t, configDir)
 	now := time.Now().UTC()
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)

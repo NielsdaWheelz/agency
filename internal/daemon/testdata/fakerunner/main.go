@@ -15,10 +15,27 @@ import (
 )
 
 type launchCapture struct {
-	Args           []string `json:"args"`
-	CWD            string   `json:"cwd"`
-	Mode           string   `json:"mode"`
-	FirstStdinLine string   `json:"first_stdin_line,omitempty"`
+	Args           []string          `json:"args"`
+	CWD            string            `json:"cwd"`
+	Mode           string            `json:"mode"`
+	FirstStdinLine string            `json:"first_stdin_line,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+}
+
+func capturedEnv() map[string]string {
+	raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_CAPTURE_ENV_KEYS"))
+	if raw == "" {
+		return nil
+	}
+	env := map[string]string{}
+	for _, key := range strings.Split(raw, ",") {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		env[key] = os.Getenv(key)
+	}
+	return env
 }
 
 func writeCapture(path, mode, firstStdinLine string) error {
@@ -34,6 +51,7 @@ func writeCapture(path, mode, firstStdinLine string) error {
 		CWD:            cwd,
 		Mode:           mode,
 		FirstStdinLine: firstStdinLine,
+		Env:            capturedEnv(),
 	})
 	if err != nil {
 		return err

@@ -23,7 +23,7 @@ func (e *Engine) pruneCheckpoints(ctx context.Context, cpFile *CheckpointsFile) 
 		_, _ = e.runner.Run(ctx, "git", []string{
 			"-C", e.repoRoot,
 			"update-ref", "-d", cp.SnapshotRef,
-		}, exec.RunOpts{})
+		}, exec.RunOpts{Env: e.config.Env})
 	}
 
 	cpFile.Checkpoints = cpFile.Checkpoints[excess:]

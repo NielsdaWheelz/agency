@@ -25,6 +25,7 @@ type stubCall struct {
 	Name string
 	Args []string
 	Dir  string
+	Env  map[string]string
 }
 
 func newStubRunner() *stubRunner {
@@ -54,7 +55,7 @@ func joinArgs(args []string) string {
 }
 
 func (s *stubRunner) Run(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
-	s.calls = append(s.calls, stubCall{Name: name, Args: args, Dir: opts.Dir})
+	s.calls = append(s.calls, stubCall{Name: name, Args: args, Dir: opts.Dir, Env: opts.Env})
 
 	key := s.makeKey(name, args, opts.Dir)
 	if result, ok := s.responses[key]; ok {
@@ -82,7 +83,7 @@ func TestGetRepoRoot_Success(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	root, err := GetRepoRoot(ctx, cr, cwd)
+	root, err := GetRepoRoot(ctx, cr, cwd, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, expectedRoot, root.Path)
@@ -106,10 +107,28 @@ func TestGetRepoRoot_NotInRepo(t *testing.T) {
 		ExitCode: 128,
 	})
 
-	_, err := GetRepoRoot(ctx, cr, cwd)
+	_, err := GetRepoRoot(ctx, cr, cwd, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
+}
+
+func TestGetRepoRoot_PassesEnv(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cr := newStubRunner()
+
+	cwd := "/some/project"
+	cr.On("git", []string{"rev-parse", "--show-toplevel"}, cwd, exec.CmdResult{
+		Stdout:   cwd + "\n",
+		ExitCode: 0,
+	})
+
+	_, err := GetRepoRoot(ctx, cr, cwd, map[string]string{"GH_CONFIG_DIR": "/tmp/gh"})
+
+	require.NoError(t, err)
+	require.Len(t, cr.calls, 1)
+	assert.Equal(t, map[string]string{"GH_CONFIG_DIR": "/tmp/gh"}, cr.calls[0].Env)
 }
 
 func TestGetRepoRoot_EmptyOutput(t *testing.T) {
@@ -124,7 +143,7 @@ func TestGetRepoRoot_EmptyOutput(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	_, err := GetRepoRoot(ctx, cr, cwd)
+	_, err := GetRepoRoot(ctx, cr, cwd, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
@@ -142,7 +161,7 @@ func TestGetRepoRoot_MultiLineOutput(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	_, err := GetRepoRoot(ctx, cr, cwd)
+	_, err := GetRepoRoot(ctx, cr, cwd, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
@@ -153,7 +172,7 @@ func TestGetRepoRoot_EmptyCwd(t *testing.T) {
 	ctx := context.Background()
 	cr := newStubRunner()
 
-	_, err := GetRepoRoot(ctx, cr, "")
+	_, err := GetRepoRoot(ctx, cr, "", nil)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
@@ -172,7 +191,7 @@ func TestGetRepoRoot_RelativePathNormalized(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	root, err := GetRepoRoot(ctx, cr, cwd)
+	root, err := GetRepoRoot(ctx, cr, cwd, nil)
 
 	require.NoError(t, err)
 
@@ -192,7 +211,7 @@ func TestGetCurrentBranch_Success(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	branch, ok, err := GetCurrentBranch(ctx, cr, repoRoot)
+	branch, ok, err := GetCurrentBranch(ctx, cr, repoRoot, nil)
 
 	require.NoError(t, err)
 	assert.True(t, ok)
@@ -210,7 +229,7 @@ func TestGetCurrentBranch_DetachedHead(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	branch, ok, err := GetCurrentBranch(ctx, cr, repoRoot)
+	branch, ok, err := GetCurrentBranch(ctx, cr, repoRoot, nil)
 
 	require.NoError(t, err)
 	assert.False(t, ok)
@@ -228,7 +247,7 @@ func TestGetCurrentBranch_MultiLineOutput(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	_, _, err := GetCurrentBranch(ctx, cr, repoRoot)
+	_, _, err := GetCurrentBranch(ctx, cr, repoRoot, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EInternal, errors.GetCode(err))
@@ -246,7 +265,7 @@ func TestGetOriginInfo_Present(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	info := GetOriginInfo(ctx, cr, repoRoot)
+	info := GetOriginInfo(ctx, cr, repoRoot, nil)
 
 	assert.True(t, info.Present)
 	assert.Equal(t, "git@github.com:owner/repo.git", info.URL)
@@ -265,7 +284,7 @@ func TestGetOriginInfo_Missing(t *testing.T) {
 		ExitCode: 1, // git config returns 1 for missing key
 	})
 
-	info := GetOriginInfo(ctx, cr, repoRoot)
+	info := GetOriginInfo(ctx, cr, repoRoot, nil)
 
 	assert.False(t, info.Present)
 	assert.Empty(t, info.URL)
@@ -284,7 +303,7 @@ func TestGetOriginInfo_EmptyURL(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	info := GetOriginInfo(ctx, cr, repoRoot)
+	info := GetOriginInfo(ctx, cr, repoRoot, nil)
 
 	assert.False(t, info.Present)
 }
@@ -408,7 +427,7 @@ func TestHasCommits_HasCommits(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	has, err := HasCommits(ctx, cr, repoRoot)
+	has, err := HasCommits(ctx, cr, repoRoot, nil)
 	require.NoError(t, err)
 	assert.True(t, has)
 }
@@ -424,7 +443,7 @@ func TestHasCommits_NoCommits(t *testing.T) {
 		ExitCode: 128,
 	})
 
-	has, err := HasCommits(ctx, cr, repoRoot)
+	has, err := HasCommits(ctx, cr, repoRoot, nil)
 	require.NoError(t, err)
 	assert.False(t, has, "expected HasCommits = false for empty repo")
 }
@@ -442,7 +461,7 @@ func TestIsClean_Clean(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	clean, err := IsClean(ctx, cr, repoRoot)
+	clean, err := IsClean(ctx, cr, repoRoot, nil)
 	require.NoError(t, err)
 	assert.True(t, clean)
 }
@@ -458,7 +477,7 @@ func TestIsClean_Dirty(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	clean, err := IsClean(ctx, cr, repoRoot)
+	clean, err := IsClean(ctx, cr, repoRoot, nil)
 	require.NoError(t, err)
 	assert.False(t, clean, "expected IsClean = false for dirty tree")
 }
@@ -474,9 +493,27 @@ func TestIsClean_DirtyWithUntracked(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	clean, err := IsClean(ctx, cr, repoRoot)
+	clean, err := IsClean(ctx, cr, repoRoot, nil)
 	require.NoError(t, err)
 	assert.False(t, clean, "expected IsClean = false for untracked files")
+}
+
+func TestIsClean_PassesEnv(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cr := newStubRunner()
+	repoRoot := "/some/project"
+
+	cr.On("git", []string{"status", "--porcelain"}, repoRoot, exec.CmdResult{
+		Stdout:   "",
+		ExitCode: 0,
+	})
+
+	clean, err := IsClean(ctx, cr, repoRoot, map[string]string{"GIT_CONFIG_GLOBAL": "/tmp/gitconfig"})
+	require.NoError(t, err)
+	assert.True(t, clean)
+	require.Len(t, cr.calls, 1)
+	assert.Equal(t, map[string]string{"GIT_CONFIG_GLOBAL": "/tmp/gitconfig"}, cr.calls[0].Env)
 }
 
 // Tests for BranchExists
@@ -493,7 +530,7 @@ func TestBranchExists_Exists(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	exists, err := BranchExists(ctx, cr, repoRoot, branch)
+	exists, err := BranchExists(ctx, cr, repoRoot, branch, nil)
 	require.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -510,7 +547,7 @@ func TestBranchExists_NotExists(t *testing.T) {
 		ExitCode: 1,
 	})
 
-	exists, err := BranchExists(ctx, cr, repoRoot, branch)
+	exists, err := BranchExists(ctx, cr, repoRoot, branch, nil)
 	require.NoError(t, err)
 	assert.False(t, exists, "expected BranchExists = false for nonexistent branch")
 }
@@ -528,7 +565,7 @@ func TestGetOriginURL_Present(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	url := GetOriginURL(ctx, cr, repoRoot)
+	url := GetOriginURL(ctx, cr, repoRoot, nil)
 	assert.Equal(t, "git@github.com:owner/repo.git", url)
 }
 
@@ -543,6 +580,6 @@ func TestGetOriginURL_Missing(t *testing.T) {
 		ExitCode: 2,
 	})
 
-	url := GetOriginURL(ctx, cr, repoRoot)
+	url := GetOriginURL(ctx, cr, repoRoot, nil)
 	assert.Empty(t, url)
 }

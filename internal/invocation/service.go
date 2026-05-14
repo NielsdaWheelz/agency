@@ -77,6 +77,9 @@ type CreateOpts struct {
 
 	// RequestFingerprint records the durable fingerprint for ClientRequestID.
 	RequestFingerprint string
+
+	// Env overlays daemon-owned git commands for this invocation.
+	Env map[string]string
 }
 
 // CreateResult holds the result of a successful invocation creation.
@@ -176,12 +179,12 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		if gitWorktreeCreated {
 			// Remove worktree (best-effort)
 			args := []string{"-C", opts.RepoRoot, "worktree", "remove", "--force", sandboxTreePath}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{})
+			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if branchCreated {
 			// Delete branch (best-effort)
 			args := []string{"-C", opts.RepoRoot, "branch", "-D", sandboxBranch}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{})
+			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if invocationDirCreated {
 			// Remove invocation directory (best-effort)
@@ -205,7 +208,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	baseCommitResult, err := s.CR.Run(ctx, "git", []string{
 		"-C", opts.RepoRoot,
 		"rev-parse", integrationBranch,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
@@ -258,7 +261,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		integrationBranch,
 	}
 
-	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{})
+	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(

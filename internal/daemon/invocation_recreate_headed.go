@@ -3,7 +3,6 @@ package daemon
 import (
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -188,7 +187,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", "", requestID)
 		return
 	}
-	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath); err != nil {
+	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, prSyncNonInteractiveEnv(launchEnv)); err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", "", requestID)
 		return
 	}
@@ -240,19 +239,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 
 	runnerArgs := append([]string(nil), meta.RunnerArgs...)
-	envKeys := append([]string(nil), meta.CustomEnvKeys...)
-	seen := make(map[string]bool, len(envKeys)+len(launchEnv))
-	for _, key := range envKeys {
-		seen[key] = true
-	}
-	for _, key := range sortedEnvKeys(launchEnv) {
-		if !seen[key] {
-			envKeys = append(envKeys, key)
-			seen[key] = true
-		}
-	}
-	sort.Strings(envKeys)
-	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs, envKeys); err != nil {
+	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs, append([]string(nil), meta.CustomEnvKeys...)); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
 		return
@@ -265,6 +252,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = meta.CheckpointIncludeUntracked
+	cpConfig.Env = prSyncNonInteractiveEnv(launchEnv)
 	if s.CheckpointDebounceOverride != nil {
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
 		cpConfig.DriftInterval = *s.CheckpointDebounceOverride

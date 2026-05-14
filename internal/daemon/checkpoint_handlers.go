@@ -93,6 +93,15 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	sandboxPath := meta.SandboxPath
 	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
 	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
+	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EExecutionProfileNotFound
+		}
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+		return
+	}
 
 	// Create applier and apply checkpoint
 	applier := checkpoint.NewApplierWithWriter(
@@ -106,7 +115,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		s.InvocationEvents,
 	)
 
-	cp, err := applier.Apply(r.Context(), req.CheckpointID)
+	cp, err := applier.ApplyWithOptions(r.Context(), req.CheckpointID, checkpoint.ApplyOptions{Env: prSyncNonInteractiveEnv(profileEnv)})
 	if err != nil {
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:

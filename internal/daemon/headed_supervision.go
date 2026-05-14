@@ -27,7 +27,12 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	if err != nil {
 		return err
 	}
-	if err := s.installHeadedRunnerHooks(ctx, repoID, invocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath); err != nil {
+	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
+	if err != nil {
+		return fmt.Errorf("resolve execution profile env: %w", err)
+	}
+	env := prSyncNonInteractiveEnv(profileEnv)
+	if err := s.installHeadedRunnerHooks(ctx, repoID, invocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, env); err != nil {
 		return fmt.Errorf("install headed runner hooks: %w", err)
 	}
 
@@ -76,6 +81,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	eventsPath := s.Store.InvocationEventsPath(repoID, invocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = meta.CheckpointIncludeUntracked
+	cpConfig.Env = env
 	if s.CheckpointDebounceOverride != nil {
 		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
 		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
