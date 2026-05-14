@@ -19,8 +19,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/require"
@@ -55,9 +53,35 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dataDir := filepath.Join(tmpDir, "data")
+	configDir := filepath.Join(tmpDir, "config")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
-	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(tmpDir, "config"))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	t.Setenv("AGENCY_CACHE_DIR", filepath.Join(tmpDir, "cache"))
+	require.NoError(t, os.MkdirAll(dataDir, 0o700), "mkdir data dir")
+	require.NoError(t, os.MkdirAll(configDir, 0o700), "mkdir config dir")
+	userConfig, err := json.MarshalIndent(map[string]any{
+		"version": 4,
+		"defaults": map[string]any{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]any{
+			"claude-code": "claude",
+		},
+		"editors": map[string]any{
+			"code": "code",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]any{
+					"GH_TOKEN": token,
+				},
+			},
+		},
+	}, "", "  ")
+	require.NoError(t, err, "marshal user config")
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), append(userConfig, '\n'), 0o600), "write user config")
 
 	repoRoot := filepath.Join(tmpDir, "repo")
 	requireGHAuth(t, ctx, cr)
@@ -68,29 +92,7 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 
 	runID, err := core.NewRunID(time.Now())
 	require.NoError(t, err, "runID")
-	branch := fmt.Sprintf("agency/e2e-%s", runID)
 
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
-	require.NotEmpty(t, repoIdentity.RepoID, "repoID empty")
-
-	worktreePath := filepath.Join(dataDir, "repos", repoIdentity.RepoID, "worktrees", runID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(worktreePath), 0o755), "mkdir worktrees")
-	runCmd(t, ctx, cr, repoRoot, "git", "fetch", "origin", defaultBranch)
-	runCmd(t, ctx, cr, repoRoot, "git", "worktree", "add", "-b", branch, worktreePath, "origin/"+defaultBranch)
-
-	// Infrastructure files (agency.json, scripts/) use FIXED content so concurrent
-	// test runs don't conflict - Git auto-merges identical content.
-	// Only the e2e/<runID>/ directory contains unique-per-run data.
-	scriptsDir := filepath.Join(worktreePath, "scripts")
-	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "mkdir scripts")
-
-	// Fixed script content - same every run
-	writeScript(t, filepath.Join(scriptsDir, "agency_setup.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-	writeScript(t, filepath.Join(scriptsDir, "agency_verify.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-	writeScript(t, filepath.Join(scriptsDir, "agency_archive.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-
-	// Fixed agency.json content - same every run
 	agencyJSON := `{
   "version": 4,
   "scripts": {
@@ -113,7 +115,49 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
   }
 }
 `
-	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "agency.json"), []byte(agencyJSON), 0o644), "write agency.json")
+	repoScriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(repoScriptsDir, 0o755), "mkdir repo scripts")
+	writeScript(t, filepath.Join(repoScriptsDir, "agency_setup.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	writeScript(t, filepath.Join(repoScriptsDir, "agency_verify.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	writeScript(t, filepath.Join(repoScriptsDir, "agency_archive.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0o644), "write repo agency.json")
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	srv := daemon.NewServer(st, cr, fsys, configDir)
+	listener, err := net.Listen("unix", st.DaemonSocketPath())
+	require.NoError(t, err, "listen daemon socket")
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		<-serveDone
+	})
+	client := daemonclient.NewClient(st.DaemonSocketPath())
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
+	registeredRepo, err := client.RegisterRepo(ctx, repoRoot)
+	require.NoError(t, err, "RegisterRepo")
+	repoID := registeredRepo.Data.RepoID
+	require.NotEmpty(t, repoID, "registered repo id")
+	createResp, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+		RepoRoot:   repoRoot,
+		Name:       "e2e-" + runID,
+		BaseBranch: defaultBranch,
+	})
+	require.NoError(t, err, "WorktreeCreate")
+	require.True(t, createResp.OK, "worktree create response")
+	require.Equal(t, repoID, createResp.RepoID, "worktree repo id")
+	require.Equal(t, "personal", createResp.ExecutionProfile, "worktree execution profile")
+	require.Equal(t, filepath.Join(filepath.Dir(registeredRepo.Data.PreferredRoot), ".agency", "checkouts", repoID), createResp.CheckoutRoot, "worktree checkout root")
+	worktreeID := createResp.WorktreeID
+	branch := createResp.Branch
+	worktreePath := createResp.TreePath
+	require.NotEmpty(t, worktreeID, "worktree id")
+	require.NotEmpty(t, branch, "worktree branch")
+	require.Equal(t, filepath.Join(createResp.CheckoutRoot, "worktrees", "e2e-"+runID+"-"+core.ShortID(worktreeID)), worktreePath, "worktree path")
 
 	// Runner status lives under .agency/state/ and is read locally by PR sync.
 	stateDir := filepath.Join(worktreePath, ".agency", "state")
@@ -150,12 +194,9 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 		require.Fail(t, "git check-ignore .agency/state/runner_status.json unexpected exit code", "exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
 
-	// Add fixed infrastructure files + unique run data
+	// Repo-shared config lives at the registered canonical repo root; the PR
+	// branch only carries unique run data plus runner status when it is tracked.
 	addPaths := []string{
-		"agency.json",
-		"scripts/agency_setup.sh",
-		"scripts/agency_verify.sh",
-		"scripts/agency_archive.sh",
 		fmt.Sprintf("e2e/%s/", runID),
 	}
 	if !runnerStatusIgnored {
@@ -164,96 +205,23 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	runCmd(t, ctx, cr, worktreePath, "git", append([]string{"add"}, addPaths...)...)
 	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)
 
-	st := store.NewStore(fsys, dataDir, time.Now)
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	repoRecord := store.RepoRecord{
-		SchemaVersion:    store.SchemaVersion,
-		RepoKey:          repoIdentity.RepoKey,
-		RepoID:           repoIdentity.RepoID,
-		RepoRootLastSeen: repoRoot,
-		PreferredRoot:    repoRoot,
-		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
-		OriginPresent:    true,
-		OriginURL:        originInfo.URL,
-		OriginHost:       originInfo.Host,
-		Capabilities: store.Capabilities{
-			GitHubOrigin: repoIdentity.GitHubFlowAvailable,
-			OriginHost:   originInfo.Host,
-			GhAuthed:     true,
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	require.NoError(t, st.SaveRepoRecord(repoRecord), "SaveRepoRecord")
-
-	worktreeID := runID
-	_, err = st.EnsureIntegrationWorktreeDir(repoIdentity.RepoID, worktreeID)
-	require.NoError(t, err, "EnsureIntegrationWorktreeDir")
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoIdentity.RepoID, worktreeID, &store.IntegrationWorktreeMeta{
-		SchemaVersion:    store.SchemaVersion,
-		WorktreeID:       worktreeID,
-		Name:             "e2e-" + runID,
-		RepoID:           repoIdentity.RepoID,
-		Branch:           branch,
-		BaseBranch:       defaultBranch,
-		TreePath:         worktreePath,
-		CheckoutRoot:     filepath.Join(dataDir, "repos", repoIdentity.RepoID),
-		ExecutionProfile: "personal",
-		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
-		State:            store.WorktreeStatePresent,
-	}), "WriteIntegrationWorktreeMeta")
-
-	invocationID := runID
-	_, err = st.EnsureInvocationDir(repoIdentity.RepoID, invocationID)
-	require.NoError(t, err, "EnsureInvocationDir")
-	require.NoError(t, st.WriteInvocationMeta(repoIdentity.RepoID, invocationID, &store.InvocationMeta{
-		SchemaVersion:         store.SchemaVersion,
-		InvocationID:          invocationID,
-		InvocationName:        "e2e-" + runID,
-		IntegrationWorktreeID: worktreeID,
-		SandboxPath:           worktreePath,
-		CheckoutRoot:          filepath.Join(dataDir, "repos", repoIdentity.RepoID),
-		ExecutionProfile:      "personal",
-		SandboxBranch:         "agency/sandbox-" + runID,
-		BaseCommit:            "",
-		Runner:                "claude-code",
-		Mode:                  store.RunnerModeHeadless,
-		StartedAt:             time.Now().UTC().Format(time.RFC3339),
-		FinishedAt:            time.Now().UTC().Format(time.RFC3339),
-		Status:                store.InvocationStatusFinished,
-		ExitReason:            "exited",
-		LandingStatus:         store.LandingStatusLanded,
-	}), "WriteInvocationMeta")
-
-	configDir := filepath.Join(tmpDir, "config")
-	srv := daemon.NewServer(st, cr, fsys, configDir)
-	listener, err := net.Listen("unix", st.DaemonSocketPath())
-	require.NoError(t, err, "listen daemon socket")
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- srv.Serve(listener) }()
-	t.Cleanup(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		<-serveDone
-	})
-	client := daemonclient.NewClient(st.DaemonSocketPath())
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer waitCancel()
-	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
-
 	var prSyncStdout, prSyncStderr bytes.Buffer
 	require.NoError(t, WorktreePRSync(ctx, cr, fsys, repoRoot, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoRef:         repoIdentity.RepoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &prSyncStdout, &prSyncStderr), "worktree pr sync failed\nstderr:\n%s", prSyncStderr.String())
 
 	var prSyncPayload struct {
-		PRNumber int `json:"pr_number"`
+		OK        bool   `json:"ok"`
+		ErrorCode string `json:"error_code"`
+		Message   string `json:"message"`
+		Hint      string `json:"hint"`
+		PRNumber  int    `json:"pr_number"`
 	}
 	require.NoError(t, json.Unmarshal(prSyncStdout.Bytes(), &prSyncPayload), "decode pr sync JSON")
+	require.True(t, prSyncPayload.OK, "pr sync failed: code=%s message=%s hint=%s stdout=%s stderr=%s", prSyncPayload.ErrorCode, prSyncPayload.Message, prSyncPayload.Hint, prSyncStdout.String(), prSyncStderr.String())
 	prNumber := prSyncPayload.PRNumber
 	require.NotZero(t, prNumber, "pr_number not recorded")
 
@@ -272,7 +240,7 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	var mergeStdout, mergeStderr bytes.Buffer
 	require.NoError(t, WorktreePRMerge(ctx, cr, fsys, repoRoot, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoRef:         repoIdentity.RepoID,
+		RepoRef:         repoID,
 		Yes:             true,
 		DataDirOverride: dataDir,
 	}, &mergeStdout, &mergeStderr), "worktree pr merge failed\nstderr:\n%s", mergeStderr.String())

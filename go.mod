@@ -1,6 +1,6 @@
 module github.com/NielsdaWheelz/agency
 
-go 1.26.1
+go 1.26.3
 
 require (
 	charm.land/bubbletea/v2 v2.0.1
