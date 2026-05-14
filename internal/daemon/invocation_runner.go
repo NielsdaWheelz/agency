@@ -95,12 +95,12 @@ func loadMaxStreamSeq(path string) uint64 {
 	return maxSeq
 }
 
-func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, gitEnv map[string]string) (int, int, error) {
+func (s *Server) startRunner(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, gitEnv map[string]string, claim func(pid, pgid int) error) (int, int, error) {
 	args, err := runners.BuildHeadlessArgs(req.Runner, req.Prompt, result.SandboxPath, req.RunnerArgs)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to build runner args: %w", err)
 	}
-	return s.startRunnerWithArgs(ctx, repoID, result, repoRoot, integrationWorktreeID, req, args, "", gitEnv)
+	return s.startRunnerWithArgs(ctx, repoID, result, repoRoot, integrationWorktreeID, req, args, "", gitEnv, claim)
 }
 
 func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProcess, prompt string) (int, int, error) {
@@ -128,10 +128,12 @@ func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProc
 	return s.startRunnerWithArgs(ctx, proc.RepoID, &invocation.CreateResult{
 		InvocationID: proc.InvocationID,
 		SandboxPath:  proc.SandboxPath,
-	}, proc.RepoRoot, proc.IntegrationWorktreeID, req, args, resumeSessionID, prSyncNonInteractiveEnv(profileEnv))
+	}, proc.RepoRoot, proc.IntegrationWorktreeID, req, args, resumeSessionID, prSyncNonInteractiveEnv(profileEnv), func(pid, pgid int) error {
+		return s.claimHeadlessInvocationResume(proc.RepoID, proc.InvocationID, pid, pgid)
+	})
 }
 
-func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, args []string, resumeSessionID string, gitEnv map[string]string) (int, int, error) {
+func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, args []string, resumeSessionID string, gitEnv map[string]string, claim func(pid, pgid int) error) (int, int, error) {
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to load user config: %w", err)
@@ -297,6 +299,20 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	s.processes[result.InvocationID] = proc
 	s.mu.Unlock()
 
+	if claim != nil {
+		if err := claim(pid, pgid); err != nil {
+			s.clearInvocationProcessIfCurrent(result.InvocationID, proc)
+			if pgid > 0 {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			}
+			if proc.Relay != nil {
+				_ = proc.Relay.Close()
+			}
+			logFiles.Close()
+			return 0, 0, err
+		}
+	}
+
 	proc.streamWg.Add(2)
 	go s.streamAndParseOutput(proc, startedProc.StdoutPipe, rawFile, streamFile)
 	go s.streamOutput(proc, startedProc.StderrPipe, stderrFile)
@@ -408,7 +424,7 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 	}
 
 	if status == store.InvocationStatusFinished && len(queuedResumePrompts) > 0 && runners.SupportsResumeTurns(proc.Runner) {
-		pid, pgid, resumeErr := s.startRunnerResumeTurn(context.Background(), proc, queuedResumePrompts[0])
+		_, _, resumeErr := s.startRunnerResumeTurn(context.Background(), proc, queuedResumePrompts[0])
 		if resumeErr != nil {
 			status = store.InvocationStatusFailed
 			failureReason = "runner_resume_failed"
@@ -416,7 +432,6 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 			if len(queuedResumePrompts) > 1 {
 				s.enqueueFollowUpPrompts(proc.InvocationID, queuedResumePrompts[1:])
 			}
-			s.claimHeadlessInvocationResume(proc.RepoID, proc.InvocationID, pid, pgid)
 			return
 		}
 	}

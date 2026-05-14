@@ -1002,12 +1002,16 @@ func TestDaemonRunnerCrash(t *testing.T) {
 	startResp := startTestInvocation(t, env.Client, repoRoot, "crash-test", "exit-error")
 
 	// exit-error mode exits immediately with code 1.
-	meta := waitForInvocationTerminal(t, env.Store, startResp.RepoID, startResp.InvocationID, 5*time.Second)
-	assert.Equal(t, store.InvocationStatusFailed, meta.Status)
-	assert.Equal(t, "runner_exit_nonzero", meta.FailureReason)
-	if assert.NotNil(t, meta.ExitCode) {
-		assert.Equal(t, 1, *meta.ExitCode)
-	}
+	var meta *store.InvocationMeta
+	require.Eventually(t, func() bool {
+		var err error
+		meta, err = env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
+		return err == nil &&
+			meta.Status == store.InvocationStatusFailed &&
+			meta.FailureReason == "runner_exit_nonzero" &&
+			meta.ExitCode != nil &&
+			*meta.ExitCode == 1
+	}, 5*time.Second, 50*time.Millisecond, "runner crash did not persist nonzero exit details")
 }
 
 // ---------------------------------------------------------------------------

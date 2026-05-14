@@ -182,7 +182,24 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	pid, pgid, err := s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, prep.wtRecord.WorktreeID, req, gitEnv)
+	promptHash := sha256.Sum256([]byte(req.Prompt))
+	promptSHA := hex.EncodeToString(promptHash[:])
+	envKeys := sortedEnvKeys(requestEnv)
+	runnerArgs := append([]string(nil), req.RunnerArgs...)
+	claim := func(pid, pgid int) error {
+		return s.claimHeadlessInvocationStart(
+			repoIdentity.RepoID,
+			createResult.InvocationID,
+			req.Runner,
+			pid,
+			pgid,
+			s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID),
+			promptSHA,
+			runnerArgs,
+			envKeys,
+		)
+	}
+	_, _, err = s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, prep.wtRecord.WorktreeID, req, gitEnv, claim)
 	if err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "spawn_failed", gitEnv)
 		code := errors.GetCode(err)
@@ -194,26 +211,6 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 
 	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
-
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	promptSHA := hex.EncodeToString(promptHash[:])
-	envKeys := sortedEnvKeys(requestEnv)
-	runnerArgs := append([]string(nil), req.RunnerArgs...)
-
-	if err := s.claimHeadlessInvocationStart(
-		repoIdentity.RepoID,
-		createResult.InvocationID,
-		req.Runner,
-		pid,
-		pgid,
-		s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID),
-		promptSHA,
-		runnerArgs,
-		envKeys,
-	); err != nil {
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", req.ClientRequestID)
-		return
-	}
 
 	meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	if err != nil {

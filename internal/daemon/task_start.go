@@ -433,7 +433,18 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 		ClientRequestID:    req.ClientRequestID,
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	}
-	pid, pgid, err := s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq, gitEnv)
+	promptHash := sha256.Sum256([]byte(req.Prompt))
+	promptSHA := hex.EncodeToString(promptHash[:])
+	runnerArgs := append([]string(nil), req.RunnerArgs...)
+	claim := func(pid, pgid int) error {
+		if err := s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys); err != nil {
+			return err
+		}
+		return s.Store.UpdateInvocationMeta(repoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
+			meta.TaskID = taskID
+		})
+	}
+	_, _, err = s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq, gitEnv, claim)
 	if err != nil {
 		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "spawn_failed", gitEnv)
 		code := errors.GetCode(err)
@@ -441,18 +452,6 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 			code = errors.ERunnerStartFailed
 		}
 		return nil, newTaskStartFailure(http.StatusInternalServerError, code, err.Error(), "")
-	}
-
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	promptSHA := hex.EncodeToString(promptHash[:])
-	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	if err := s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys); err != nil {
-		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
-	}
-	if err := s.Store.UpdateInvocationMeta(repoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
-		meta.TaskID = taskID
-	}); err != nil {
-		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
 	}
 
 	meta, err := s.Store.ReadInvocationMeta(repoID, createResult.InvocationID)

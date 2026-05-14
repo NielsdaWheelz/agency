@@ -51,10 +51,10 @@ func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner strin
 	})
 }
 
-func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid, pgid int) {
+func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid, pgid int) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.PID = &pid
 		meta.PGID = &pgid
