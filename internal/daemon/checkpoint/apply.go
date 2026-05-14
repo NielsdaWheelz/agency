@@ -18,12 +18,15 @@ import (
 // ApplyOptions controls checkpoint apply behavior for different callers.
 type ApplyOptions struct {
 	// RewindHeadToSnapshotBase resets HEAD to checkpoint.sandbox_head_sha before
-	// restoring the snapshot tree. This gives true retry semantics for restart.
+	// restoring the snapshot tree.
 	RewindHeadToSnapshotBase bool
 
 	// BackupRefPrefix controls where pre-apply HEAD backup refs are written.
 	// Defaults to RestoreBackupRefPrefix when empty.
 	BackupRefPrefix string
+
+	// Env overlays every git command the applier runs.
+	Env map[string]string
 }
 
 // Applier handles checkpoint rollback operations.
@@ -111,18 +114,18 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	}
 
 	// 3. Verify the snapshot commit exists
-	if err := a.verifyCommitExists(ctx, cp.SnapshotCommit); err != nil {
+	if err := a.verifyCommitExists(ctx, cp.SnapshotCommit, opts.Env); err != nil {
 		return nil, errors.New(errors.ECheckpointNotFound, fmt.Sprintf("snapshot commit %s not found or inaccessible", cp.SnapshotCommit))
 	}
 
 	snapshotBase := ""
 	if opts.RewindHeadToSnapshotBase {
-		snapshotBase, err = a.resolveSnapshotBase(ctx, cp)
-		if err != nil {
-			if errors.GetCode(err) != "" {
-				return nil, err
-			}
-			return nil, errors.Wrap(errors.ECheckpointFailed, "failed to resolve checkpoint base commit", err)
+		snapshotBase = strings.TrimSpace(cp.SandboxHeadSHA)
+		if snapshotBase == "" {
+			return nil, errors.New(errors.ECheckpointFailed, "checkpoint missing sandbox_head_sha")
+		}
+		if err := a.verifyCommitExists(ctx, snapshotBase, opts.Env); err != nil {
+			return nil, errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint sandbox head commit %s not found", snapshotBase))
 		}
 	}
 
@@ -132,17 +135,17 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	}
 
 	// 5. Capture and persist pre-apply HEAD for safety/recovery.
-	preApplyHead, err := a.currentHead(ctx)
+	preApplyHead, err := a.currentHead(ctx, opts.Env)
 	if err != nil {
 		return nil, errors.Wrap(errors.ERollbackFailed, "failed to resolve pre-apply HEAD", err)
 	}
 	backupRef := a.buildBackupRef(backupPrefix, checkpointID)
-	if err := a.createBackupRef(ctx, backupRef, preApplyHead); err != nil {
+	if err := a.createBackupRef(ctx, backupRef, preApplyHead, opts.Env); err != nil {
 		return nil, errors.Wrap(errors.ERollbackFailed, "failed to create pre-apply backup ref", err)
 	}
 
 	restoreWithRecovery := func(restoreErr error, message string) error {
-		recoverErr := a.recoverPreApplyState(preApplyHead)
+		recoverErr := a.recoverPreApplyState(preApplyHead, opts.Env)
 		if recoverErr != nil {
 			return errors.New(
 				errors.ERollbackFailed,
@@ -160,17 +163,17 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	if opts.RewindHeadToSnapshotBase {
 		resetTarget = snapshotBase
 	}
-	if err := a.gitResetHard(ctx, resetTarget); err != nil {
+	if err := a.gitResetHard(ctx, resetTarget, opts.Env); err != nil {
 		return nil, restoreWithRecovery(err, "failed to reset sandbox")
 	}
 
 	// 7. Remove untracked files/directories.
-	if err := a.gitClean(ctx); err != nil {
+	if err := a.gitClean(ctx, opts.Env); err != nil {
 		return nil, restoreWithRecovery(err, "failed to clean sandbox")
 	}
 
 	// 8. Restore exact tree/index state from snapshot commit.
-	if err := a.gitReadTree(ctx, cp.SnapshotCommit); err != nil {
+	if err := a.gitReadTree(ctx, cp.SnapshotCommit, opts.Env); err != nil {
 		return nil, restoreWithRecovery(err, "failed to restore snapshot tree")
 	}
 
@@ -182,11 +185,11 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	return cp, nil
 }
 
-func (a *Applier) verifyCommitExists(ctx context.Context, sha string) error {
+func (a *Applier) verifyCommitExists(ctx context.Context, sha string, env map[string]string) error {
 	verifyResult, err := a.runner.Run(ctx, "git", []string{
 		"-C", a.sandboxPath,
 		"cat-file", "-t", sha,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -196,44 +199,11 @@ func (a *Applier) verifyCommitExists(ctx context.Context, sha string) error {
 	return nil
 }
 
-func (a *Applier) resolveSnapshotBase(ctx context.Context, cp *Checkpoint) (string, error) {
-	if cp == nil {
-		return "", errors.New(errors.ECheckpointFailed, "checkpoint is nil")
-	}
-	if base := strings.TrimSpace(cp.SandboxHeadSHA); base != "" {
-		if err := a.verifyCommitExists(ctx, base); err != nil {
-			return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint sandbox head commit %s not found", base))
-		}
-		return base, nil
-	}
-
-	// Backward-compat fallback for legacy checkpoints without sandbox_head_sha:
-	// derive base from snapshot commit parent.
-	result, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"rev-parse", cp.SnapshotCommit + "^",
-	}, exec.RunOpts{})
-	if err != nil {
-		return "", err
-	}
-	if result.ExitCode != 0 {
-		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit for %s not found", cp.SnapshotCommit))
-	}
-	base := strings.TrimSpace(result.Stdout)
-	if base == "" {
-		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit for %s is empty", cp.SnapshotCommit))
-	}
-	if err := a.verifyCommitExists(ctx, base); err != nil {
-		return "", errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint base commit %s not found", base))
-	}
-	return base, nil
-}
-
-func (a *Applier) currentHead(ctx context.Context) (string, error) {
+func (a *Applier) currentHead(ctx context.Context, env map[string]string) (string, error) {
 	result, err := a.runner.Run(ctx, "git", []string{
 		"-C", a.sandboxPath,
 		"rev-parse", "HEAD",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return "", err
 	}
@@ -253,11 +223,11 @@ func (a *Applier) buildBackupRef(prefix string, checkpointID int) string {
 	)
 }
 
-func (a *Applier) createBackupRef(ctx context.Context, backupRef, headSHA string) error {
+func (a *Applier) createBackupRef(ctx context.Context, backupRef, headSHA string, env map[string]string) error {
 	result, err := a.runner.Run(ctx, "git", []string{
 		"-C", a.sandboxPath,
 		"update-ref", backupRef, headSHA,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -267,12 +237,12 @@ func (a *Applier) createBackupRef(ctx context.Context, backupRef, headSHA string
 	return nil
 }
 
-func (a *Applier) gitResetHard(ctx context.Context, target string) error {
+func (a *Applier) gitResetHard(ctx context.Context, target string, env map[string]string) error {
 	args := []string{"-C", a.sandboxPath, "reset", "--hard"}
 	if strings.TrimSpace(target) != "" {
 		args = append(args, target)
 	}
-	result, err := a.runner.Run(ctx, "git", args, exec.RunOpts{})
+	result, err := a.runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -282,11 +252,11 @@ func (a *Applier) gitResetHard(ctx context.Context, target string) error {
 	return nil
 }
 
-func (a *Applier) gitClean(ctx context.Context) error {
+func (a *Applier) gitClean(ctx context.Context, env map[string]string) error {
 	result, err := a.runner.Run(ctx, "git", []string{
 		"-C", a.sandboxPath,
 		"clean", "-fd",
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -296,11 +266,11 @@ func (a *Applier) gitClean(ctx context.Context) error {
 	return nil
 }
 
-func (a *Applier) gitReadTree(ctx context.Context, snapshotCommit string) error {
+func (a *Applier) gitReadTree(ctx context.Context, snapshotCommit string, env map[string]string) error {
 	result, err := a.runner.Run(ctx, "git", []string{
 		"-C", a.sandboxPath,
 		"read-tree", "--reset", "-u", snapshotCommit,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -310,14 +280,14 @@ func (a *Applier) gitReadTree(ctx context.Context, snapshotCommit string) error 
 	return nil
 }
 
-func (a *Applier) recoverPreApplyState(preApplyHead string) error {
+func (a *Applier) recoverPreApplyState(preApplyHead string, env map[string]string) error {
 	recoverCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.gitResetHard(recoverCtx, preApplyHead); err != nil {
+	if err := a.gitResetHard(recoverCtx, preApplyHead, env); err != nil {
 		return err
 	}
-	if err := a.gitClean(recoverCtx); err != nil {
+	if err := a.gitClean(recoverCtx, env); err != nil {
 		return err
 	}
 	return nil

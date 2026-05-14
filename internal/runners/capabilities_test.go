@@ -25,13 +25,11 @@ func TestResolve(t *testing.T) {
 		wantID  string
 		wantErr bool
 	}{
-		{name: "legacy claude alias", input: "claude", wantID: "claude-code"},
 		{name: "canonical claude-code", input: "claude-code", wantID: "claude-code"},
 		{name: "codex", input: "codex", wantID: "codex"},
 		{name: "amp", input: "amp", wantID: "amp"},
 		{name: "opencode", input: "opencode", wantID: "opencode"},
 		{name: "cursor", input: "cursor", wantID: "cursor"},
-		{name: "legacy cursor-cli alias", input: "cursor-cli", wantID: "cursor"},
 		{name: "droid", input: "droid", wantID: "droid"},
 		{name: "unknown", input: "unknown", wantErr: true},
 		{name: "empty", input: "", wantErr: true},
@@ -76,9 +74,12 @@ func TestValidateArgs(t *testing.T) {
 	require.Error(t, ValidateArgs("droid", []string{"--input-format", "text"}))
 	require.NoError(t, ValidateArgs("amp", []string{"--model", "amp-fast"}))
 
-	// Permission flags are allowed in headed mode (user at terminal).
-	require.NoError(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
+	// Approval flags remain runner-specific in headed mode, except for Claude's
+	// bypass shortcut which Agency owns through typed permission-mode handling.
+	require.Error(t, ValidateArgs("claude-code", []string{"--dangerously-skip-permissions"}))
 	require.NoError(t, ValidateArgs("codex", []string{"--full-auto"}))
+	require.NoError(t, ValidateArgs("codex", []string{"--ask-for-approval", "never"}))
+	require.NoError(t, ValidateArgs("codex", []string{"--sandbox", "workspace-write"}))
 	require.NoError(t, ValidateArgs("cursor", []string{"--force"}))
 	require.NoError(t, ValidateArgs("opencode", []string{"--mode", "safe"}))
 }
@@ -93,8 +94,12 @@ func TestValidateHeadlessArgs(t *testing.T) {
 
 	// Permission/approval flags rejected in headless mode — Agency controls them.
 	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--dangerously-skip-permissions"}))
-	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "default"}))
-	require.Error(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode=acceptEdits"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"-a", "never"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--ask-for-approval", "never"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--ask-for-approval=never"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"-s", "workspace-write"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--sandbox", "workspace-write"}))
+	require.Error(t, ValidateHeadlessArgs("codex", []string{"--sandbox=workspace-write"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--full-auto"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox"}))
 	require.Error(t, ValidateHeadlessArgs("codex", []string{"--yolo"}))
@@ -107,6 +112,7 @@ func TestValidateHeadlessArgs(t *testing.T) {
 
 	// Non-conflicting flags pass.
 	require.NoError(t, ValidateHeadlessArgs("claude-code", []string{"--model", "opus"}))
+	require.NoError(t, ValidateHeadlessArgs("claude-code", []string{"--permission-mode", "bypassPermissions"}))
 	require.NoError(t, ValidateHeadlessArgs("codex", []string{"--model", "gpt-5"}))
 	require.NoError(t, ValidateHeadlessArgs("opencode", []string{"--model", "open"}))
 }
@@ -114,13 +120,13 @@ func TestValidateHeadlessArgs(t *testing.T) {
 func TestBuildHeadlessArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildHeadlessArgs("claude", "fix bug", "/sandbox", []string{"--model", "opus"})
+	claudeArgs, err := BuildHeadlessArgs("claude-code", "fix bug", "/sandbox", []string{"--model", "opus", "--permission-mode", "bypassPermissions"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"}, claudeArgs)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--model", "opus", "--permission-mode", "bypassPermissions", "fix bug"}, claudeArgs)
 
 	codexArgs, err := BuildHeadlessArgs("codex", "fix bug", "/sandbox", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--cd", "/sandbox", "--json", "--full-auto", "--model", "gpt-5", "fix bug"}, codexArgs)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", "/sandbox", "--json", "--model", "gpt-5", "--disable", "unified_exec", "fix bug"}, codexArgs)
 
 	ampArgs, err := BuildHeadlessArgs("amp", "fix bug", "/sandbox", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
@@ -150,13 +156,21 @@ func TestBuildHeadlessArgs_RequiresPrompt(t *testing.T) {
 func TestBuildResumeArgs(t *testing.T) {
 	t.Parallel()
 
+	claudeArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "", []string{"--model", "opus", "--permission-mode", "bypassPermissions"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--continue", "--model", "opus", "--permission-mode", "bypassPermissions", "continue from previous turn"}, claudeArgs)
+
+	claudeExplicitArgs, err := BuildResumeArgs("claude-code", "continue from previous turn", "sess_abc123", []string{"--model", "opus", "--permission-mode", "bypassPermissions"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--resume", "sess_abc123", "--model", "opus", "--permission-mode", "bypassPermissions", "continue from previous turn"}, claudeExplicitArgs)
+
 	codexArgs, err := BuildResumeArgs("codex", "continue from previous turn", "", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "resume", "--last", "--json", "--full-auto", "--model", "gpt-5", "continue from previous turn"}, codexArgs)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "resume", "--last", "--json", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexArgs)
 
 	codexExplicitArgs, err := BuildResumeArgs("codex", "continue from previous turn", "thread_abc123", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "resume", "thread_abc123", "--json", "--full-auto", "--model", "gpt-5", "continue from previous turn"}, codexExplicitArgs)
+	assert.Equal(t, []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "resume", "thread_abc123", "--json", "--model", "gpt-5", "--disable", "unified_exec", "continue from previous turn"}, codexExplicitArgs)
 
 	cursorArgs, err := BuildResumeArgs("cursor", "continue from previous turn", "", []string{"--model", "sonnet-4.6-thinking"})
 	require.NoError(t, err)
@@ -170,6 +184,7 @@ func TestBuildResumeArgs(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
 
+	assert.True(t, SupportsResumeTurns("claude-code"))
 	assert.True(t, SupportsResumeTurns("codex"))
 	assert.True(t, SupportsResumeTurns("cursor"))
 	assert.False(t, SupportsResumeTurns("amp"))
@@ -178,13 +193,13 @@ func TestBuildResumeArgs(t *testing.T) {
 func TestBuildHeadedArgs(t *testing.T) {
 	t.Parallel()
 
-	claudeArgs, err := BuildHeadedArgs("claude", []string{"--model", "opus"})
+	claudeArgs, err := BuildHeadedArgs("claude-code", []string{"--model", "opus"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--model", "opus"}, claudeArgs)
 
 	codexArgs, err := BuildHeadedArgs("codex", []string{"--model", "gpt-5"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--model", "gpt-5"}, codexArgs)
+	assert.Equal(t, []string{"--model", "gpt-5", "--enable", "codex_hooks"}, codexArgs)
 
 	ampArgs, err := BuildHeadedArgs("amp", []string{"--model", "amp-fast"})
 	require.NoError(t, err)
@@ -203,26 +218,24 @@ func TestBuildHeadedArgs(t *testing.T) {
 	assert.Equal(t, []string{"--model", "droid-1"}, droidArgs)
 }
 
-func TestChatMode(t *testing.T) {
+func TestFollowUpMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		runner string
-		want   ChatMode
+		want   FollowUpMode
 	}{
-		{"claude-code", ChatModeStdin},
-		{"claude", ChatModeStdin},
-		{"codex", ChatModeResume},
-		{"amp", ChatModeStdin},
-		{"opencode", ChatModeResume},
-		{"cursor", ChatModeResume},
-		{"cursor-cli", ChatModeResume},
-		{"droid", ChatModeStdin},
+		{"claude-code", FollowUpModeResume},
+		{"codex", FollowUpModeResume},
+		{"amp", FollowUpModeStdin},
+		{"opencode", FollowUpModeResume},
+		{"cursor", FollowUpModeResume},
+		{"droid", FollowUpModeStdin},
 	}
 	for _, tt := range tests {
 		t.Run(tt.runner, func(t *testing.T) {
 			t.Parallel()
-			mode, err := ResolveChatMode(tt.runner)
+			mode, err := ResolveFollowUpMode(tt.runner)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, mode)
 		})
@@ -236,13 +249,11 @@ func TestInitialPromptMode(t *testing.T) {
 		runner string
 		want   InitialPromptMode
 	}{
-		{"claude-code", InitialPromptStdin},
-		{"claude", InitialPromptStdin},
+		{"claude-code", InitialPromptPositional},
 		{"codex", InitialPromptPositional},
 		{"amp", InitialPromptStdin},
 		{"opencode", InitialPromptPositional},
 		{"cursor", InitialPromptPositional},
-		{"cursor-cli", InitialPromptPositional},
 		{"droid", InitialPromptStdin},
 	}
 	for _, tt := range tests {
@@ -255,9 +266,9 @@ func TestInitialPromptMode(t *testing.T) {
 	}
 }
 
-func TestChatMode_UnknownRunner(t *testing.T) {
+func TestFollowUpMode_UnknownRunner(t *testing.T) {
 	t.Parallel()
-	_, err := ResolveChatMode("unknown")
+	_, err := ResolveFollowUpMode("unknown")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
 }
@@ -265,11 +276,9 @@ func TestChatMode_UnknownRunner(t *testing.T) {
 func TestHasSemanticAdapter(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, HasSemanticAdapter("claude"))
 	assert.True(t, HasSemanticAdapter("claude-code"))
 	assert.True(t, HasSemanticAdapter("codex"))
 	assert.True(t, HasSemanticAdapter("cursor"))
-	assert.True(t, HasSemanticAdapter("cursor-cli"))
 	assert.False(t, HasSemanticAdapter("amp"))
 	assert.False(t, HasSemanticAdapter("opencode"))
 	assert.False(t, HasSemanticAdapter("droid"))

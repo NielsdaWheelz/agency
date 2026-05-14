@@ -1,0 +1,14 @@
+{
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
+  },
+  "runner_defaults": []
+}

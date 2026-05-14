@@ -25,7 +25,7 @@ type RunConfig struct {
 	// WorkDir is the worktree root directory (cwd for script execution).
 	WorkDir string
 
-	// Script is the exact script string to execute (from agency.json).
+	// Script is the exact script path to execute.
 	Script string
 
 	// Env is the full environment for the script. Caller provides merged env.
@@ -45,9 +45,7 @@ type RunConfig struct {
 	RecordPath string
 }
 
-// GracePeriod is the duration to wait between SIGINT and SIGKILL when
-// terminating a verify process (timeout or cancellation).
-const GracePeriod = 3 * time.Second
+const gracePeriod = 3 * time.Second
 
 // Run executes the verify script and writes the canonical verify_record.json.
 //
@@ -100,9 +98,9 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	record.StartedAt = startTime.Format(time.RFC3339Nano)
 
 	// Write header to log file (matching setup.log style, best-effort diagnostic output)
-	_, _ = fmt.Fprintf(logFile, "# agency verify log\n")
+	_, _ = fmt.Fprintf(logFile, "# verify log\n")
 	_, _ = fmt.Fprintf(logFile, "# timestamp: %s\n", startTime.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(logFile, "# command: sh -lc %s\n", cfg.Script)
+	_, _ = fmt.Fprintf(logFile, "# command: %s\n", cfg.Script)
 	_, _ = fmt.Fprintf(logFile, "# cwd: %s\n", cfg.WorkDir)
 	_, _ = fmt.Fprintf(logFile, "# ---\n\n")
 
@@ -122,7 +120,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		return record, fmt.Errorf("failed to open /dev/null: %w", err)
 	}
 	// Start process in its own process group for clean signal handling.
-	proc, err := exec.StartProcess(timeoutCtx, "sh", []string{"-lc", cfg.Script}, exec.StartOpts{
+	proc, err := exec.StartProcess(timeoutCtx, cfg.Script, nil, exec.StartOpts{
 		Dir:     cfg.WorkDir,
 		EnvList: cfg.Env,
 		Stdin:   devnull,
@@ -212,19 +210,19 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	}
 
 	// Read verify.json (optional structured output)
-	vjResult := ReadVerifyJSON(cfg.VerifyJSONPath)
-	if vjResult.Exists {
+	vjResult := readVerifyJSON(cfg.VerifyJSONPath)
+	if vjResult.exists {
 		record.VerifyJSONPath = &cfg.VerifyJSONPath
-		if vjResult.Err != nil && record.Error == nil {
+		if vjResult.err != nil && record.Error == nil {
 			// Record parse/validation error only if no other internal error
-			errStr := vjResult.Err.Error()
+			errStr := vjResult.err.Error()
 			record.Error = &errStr
 		}
 	}
 
 	// Derive OK and Summary using precedence rules
-	record.OK = DeriveOK(timedOut, cancelled, record.ExitCode, vjResult.VJ)
-	record.Summary = DeriveSummary(timedOut, cancelled, record.ExitCode, vjResult.VJ)
+	record.OK = deriveOK(timedOut, cancelled, record.ExitCode, vjResult.value)
+	record.Summary = deriveSummary(timedOut, cancelled, record.ExitCode, vjResult.value)
 
 	// Write verify_record.json atomically
 	if err := fs.WriteJSONAtomic(cfg.RecordPath, record, 0o644); err != nil {
@@ -234,14 +232,14 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	return record, nil
 }
 
-// killProcessGroup sends SIGINT to the process group, waits GracePeriod,
+// killProcessGroup sends SIGINT to the process group, waits gracePeriod,
 // then sends SIGKILL to the process group.
 func killProcessGroup(pgid int) {
 	// Send SIGINT to process group (negative pgid targets the group)
 	_ = syscall.Kill(-pgid, syscall.SIGINT)
 
 	// Wait grace period
-	time.Sleep(GracePeriod)
+	time.Sleep(gracePeriod)
 
 	// Send SIGKILL to process group
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)

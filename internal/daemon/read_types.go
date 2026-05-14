@@ -1,8 +1,16 @@
 // Package daemon implements the agency daemon supervisor.
-// This file defines types for the read API (PR-12).
 package daemon
 
+import "encoding/json"
+
 // ----- Response Envelope -----
+
+// Result is the canonical decoded daemon response surface used by callers once
+// the wire envelope has been parsed.
+type Result[T any] struct {
+	Data      T
+	RequestID string
+}
 
 // APIResponse is the standard response envelope for all read endpoints.
 // All responses include the envelope fields; data is type-specific.
@@ -21,6 +29,22 @@ type APIResponse struct {
 	Details   interface{} `json:"details,omitempty"`
 }
 
+// RawAPIResponse is the canonical transport envelope for read-client decoding.
+// Clients should decode this envelope once, then unmarshal Data into the
+// daemon DTO for the requested capability instead of redefining the envelope.
+type RawAPIResponse struct {
+	OK           bool            `json:"ok"`
+	APIVersion   int             `json:"api_version"`
+	BuildVersion string          `json:"build_version,omitempty"`
+	GitSHA       string          `json:"git_sha,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	Hint         string          `json:"hint,omitempty"`
+	Details      json.RawMessage `json:"details,omitempty"`
+}
+
 // AmbiguousDetails is the details shape for E_AMBIGUOUS errors.
 type AmbiguousDetails struct {
 	Candidates []string `json:"candidates"`
@@ -34,62 +58,147 @@ type InvalidQueryArgumentDetails struct {
 	AllowedValues []string `json:"allowed_values"`
 }
 
-// CursorInvalidDetails is the details shape for E_CURSOR_INVALID errors.
-type CursorInvalidDetails struct {
-	Reason string `json:"reason"`
-}
-
 // ----- WorktreeDTO -----
 
 // WorktreeDTO is the canonical DTO for integration worktree responses.
 type WorktreeDTO struct {
-	WorktreeID   string `json:"worktree_id"`
-	Name         string `json:"name"`
-	RepoID       string `json:"repo_id"`
-	Branch       string `json:"branch"`
-	ParentBranch string `json:"parent_branch"`
-	TreePath     string `json:"tree_path"`
-	State        string `json:"state"` // "present" or "archived"
-	CreatedAt    string `json:"created_at"`
-	LastUsedAt   string `json:"last_used_at,omitempty"`
+	WorktreeID       string            `json:"worktree_id"`
+	WorktreeName     string            `json:"worktree_name"`
+	RepoID           string            `json:"repo_id"`
+	RepoName         string            `json:"repo_name"`
+	Branch           string            `json:"branch"`
+	BaseBranch       string            `json:"base_branch"`
+	TreePath         string            `json:"tree_path"`
+	CheckoutRoot     string            `json:"checkout_root"`
+	ExecutionProfile string            `json:"execution_profile"`
+	State            string            `json:"state"` // "present" or "archived"
+	CreatedAt        string            `json:"created_at"`
+	LastUsedAt       string            `json:"last_used_at,omitempty"`
+	Merge            *WorktreeMergeDTO `json:"merge,omitempty"`
+}
+
+// WorktreeMergeDTO is the canonical daemon read shape for durable worktree merge state.
+type WorktreeMergeDTO struct {
+	AttemptID string `json:"attempt_id"`
+	RequestID string `json:"request_id,omitempty"`
+
+	State         string `json:"state"` // running, succeeded, failed
+	Stage         string `json:"stage"` // preflight, verify, merge, archive, completed
+	StatusSummary string `json:"status_summary,omitempty"`
+
+	Strategy     string `json:"strategy"`
+	DeleteBranch bool   `json:"delete_branch"`
+
+	Branch   string `json:"branch,omitempty"`
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+
+	MergeLogPath   string `json:"merge_log_path,omitempty"`
+	VerifyLogPath  string `json:"verify_log_path,omitempty"`
+	ArchiveLogPath string `json:"archive_log_path,omitempty"`
+
+	StartedAt  string `json:"started_at"`
+	UpdatedAt  string `json:"updated_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	Hint         string `json:"hint,omitempty"`
 }
 
 // ----- InvocationDTO -----
 
+// InvocationState is the canonical invocation state exposed by daemon reads.
+type InvocationState string
+
+const (
+	InvocationStateStarting  InvocationState = "starting"
+	InvocationStateRunning   InvocationState = "running"
+	InvocationStateWaiting   InvocationState = "waiting"
+	InvocationStateStopping  InvocationState = "stopping"
+	InvocationStateSucceeded InvocationState = "succeeded"
+	InvocationStateFailed    InvocationState = "failed"
+)
+
 // InvocationDTO is the canonical DTO for invocation responses.
 // Used by both list and show endpoints (no separate summary DTO).
 type InvocationDTO struct {
-	InvocationID   string `json:"invocation_id"`
-	InvocationName string `json:"invocation_name,omitempty"`
-	WorktreeID     string `json:"worktree_id"`
-	RepoID         string `json:"repo_id"`
-	Runner         string `json:"runner"`
-	Mode           string `json:"mode"` // "headed" or "headless"
+	InvocationID     string `json:"invocation_id"`
+	InvocationName   string `json:"invocation_name,omitempty"`
+	WorktreeID       string `json:"worktree_id"`
+	WorktreeName     string `json:"worktree_name"`
+	RepoID           string `json:"repo_id"`
+	RepoName         string `json:"repo_name"`
+	Runner           string `json:"runner"`
+	Mode             string `json:"mode"` // "headed" or "headless"
+	TmuxSession      string `json:"tmux_session,omitempty"`
+	CheckoutRoot     string `json:"checkout_root"`
+	ExecutionProfile string `json:"execution_profile"`
 
 	// Timestamps
 	StartedAt    string `json:"started_at"`
 	FinishedAt   string `json:"finished_at,omitempty"`
 	LastOutputAt string `json:"last_output_at,omitempty"`
 
-	// Lifecycle status
-	Status     string `json:"status"`      // starting, running, finished, failed
+	// Canonical invocation state.
+	State      string `json:"state"` // starting, running, waiting, stopping, succeeded, failed
+	Reason     string `json:"reason,omitempty"`
 	ExitReason string `json:"exit_reason"` // exited, killed, stopped, start_failed, unknown
 	ExitCode   *int   `json:"exit_code,omitempty"`
-
-	// Semantic status (headless only)
-	SemanticStatus string `json:"semantic_status,omitempty"` // working, needs_input, blocked, ready_for_review
 
 	// Landing status
 	LandingStatus string `json:"landing_status,omitempty"` // pending, landed, discarded
 
-	// Derived display fields (computed by daemon)
-	DisplayStatus  string   `json:"display_status"`  // daemon-derived human-readable status
+	// Workspace/list/show policy projection.
+	PRSyncEligible bool `json:"pr_sync_eligible"`
+
 	AttentionFlags []string `json:"attention_flags"` // daemon-derived flags
 	SortKey        int      `json:"sort_key"`        // daemon-derived priority for rendering
+
+	// Shared activity projection.
+	StatusSummary  string                        `json:"status_summary,omitempty"`
+	LatestActivity *InvocationLatestActivity     `json:"latest_activity,omitempty"`
+	Navigation     *InvocationActivityNavigation `json:"navigation,omitempty"`
 
 	// Paths
 	SandboxPath string `json:"sandbox_path"`
 	LogsDir     string `json:"logs_dir,omitempty"`
+}
+
+// InvocationLatestActivity summarizes the latest meaningful invocation activity.
+// Shared across list/watch/show surfaces.
+type InvocationLatestActivity struct {
+	TurnID    string `json:"turn_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+
+	ToolCallCount int                          `json:"tool_call_count,omitempty"`
+	ToolCalls     []InvocationActivityToolCall `json:"tool_calls,omitempty"`
+
+	CheckpointID           int      `json:"checkpoint_id,omitempty"`
+	Restorable             bool     `json:"restorable,omitempty"`
+	CheckpointDescription  string   `json:"checkpoint_description,omitempty"`
+	CheckpointDiffstat     string   `json:"checkpoint_diffstat,omitempty"`
+	CheckpointChangedPaths []string `json:"checkpoint_changed_paths,omitempty"`
+	CheckpointChangedCount int      `json:"checkpoint_changed_count,omitempty"`
+	CheckpointPathsTrimmed bool     `json:"checkpoint_paths_trimmed,omitempty"`
+}
+
+// InvocationActivityToolCall summarizes one tool call in latest_activity.
+type InvocationActivityToolCall struct {
+	Name     string `json:"name,omitempty"`
+	Command  string `json:"command,omitempty"`
+	HasExit  bool   `json:"has_exit,omitempty"`
+	ExitCode int    `json:"exit_code,omitempty"`
+}
+
+// InvocationActivityNavigation links activity projections back to history/diff context.
+type InvocationActivityNavigation struct {
+	LatestTurnID   string `json:"latest_turn_id,omitempty"`
+	HistoryCommand string `json:"history_command,omitempty"`
+	DiffCommand    string `json:"diff_command,omitempty"`
+	AttachCommand  string `json:"attach_command,omitempty"`
 }
 
 // ----- CheckpointDTO -----
@@ -103,7 +212,7 @@ type CheckpointDTO struct {
 	IncludesUntracked bool   `json:"includes_untracked"`
 	Degraded          bool   `json:"degraded"`
 
-	// Semantic trigger metadata (schema 1.1+). Omitted for legacy checkpoints.
+	// Semantic trigger metadata (schema 1.1+).
 	Trigger     string `json:"trigger,omitempty"`
 	ToolName    string `json:"tool_name,omitempty"`
 	StreamSeq   uint64 `json:"stream_seq,omitempty"`
@@ -183,64 +292,69 @@ type InvocationDiffData struct {
 	TurnContext              *DiffTurnContext `json:"turn_context,omitempty"`
 }
 
-// InvocationReviewReason is one deterministic blocking reason in review output.
-type InvocationReviewReason struct {
+// InvocationCheckReason is one deterministic blocking reason in check output.
+type InvocationCheckReason struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Hint    string `json:"hint,omitempty"`
 }
 
-// InvocationReviewNavigation links review findings back to invocation context.
-type InvocationReviewNavigation struct {
+// InvocationCheckNavigation links check findings back to invocation context.
+type InvocationCheckNavigation struct {
 	InvocationRef  string `json:"invocation_ref"`
 	RepoID         string `json:"repo_id"`
 	LatestTurnID   string `json:"latest_turn_id,omitempty"`
 	HistoryCommand string `json:"history_command"`
 	DiffCommand    string `json:"diff_command,omitempty"`
+	AttachCommand  string `json:"attach_command,omitempty"`
 	PRSyncCommand  string `json:"pr_sync_command,omitempty"`
 }
 
-// InvocationReviewData is the data payload for GET /invocations/{id}/review.
-type InvocationReviewData struct {
-	InvocationID      string                     `json:"invocation_id"`
-	RepoID            string                     `json:"repo_id"`
-	Ready             bool                       `json:"ready"`
-	Readiness         string                     `json:"readiness"` // "ready" or "blocked"
-	PRSyncEligible    bool                       `json:"pr_sync_eligible"`
-	ReportSource      string                     `json:"report_source,omitempty"`
-	Status            string                     `json:"status"`
-	DisplayStatus     string                     `json:"display_status"`
-	SemanticStatus    string                     `json:"semantic_status,omitempty"`
-	LandingStatus     string                     `json:"landing_status,omitempty"`
-	RunnerStatus      string                     `json:"runner_status,omitempty"`
-	RunnerSummary     string                     `json:"runner_summary,omitempty"`
-	RunnerUpdatedAt   string                     `json:"runner_updated_at,omitempty"`
-	HowToTest         string                     `json:"how_to_test,omitempty"`
-	ReportDiagnostics []ReportDiagnostic         `json:"report_diagnostics,omitempty"`
-	BlockingReasons   []InvocationReviewReason   `json:"blocking_reasons"`
-	Navigation        InvocationReviewNavigation `json:"navigation"`
+// InvocationCheckData is the data payload for GET /invocations/{id}/check.
+type InvocationCheckData struct {
+	InvocationID    string                    `json:"invocation_id"`
+	RepoID          string                    `json:"repo_id"`
+	State           string                    `json:"state"`
+	Reason          string                    `json:"reason,omitempty"`
+	PRSyncEligible  bool                      `json:"pr_sync_eligible"`
+	LandingStatus   string                    `json:"landing_status,omitempty"`
+	RunnerState     string                    `json:"runner_state,omitempty"`
+	RunnerReason    string                    `json:"runner_reason,omitempty"`
+	RunnerSummary   string                    `json:"runner_summary,omitempty"`
+	RunnerUpdatedAt string                    `json:"runner_updated_at,omitempty"`
+	HowToTest       string                    `json:"how_to_test,omitempty"`
+	BlockingReasons []InvocationCheckReason   `json:"blocking_reasons"`
+	Navigation      InvocationCheckNavigation `json:"navigation"`
 }
 
-// InvocationCheckReason is retained as a compatibility alias.
-type InvocationCheckReason = InvocationReviewReason
+// InvocationSessionClient describes one tmux client attached to a headed invocation.
+type InvocationSessionClient struct {
+	Name     string `json:"name,omitempty"`
+	TTY      string `json:"tty,omitempty"`
+	PID      int    `json:"pid,omitempty"`
+	ReadOnly bool   `json:"read_only"`
+}
 
-// InvocationChecksNavigation is retained as a compatibility alias.
-type InvocationChecksNavigation = InvocationReviewNavigation
+// InvocationSessionData is the data payload for GET /invocations/{id}/session.
+type InvocationSessionData struct {
+	InvocationID string `json:"invocation_id"`
+	RepoID       string `json:"repo_id"`
 
-// InvocationChecksData is retained as a compatibility alias.
-type InvocationChecksData = InvocationReviewData
+	SessionStatus    string                    `json:"session_status"` // live, missing
+	TmuxSession      string                    `json:"tmux_session"`
+	ClientCount      int                       `json:"client_count"`
+	ConnectedClients []InvocationSessionClient `json:"connected_clients"`
 
-// ----- Logs Response Types -----
+	AttachCommand     string `json:"attach_command,omitempty"`
+	RecreateAvailable bool   `json:"recreate_available"`
+}
 
-// InvocationLogsData is the data payload for GET /invocations/{id}/logs.
-type InvocationLogsData struct {
-	Kind          string `json:"kind"` // raw, stderr, stream
-	Content       string `json:"content"`
-	Truncated     bool   `json:"truncated"`
-	TotalBytes    int64  `json:"total_bytes"`
-	ReturnedBytes int    `json:"returned_bytes"`
-	StartsMidline bool   `json:"starts_midline"`
-	EndsMidline   bool   `json:"ends_midline"`
+// InvocationLogsOffsetData is the data payload for GET /invocations/{id}/logs.
+type InvocationLogsOffsetData struct {
+	Kind       string `json:"kind"` // raw, stderr, stream, hooks, terminal
+	DataB64    string `json:"data_b64"`
+	NextOffset int64  `json:"next_offset"`
+	TotalBytes int64  `json:"total_bytes"`
 }
 
 // ----- Pagination Cursor Types -----
@@ -262,23 +376,6 @@ type CheckpointCursor struct {
 	ID int `json:"id"`
 }
 
-// ----- Display Status Constants -----
-
-// Display status values derived by daemon.
-const (
-	DisplayStatusFailed         = "failed"
-	DisplayStatusNeedsAttention = "needs attention"
-	DisplayStatusNeedsInput     = "needs input"
-	DisplayStatusBlocked        = "blocked"
-	DisplayStatusReadyForReview = "ready for review"
-	DisplayStatusWorking        = "working"
-	DisplayStatusRunning        = "running"
-	DisplayStatusFinished       = "finished"
-	DisplayStatusStarting       = "starting"
-	DisplayStatusLanded         = "landed"
-	DisplayStatusDiscarded      = "discarded"
-)
-
 // Attention flag values.
 const (
 	AttentionFlagNeedsAttention = "needs_attention"
@@ -290,14 +387,12 @@ const (
 // Sort key constants (lower = higher priority).
 const (
 	SortKeyFailed         = 10
-	SortKeyNeedsAttention = 20
-	SortKeyNeedsInput     = 30
-	SortKeyBlocked        = 40
-	SortKeyReadyForReview = 50
-	SortKeyWorking        = 60
-	SortKeyRunning        = 70
-	SortKeyFinished       = 80
-	SortKeyStarting       = 90
+	SortKeyStopping       = 20
+	SortKeyNeedsAttention = 30
+	SortKeyWaiting        = 40
+	SortKeyRunning        = 50
+	SortKeyStarting       = 60
+	SortKeySucceeded      = 70
 	SortKeyLanded         = 100
 	SortKeyDiscarded      = 110
 )
@@ -306,7 +401,7 @@ const (
 
 // ListWorktreesParams holds query parameters for GET /worktrees.
 type ListWorktreesParams struct {
-	RepoID string // optional, filter by repo
+	RepoID string // optional, filter by canonical repo_id
 	State  string // present, archived, all (default: present)
 	Limit  int    // default 100, max 500
 	Cursor string // opaque pagination cursor
@@ -314,10 +409,9 @@ type ListWorktreesParams struct {
 
 // ListInvocationsParams holds query parameters for GET /invocations.
 type ListInvocationsParams struct {
-	RepoID      string // optional, filter by repo
-	WorktreeID  string // optional, filter by worktree (can be ref)
+	RepoID      string // optional, filter by canonical repo_id
 	WorktreeRef string // optional, filter by worktree ref (name/id/prefix)
-	State       string // active, finished, all (default: all)
+	State       string // unresolved, finished, all (default: all)
 	Mode        string // headed, headless, all (default: all)
 	Limit       int    // default 100, max 500
 	Cursor      string // opaque pagination cursor
@@ -325,27 +419,15 @@ type ListInvocationsParams struct {
 
 // GetLogsParams holds query parameters for GET /invocations/{id}/logs.
 type GetLogsParams struct {
-	Kind      string // raw, stderr, stream (default: raw)
-	TailBytes int    // default 65536, max 1048576
-
-	// Offset mode (PR-B): when OffsetMode is true, use Offset+Limit instead of TailBytes.
-	OffsetMode bool
-	Offset     int64 // byte offset from start of file (>= 0)
-	Limit      int   // max bytes returned; clamped to [1, MaxLogChunk]
+	Kind   string // raw, stderr, stream, hooks, terminal (default: raw)
+	Offset int64  // byte offset from start of file (>= 0)
+	Limit  int    // max bytes returned; clamped to [1, MaxLogChunk]
 }
 
 // MaxLogChunk is the maximum bytes per offset-mode log read (1 MB).
 const MaxLogChunk = 1_048_576
 
-// InvocationLogsOffsetData is the data payload for offset-mode log reads (PR-B).
-type InvocationLogsOffsetData struct {
-	Kind       string `json:"kind"`        // raw, stderr, stream
-	DataB64    string `json:"data_b64"`    // raw bytes, base64-encoded
-	NextOffset int64  `json:"next_offset"` // offset + len(data)
-	TotalBytes int64  `json:"total_bytes"` // current file size
-}
-
-// ----- Timeline Response Types (S3 PR-01) -----
+// ----- Timeline Response Types -----
 
 // TimelineEntryDTO is a normalized, typed entry in the invocation timeline.
 type TimelineEntryDTO struct {
@@ -376,68 +458,6 @@ type GetTimelineParams struct {
 	Limit  int    // default 100, max 500
 	Cursor string // opaque pagination cursor
 	Order  string // "asc" (default) or "desc"
-}
-
-// ----- S1 Release Gate DTOs (PR-05) -----
-
-// S1ReleaseReadinessData is the data payload for GET /spec/v2.1/s1/release/readiness.
-type S1ReleaseReadinessData struct {
-	Slice      string            `json:"slice"`
-	SliceReady bool              `json:"slice_ready"`
-	GateA      *S1GateStatusData `json:"gate_a"`
-	GateB      *S1GateStatusData `json:"gate_b"`
-}
-
-// S1GateStatusData is the gate-level status within S1 release data.
-type S1GateStatusData struct {
-	GateID        string   `json:"gate_id"`
-	Status        string   `json:"status"`
-	TotalItems    int      `json:"total_items"`
-	ClosedItems   int      `json:"closed_items"`
-	BlockingItems []string `json:"blocking_items"`
-}
-
-// S1ClosureReportData is the data payload for GET /spec/v2.1/s1/release/closure-report.
-type S1ClosureReportData struct {
-	Slice string             `json:"slice"`
-	GateA *S1GateClosureData `json:"gate_a"`
-	GateB *S1GateClosureData `json:"gate_b"`
-}
-
-// S1GateClosureData is the gate-level closure snapshot within S1 closure report.
-type S1GateClosureData struct {
-	GateID         string                 `json:"gate_id"`
-	Status         string                 `json:"status"`
-	TotalItems     int                    `json:"total_items"`
-	ClosedItems    int                    `json:"closed_items"`
-	BlockingItems  []string               `json:"blocking_items"`
-	ClosedEvidence []S1ClosedItemEvidence `json:"closed_evidence"`
-}
-
-// S1ClosedItemEvidence is the evidence payload for a single closed gate item.
-type S1ClosedItemEvidence struct {
-	IssuePath       string               `json:"issue_path"`
-	ImplementedRefs []string             `json:"implemented_refs"`
-	TargetedTests   []S1TestEvidenceData `json:"targeted_tests"`
-	SuiteTests      []S1TestEvidenceData `json:"suite_tests"`
-}
-
-// S1TestEvidenceData is a single test evidence entry in daemon response.
-type S1TestEvidenceData struct {
-	IssuePath   string `json:"issue_path"`
-	Command     string `json:"command"`
-	Scope       string `json:"scope"`
-	Result      string `json:"result"`
-	ArtifactRef string `json:"artifact_ref"`
-	RecordedAt  string `json:"recorded_at"`
-}
-
-// S1FreezeReadinessData is the data payload for GET /spec/v2.1/s1/release/freeze-readiness.
-type S1FreezeReadinessData struct {
-	FreezeReady     bool   `json:"freeze_ready"`
-	UnresolvedCount int    `json:"unresolved_count"`
-	SpecPath        string `json:"spec_path"`
-	FirstQuestion   string `json:"first_question,omitempty"`
 }
 
 // GetDiffParams holds query parameters for GET /invocations/{id}/diff.

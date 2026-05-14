@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,18 +17,20 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/paths"
+	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // DoctorReport holds all the data for doctor output.
 type DoctorReport struct {
 	// Repo and directories
-	RepoRoot        string
-	AgencyDataDir   string
-	AgencyConfigDir string
-	UserConfigPath  string
-	AgencyCacheDir  string
+	RepoRoot         string
+	AgencyDataDir    string
+	AgencyConfigDir  string
+	UserConfigPath   string
+	AgencyJSONPath   string
+	AgencyJSONSource string
+	AgencyCacheDir   string
 
 	// Identity/origin
 	RepoKey             string
@@ -44,13 +47,22 @@ type DoctorReport struct {
 	GhAuthenticated bool
 
 	// Config resolution
-	DefaultsParentBranch string
-	DefaultsRunner       string
-	DefaultsEditor       string
-	RunnerCmd            string
-	ScriptSetup          string
-	ScriptVerify         string
-	ScriptArchive        string
+	DefaultsBaseBranch          string
+	DefaultsRunner              string
+	DefaultsRunnerModel         string
+	DefaultsRunnerModelSource   string
+	DefaultsRunnerEffort        string
+	DefaultsRunnerEffortSource  string
+	DefaultsEditor              string
+	ExecutionProfile            string
+	ExecutionProfileSource      string
+	ExecutionCheckoutRootPolicy string
+	ExecutionCheckoutRoot       string
+	ExecutionProfileEnvKeys     []string
+	RunnerCmd                   string
+	ScriptSetup                 string
+	ScriptVerify                string
+	ScriptArchive               string
 }
 
 // osEnv implements paths.Env using os.Getenv.
@@ -62,69 +74,103 @@ func (osEnv) Get(key string) string {
 
 // DoctorOpts holds options for the doctor command.
 type DoctorOpts struct {
-	// RepoPath is the optional --repo flag to target a specific repo.
-	RepoPath string
+	// Path is the optional --path flag to target a specific repo checkout.
+	Path string
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
 
 	// ConfigDirOverride, if set, is used instead of resolving from environment.
 	ConfigDirOverride string
+
+	// AgencyConfigPath, if set, is the exact agency config file to load.
+	AgencyConfigPath string
 }
 
 // Doctor implements the `agency doctor` command.
-// Validates repo, tools, config, scripts, and persists repo identity on success.
+// Validates repo, tools, config, and scripts without mutating on-disk state.
 func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts DoctorOpts, stdout, stderr io.Writer) error {
-	// 1. Discover repo root (use --repo if provided, otherwise CWD)
 	targetPath := cwd
-	if opts.RepoPath != "" {
-		targetPath = opts.RepoPath
+	if opts.Path != "" {
+		targetPath = opts.Path
 	}
-	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath)
+
+	dirs, err := resolveCommandDirs(opts.DataDirOverride, opts.ConfigDirOverride)
 	if err != nil {
-		if opts.RepoPath != "" {
+		return err
+	}
+	dirs.DataDir = doctorDisplayPath(dirs.DataDir)
+	dirs.ConfigDir = doctorDisplayPath(dirs.ConfigDir)
+	dirs.CacheDir = doctorDisplayPath(dirs.CacheDir)
+	if cwdInsideAgencyManagedTree(targetPath) {
+		ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+		if err != nil {
+			return err
+		}
+		repoID, ok, err := agencyManagedTreeRepoID(ctx, ns.client, targetPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.NewWithDetails(
+				errors.EUnsafeRepoRoot,
+				"target path is inside an agency-managed tree but no matching metadata was found",
+				map[string]string{"hint": "re-run against the original repo checkout"},
+			)
+		}
+		repo, err := resolveAccessibleRepo(ctx, ns.client, repoID)
+		if err != nil {
+			return err
+		}
+		targetPath = repo.PreferredRoot
+	}
+
+	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath, nil)
+	if err != nil {
+		if opts.Path != "" {
 			return errors.NewWithDetails(
 				errors.EInvalidRepoPath,
-				fmt.Sprintf("--repo path is not inside a git repository: %s", opts.RepoPath),
-				map[string]string{"path": opts.RepoPath},
+				fmt.Sprintf("--path is not inside a git repository: %s", opts.Path),
+				map[string]string{"path": opts.Path},
 			)
 		}
 		return err
 	}
-
-	// 2. Resolve directories
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-	if opts.DataDirOverride != "" {
-		dirs.DataDir = opts.DataDirOverride
-	}
-	if opts.ConfigDirOverride != "" {
-		dirs.ConfigDir = opts.ConfigDirOverride
-	}
-
-	// 3. Load and validate user config
-	userCfg, found, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return errors.New(errors.EInvalidUserConfig, "user config not found: "+config.UserConfigPath(dirs.ConfigDir))
-	}
-
-	// 4. Load and validate agency.json
-	cfg, err := config.LoadAndValidate(fsys, repoRoot.Path)
+	repoRoot.Path, err = doctorCanonicalPath(repoRoot.Path, "repo root")
 	if err != nil {
 		return err
 	}
 
-	// 5. Get origin info
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
+	userCfg, err := config.LoadUserConfig(fsys, dirs.ConfigDir)
+	if err != nil {
+		return err
+	}
 
-	// 6. Derive repo identity
+	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path, nil)
+
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+	repoRoot.Path, err = registeredRepoRootFromStore(store.NewStore(fsys, dirs.DataDir, time.Now), repoIdentity.RepoID)
+	if err != nil {
+		return err
+	}
+	repoRoot.Path = doctorDisplayPath(repoRoot.Path)
+	originInfo = git.GetOriginInfo(ctx, cr, repoRoot.Path, nil)
+
+	agencyConfigPath := opts.AgencyConfigPath
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
+	}
+	if agencyConfigPath != "" {
+		agencyConfigPath, err = doctorCanonicalPath(agencyConfigPath, "agency config")
+		if err != nil {
+			return err
+		}
+	}
+	resolvedAgencyConfig, err := config.ResolveAgencyConfig(fsys, repoRoot.Path, dirs.ConfigDir, repoIdentity.RepoID, agencyConfigPath)
+	if err != nil {
+		return err
+	}
+	cfg := resolvedAgencyConfig.Config
 
 	// 7. Check tools
 	gitVersion, err := checkGit(ctx, cr)
@@ -142,17 +188,71 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	// 8. Check gh auth status
-	if err := checkGhAuth(ctx, cr); err != nil {
-		return err
-	}
-
-	// 9. Resolve runner/editor commands
 	resolvedRunnerCmd, err := config.ResolveRunnerCmd(cr, fsys, dirs.ConfigDir, userCfg, userCfg.Defaults.Runner)
 	if err != nil {
 		return err
 	}
 	if _, err := config.ResolveEditorCmd(cr, fsys, dirs.ConfigDir, userCfg, userCfg.Defaults.Editor); err != nil {
+		return err
+	}
+	canonicalRunner, err := runners.Canonicalize(userCfg.Defaults.Runner)
+	if err != nil {
+		return err
+	}
+
+	defaultsRunnerModel := ""
+	defaultsRunnerModelSource := "none"
+	defaultsRunnerEffort := ""
+	defaultsRunnerEffortSource := "none"
+	if runnerDefaults, ok := userCfg.RunnerDefaults[canonicalRunner]; ok {
+		if runnerDefaults.Model != "" {
+			defaultsRunnerModel = runnerDefaults.Model
+			defaultsRunnerModelSource = "user"
+		}
+		if runnerDefaults.Effort != "" {
+			defaultsRunnerEffort = runnerDefaults.Effort
+			defaultsRunnerEffortSource = "user"
+		}
+	}
+	if runnerDefaults, ok := cfg.RunnerDefaults[canonicalRunner]; ok {
+		if runnerDefaults.Model != "" {
+			defaultsRunnerModel = runnerDefaults.Model
+			defaultsRunnerModelSource = resolvedAgencyConfig.Source
+		}
+		if runnerDefaults.Effort != "" {
+			defaultsRunnerEffort = runnerDefaults.Effort
+			defaultsRunnerEffortSource = resolvedAgencyConfig.Source
+		}
+	}
+
+	executionProfile := strings.TrimSpace(cfg.Execution.Profile)
+	executionProfileSource := resolvedAgencyConfig.Source
+	if executionProfile == "" {
+		executionProfile = userCfg.Defaults.ExecutionProfile
+		executionProfileSource = "user"
+	}
+	profileEnv, err := config.ExecutionProfileEnv(userCfg, executionProfile)
+	if err != nil {
+		return err
+	}
+	ghAuthEnv := make(map[string]string, len(profileEnv)+3)
+	for key, value := range profileEnv {
+		ghAuthEnv[key] = value
+	}
+	ghAuthEnv["GIT_TERMINAL_PROMPT"] = "0"
+	ghAuthEnv["GH_PROMPT_DISABLED"] = "1"
+	ghAuthEnv["CI"] = "1"
+	if err := checkGhAuth(ctx, cr, ghAuthEnv); err != nil {
+		return err
+	}
+	executionProfileEnvKeys := make([]string, 0, len(profileEnv))
+	for key := range profileEnv {
+		executionProfileEnvKeys = append(executionProfileEnvKeys, key)
+	}
+	sort.Strings(executionProfileEnvKeys)
+
+	executionCheckoutRoot, err := config.ResolveCheckoutRoot(repoRoot.Path, repoIdentity.RepoID, cfg.Execution.CheckoutRoot)
+	if err != nil {
 		return err
 	}
 
@@ -174,39 +274,42 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	if err != nil {
 		return err
 	}
-
-	// Build report
 	report := DoctorReport{
-		RepoRoot:             repoRoot.Path,
-		AgencyDataDir:        dirs.DataDir,
-		AgencyConfigDir:      dirs.ConfigDir,
-		UserConfigPath:       config.UserConfigPath(dirs.ConfigDir),
-		AgencyCacheDir:       dirs.CacheDir,
-		RepoKey:              repoIdentity.RepoKey,
-		RepoID:               repoIdentity.RepoID,
-		OriginPresent:        originInfo.Present,
-		OriginURL:            originInfo.URL,
-		OriginHost:           originInfo.Host,
-		GitHubFlowAvailable:  repoIdentity.GitHubFlowAvailable,
-		GitVersion:           gitVersion,
-		TmuxVersion:          tmuxVersion,
-		GhVersion:            ghVersion,
-		GhAuthenticated:      true,
-		DefaultsParentBranch: currentBranch,
-		DefaultsRunner:       userCfg.Defaults.Runner,
-		DefaultsEditor:       userCfg.Defaults.Editor,
-		RunnerCmd:            resolvedRunnerCmd,
-		ScriptSetup:          scriptSetup,
-		ScriptVerify:         scriptVerify,
-		ScriptArchive:        scriptArchive,
+		RepoRoot:                    repoRoot.Path,
+		AgencyDataDir:               dirs.DataDir,
+		AgencyConfigDir:             dirs.ConfigDir,
+		UserConfigPath:              config.UserConfigPath(dirs.ConfigDir),
+		AgencyJSONPath:              resolvedAgencyConfig.Path,
+		AgencyJSONSource:            resolvedAgencyConfig.Source,
+		AgencyCacheDir:              dirs.CacheDir,
+		RepoKey:                     repoIdentity.RepoKey,
+		RepoID:                      repoIdentity.RepoID,
+		OriginPresent:               originInfo.Present,
+		OriginURL:                   originInfo.URL,
+		OriginHost:                  originInfo.Host,
+		GitHubFlowAvailable:         repoIdentity.GitHubFlowAvailable,
+		GitVersion:                  gitVersion,
+		TmuxVersion:                 tmuxVersion,
+		GhVersion:                   ghVersion,
+		GhAuthenticated:             true,
+		DefaultsBaseBranch:          currentBranch,
+		DefaultsRunner:              userCfg.Defaults.Runner,
+		DefaultsRunnerModel:         defaultsRunnerModel,
+		DefaultsRunnerModelSource:   defaultsRunnerModelSource,
+		DefaultsRunnerEffort:        defaultsRunnerEffort,
+		DefaultsRunnerEffortSource:  defaultsRunnerEffortSource,
+		DefaultsEditor:              userCfg.Defaults.Editor,
+		ExecutionProfile:            executionProfile,
+		ExecutionProfileSource:      executionProfileSource,
+		ExecutionCheckoutRootPolicy: cfg.Execution.CheckoutRoot,
+		ExecutionCheckoutRoot:       executionCheckoutRoot,
+		ExecutionProfileEnvKeys:     executionProfileEnvKeys,
+		RunnerCmd:                   resolvedRunnerCmd,
+		ScriptSetup:                 scriptSetup,
+		ScriptVerify:                scriptVerify,
+		ScriptArchive:               scriptArchive,
 	}
 
-	// 10. Persist repo index and repo record (only on success)
-	if err := persistOnSuccess(fsys, dirs.DataDir, repoRoot.Path, repoIdentity, originInfo, cfg); err != nil {
-		return err
-	}
-
-	// 11. Write output
 	writeDoctorOutput(stdout, report)
 
 	return nil
@@ -252,8 +355,8 @@ func checkGh(ctx context.Context, cr agencyexec.CommandRunner) (string, error) {
 }
 
 // checkGhAuth verifies gh is authenticated.
-func checkGhAuth(ctx context.Context, cr agencyexec.CommandRunner) error {
-	result, err := cr.Run(ctx, "gh", []string{"auth", "status"}, agencyexec.RunOpts{})
+func checkGhAuth(ctx context.Context, cr agencyexec.CommandRunner, env map[string]string) error {
+	result, err := cr.Run(ctx, "gh", []string{"auth", "status"}, agencyexec.RunOpts{Env: env})
 	if err != nil {
 		return errors.New(errors.EGhNotAuthenticated, "gh auth check failed; run 'gh auth login'")
 	}
@@ -272,11 +375,15 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 	if !filepath.IsAbs(scriptPath) {
 		absPath = filepath.Join(repoRoot, scriptPath)
 	}
+	absPath, err := doctorCanonicalPath(absPath, scriptName+" script")
+	if err != nil {
+		return "", err
+	}
 
 	info, err := fsys.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", errors.New(errors.EScriptNotFound, "script not found: "+scriptPath)
+			return "", errors.New(errors.EScriptNotFound, "script not found: "+absPath)
 		}
 		return "", errors.Wrap(errors.EScriptNotFound, "failed to check script "+scriptName, err)
 	}
@@ -284,72 +391,21 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 	// Follow symlink if needed and check executable
 	// For symlinks, Stat already follows them, so mode check is on the target
 	if info.Mode().Perm()&0111 == 0 {
-		return "", errors.New(errors.EScriptNotExecutable, "script is not executable: "+scriptPath+"; run 'chmod +x "+scriptPath+"'")
+		return "", errors.New(errors.EScriptNotExecutable, "script is not executable: "+absPath+"; run 'chmod +x "+absPath+"'")
 	}
 
 	return absPath, nil
 }
 
 func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot string) (string, error) {
-	result, err := cr.Run(ctx, "git", []string{"branch", "--show-current"}, agencyexec.RunOpts{Dir: repoRoot})
+	branch, ok, err := git.GetCurrentBranch(ctx, cr, repoRoot, nil)
 	if err != nil {
 		return "", errors.Wrap(errors.EInternal, "failed to get current branch", err)
 	}
-	return strings.TrimSpace(result.Stdout), nil
-}
-
-// persistOnSuccess writes repo_index.json and repo.json atomically.
-func persistOnSuccess(fsys fs.FS, dataDir, repoRoot string, repoIdentity identity.RepoIdentity, originInfo git.OriginInfo, cfg config.AgencyConfig) error {
-	st := store.NewStore(fsys, dataDir, time.Now)
-
-	// Load existing repo index (or empty if missing)
-	idx, err := st.LoadRepoIndex()
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to load repo_index.json", err)
+	if !ok {
+		return "", nil
 	}
-
-	// Upsert entry
-	idx = st.UpsertRepoIndexEntry(idx, repoIdentity.RepoKey, repoIdentity.RepoID, repoRoot)
-
-	// Load existing repo record (if any)
-	existingRec, exists, err := st.LoadRepoRecord(repoIdentity.RepoID)
-	if err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to load repo.json", err)
-	}
-
-	var existingPtr *store.RepoRecord
-	if exists {
-		existingPtr = &existingRec
-	}
-
-	// Build repo record
-	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
-	rec := st.UpsertRepoRecord(existingPtr, store.BuildRepoRecordInput{
-		RepoKey:          repoIdentity.RepoKey,
-		RepoID:           repoIdentity.RepoID,
-		RepoRootLastSeen: repoRoot,
-		AgencyJSONPath:   agencyJSONPath,
-		OriginPresent:    originInfo.Present,
-		OriginURL:        originInfo.URL,
-		OriginHost:       originInfo.Host,
-		Capabilities: store.Capabilities{
-			GitHubOrigin: repoIdentity.GitHubFlowAvailable,
-			OriginHost:   originInfo.Host,
-			GhAuthed:     true,
-		},
-	})
-
-	// Save repo record first (so repo dir exists for repo_index to reference)
-	if err := st.SaveRepoRecord(rec); err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to write repo.json", err)
-	}
-
-	// Save repo index
-	if err := st.SaveRepoIndex(idx); err != nil {
-		return errors.Wrap(errors.EPersistFailed, "failed to write repo_index.json", err)
-	}
-
-	return nil
+	return branch, nil
 }
 
 // writeDoctorOutput writes the stable key: value output.
@@ -361,6 +417,8 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	_, _ = fmt.Fprintf(w, "agency_data_dir: %s\n", r.AgencyDataDir)
 	_, _ = fmt.Fprintf(w, "agency_config_dir: %s\n", r.AgencyConfigDir)
 	_, _ = fmt.Fprintf(w, "user_config_path: %s\n", r.UserConfigPath)
+	_, _ = fmt.Fprintf(w, "agency_json_path: %s\n", r.AgencyJSONPath)
+	_, _ = fmt.Fprintf(w, "agency_json_source: %s\n", r.AgencyJSONSource)
 	_, _ = fmt.Fprintf(w, "agency_cache_dir: %s\n", r.AgencyCacheDir)
 
 	// Identity/origin
@@ -378,9 +436,18 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	_, _ = fmt.Fprintf(w, "gh_authenticated: %s\n", boolStr(r.GhAuthenticated))
 
 	// Config resolution
-	_, _ = fmt.Fprintf(w, "defaults_parent_branch: %s\n", r.DefaultsParentBranch)
+	_, _ = fmt.Fprintf(w, "defaults_base_branch: %s\n", r.DefaultsBaseBranch)
 	_, _ = fmt.Fprintf(w, "defaults_runner: %s\n", r.DefaultsRunner)
+	_, _ = fmt.Fprintf(w, "defaults_runner_model: %s\n", r.DefaultsRunnerModel)
+	_, _ = fmt.Fprintf(w, "defaults_runner_model_source: %s\n", r.DefaultsRunnerModelSource)
+	_, _ = fmt.Fprintf(w, "defaults_runner_effort: %s\n", r.DefaultsRunnerEffort)
+	_, _ = fmt.Fprintf(w, "defaults_runner_effort_source: %s\n", r.DefaultsRunnerEffortSource)
 	_, _ = fmt.Fprintf(w, "defaults_editor: %s\n", r.DefaultsEditor)
+	_, _ = fmt.Fprintf(w, "execution_profile: %s\n", r.ExecutionProfile)
+	_, _ = fmt.Fprintf(w, "execution_profile_source: %s\n", r.ExecutionProfileSource)
+	_, _ = fmt.Fprintf(w, "execution_checkout_root_policy: %s\n", r.ExecutionCheckoutRootPolicy)
+	_, _ = fmt.Fprintf(w, "execution_checkout_root: %s\n", r.ExecutionCheckoutRoot)
+	_, _ = fmt.Fprintf(w, "execution_profile_env_keys: %s\n", strings.Join(r.ExecutionProfileEnvKeys, ","))
 	_, _ = fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)
 	_, _ = fmt.Fprintf(w, "script_setup: %s\n", r.ScriptSetup)
 	_, _ = fmt.Fprintf(w, "script_verify: %s\n", r.ScriptVerify)
@@ -395,4 +462,24 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func doctorCanonicalPath(pathValue, label string) (string, error) {
+	resolvedPath, err := canonicalCommandDir(pathValue, label)
+	if err != nil {
+		return "", err
+	}
+	return doctorDisplayPath(resolvedPath), nil
+}
+
+func doctorDisplayPath(pathValue string) string {
+	cleanPath := filepath.Clean(pathValue)
+	switch {
+	case cleanPath == "/private/var":
+		return "/var"
+	case strings.HasPrefix(cleanPath, "/private/var/"):
+		return strings.TrimPrefix(cleanPath, "/private")
+	default:
+		return cleanPath
+	}
 }

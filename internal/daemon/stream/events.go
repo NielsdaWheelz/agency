@@ -1,5 +1,5 @@
 // Package stream provides parsing and normalization of headless runner output.
-// This implements PR-07: Stream Parsing, Normalized Events, and Semantic Status.
+// This file defines normalized stream events.
 package stream
 
 import (
@@ -40,6 +40,11 @@ const (
 
 	// EventKindParseError indicates a parsing error for a raw line.
 	EventKindParseError EventKind = "parse_error"
+
+	// EventKindUnknown is a parser diagnostic for a provider event shape we
+	// could not classify. The raw bytes remain in raw.jsonl, while data carries
+	// the provider type, reason, and a raw JSON preview.
+	EventKindUnknown EventKind = "unknown"
 )
 
 // NormalizedEvent represents a normalized event written to stream.jsonl.
@@ -108,10 +113,16 @@ type SessionStartNotification struct {
 	Seq uint64
 }
 
+// FinalNotification is emitted by the parser when a final event is persisted.
+// Success indicates whether the final represented successful completion.
+type FinalNotification struct {
+	Success bool
+	Seq     uint64
+}
+
 // MessageData contains data for message events.
 // ContentBlocks, when present, preserves the full structure of content blocks
-// (text, tool_use, tool_result) with their complete fields. This is additive
-// to the existing Text/HasToolUse/ToolNames fields which remain for backwards compat.
+// (text, tool_use, tool_result) with their complete fields.
 type MessageData struct {
 	HasToolUse    bool                     `json:"has_tool_use"`
 	ToolNames     []string                 `json:"tool_names,omitempty"`
@@ -183,4 +194,5 @@ var MutatingStreamTools = map[string]bool{
 	"MultiEdit":    true,
 	"NotebookEdit": true,
 	"Bash":         true,
+	"FileChange":   true,
 }

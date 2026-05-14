@@ -1,13 +1,13 @@
 module github.com/NielsdaWheelz/agency
 
-go 1.24.2
+go 1.26.3
 
 require (
-	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
+	github.com/mattn/go-runewidth v0.0.20
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/term v0.39.0
@@ -25,7 +25,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
-	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

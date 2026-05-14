@@ -22,10 +22,7 @@ type FakeCommandRunner struct {
 	mu        sync.Mutex
 	Responses map[string]FakeResponse // key: "name arg1 arg2"
 	Calls     []string
-
-	// LookPathFunc overrides the default LookPath behaviour.
-	// If nil, LookPath returns "/usr/bin/" + file.
-	LookPathFunc func(string) (string, error)
+	CallEnvs  []map[string]string
 }
 
 // NewFakeCommandRunner creates a ready-to-use FakeCommandRunner.
@@ -36,11 +33,22 @@ func NewFakeCommandRunner() *FakeCommandRunner {
 }
 
 // Run implements exec.CommandRunner.
-func (f *FakeCommandRunner) Run(_ context.Context, name string, args []string, _ exec.RunOpts) (exec.CmdResult, error) {
-	key := name + " " + strings.Join(args, " ")
+func (f *FakeCommandRunner) Run(_ context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
+	key := name
+	if len(args) > 0 {
+		key += " " + strings.Join(args, " ")
+	}
+	var env map[string]string
+	if opts.Env != nil {
+		env = make(map[string]string, len(opts.Env))
+		for k, v := range opts.Env {
+			env[k] = v
+		}
+	}
 
 	f.mu.Lock()
 	f.Calls = append(f.Calls, key)
+	f.CallEnvs = append(f.CallEnvs, env)
 	resp, ok := f.Responses[key]
 	f.mu.Unlock()
 
@@ -61,8 +69,5 @@ func (f *FakeCommandRunner) Run(_ context.Context, name string, args []string, _
 
 // LookPath implements exec.CommandRunner.
 func (f *FakeCommandRunner) LookPath(file string) (string, error) {
-	if f.LookPathFunc != nil {
-		return f.LookPathFunc(file)
-	}
 	return "/usr/bin/" + file, nil
 }

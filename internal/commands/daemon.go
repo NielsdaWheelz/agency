@@ -1,5 +1,4 @@
 // Package commands implements agency CLI commands.
-// This file implements daemon commands (Slice 8 PR-04).
 package commands
 
 import (

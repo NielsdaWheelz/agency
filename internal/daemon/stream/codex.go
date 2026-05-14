@@ -3,12 +3,14 @@ package stream
 import (
 	"encoding/json"
 	"strings"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // CodexAdapter parses Codex CLI JSON output.
-type CodexAdapter struct{}
+type CodexAdapter struct {
+	// commandOutputByItemID accumulates command output fragments by item id.
+	// Codex may surface partial output on started/updated/completed events.
+	commandOutputByItemID map[string]string
+}
 
 // Name returns the runner name.
 func (a *CodexAdapter) Name() string {
@@ -31,20 +33,32 @@ type codexRawEvent struct {
 
 // codexItem represents an item in Codex output.
 type codexItem struct {
+	ID   string `json:"id,omitempty"`
 	Type string `json:"type"`
 
 	// For command_execution
-	Command  string `json:"command,omitempty"`
-	ExitCode *int   `json:"exit_code,omitempty"`
+	Command          string `json:"command,omitempty"`
+	AggregatedOutput string `json:"aggregated_output,omitempty"`
+	ExitCode         *int   `json:"exit_code,omitempty"`
+	Status           string `json:"status,omitempty"`
 
 	// For agent_message
+	Text    string              `json:"text,omitempty"`
 	Content []codexContentBlock `json:"content,omitempty"`
+
+	// For file_change
+	Changes []codexFileChange `json:"changes,omitempty"`
 }
 
 // codexContentBlock represents a content block in Codex output.
 type codexContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+}
+
+type codexFileChange struct {
+	Path string `json:"path,omitempty"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // codexUsage represents token usage in Codex output.
@@ -71,26 +85,67 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		return &ParseResult{}, nil
 
 	case "item.started":
-		if raw.Item != nil && raw.Item.Type == "command_execution" {
-			events, status := a.parseCommandStart(&raw)
-			result.Events = events
-			result.SemanticStatus = status
+		if raw.Item != nil {
+			switch raw.Item.Type {
+			case "command_execution":
+				result.Events = a.parseCommandStart(&raw)
+			case "reasoning":
+				return &ParseResult{}, nil
+			default:
+				unknown := newUnknownRunnerEvent(raw.Type, "unsupported_item_type", line)
+				if raw.Item.Type != "" {
+					unknown.Data["runner_item_type"] = raw.Item.Type
+				}
+				result.Events = []*NormalizedEvent{unknown}
+			}
+		} else {
+			result.Events = []*NormalizedEvent{
+				newUnknownRunnerEvent(raw.Type, "missing_item", line),
+			}
+		}
+
+	case "item.updated":
+		if raw.Item != nil {
+			switch raw.Item.Type {
+			case "command_execution":
+				result.Events = a.parseCommandStart(&raw)
+			case "reasoning":
+				return &ParseResult{}, nil
+			default:
+				unknown := newUnknownRunnerEvent(raw.Type, "unsupported_item_type", line)
+				if raw.Item.Type != "" {
+					unknown.Data["runner_item_type"] = raw.Item.Type
+				}
+				result.Events = []*NormalizedEvent{unknown}
+			}
+		} else {
+			result.Events = []*NormalizedEvent{
+				newUnknownRunnerEvent(raw.Type, "missing_item", line),
+			}
 		}
 
 	case "item.completed":
 		if raw.Item != nil {
 			switch raw.Item.Type {
 			case "command_execution":
-				events, status := a.parseCommandEnd(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseCommandEnd(&raw)
 			case "agent_message":
-				events, status := a.parseAgentMessage(&raw)
-				result.Events = events
-				result.SemanticStatus = status
+				result.Events = a.parseAgentMessage(&raw)
+			case "file_change":
+				result.Events = a.parseFileChange(&raw)
 			case "reasoning":
 				// Ignore reasoning items - internal model thought
 				return &ParseResult{}, nil
+			default:
+				unknown := newUnknownRunnerEvent(raw.Type, "unsupported_item_type", line)
+				if raw.Item.Type != "" {
+					unknown.Data["runner_item_type"] = raw.Item.Type
+				}
+				result.Events = []*NormalizedEvent{unknown}
+			}
+		} else {
+			result.Events = []*NormalizedEvent{
+				newUnknownRunnerEvent(raw.Type, "missing_item", line),
 			}
 		}
 
@@ -98,8 +153,9 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		result.Events = a.parseTurnCompleted(&raw)
 
 	default:
-		// Unknown event type - ignore
-		return &ParseResult{}, nil
+		result.Events = []*NormalizedEvent{
+			newUnknownRunnerEvent(raw.Type, "unsupported_event_type", line),
+		}
 	}
 
 	return result, nil
@@ -120,29 +176,37 @@ func (a *CodexAdapter) parseThreadStarted(raw *codexRawEvent) []*NormalizedEvent
 }
 
 // parseCommandStart handles item.started command_execution events.
-func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseCommandStart(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindToolStart,
 		Data: make(map[string]interface{}),
 	}
 	event.Data["name"] = "Bash"
+	event.Data["action_family"] = ActionFamilyCommandExecution
 
 	if raw.Item.Command != "" {
 		event.Data["command"] = raw.Item.Command
 	}
-
-	// Command execution -> working status
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	if itemID := strings.TrimSpace(raw.Item.ID); itemID != "" {
+		event.Data["tool_id"] = itemID
+	}
+	output := raw.Item.AggregatedOutput
+	if strings.TrimSpace(raw.Item.ID) != "" {
+		a.mergeCommandOutput(raw.Item.ID, raw.Item.AggregatedOutput)
+		output = a.commandOutput(raw.Item.ID)
+	}
+	setOutputPreview(event.Data, output)
+	return []*NormalizedEvent{event}
 }
 
 // parseCommandEnd handles item.completed command_execution events.
-func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindToolEnd,
 		Data: make(map[string]interface{}),
 	}
 	event.Data["name"] = "Bash"
+	event.Data["action_family"] = ActionFamilyCommandExecution
 
 	if raw.Item.Command != "" {
 		event.Data["command"] = raw.Item.Command
@@ -150,14 +214,21 @@ func (a *CodexAdapter) parseCommandEnd(raw *codexRawEvent) ([]*NormalizedEvent, 
 	if raw.Item.ExitCode != nil {
 		event.Data["exit_code"] = *raw.Item.ExitCode
 	}
-
-	// Keep working status after command ends
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	if itemID := strings.TrimSpace(raw.Item.ID); itemID != "" {
+		event.Data["tool_id"] = itemID
+	}
+	output := raw.Item.AggregatedOutput
+	if strings.TrimSpace(raw.Item.ID) != "" {
+		a.mergeCommandOutput(raw.Item.ID, raw.Item.AggregatedOutput)
+		output = a.commandOutput(raw.Item.ID)
+		a.clearCommandOutput(raw.Item.ID)
+	}
+	setOutputPreview(event.Data, output)
+	return []*NormalizedEvent{event}
 }
 
 // parseAgentMessage handles item.completed agent_message events.
-func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindMessage,
 		Data: make(map[string]interface{}),
@@ -165,10 +236,14 @@ func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent
 
 	event.Data["role"] = "assistant"
 	event.Data["has_tool_use"] = false
+	event.Data["message_family"] = MessageFamilyAssistant
 
 	// Extract text from content blocks
-	if raw.Item != nil && len(raw.Item.Content) > 0 {
+	if raw.Item != nil {
 		var textParts []string
+		if text := strings.TrimSpace(raw.Item.Text); text != "" {
+			textParts = append(textParts, text)
+		}
 		// Codex agent_message items contain text blocks only; tool use is
 		// expressed via separate command_execution items.
 		var enrichedBlocks []map[string]interface{}
@@ -192,10 +267,38 @@ func (a *CodexAdapter) parseAgentMessage(raw *codexRawEvent) ([]*NormalizedEvent
 			event.Data["text"] = strings.Join(textParts, "\n")
 		}
 	}
+	return []*NormalizedEvent{event}
+}
 
-	// Agent message (final) -> ready_for_review
-	status := runnerstatus.StatusReadyForReview
-	return []*NormalizedEvent{event}, &status
+// parseFileChange handles item.completed file_change events.
+func (a *CodexAdapter) parseFileChange(raw *codexRawEvent) []*NormalizedEvent {
+	event := &NormalizedEvent{
+		Kind: EventKindToolEnd,
+		Data: make(map[string]interface{}),
+	}
+	event.Data["name"] = "FileChange"
+	event.Data["action_family"] = ActionFamilyFileChange
+
+	if raw.Item != nil && len(raw.Item.Changes) > 0 {
+		paths := make([]string, 0, len(raw.Item.Changes))
+		kinds := make([]string, 0, len(raw.Item.Changes))
+		for _, change := range raw.Item.Changes {
+			if path := strings.TrimSpace(change.Path); path != "" {
+				paths = append(paths, path)
+			}
+			if kind := strings.TrimSpace(change.Kind); kind != "" {
+				kinds = append(kinds, kind)
+			}
+		}
+		if len(paths) > 0 {
+			event.Data["changed_paths"] = paths
+			event.Data["change_count"] = len(paths)
+		}
+		if len(kinds) > 0 {
+			event.Data["change_kinds"] = kinds
+		}
+	}
+	return []*NormalizedEvent{event}
 }
 
 // parseTurnCompleted handles turn.completed events.
@@ -211,4 +314,63 @@ func (a *CodexAdapter) parseTurnCompleted(raw *codexRawEvent) []*NormalizedEvent
 	}
 
 	return []*NormalizedEvent{event}
+}
+
+func (a *CodexAdapter) ensureCommandOutputState() {
+	if a.commandOutputByItemID == nil {
+		a.commandOutputByItemID = make(map[string]string)
+	}
+}
+
+func (a *CodexAdapter) mergeCommandOutput(itemID, output string) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" || output == "" {
+		return
+	}
+	a.ensureCommandOutputState()
+	a.commandOutputByItemID[itemID] = mergeCodexCommandOutput(a.commandOutputByItemID[itemID], output)
+}
+
+func (a *CodexAdapter) commandOutput(itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ""
+	}
+	return a.commandOutputByItemID[itemID]
+}
+
+func (a *CodexAdapter) clearCommandOutput(itemID string) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" || a.commandOutputByItemID == nil {
+		return
+	}
+	delete(a.commandOutputByItemID, itemID)
+}
+
+func mergeCodexCommandOutput(previous, current string) string {
+	if previous == "" {
+		return current
+	}
+	if current == "" {
+		return previous
+	}
+	if strings.HasPrefix(current, previous) {
+		return current
+	}
+	if strings.HasPrefix(previous, current) {
+		return previous
+	}
+	return previous + current
+}
+
+func setOutputPreview(data map[string]interface{}, output string) {
+	if data == nil || output == "" {
+		return
+	}
+	preview := output
+	if len(preview) > 2048 {
+		preview = preview[:2048]
+		data["output_truncated"] = true
+	}
+	data["output_preview"] = preview
 }

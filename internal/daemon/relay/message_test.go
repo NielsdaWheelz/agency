@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFormatStdinMessage_ClaudeCode(t *testing.T) {
+func TestFormatStdinMessage_AmpEnvelope(t *testing.T) {
 	t.Parallel()
 
-	line, err := FormatStdinMessage(runners.RunnerClaudeCode, "fix the bug")
+	line, err := FormatStdinMessage(runners.RunnerAmp, "fix the bug")
 	require.NoError(t, err)
 
 	var parsed map[string]any
@@ -68,7 +68,7 @@ func TestFormatStdinMessage_ValidJSON(t *testing.T) {
 	t.Parallel()
 
 	// Ensure special characters are properly escaped.
-	line, err := FormatStdinMessage(runners.RunnerClaudeCode, `prompt with "quotes" and \backslash and 日本語`)
+	line, err := FormatStdinMessage(runners.RunnerAmp, `prompt with "quotes" and \backslash and 日本語`)
 	require.NoError(t, err)
 	assert.True(t, json.Valid(line), "output must be valid JSON")
 
@@ -81,7 +81,7 @@ func TestFormatStdinMessage_EmptyPrompt(t *testing.T) {
 	t.Parallel()
 
 	// Empty prompt is technically valid JSON — the caller should validate before calling.
-	line, err := FormatStdinMessage(runners.RunnerClaudeCode, "")
+	line, err := FormatStdinMessage(runners.RunnerAmp, "")
 	require.NoError(t, err)
 	assert.True(t, json.Valid(line))
 }
@@ -91,7 +91,7 @@ func TestFormatStdinMessage_NoNewline(t *testing.T) {
 
 	// FormatStdinMessage returns the JSON payload WITHOUT a trailing newline.
 	// The caller (StdinRelay.Send) appends the newline.
-	line, err := FormatStdinMessage(runners.RunnerClaudeCode, "hello")
+	line, err := FormatStdinMessage(runners.RunnerAmp, "hello")
 	require.NoError(t, err)
 	assert.NotEqual(t, byte('\n'), line[len(line)-1], "FormatStdinMessage must not include trailing newline")
 }
@@ -99,7 +99,7 @@ func TestFormatStdinMessage_NoNewline(t *testing.T) {
 func TestFormatStdinMessage_AllStdinRunners(t *testing.T) {
 	t.Parallel()
 
-	stdinRunners := []string{runners.RunnerClaudeCode, runners.RunnerAmp, runners.RunnerDroid}
+	stdinRunners := []string{runners.RunnerAmp, runners.RunnerDroid}
 	for _, runner := range stdinRunners {
 		t.Run(runner, func(t *testing.T) {
 			t.Parallel()
@@ -113,7 +113,7 @@ func TestFormatStdinMessage_AllStdinRunners(t *testing.T) {
 func TestFormatStdinMessage_AllResumeRunners(t *testing.T) {
 	t.Parallel()
 
-	resumeRunners := []string{runners.RunnerCodex, runners.RunnerOpenCode, runners.RunnerCursor}
+	resumeRunners := []string{runners.RunnerClaudeCode, runners.RunnerCodex, runners.RunnerOpenCode, runners.RunnerCursor}
 	for _, runner := range resumeRunners {
 		t.Run(runner, func(t *testing.T) {
 			t.Parallel()

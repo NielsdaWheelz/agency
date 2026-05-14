@@ -7,7 +7,7 @@ local-first AI coding agent manager for Mac and Linux. creates isolated git work
 ### macos (homebrew)
 
 ```bash
-brew install NielsdaWheelz/tap/agency
+brew install --cask NielsdaWheelz/tap/agency
 ```
 
 ### linux
@@ -26,117 +26,156 @@ go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 
 ## prerequisites
 
-`git`, `tmux`, `gh` (authenticated), plus explicit runner mappings in user config.
+`git`, `tmux`, `gh` (authenticated), and at least one supported runner executable on `PATH`.
 
-runner commands must be configured in `config.json` under your agency config dir
-(`$AGENCY_CONFIG_DIR/config.json`; defaults to `~/Library/Preferences/agency/config.json` on macOS and `~/.config/agency/config.json` on Linux):
+Run `agency config init` first. It writes a working version `4` `config.json` under your agency config dir.
+For the full schema and setup rules, see [docs/configuration.md](docs/configuration.md).
+For paths and precedence, see [docs/environment.md](docs/environment.md).
+
+Short working `config.json` example:
 
 ```json
 {
-  "version": 1,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
-    "model": "opus",
-    "effort": "high"
+    "base_branch": "main",
+    "execution_profile": "personal"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "claude-opus-4-7[1m]",
+      "effort": "max",
+      "permission_mode": "bypassPermissions"
+    }
   },
   "runners": {
-    "claude-code": "claude",
-    "codex": "codex"
+    "claude-code": "claude"
+  },
+  "editors": {
+    "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {
+        "CODEX_HOME": "/Users/me/.codex-personal",
+        "CLAUDE_CONFIG_DIR": "/Users/me/.claude",
+        "GH_CONFIG_DIR": "/Users/me/.config/gh"
+      }
+    }
   }
 }
 ```
 
-supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
-legacy aliases are accepted: `claude` -> `claude-code`, `cursor-cli` -> `cursor`.
-
 ## quick start
 
+`agency init` writes per-repo agency config and scripts under `$AGENCY_CONFIG_DIR` by default, so setup/verify/archive scripts do not need to be committed to the repo.
+Use `agency init --repo-config` only when you want shareable `agency.json` and scripts in the repo.
+
 ```bash
-cd myrepo
-agency repo add                              # register this repo
-agency worktree create --name my-feature     # create an isolated branch
-agency agent start --worktree my-feature     # launch claude-code in a tmux session
-# Ctrl+b, d to detach from tmux
-agency watch                                 # full-screen readiness workspace (interactive tty; enter/o/p actions)
-agency agent ls --watch                      # lightweight list watch
-agency agent land <invocation-id> --apply    # land changes back to worktree
+agency config init
+agency repo add /path/to/myrepo
+agency init --path /path/to/myrepo
+agency task start my-feature --repo <repo-ref> --base main --prompt "Fix the auth bug"
+agency agent <invocation-ref> land --apply
 ```
+
+`agency repo add [path]` uses a positional path. Omit it only when your current directory is already inside the repo you want to register.
+`agency init` and `agency doctor` use `--path <checkout-path>` when you are not already in the target repo.
+`task start`, `worktree create`, and `agent start` accept optional `--repo` selectors from any cwd; when omitted, they resolve the repo from the current directory and otherwise error.
+`agency repo <repo-ref>`, `agency task <task-ref>`, `agency worktree <worktree-ref>`, and `agency agent <invocation-ref>` are the default show forms. Collection verbs remain explicit: `agency repo ls`, `agency task ls`, `agency worktree ls`, and `agency agent ls`.
+`--repo` accepts a repo name, key, id, or unique prefix from `agency repo ls`.
+`agency task start <name>` is the high-level delegation surface: it creates one task, one integration worktree, and one primary invocation. It defaults to headless mode, so use `--prompt` or `--prompt-file`; `--mode headed` may use `--detached` and rejects prompt flags.
+`agency task start <name>` and `agency worktree create <name>` use positional names and default an omitted `--base` to the current branch of the selected checkout. For omitted targeting, the selected checkout follows: explicit `--repo`, then the current directory, then error. `--base` is the canonical base-branch selector.
+`agency agent start` takes no positional worktree argument. Use `--worktree <worktree-ref>` when you want an explicit override from any cwd.
+If `--worktree` is omitted, `agency agent start` resolves the worktree from the current directory only when cwd is already inside a present integration worktree. Otherwise `--worktree` is required.
+Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
+`task start`, `task <task-ref> retry`, and `agent start` use agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
+`task start`, `task <task-ref> retry`, and `agent start` resolve an execution profile from explicit `--execution-profile`, then `agency.json` `execution.profile`, then `config.json` `defaults.execution_profile`.
+`agency.json` `execution.checkout_root` controls managed checkout placement. Omit it for the default `repo-sibling` policy, which places worktrees and sandboxes under `<canonical-repo-parent>/.agency/checkouts/<repo-id>/`, outside the repo and outside `AGENCY_DATA_DIR`.
+`agency agent start` defaults to `--mode headed`. Use `--mode headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
+For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set default `permission_mode` in user `config.json` or override it explicitly with `--permission-mode`; repo `agency.json` cannot set it.
+
+headed (interactive tmux):
+
+```bash
+agency agent start --worktree my-feature --repo <repo-ref>
+agency agent start --worktree my-feature --repo <repo-ref> --detached --model opus[1m] --effort max
+agency agent <invocation-ref> attach
+```
+
+For `claude-code`, headed mode launches interactive Claude in tmux and applies Agency-owned Claude settings without the print/stream-json startup path.
 
 headless (fire-and-forget):
 
 ```bash
-agency agent start --worktree my-feature --headless --prompt "Fix the auth bug"
-agency agent start --worktree my-feature --headless --prompt "Fix auth edge cases" --model opus --effort high
-agency agent logs <invocation-id> --follow
-agency agent chat <invocation-id> --prompt "continue with edge-case tests"
-agency agent history <invocation-id> --limit 50   # limit must be 1..500
-agency agent history <invocation-id> --last        # show only the last timeline entry
-agency agent review <invocation-id>               # review verdict + blocking reasons
-agency agent diff <invocation-id> --turn <entry> # turn-anchored diff context
-agency agent land <invocation-id> --apply         # land sandbox into integration worktree
-agency worktree pr sync <worktree-ref>            # push branch + create/update PR
-agency worktree merge <worktree-ref> --yes        # verify + merge worktree PR
-agency worktree update <worktree-ref>             # rebase worktree branch onto origin/<parent_branch>
-agency checkpoint ls --invocation <invocation-id>
-agency agent restart <invocation-id> --checkpoint 3 --env FAKE_RUNNER_MODE=sleep
-agency agent restart <invocation-id> --checkpoint 3 --model opus --effort high
-agency agent restart <invocation-id> --history     # interactive history selector (tty only)
+agency agent start --worktree my-feature --repo <repo-ref> --mode headless --prompt "Fix auth edge cases" --model claude-opus-4-7[1m] --effort max
+agency agent <invocation-ref> history                 # interactive invocation history/transcript/logs UI (same runtime; tty only)
+agency agent <invocation-ref> history --json          # machine-readable timeline output
+agency agent <invocation-ref> history logs --follow   # raw invocation logs
+agency agent <invocation-ref> followup --prompt "continue with edge-case tests"
+agency agent <invocation-ref> check                   # canonical invocation state + reason
+agency agent <invocation-ref> diff --turn <entry>    # changes for a turn or range
+agency agent <invocation-ref> diff --turn-range <start>..<end>
+agency agent <invocation-ref> land --apply           # land sandbox into integration worktree
+agency worktree <worktree-ref> pr sync               # push branch + create/update PR
+agency worktree <worktree-ref> pr merge --yes        # verify, merge, and archive worktree PR
+agency worktree <worktree-ref> rebase                # rebase worktree branch onto origin/<base_branch>
+agency agent <invocation-ref> restore --checkpoint 3
+agency agent <invocation-ref> restore --turn <entry>
 ```
 
-short alias parity for high-traffic s6 navigation/progression surfaces:
-- `agent review`: `-r/--repo`, `-j/--json`
-- `agent path|open|attach|enter`: `-r/--repo`
-- compatibility `path|open|attach`: `-r/--repo`
+For `claude-code`, headless mode runs through the daemon in print/stream-json mode. Agency owns the Claude startup flags, applies configured `model` and `effort`, and controls the effective permission behavior.
 
-if the original headless start used custom env keys, `agent restart` requires explicitly replaying those keys via `--env KEY=VALUE`.
-for non-interactive/scripted use, prefer `--checkpoint`; `--history` is interactive.
-`agent restart` replays the invocation's stored original prompt; use `agency checkpoint apply` when you want restore-only rollback without restarting prompt execution.
-`agent restart --history` shows checkpoint-aware turn summaries, completed tool calls, and authoritative changed-file previews from checkpoint-to-checkpoint git diffs.
-typed model/effort knobs are supported for `claude-code`, `codex`, and `cursor`.
-for `claude-code` and `codex`, `--model` and `--effort` apply.
-for `cursor`, use `--model` only (choose a thinking-capable model id when needed, for example `sonnet-4.6-thinking`).
-for other runners, keep using `--runner-arg`.
-
-legacy `run` surface supports open-on-create:
-
-```bash
-agency run --name feature-x --open
-```
+`agency watch` and `agency agent <invocation-ref> history` open different pages of the same Bubble Tea runtime.
+That runtime exposes workspace, history, transcript, and logs pages over the same daemon-backed read model.
+`agency agent <invocation-ref> history` is the canonical inspection surface for invocation turns, checkpoints, transcripts, and logs.
+`agency agent <invocation-ref> attach` stays a thin tmux handoff for running headed invocations; it is not a parallel inspection workflow.
+For headed invocations, `watch` and `attach` use the same daemon-backed session read, and `agency agent <invocation-ref> clients` prints the live tmux clients for that session.
+For headed interactive logs, prefer the live terminal output; use history/transcript/logs pages for daemon-backed inspection and replay.
+Invocation state uses one canonical vocabulary: `starting`, `running`, `waiting`, `stopping`, `succeeded`, `failed`.
+`waiting` covers both done-and-idle and waiting-for-user cases.
+`blocked` is not a user-facing state.
+`agency agent <invocation-ref> restore` restores sandbox state only; it does not rerun the original prompt.
+use `--checkpoint` for explicit/scripted restore and `--turn` when selecting a restorable turn from history output.
+after a restore, use `agency agent <invocation-ref> followup` to continue from the restored state.
+runner config details live in [docs/configuration.md](docs/configuration.md).
 
 non-interactive destructive flows require explicit confirmation via `--yes`:
 
 ```bash
-agency clean <run-id> --yes
-agency merge <run-id> --yes
-agency worktree rm <name|id|prefix> --yes
-agency worktree merge <worktree-ref> --yes
+agency worktree <worktree-ref> rm --yes
+agency worktree <worktree-ref> pr merge --yes
+agency repo <repo-ref> rm --yes
 ```
 
 automation-friendly mutation json:
 
 ```bash
-agency agent start --worktree my-feature --headless --prompt "fix bug" --json
-agency agent stop <invocation-id> --json
-agency agent kill <invocation-id> --json
-agency agent land <invocation-id> --json
-agency worktree pr sync <worktree-ref> --json
-agency worktree merge <worktree-ref> --yes --json
-agency worktree update <worktree-ref> --json
-agency agent discard <invocation-id> --json
-agency agent chat <invocation-id> --prompt "continue" --json
-agency agent restart <invocation-id> --checkpoint 3 --json
+agency agent start --worktree my-feature --repo <repo-ref> --mode headless --prompt "fix bug" --json
+agency agent <invocation-ref> stop --json
+agency agent <invocation-ref> kill --json
+agency agent <invocation-ref> land --json
+agency worktree <worktree-ref> pr sync --json
+agency worktree <worktree-ref> pr merge --yes --json
+agency worktree <worktree-ref> rebase --json
+agency agent <invocation-ref> discard --json
+agency agent <invocation-ref> followup --prompt "continue" --json
+agency agent <invocation-ref> recreate --json
+agency agent <invocation-ref> restore --checkpoint 3 --json
+agency repo add /abs/path/to/repo --json
+agency repo <repo-ref> rm --yes --json
 ```
 
 all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
-success payloads include additive command-specific fields (for example `timeline_entry_id` for `chat`,
-and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restart`).
-for `worktree pr sync` and `worktree merge`, additive report fields include
-`report_source`, `report_fallback_used`, and `report_diagnostics`.
+success payloads include additive command-specific fields (for example `timeline_entry_id` for `followup`,
+and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restore`).
+Start, retry, and recreate JSON payloads include `execution_profile`, `checkout_root`, and `custom_env_keys` for explainability without exposing env values.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
-daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed `E_INVALID_ARGUMENT` errors.
+daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed bad-request errors.
 
 ## how it works
 
@@ -148,20 +187,27 @@ Repo ──► Worktree ──► Agent Invocation ──► Sandbox
 
 you register a repo, create worktrees (isolated branches), start agents inside sandboxed copies of those branches, then land the agent's changes back. a background daemon supervises everything — auto-starts on first use.
 
-invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
+invocation mutation flows (follow-up prompts, checkpoint lifecycle, rollback apply, headed recreate, land/discard) are recorded in one daemon-owned append-only event log with deterministic per-invocation sequencing.
 for headless runs, stdout capture is safety-bounded: `raw.jsonl` is preserved verbatim, oversized lines emit `parse_error` in `stream.jsonl`, and processing continues with subsequent valid lines.
-legacy compatibility commands (`agency push` / `agency merge`) are retained, but their report/body handling and merge-log persistence follow the same bounded-input + durable-write safety posture as canonical v2.1 flows.
-reports-v2 progression is mode-aware: headless `review`/`pr sync`/`merge` is strict and typed; headed/compatibility paths stay progression-capable with explicit diagnostics and deterministic fallback behavior.
+the only semantic runner contract is `.agency/state/runner_status.json`.
+it uses one canonical `state`; the CLI and terminal UI should not layer separate semantic, display, or readiness statuses on top of it.
+the runner writes `running`, `waiting`, `succeeded`, or `failed`.
+`waiting` covers both turn-complete idle and waiting-for-user cases.
+unknown provider events should degrade to diagnostics in transcript/log inspection, not to a fake top-level invocation state.
 
 ## documentation
 
-- **[getting started](docs/getting-started.md)** — full walkthrough from zero to merged PR
-- **[concepts](docs/concepts.md)** — repos, worktrees, agents, sandboxes, landing, checkpoints
-- **[CLI reference](docs/cli.md)** — every command and flag
-- **[configuration](docs/configuration.md)** — agency.json, environment variables, shell completion
-- **[architecture](docs/architecture.md)** — daemon internals, stream parsing, data model
-- **[v2.1 docs](docs/v2.1/README.md)** — consolidated product scope, parity matrix, release gates, roadmap
-- **[contributing](docs/contributing.md)** — build, test, lint, project structure
+- **[docs/index.md](docs/index.md)** — documentation map and ownership rules
+- **[docs/configuration.md](docs/configuration.md)** — config setup and version `4` schemas
+- **[docs/execution-profiles.md](docs/execution-profiles.md)** — execution profiles and managed checkout placement
+- **[docs/codebase.md](docs/codebase.md)** — package layout and architecture boundaries
+- **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
+- **[docs/environment.md](docs/environment.md)** — config paths, overrides, and precedence
+- **[docs/git-worktrees.md](docs/git-worktrees.md)** — repo, integration worktree, invocation, and sandbox model
+- **[docs/overrides.md](docs/overrides.md)** — explicit CLI and config override rules
+- **[docs/persistence.md](docs/persistence.md)** — on-disk schemas, atomic writes, and permissions
+- **[docs/testing.md](docs/testing.md)** — testing standards, layers, fixtures, and e2e rules
+- **[docs/modules/index.md](docs/modules/index.md)** — subsystem-owned docs
 
 ## license
 

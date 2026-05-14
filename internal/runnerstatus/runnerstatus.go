@@ -13,28 +13,35 @@ import (
 	"time"
 )
 
-// Status represents the runner's current state.
-type Status string
+// State represents the runner's current state.
+type State string
 
-// Valid runner status values.
+// Valid runner state values.
 const (
-	StatusWorking        Status = "working"
-	StatusNeedsInput     Status = "needs_input"
-	StatusBlocked        Status = "blocked"
-	StatusReadyForReview Status = "ready_for_review"
+	StateRunning   State = "running"
+	StateWaiting   State = "waiting"
+	StateSucceeded State = "succeeded"
+	StateFailed    State = "failed"
+)
+
+// Common runner reasons.
+const (
+	ReasonAwaitingUserInput = "awaiting_user_input"
+	ReasonAwaitingApproval  = "awaiting_approval"
+	ReasonTurnComplete      = "turn_complete"
 )
 
 // SchemaVersion is the current schema version for runner_status.json.
-const SchemaVersion = "1.0"
+const SchemaVersion = "2.0"
 
 // RunnerStatus represents the contents of .agency/state/runner_status.json.
 type RunnerStatus struct {
 	SchemaVersion string   `json:"schema_version"`
-	Status        Status   `json:"status"`
+	State         State    `json:"state"`
 	UpdatedAt     string   `json:"updated_at"`
+	Reason        string   `json:"reason,omitempty"`
 	Summary       string   `json:"summary"`
 	Questions     []string `json:"questions"`
-	Blockers      []string `json:"blockers"`
 	HowToTest     string   `json:"how_to_test"`
 	Risks         []string `json:"risks"`
 }
@@ -94,35 +101,36 @@ func (s *RunnerStatus) Validate() error {
 		return fmt.Errorf("runner status is nil")
 	}
 
-	// Validate status value
-	switch s.Status {
-	case StatusWorking, StatusNeedsInput, StatusBlocked, StatusReadyForReview:
-		// valid
+	// Validate state value.
+	switch s.State {
+	case StateRunning, StateWaiting, StateSucceeded, StateFailed:
 	case "":
-		return fmt.Errorf("status is required")
+		return fmt.Errorf("state is required")
 	default:
-		return fmt.Errorf("invalid status value: %q", s.Status)
+		return fmt.Errorf("invalid state value: %q", s.State)
 	}
 
-	// Summary is required for all statuses
+	// Summary is required for all states.
 	if s.Summary == "" {
 		return fmt.Errorf("summary is required")
 	}
 
-	// Validate required fields per status
-	switch s.Status {
-	case StatusNeedsInput:
-		if len(s.Questions) == 0 {
-			return fmt.Errorf("questions[] is required when status is needs_input")
+	switch s.State {
+	case StateWaiting:
+		if len(s.Questions) > 0 && s.Reason != ReasonAwaitingUserInput {
+			return fmt.Errorf("questions[] requires reason awaiting_user_input")
 		}
-	case StatusBlocked:
-		if len(s.Blockers) == 0 {
-			return fmt.Errorf("blockers[] is required when status is blocked")
+		if s.Reason == ReasonAwaitingUserInput && len(s.Questions) == 0 {
+			return fmt.Errorf("questions[] is required when state is waiting and reason is awaiting_user_input")
 		}
-	case StatusReadyForReview:
+	case StateSucceeded:
 		if s.HowToTest == "" {
-			return fmt.Errorf("how_to_test is required when status is ready_for_review")
+			return fmt.Errorf("how_to_test is required when state is succeeded")
 		}
+	}
+
+	if s.State != StateWaiting && len(s.Questions) > 0 {
+		return fmt.Errorf("questions[] is only valid when state is waiting")
 	}
 
 	return nil
@@ -143,24 +151,23 @@ func (s *RunnerStatus) Age() time.Duration {
 	return time.Since(t)
 }
 
-// NewInitial creates a new RunnerStatus with initial "working" state.
+// NewInitial creates a new RunnerStatus with initial "running" state.
 func NewInitial() *RunnerStatus {
 	return &RunnerStatus{
 		SchemaVersion: SchemaVersion,
-		Status:        StatusWorking,
+		State:         StateRunning,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Summary:       "Starting work",
 		Questions:     []string{},
-		Blockers:      []string{},
 		HowToTest:     "",
 		Risks:         []string{},
 	}
 }
 
-// IsValid returns true if the status is one of the known valid values.
-func (s Status) IsValid() bool {
+// IsValid returns true if the state is one of the known valid values.
+func (s State) IsValid() bool {
 	switch s {
-	case StatusWorking, StatusNeedsInput, StatusBlocked, StatusReadyForReview:
+	case StateRunning, StateWaiting, StateSucceeded, StateFailed:
 		return true
 	default:
 		return false

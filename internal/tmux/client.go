@@ -12,6 +12,14 @@ const (
 	KeyCtrlC Key = "C-c"
 )
 
+// AttachedClient describes one tmux client attached to a session.
+type AttachedClient struct {
+	Name     string
+	TTY      string
+	PID      int
+	ReadOnly bool
+}
+
 // Note: SessionName(id string) string is defined in capture.go
 // Format: agency_<id>
 // This is the canonical naming function for tmux sessions.
@@ -30,13 +38,9 @@ type Client interface {
 	// name: session name
 	// cwd: working directory for the session
 	// argv: command and arguments to run (must have at least 1 element)
+	// env: optional environment variables to set in the tmux session
 	// Returns error if argv is empty or if tmux fails.
-	NewSession(ctx context.Context, name, cwd string, argv []string) error
-
-	// Attach attaches to an existing tmux session.
-	// This blocks until the user detaches.
-	// Returns error if session does not exist or attach fails.
-	Attach(ctx context.Context, name string) error
+	NewSession(ctx context.Context, name, cwd string, argv []string, env map[string]string) error
 
 	// KillSession kills an existing tmux session.
 	// Returns error if session does not exist or kill fails.
@@ -46,4 +50,13 @@ type Client interface {
 	// keys must have at least 1 element.
 	// Returns error if keys is empty, session does not exist, or send fails.
 	SendKeys(ctx context.Context, name string, keys []Key) error
+
+	// CaptureScrollback captures scrollback from a tmux pane target.
+	CaptureScrollback(ctx context.Context, target string) (string, error)
+
+	// PipePane appends future pane output to logPath.
+	PipePane(ctx context.Context, target, logPath string) error
+
+	// ListAttachedClients returns the currently attached tmux clients.
+	ListAttachedClients(ctx context.Context, name string) ([]AttachedClient, error)
 }

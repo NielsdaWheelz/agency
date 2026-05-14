@@ -74,7 +74,7 @@ func TestResolveDirs_DataDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dirs := ResolveDirsWithOS(tt.env, home, tt.isDarwin)
+			dirs := resolveDirsWithOS(tt.env, home, tt.isDarwin)
 			assert.Equal(t, tt.want, dirs.DataDir)
 		})
 	}
@@ -140,7 +140,7 @@ func TestResolveDirs_ConfigDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dirs := ResolveDirsWithOS(tt.env, home, tt.isDarwin)
+			dirs := resolveDirsWithOS(tt.env, home, tt.isDarwin)
 			assert.Equal(t, tt.want, dirs.ConfigDir)
 		})
 	}
@@ -206,7 +206,7 @@ func TestResolveDirs_CacheDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dirs := ResolveDirsWithOS(tt.env, home, tt.isDarwin)
+			dirs := resolveDirsWithOS(tt.env, home, tt.isDarwin)
 			assert.Equal(t, tt.want, dirs.CacheDir)
 		})
 	}
@@ -224,7 +224,7 @@ func TestResolveDirs_AllDirs(t *testing.T) {
 		"AGENCY_CACHE_DIR":  "/ca",
 	}
 
-	dirs := ResolveDirsWithOS(env, home, false)
+	dirs := resolveDirsWithOS(env, home, false)
 
 	assert.Equal(t, "/d", dirs.DataDir)
 	assert.Equal(t, "/c", dirs.ConfigDir)
@@ -238,7 +238,7 @@ func TestResolveDirs_TildeNotExpanded(t *testing.T) {
 	home := filepath.FromSlash("/home/testuser")
 	env := mapEnv{"AGENCY_DATA_DIR": "~/data"}
 
-	dirs := ResolveDirsWithOS(env, home, false)
+	dirs := resolveDirsWithOS(env, home, false)
 
 	// Should be literal ~/data, not /home/testuser/data
 	assert.Equal(t, "~/data", dirs.DataDir, "tilde should not be expanded")
@@ -251,7 +251,7 @@ func TestResolveDirs_EmptyEnvVarIgnored(t *testing.T) {
 	// Empty string should be treated as unset
 	env := mapEnv{"AGENCY_DATA_DIR": ""}
 
-	dirs := ResolveDirsWithOS(env, home, false)
+	dirs := resolveDirsWithOS(env, home, false)
 
 	// Should fall through to default, not use empty string
 	want := filepath.FromSlash("/home/testuser/.local/share/agency")

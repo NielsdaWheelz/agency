@@ -1,9 +1,8 @@
 // Package store provides persistence for agency data.
-// This file implements filesystem-based integration worktree discovery (Slice 8 PR-01).
+// This file implements filesystem-based integration worktree discovery.
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,15 +73,14 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 		}
 
 		var meta IntegrationWorktreeMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
+		if err := decodeStrictJSON(data, &meta); err != nil {
 			// Invalid JSON - mark as broken
 			record.Broken = true
 			records = append(records, record)
 			continue
 		}
 
-		// Validate minimal required fields for non-broken status
-		if meta.SchemaVersion == "" || meta.CreatedAt == "" {
+		if err := validateIntegrationWorktreeMeta(meta, repoID, worktreeID, metaPath); err != nil {
 			record.Broken = true
 			records = append(records, record)
 			continue
@@ -118,64 +116,6 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 		}
 
 		// Tie-breaker: worktree_id ascending
-		return records[i].WorktreeID < records[j].WorktreeID
-	})
-
-	return records, nil
-}
-
-// ScanAllIntegrationWorktrees discovers integration worktrees across all repos.
-// Returns records sorted by RepoID asc, then created_at asc, then WorktreeID asc.
-func ScanAllIntegrationWorktrees(dataDir string) ([]IntegrationWorktreeRecord, error) {
-	reposDir := filepath.Join(dataDir, "repos")
-
-	entries, err := os.ReadDir(reposDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var records []IntegrationWorktreeRecord
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		repoID := entry.Name()
-		repoRecords, err := ScanIntegrationWorktreesForRepo(dataDir, repoID)
-		if err != nil {
-			// Skip repos with errors (e.g., permission denied)
-			continue
-		}
-		records = append(records, repoRecords...)
-	}
-
-	// Sort by RepoID, then created_at, then WorktreeID
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].RepoID != records[j].RepoID {
-			return records[i].RepoID < records[j].RepoID
-		}
-		// Broken records sort last within repo
-		if records[i].Broken != records[j].Broken {
-			return !records[i].Broken
-		}
-		if records[i].Broken && records[j].Broken {
-			return records[i].WorktreeID < records[j].WorktreeID
-		}
-
-		ti, erri := time.Parse(time.RFC3339, records[i].Meta.CreatedAt)
-		tj, errj := time.Parse(time.RFC3339, records[j].Meta.CreatedAt)
-
-		if erri != nil || errj != nil {
-			return records[i].WorktreeID < records[j].WorktreeID
-		}
-
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-
 		return records[i].WorktreeID < records[j].WorktreeID
 	})
 

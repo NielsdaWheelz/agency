@@ -103,6 +103,28 @@ func TestFormatContextKeysInOrder(t *testing.T) {
 	assert.True(t, exitCodeIdx < logIdx, "exit_code should come before log")
 }
 
+func TestFormatShowsPathAndSourceByDefault(t *testing.T) {
+	t.Parallel()
+
+	err := NewWithDetails(EInvalidAgencyJSON, "version 1 is not supported; agency.json must use version 4", map[string]string{
+		"path":   "/repo/agency.json",
+		"source": "repo",
+		"hint":   "fix /repo/agency.json, or regenerate it",
+	})
+
+	output := Format(err, PrintOptions{})
+
+	pathIdx := strings.Index(output, "path: /repo/agency.json")
+	sourceIdx := strings.Index(output, "source: repo")
+	hintIdx := strings.Index(output, "hint: fix /repo/agency.json, or regenerate it")
+
+	assert.NotEqual(t, -1, pathIdx, "path should appear in default output")
+	assert.NotEqual(t, -1, sourceIdx, "source should appear in default output")
+	assert.NotEqual(t, -1, hintIdx, "hint should appear in output")
+	assert.True(t, pathIdx < sourceIdx, "path should come before source")
+	assert.True(t, sourceIdx < hintIdx, "source should come before hint")
+}
+
 // TestFormatUnknownKeysHiddenByDefault verifies unknown keys are hidden without --verbose.
 func TestFormatUnknownKeysHiddenByDefault(t *testing.T) {
 	t.Parallel()
@@ -442,67 +464,6 @@ func TestReadTailNonexistentFile(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestGetHint verifies GetHint function.
-func TestGetHint(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		err      error
-		expected string
-	}{
-		{
-			name:     "with hint",
-			err:      NewWithDetails(EScriptFailed, "test", map[string]string{"hint": "fix it"}),
-			expected: "fix it",
-		},
-		{
-			name:     "no hint",
-			err:      NewWithDetails(EScriptFailed, "test", map[string]string{"other": "value"}),
-			expected: "",
-		},
-		{
-			name:     "nil details",
-			err:      New(EScriptFailed, "test"),
-			expected: "",
-		},
-		{
-			name:     "non-agency error",
-			err:      &testError{msg: "plain"},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			result := GetHint(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestFormatHint verifies FormatHint function.
-func TestFormatHint(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"", ""},
-		{"fix it", "hint: fix it"},
-		{"hint: already prefixed", "hint: already prefixed"},
-	}
-
-	for _, tt := range tests {
-		result := FormatHint(tt.input)
-		assert.Equal(t, tt.expected, result)
-	}
-}
-
 // testError is a simple error implementation for testing.
 type testError struct {
 	msg string
@@ -549,28 +510,16 @@ func TestDeriveTryLines(t *testing.T) {
 		contains string
 	}{
 		{
-			name:     "session not found suggests resume",
-			code:     ESessionNotFound,
-			details:  map[string]string{"run_id": "test-123"},
-			contains: "agency resume test-123",
-		},
-		{
 			name:     "gh not authenticated suggests login",
 			code:     EGhNotAuthenticated,
 			details:  nil,
 			contains: "gh auth login",
 		},
 		{
-			name:     "remote out of date suggests push",
-			code:     ERemoteOutOfDate,
-			details:  map[string]string{"run_id": "test-456"},
-			contains: "agency push test-456",
-		},
-		{
-			name:     "no pr suggests push",
-			code:     ENoPR,
-			details:  map[string]string{"run_id": "test-789"},
-			contains: "agency push test-789",
+			name:     "missing user config suggests config init",
+			code:     ENoUserConfig,
+			details:  nil,
+			contains: "agency config init",
 		},
 	}
 

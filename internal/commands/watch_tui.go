@@ -1,16 +1,17 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/watch"
 )
@@ -26,77 +27,24 @@ type WatchOpts struct {
 	Output          io.Writer
 }
 
-type watchEnterDelegate func(context.Context, exec.CommandRunner, fs.FS, string, AgentEnterOpts, io.Writer, io.Writer) error
-type watchOpenDelegate func(context.Context, exec.CommandRunner, fs.FS, string, AgentOpenOpts, io.Writer, io.Writer) error
-type watchPRSyncDelegate func(context.Context, exec.CommandRunner, fs.FS, string, WorktreePRSyncOpts, io.Writer, io.Writer) error
-
-// watchActionDelegates forwards in-watch actions to canonical command contracts.
-// It intentionally does not implement watch-specific policy logic.
-type watchActionDelegates struct {
-	cr              exec.CommandRunner
-	fsys            fs.FS
-	cwd             string
+type watchLaunchOptions struct {
+	initialPage     watch.InitialPage
+	invocationID    string
+	repoID          string
+	interval        time.Duration
+	input           io.Reader
+	output          io.Writer
+	isInteractive   func() bool
 	dataDirOverride string
-	stdout          io.Writer
-	stderr          io.Writer
-
-	enterFn  watchEnterDelegate
-	openFn   watchOpenDelegate
-	prSyncFn watchPRSyncDelegate
+	runWatch        func(context.Context, *daemonclient.Client, watch.RunOptions) (watch.RunResult, error)
 }
 
-func newWatchActionDelegates(cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string, stdout, stderr io.Writer) *watchActionDelegates {
-	return &watchActionDelegates{
-		cr:              cr,
-		fsys:            fsys,
-		cwd:             cwd,
-		dataDirOverride: dataDirOverride,
-		stdout:          stdout,
-		stderr:          stderr,
-		enterFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentEnterOpts, stdout, stderr io.Writer) error {
-			return AgentEnter(ctx, cr, fsys, cwd, opts, stdout, stderr)
-		},
-		openFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
-			return AgentOpen(ctx, cr, fsys, cwd, opts, stdout, stderr)
-		},
-		prSyncFn: func(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePRSyncOpts, stdout, stderr io.Writer) error {
-			return WorktreePRSync(ctx, cr, fsys, cwd, opts, stdout, stderr)
-		},
-	}
-}
-
-func (d *watchActionDelegates) Enter(ctx context.Context, invocationID, repoID string) error {
-	return d.enterFn(ctx, d.cr, d.fsys, d.cwd, AgentEnterOpts{
-		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
-		DataDirOverride: d.dataDirOverride,
-	}, d.stdout, d.stderr)
-}
-
-func (d *watchActionDelegates) Open(ctx context.Context, invocationID, repoID string) error {
-	return d.openFn(ctx, d.cr, d.fsys, d.cwd, AgentOpenOpts{
-		InvocationRef:   invocationID,
-		RepoFlag:        repoID,
-		DataDirOverride: d.dataDirOverride,
-	}, d.stdout, d.stderr)
-}
-
-func (d *watchActionDelegates) PRSync(ctx context.Context, worktreeID, repoID string) error {
-	return d.prSyncFn(ctx, d.cr, d.fsys, d.cwd, WorktreePRSyncOpts{
-		WorktreeRef:     worktreeID,
-		RepoFlag:        repoID,
-		DataDirOverride: d.dataDirOverride,
-	}, d.stdout, d.stderr)
-}
-
-// Watch launches the full-screen, daemon-backed watch workspace.
-func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WatchOpts, stdout, stderr io.Writer) error {
-	_ = stderr
+func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, stdout, stderr io.Writer, opts watchLaunchOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	isInteractive := opts.IsInteractive
+	isInteractive := opts.isInteractive
 	if isInteractive == nil {
 		isInteractive = func() bool {
 			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
@@ -113,14 +61,13 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 	}
 
 	var dataDir string
-	if opts.DataDirOverride != "" {
-		dataDir = opts.DataDirOverride
+	if opts.dataDirOverride != "" {
+		dataDir = opts.dataDirOverride
 	} else {
-		homeDir, err := os.UserHomeDir()
+		dirs, err := resolveCommandDirs("", "")
 		if err != nil {
-			return errors.Wrap(errors.EInternal, "failed to get home directory", err)
+			return err
 		}
-		dirs := paths.ResolveDirs(osEnv{}, homeDir)
 		dataDir = dirs.DataDir
 	}
 
@@ -136,25 +83,172 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		return err
 	}
 
-	interval := opts.Interval
+	interval := opts.interval
 	if interval <= 0 {
 		interval = defaultWatchInterval
 	}
-	input := opts.Input
+	input := opts.input
 	if input == nil {
 		input = os.Stdin
 	}
-	output := opts.Output
+	output := opts.output
 	if output == nil {
 		output = stdout
 	}
 
-	loader := watch.NewSnapshotLoader(client)
-	actionDelegates := newWatchActionDelegates(cr, fsys, cwd, opts.DataDirOverride, io.Discard, io.Discard)
-	return watch.Run(ctx, loader, watch.RunOptions{
-		Interval: interval,
-		Input:    input,
-		Output:   output,
-		Actions:  actionDelegates,
+	capture := func(run func(stdout, stderr io.Writer) error) (string, error) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		err := run(&stdout, &stderr)
+
+		output := strings.TrimSpace(stdout.String())
+		if errText := strings.TrimSpace(stderr.String()); errText != "" {
+			if output != "" {
+				output += "\n"
+			}
+			output += errText
+		}
+
+		return output, err
+	}
+
+	runWatch := opts.runWatch
+	if runWatch == nil {
+		runWatch = watch.Run
+	}
+
+	runOpts := watch.RunOptions{
+		InitialPage:  opts.initialPage,
+		InvocationID: opts.invocationID,
+		RepoID:       opts.repoID,
+		Interval:     interval,
+		Input:        input,
+		Output:       output,
+		Open: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentOpen(ctx, cr, fsys, cwd, AgentOpenOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Stop: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentStop(ctx, cr, fsys, cwd, AgentStopOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Kill: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentKill(ctx, cr, fsys, cwd, AgentKillOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Land: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentLand(ctx, cr, fsys, cwd, AgentLandOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Discard: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentDiscard(ctx, cr, fsys, cwd, AgentDiscardOpts{
+					InvocationRef: invocationID,
+					RepoRef:       repoID,
+				}, stdout, stderr)
+			})
+		},
+		Recreate: func(ctx context.Context, invocationID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentRecreate(ctx, cr, fsys, cwd, AgentRecreateOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					Detached:        true,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Followup: func(ctx context.Context, invocationID, repoID, prompt string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentFollowup(ctx, cr, fsys, cwd, AgentFollowupOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					Prompt:          prompt,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		PRSync: func(ctx context.Context, worktreeID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return WorktreePRSync(ctx, cr, fsys, cwd, WorktreePRSyncOpts{
+					WorktreeRef:     worktreeID,
+					RepoRef:         repoID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		PRMerge: func(ctx context.Context, worktreeID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return WorktreePRMerge(ctx, cr, fsys, cwd, WorktreePRMergeOpts{
+					WorktreeRef:     worktreeID,
+					RepoRef:         repoID,
+					Yes:             true,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Rebase: func(ctx context.Context, worktreeID, repoID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return WorktreeRebase(ctx, cr, fsys, cwd, WorktreeRebaseOpts{
+					WorktreeRef:     worktreeID,
+					RepoRef:         repoID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+		Restore: func(ctx context.Context, invocationID, repoID, turnID string) (string, error) {
+			return capture(func(stdout, stderr io.Writer) error {
+				return AgentRestore(ctx, cr, fsys, cwd, AgentRestoreOpts{
+					InvocationRef:   invocationID,
+					RepoRef:         repoID,
+					TurnID:          turnID,
+					DataDirOverride: opts.dataDirOverride,
+				}, stdout, stderr)
+			})
+		},
+	}
+
+	result, err := runWatch(ctx, client, runOpts)
+	if err != nil {
+		return err
+	}
+	if result.AttachInvocationID == "" || result.AttachRepoID == "" {
+		return nil
+	}
+	return AgentAttach(ctx, cr, fsys, cwd, AgentAttachOpts{
+		InvocationRef:   result.AttachInvocationID,
+		RepoRef:         result.AttachRepoID,
+		IsInteractive:   isInteractive,
+		DataDirOverride: opts.dataDirOverride,
+	}, stdout, stderr)
+}
+
+// Watch launches the full-screen, daemon-backed watch workspace.
+func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WatchOpts, stdout, stderr io.Writer) error {
+	return launchWatchWorkspace(ctx, cr, fsys, cwd, stdout, stderr, watchLaunchOptions{
+		initialPage:     watch.InitialPageWorkspace,
+		interval:        opts.Interval,
+		input:           opts.Input,
+		output:          opts.Output,
+		isInteractive:   opts.IsInteractive,
+		dataDirOverride: opts.DataDirOverride,
+		runWatch:        watch.Run,
 	})
 }

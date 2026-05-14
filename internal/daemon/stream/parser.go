@@ -52,10 +52,10 @@ type Parser struct {
 	// seq is the monotonic sequence counter for normalized events.
 	seq uint64
 
-	// semanticStatus is the current semantic status.
-	semanticStatus *runnerstatus.Status
+	// semanticStatus remains for daemon wiring; stream parsing no longer infers it.
+	semanticStatus *runnerstatus.State
 
-	// semanticStatusUpdatedAt is when semantic status was last updated.
+	// semanticStatusUpdatedAt tracks the last external semantic-status update time.
 	semanticStatusUpdatedAt time.Time
 
 	// lastOutputAt tracks when the last output was received.
@@ -78,6 +78,10 @@ type Parser struct {
 	// explicit session/thread identifier.
 	// Set via SetSessionStartNotify before calling StreamAndParse.
 	sessionStartNotify func(SessionStartNotification)
+
+	// finalNotify is called when a final event is written to stream.jsonl.
+	// Set via SetFinalNotify before calling StreamAndParse.
+	finalNotify func(FinalNotification)
 
 	// pendingMutatingTools tracks mutating tool names from the latest assistant
 	// message, used to emit a checkpoint notification after the tool results arrive.
@@ -103,14 +107,14 @@ func (p *Parser) SetInitialSeq(seq uint64) {
 	p.seq = seq
 }
 
-// GetSemanticStatus returns the current semantic status.
-func (p *Parser) GetSemanticStatus() *runnerstatus.Status {
+// GetSemanticStatus returns the current semantic status value.
+func (p *Parser) GetSemanticStatus() *runnerstatus.State {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.semanticStatus
 }
 
-// GetSemanticStatusUpdatedAt returns when the semantic status was last updated.
+// GetSemanticStatusUpdatedAt returns when semantic status was last updated.
 func (p *Parser) GetSemanticStatusUpdatedAt() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -136,6 +140,14 @@ func (p *Parser) SetSessionStartNotify(fn func(SessionStartNotification)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sessionStartNotify = fn
+}
+
+// SetFinalNotify registers a callback invoked when a parsed final event is
+// persisted. Safe to call with nil (no-op).
+func (p *Parser) SetFinalNotify(fn func(FinalNotification)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.finalNotify = fn
 }
 
 // Stop stops the parser.
@@ -268,11 +280,7 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 		// Detect mutating tools and emit checkpoint notification.
 		p.maybeNotifyCheckpoint(event)
 		p.maybeNotifySessionStart(event)
-	}
-
-	// Update semantic status if provided
-	if result.SemanticStatus != nil {
-		p.updateSemanticStatus(result.SemanticStatus)
+		p.maybeNotifyFinal(event)
 	}
 	return nil
 }
@@ -292,20 +300,34 @@ func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.Fil
 	if err != nil {
 		return fmt.Errorf("marshal normalized event: %w", err)
 	}
+	if len(data) > MaxLineSize {
+		overflowEvent := &NormalizedEvent{
+			SchemaVersion: event.SchemaVersion,
+			Seq:           event.Seq,
+			Timestamp:     event.Timestamp,
+			InvocationID:  event.InvocationID,
+			Runner:        event.Runner,
+			Kind:          EventKindParseError,
+			Data: map[string]interface{}{
+				"reason":      "normalized_event_too_large",
+				"event_kind":  string(event.Kind),
+				"event_bytes": len(data),
+				"max_bytes":   MaxLineSize,
+			},
+		}
+		data, err = overflowEvent.Marshal()
+		if err != nil {
+			return fmt.Errorf("marshal oversized normalized-event fallback: %w", err)
+		}
+		if len(data) > MaxLineSize {
+			return fmt.Errorf("%w: oversized fallback event exceeded max line size (%d bytes)", ErrNormalizedStreamWriteFailed, len(data))
+		}
+	}
 
 	if _, err := streamFile.Write(data); err != nil {
 		return fmt.Errorf("%w: %v", ErrNormalizedStreamWriteFailed, err)
 	}
 	return nil
-}
-
-// updateSemanticStatus updates the semantic status.
-func (p *Parser) updateSemanticStatus(status *runnerstatus.Status) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.semanticStatus = status
-	p.semanticStatusUpdatedAt = p.Clock()
 }
 
 // emitParseError emits a parse_error event with throttling.
@@ -487,6 +509,33 @@ func (p *Parser) maybeNotifySessionStart(event *NormalizedEvent) {
 	notifyFn(SessionStartNotification{
 		SessionID: sessionID,
 		Seq:       event.Seq,
+	})
+}
+
+func (p *Parser) maybeNotifyFinal(event *NormalizedEvent) {
+	if event.Kind != EventKindFinal {
+		return
+	}
+
+	p.mu.Lock()
+	notifyFn := p.finalNotify
+	p.mu.Unlock()
+	if notifyFn == nil {
+		return
+	}
+
+	success := true
+	if event.Data != nil {
+		if raw, ok := event.Data["success"]; ok {
+			if s, ok := raw.(bool); ok {
+				success = s
+			}
+		}
+	}
+
+	notifyFn(FinalNotification{
+		Success: success,
+		Seq:     event.Seq,
 	})
 }
 

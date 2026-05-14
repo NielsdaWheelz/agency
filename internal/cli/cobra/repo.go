@@ -1,259 +1,178 @@
 package cobra
 
 import (
-	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newRepoCmd() *cobra.Command {
+	var jsonOutput bool
+	var yes bool
+
 	cmd := &cobra.Command{
 		Use:   "repo",
-		Short: "Manage registered repositories",
-		Long: `Manage the daemon's repository registry.
+		Short: "Register repos and inspect the repo registry",
+		Long: `Register repositories so agency commands can target them by --repo.
 
-The daemon maintains a registry of known repositories. Registering a repo
-allows CWD-less operation: you can run agency commands from any directory
-by specifying --repo.
+Once a repo is registered, worktree and agent commands can resolve it from any
+directory by repo ref. Repo refs accept a short name, owner/repo, repo key,
+repo_id, or a unique prefix.
 
-Subcommands:
-  add     Register a repository path
-  ls      List registered repositories
-  show    Show details of a registered repository`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency repo <add|ls|show>")
-		},
-	}
-
-	cmd.AddCommand(
-		newRepoAddCmd(),
-		newRepoLSCmd(),
-		newRepoShowCmd(),
-		newRepoS1Cmd(),
-	)
-
-	return cmd
-}
-
-func newRepoAddCmd() *cobra.Command {
-	var path string
-	var jsonOutput bool
-
-	cmd := &cobra.Command{
-		Use:   "add",
-		Short: "Register a repository with the daemon",
-		Long: `Register a repository root with the daemon.
-
-If --path is omitted, the current working directory is used.
-The daemon resolves the git toplevel and assigns a stable repo_id.
-
-Example:
-  agency repo add
-  agency repo add --path /home/user/myrepo
-  agency repo add --json`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if path == "" {
-				var err error
-				path, err = os.Getwd()
-				if err != nil {
-					return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-				}
-			}
-
-			cwd, _ := os.Getwd()
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoAdd(cmd.Context(), cr, fsys, cwd, commands.RepoAddOpts{
-				Path: path,
-				JSON: jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
-	}
-
-	cmd.Flags().StringVar(&path, "path", "", "path to repository (defaults to cwd)")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-
-	return cmd
-}
-
-func newRepoLSCmd() *cobra.Command {
-	var jsonOutput bool
-
-	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List registered repositories",
-		Long: `List all repositories registered with the daemon.
-
-Example:
+Use:
+  agency repo add [path]   to register a repo
+  agency repo ls           to list registered repos
+  agency repo <repo-ref>   to show one repo
+  agency repo <repo-ref> rm --yes
+                           to remove one repo`,
+		Example: `  agency repo add /path/to/repo
   agency repo ls
-  agency repo ls --json`,
-		Args: cobra.NoArgs,
+  agency repo agency
+  agency repo agency rm --yes`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoLS(cmd.Context(), cr, fsys, commands.RepoLSOpts{
-				JSON: jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
+			switch {
+			case len(args) == 0:
+				_ = cmd.Help()
+				return errors.New(errors.EUsage, "specify 'add', 'ls', or a repo ref")
+			case args[0] == "add":
+				if err := validateRepoTargetFlags(cmd, "add", "json"); err != nil {
+					return err
+				}
+				if len(args) > 2 {
+					return errors.New(errors.EUsage, "too many arguments for \"agency repo add\"")
+				}
+				path := ""
+				if len(args) == 2 {
+					path = args[1]
+				}
+				return runRepoAdd(cmd, path, jsonOutput)
+			case args[0] == "ls":
+				if err := validateRepoTargetFlags(cmd, "ls", "json"); err != nil {
+					return err
+				}
+				if len(args) > 1 {
+					return errors.New(errors.EUsage, "too many arguments for \"agency repo ls\"")
+				}
+				return runRepoLS(cmd, jsonOutput)
+			default:
+				repoRef := args[0]
+				if len(args) == 1 {
+					if err := validateRepoTargetFlags(cmd, "<repo-ref>", "json"); err != nil {
+						return err
+					}
+					return runRepoShow(cmd, repoRef, jsonOutput)
+				}
+				if len(args) == 2 && args[1] == "rm" {
+					if err := validateRepoTargetFlags(cmd, "rm", "json", "yes"); err != nil {
+						return err
+					}
+					return runRepoRm(cmd, repoRef, yes, jsonOutput)
+				}
+				return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency repo\"")
+			}
 		},
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVarP(&jsonOutput, "json", "j", false, "output as JSON")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm removal without prompting")
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		switch len(args) {
+		case 0:
+			candidates := []string{}
+			if toComplete == "" || strings.HasPrefix("add", toComplete) {
+				candidates = append(candidates, "add\tRegister a repository")
+			}
+			if toComplete == "" || strings.HasPrefix("ls", toComplete) {
+				candidates = append(candidates, "ls\tList registered repositories")
+			}
+			if len(candidates) > 0 {
+				return candidates, cobra.ShellCompDirectiveNoFileComp
+			}
+			repoRefs, directive := completeRepoRefs(cmd, args, toComplete)
+			return repoRefs, directive
+		case 1:
+			if args[0] == "add" || args[0] == "ls" {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			values := []string{"rm"}
+			candidates := make([]string, 0, len(values))
+			for _, value := range values {
+				if toComplete != "" && !strings.HasPrefix(value, toComplete) {
+					continue
+				}
+				candidates = append(candidates, value)
+			}
+			return candidates, cobra.ShellCompDirectiveNoFileComp
+		default:
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+	}
 
 	return cmd
 }
 
-func newRepoShowCmd() *cobra.Command {
-	var jsonOutput bool
-
-	cmd := &cobra.Command{
-		Use:   "show <name|repo-key|id|prefix>",
-		Short: "Show details of a registered repository",
-		Long: `Show details of a registered repository.
-
-The argument can be a repo name, owner/repo, full repo key, repo id, or unique prefix.
-
-Example:
-  agency repo show agency
-  agency repo show NielsdaWheelz/agency
-  agency repo show github:NielsdaWheelz/agency
-  agency repo show 769749d
-  agency repo show --json agency`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoShow(cmd.Context(), cr, fsys, commands.RepoShowOpts{
-				RepoID: args[0],
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
+func validateRepoTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
+	allowedFlags := make(map[string]bool, len(allowed))
+	for _, flag := range allowed {
+		allowedFlags[flag] = true
 	}
-
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-
-	return cmd
+	for _, flag := range []string{"json", "yes"} {
+		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
+			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency repo "+action)
+		}
+	}
+	return nil
 }
 
-func newRepoS1Cmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "s1",
-		Short: "S1 release gate operations",
-		Long: `S1 release gate enforcement and reporting.
-
-Subcommands:
-  readiness   Check S1 release readiness
-  report      Generate S1 closure evidence report
-  freeze      Check S1 freeze readiness`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency repo s1 <readiness|report|freeze>")
-		},
+func runRepoAdd(cmd *cobra.Command, path string, jsonOutput bool) error {
+	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+	if err != nil {
+		return err
 	}
 
-	cmd.AddCommand(
-		newRepoS1ReadinessCmd(),
-		newRepoS1ReportCmd(),
-		newRepoS1FreezeCmd(),
-	)
-
-	return cmd
+	return commands.RepoAdd(ctx, cr, fsys, commands.RepoAddOpts{
+		Path: path,
+		JSON: jsonOutput,
+	}, cmd.OutOrStdout(), cmd.OutOrStderr())
 }
 
-func newRepoS1ReadinessCmd() *cobra.Command {
-	var jsonOutput bool
-	var repoID string
-
-	cmd := &cobra.Command{
-		Use:   "readiness",
-		Short: "Check S1 release readiness",
-		Long: `Check whether Slice S1 gates are ready for release.
-
-Returns READY when all Gate A and Gate B items are closed,
-or BLOCKED with details of blocking items.
-
-Example:
-  agency repo s1 readiness
-  agency repo s1 readiness --json
-  agency repo s1 readiness --repo <repo_id>`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoS1Readiness(cmd.Context(), cr, fsys, cwd, commands.RepoS1ReadinessOpts{
-				RepoID: repoID,
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
+func runRepoLS(cmd *cobra.Command, jsonOutput bool) error {
+	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
-
-	return cmd
+	return commands.RepoLS(ctx, cr, fsys, commands.RepoLSOpts{
+		JSON: jsonOutput,
+	}, cmd.OutOrStdout(), cmd.OutOrStderr())
 }
 
-func newRepoS1ReportCmd() *cobra.Command {
-	var jsonOutput bool
-	var repoID string
-
-	cmd := &cobra.Command{
-		Use:   "report",
-		Short: "Generate S1 closure evidence report",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoS1ClosureReport(cmd.Context(), cr, fsys, cwd, commands.RepoS1ClosureReportOpts{
-				RepoID: repoID,
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
+func runRepoShow(cmd *cobra.Command, repoRef string, jsonOutput bool) error {
+	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
-
-	return cmd
+	return commands.RepoShow(ctx, cr, fsys, commands.RepoShowOpts{
+		RepoRef: repoRef,
+		JSON:    jsonOutput,
+	}, cmd.OutOrStdout(), cmd.OutOrStderr())
 }
 
-func newRepoS1FreezeCmd() *cobra.Command {
-	var jsonOutput bool
-	var repoID string
-
-	cmd := &cobra.Command{
-		Use:   "freeze",
-		Short: "Check S1 freeze readiness",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-
-			return commands.RepoS1FreezeReadiness(cmd.Context(), cr, fsys, cwd, commands.RepoS1FreezeReadinessOpts{
-				RepoID: repoID,
-				JSON:   jsonOutput,
-			}, cmd.OutOrStdout(), cmd.OutOrStderr())
-		},
+func runRepoRm(cmd *cobra.Command, repoRef string, yes bool, jsonOutput bool) error {
+	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
-	cmd.Flags().StringVar(&repoID, "repo", "", "Repo name, key, id, or prefix (defaults to CWD auto-detect)")
-
-	return cmd
+	return commands.RepoRm(ctx, cr, fsys, commands.RepoRmOpts{
+		RepoRef: repoRef,
+		Yes:     yes,
+		JSON:    jsonOutput,
+	}, cmd.OutOrStdout(), cmd.OutOrStderr())
 }

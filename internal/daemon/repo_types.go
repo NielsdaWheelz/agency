@@ -1,0 +1,57 @@
+package daemon
+
+// RepoRegisterRequest is the request body for POST /repos/register.
+type RepoRegisterRequest struct {
+	// RepoRoot is the absolute path to the repository root (or a subdirectory).
+	// Daemon normalizes to git toplevel.
+	RepoRoot string `json:"repo_root"`
+}
+
+// RepoRegisterData is the data payload for a successful register response.
+type RepoRegisterData struct {
+	RepoID                  string   `json:"repo_id"`
+	RepoName                string   `json:"repo_name"`
+	RepoKey                 string   `json:"repo_key"`
+	Paths                   []string `json:"paths"`
+	PreferredRoot           string   `json:"preferred_root"`
+	PreferredRootAccessible bool     `json:"preferred_root_accessible"`
+	LastSeenAt              string   `json:"last_seen_at"`
+}
+
+// RepoDTO is the data transfer object for a single repo.
+type RepoDTO struct {
+	RepoID                  string     `json:"repo_id"`
+	RepoName                string     `json:"repo_name"`
+	RepoKey                 string     `json:"repo_key"`
+	Paths                   []string   `json:"paths"`
+	PreferredRoot           string     `json:"preferred_root"`
+	PreferredRootAccessible bool       `json:"preferred_root_accessible"`
+	Origin                  *OriginDTO `json:"origin,omitempty"`
+	LastSeenAt              string     `json:"last_seen_at"`
+	UpdatedAt               string     `json:"updated_at,omitempty"`
+}
+
+// OriginDTO is the origin info for a repo.
+type OriginDTO struct {
+	Present bool   `json:"present"`
+	URL     string `json:"url,omitempty"`
+	Host    string `json:"host,omitempty"`
+}
+
+// ListReposData is the data payload for GET /repos.
+type ListReposData struct {
+	Repos []RepoDTO `json:"repos"`
+}
+
+// RepoRmRequest is the request body for POST /repos/rm.
+type RepoRmRequest struct {
+	RepoRef string `json:"repo_ref"`
+}
+
+// RepoRmData is the data payload for a successful repo unregister response.
+type RepoRmData struct {
+	RepoID           string `json:"repo_id"`
+	RepoName         string `json:"repo_name"`
+	RepoKey          string `json:"repo_key"`
+	RemovedFromIndex bool   `json:"removed_from_index"`
+}

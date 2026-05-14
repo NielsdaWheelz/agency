@@ -1,14 +1,123 @@
-# configuration
+# Configuration
 
-## agency.json
+## Scope
 
-the `agency.json` file configures agency for a repository. it is created by `agency init`.
+This document owns setup and the version `4` schemas for `config.json` and `agency.json`.
 
-### schema
+For file locations and precedence, see [environment.md](environment.md).
+
+## Setup
+
+1. Run `agency config init`.
+2. Edit `config.json` when you need different runner defaults, Claude `permission_mode`, or command mappings.
+3. Register a repo with `agency repo add /path/to/repo`.
+4. Run `agency init --path /path/to/repo` for local per-repo config, or `agency init --path /path/to/repo --repo-config` for the shareable repo file at the registered repo canonical root.
+
+`agency config init` owns user config. `agency init` owns repo config and repo scripts only. Integration worktrees and sandboxes do not own repo-shared config.
+Version `4` is a hard cutover. Older `config.json` and `agency.json` versions are rejected instead of migrated or interpreted through legacy compatibility paths.
+
+## User Config: `config.json`
+
+- `version` must be `4`.
+- `defaults.runner` and `defaults.editor` are required.
+- `defaults.base_branch` is optional.
+- `defaults.execution_profile` is required and names the default execution profile.
+- `execution_profiles` is required.
+- Each `execution_profiles.<name>.env` maps environment variable names to opaque string values.
+- Profile labels must match `^[a-z0-9]+(-[a-z0-9]+)*$`.
+- Every profile referenced by `defaults.execution_profile`, `agency.json` `execution.profile`, or `--execution-profile` must exist in user config.
+- Agency does not expand `~`, substitute variables, or interpret shell syntax in profile env values.
+- `runners` maps canonical runner ids to a single executable name.
+- `editors` maps editor ids to a single executable name.
+- Runner and editor command mappings must be a single executable with no inline args. Use a wrapper script if you need args.
+- `runner_defaults` is optional.
+- Typed `runner_defaults` are supported only for `claude-code`, `codex`, and `cursor`.
+- `runner_defaults.claude-code` supports `model`, `effort`, and `permission_mode`.
+- `runner_defaults.codex` supports `model` and `effort`.
+- `runner_defaults.cursor` supports `model`.
+- Each typed runner default must set at least one supported field.
+- `runner_defaults.claude-code.permission_mode` is user-config only.
+- Unknown fields and wrong types are rejected.
+
+Supported canonical runner ids: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`.
 
 ```json
 {
-  "version": 1,
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "base_branch": "main",
+    "execution_profile": "personal"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "claude-opus-4-7[1m]",
+      "effort": "max",
+      "permission_mode": "bypassPermissions"
+    },
+    "codex": {
+      "model": "gpt-5.4",
+      "effort": "xhigh"
+    },
+    "cursor": {
+      "model": "sonnet-4.6-thinking"
+    }
+  },
+  "runners": {
+    "codex": "codex",
+    "claude-code": "claude"
+  },
+  "editors": {
+    "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {
+        "CODEX_HOME": "/Users/me/.codex-personal",
+        "CLAUDE_CONFIG_DIR": "/Users/me/.claude",
+        "GH_CONFIG_DIR": "/Users/me/.config/gh-personal"
+      }
+    },
+    "work": {
+      "env": {
+        "CODEX_HOME": "/Users/me/.codex-work",
+        "CLAUDE_CONFIG_DIR": "/Users/me/.claude-work",
+        "GH_CONFIG_DIR": "/Users/me/.config/gh-work"
+      }
+    }
+  }
+}
+```
+
+`defaults` does not accept runner-specific fields such as `model`, `effort`, `thinking`, or Claude `permission_mode`. Put those under `runner_defaults`.
+
+## Repo Config: `agency.json`
+
+- `version` must be `4`.
+- `scripts.setup.path`, `scripts.verify.path`, and `scripts.archive.path` are required.
+- `scripts.*.timeout` is optional.
+- Timeouts use Go duration strings such as `10m` or `1h`.
+- Timeout values must stay within `1m` to `24h`.
+- Relative script paths resolve from the directory that contains the selected `agency.json`.
+- Repo-shared `agency.json` lives at the registered repo canonical root: `PreferredRoot`, else `RepoRootLastSeen`.
+- Integration worktrees and sandboxes are execution surfaces only and do not own repo-shared `agency.json`.
+- Repo-shared writes must target the canonical repo root, not an agency-managed worktree.
+- `execution.profile` is optional and selects a user-defined execution profile for the repo.
+- `execution.checkout_root` is optional. It must be `repo-sibling` or an absolute path.
+- Omitted `execution.checkout_root` means `repo-sibling`.
+- Relative checkout roots are invalid.
+- Repo config may select a profile label but must not define profile env vars.
+- `runner_defaults` is optional.
+- Repo-scoped typed `runner_defaults` are supported only for `claude-code`, `codex`, and `cursor`.
+- Repo-scoped `runner_defaults.claude-code` supports `model` and `effort`.
+- `runner_defaults.claude-code.permission_mode` is not part of `agency.json`.
+- `runner_defaults.cursor.effort` is invalid.
+- Unknown fields and wrong types are rejected.
+
+```json
+{
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -22,253 +131,44 @@ the `agency.json` file configures agency for a repository. it is created by `age
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "claude-opus-4-7[1m]",
+      "effort": "max"
+    }
+  },
+  "execution": {
+    "profile": "work",
+    "checkout_root": "repo-sibling"
   }
 }
 ```
 
-### fields
+## Execution Profiles
 
-| field | required | default | description |
-|-------|----------|---------|-------------|
-| `version` | yes | - | schema version, must be `1` |
-| `scripts.setup.path` | yes | - | path to setup script (relative to repo root) |
-| `scripts.setup.timeout` | no | `10m` | setup script timeout |
-| `scripts.verify.path` | yes | - | path to verify script |
-| `scripts.verify.timeout` | no | `30m` | verify script timeout |
-| `scripts.archive.path` | yes | - | path to archive script |
-| `scripts.archive.timeout` | no | `5m` | archive script timeout |
+- Effective execution-profile precedence is explicit `--execution-profile`, then selected `agency.json` `execution.profile`, then user `config.json` `defaults.execution_profile`.
+- The daemon resolves the final profile and materializes runner env for headed, headless, retry, and recreate launches.
+- For headless runner launches and daemon-owned noninteractive Git/`gh`/script flows, profile env overlays the daemon process environment and daemon-owned safety env wins for safety-sensitive keys.
+- Headed tmux launches receive the resolved profile env plus explicit request env; headed recreate materializes the current profile env only and does not resurrect old request env values from the daemon process.
+- Agency persists profile labels and explicit request/custom env key names for explainability. It does not persist profile env key names or any env values.
+- Use profile env for account-specific state such as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, `GH_TOKEN`, `GIT_SSH_COMMAND`, or Git author variables.
+- Agency does not infer Git identity from runner identity. Put Git and `gh` env in the same profile when they should move together.
 
-## user config (`config.json`)
+## Claude Startup Contract
 
-agency also uses user-level config at:
-- macOS: `~/Library/Preferences/agency/config.json`
-- Linux: `${XDG_CONFIG_HOME:-~/.config}/agency/config.json`
-- override: `$AGENCY_CONFIG_DIR/config.json`
+- Agency owns Claude `model`, `effort`, and `permission_mode`.
+- Set Claude `model` and `effort` through typed `runner_defaults` or explicit CLI flags on `agency task start`, `agency task <task-ref> retry`, or `agency agent start`.
+- Claude `permission_mode` comes from explicit `--permission-mode`, then user `config.json` `runner_defaults.claude-code.permission_mode`.
+- Repo `agency.json` may set Claude `model` and `effort`; it cannot set Claude `permission_mode`.
+- Headed Claude starts launch interactive `claude` in tmux. Agency applies configured Claude settings without the print/stream-json startup path.
+- Headless Claude starts launch daemon-backed `claude` in print/stream-json mode. Agency owns the Claude print/stream flags and the effective permission behavior.
+- Do not pass Claude `--model`, `--effort`, or `--permission-mode` through runner command mappings or `--runner-arg`.
 
-minimal example:
+## Split
 
-```json
-{
-  "version": 1,
-  "defaults": {
-    "runner": "claude-code",
-    "editor": "code",
-    "parent_branch": "main",
-    "model": "opus",
-    "effort": "high"
-  },
-  "runners": {
-    "claude-code": "claude",
-    "codex": "codex"
-  },
-  "editors": {
-    "code": "code"
-  }
-}
-```
-
-`defaults` keys are strict: unknown keys fail config parsing with `E_INVALID_USER_CONFIG`.
-
-runner policy:
-- runner ids are capability-based: `claude-code`, `codex`, `amp`, `opencode`, `cursor`, `droid`
-- input aliases are accepted: `claude` -> `claude-code`, `cursor-cli` -> `cursor`
-- **explicit mapping is required**: no implicit runner command fallback exists; set `runners.<runner-id>` (or compatibility keys like `runners.claude` / `runners.cursor-cli`) to an executable command
-- `defaults.runner` is used by `agency agent start` when `--runner` is omitted; if no user config exists, built-in default is `claude` (canonicalized to `claude-code`)
-- `defaults.model` is consumed by typed model flags for `claude-code`, `codex`, and `cursor` flows (`agent start`, `agent restart`)
-- `defaults.effort` is consumed by typed effort flags for `claude-code` and `codex` flows (`agent start`, `agent restart`)
-
-### timeout format
-
-timeouts use Go duration format:
-
-| format | meaning |
-|--------|---------|
-| `10m` | 10 minutes |
-| `1h30m` | 1 hour 30 minutes |
-| `90s` | 90 seconds |
-| `2h` | 2 hours |
-
-constraints:
-- minimum: 1 minute
-- maximum: 24 hours
-
-### script defaults
-
-| script | default timeout | purpose |
-|--------|-----------------|---------|
-| `setup` | 10 minutes | install dependencies, copy env files |
-| `verify` | 30 minutes | run tests, lint, build |
-| `archive` | 5 minutes | cleanup before worktree deletion |
-
-## environment variables
-
-these environment variables are automatically set when agency runs your scripts:
-
-| variable | description | example |
-|----------|-------------|---------|
-| `AGENCY_RUN_ID` | run identifier | `20260115143022-a3f2` |
-| `AGENCY_NAME` | run name | `add-user-auth` |
-| `AGENCY_REPO_ROOT` | original repo path | `/Users/you/myapp` |
-| `AGENCY_WORKSPACE_ROOT` | worktree path | `/path/to/worktree` |
-| `AGENCY_BRANCH` | worktree branch | `agency/add-user-auth-a3f2` |
-| `AGENCY_PARENT_BRANCH` | parent branch | `main` |
-| `AGENCY_ORIGIN_URL` | git remote URL | `git@github.com:you/myapp.git` |
-| `AGENCY_RUNNER` | runner name | `claude` |
-| `AGENCY_DOTAGENCY_DIR` | `.agency/` path | `/path/to/worktree/.agency` |
-| `AGENCY_OUTPUT_DIR` | script output dir | `/path/to/worktree/.agency/out` |
-| `AGENCY_LOG_DIR` | log directory | `/path/to/logs` |
-| `CI` | always `1` | `1` |
-
-### usage in scripts
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# copy env files from parent repo
-if [ -f "$AGENCY_REPO_ROOT/.env" ]; then
-  cp "$AGENCY_REPO_ROOT/.env" "$AGENCY_WORKSPACE_ROOT/.env"
-fi
-
-# write output for agency to read
-echo '{"ok": true}' > "$AGENCY_OUTPUT_DIR/verify.json"
-```
-
-## shell completion
-
-agency supports tab completion for bash and zsh.
-
-**homebrew users:** completions are installed automatically. no manual configuration needed.
-
-### manual installation (non-homebrew)
-
-generate completion scripts using:
-
-```bash
-agency completion bash
-agency completion zsh
-```
-
-#### bash
-
-```bash
-# option 1: bash-completion directory (if bash-completion is installed)
-agency completion bash > ~/.local/share/bash-completion/completions/agency
-
-# option 2: manual sourcing
-agency completion bash > ~/.agency-completion.bash
-echo 'source ~/.agency-completion.bash' >> ~/.bashrc
-```
-
-#### zsh
-
-```bash
-# option 1: fpath (recommended)
-mkdir -p ~/.zsh/completions
-agency completion zsh > ~/.zsh/completions/_agency
-```
-
-add to `~/.zshrc` before `compinit`:
-
-```bash
-fpath=(~/.zsh/completions $fpath)
-autoload -Uz compinit && compinit
-```
-
-```bash
-# option 2: manual sourcing
-agency completion zsh > ~/.agency-completion.zsh
-echo 'source ~/.agency-completion.zsh' >> ~/.zshrc
-```
-
-restart your shell after configuration.
-
-### what gets completed
-
-- **commands**: `agency <TAB>` shows all subcommands
-- **run references**: `agency show <TAB>` completes run names and ids
-- **runners**: `agency run --runner <TAB>` completes configured runner names
-- **merge strategies**: `agency merge x --<TAB>` completes `--squash`, `--merge`, `--rebase`
-
-## shell integration
-
-add these functions to your `~/.bashrc` or `~/.zshrc` for fast worktree navigation:
-
-```bash
-# cd into a run's worktree
-acd() { cd "$(agency path "$1")" || return 1; }
-
-# pushd into a run's worktree (use popd to return)
-apushd() { pushd "$(agency path "$1")" || return 1; }
-```
-
-usage:
-```bash
-acd my-feature          # cd into the worktree
-git status              # run commands there
-apushd my-feature       # pushd for stack-based navigation
-popd                    # return to previous directory
-```
-
-## data directories
-
-agency stores data in platform-appropriate locations:
-
-| platform | data directory |
-|----------|----------------|
-| macOS | `~/Library/Application Support/agency` |
-| Linux | `~/.local/share/agency` (XDG_DATA_HOME) |
-
-### directory structure
-
-```
-${AGENCY_DATA_DIR}/
-├── repo_index.json              # index of all registered repos
-├── agencyd.sock                 # daemon Unix socket (v2)
-├── agencyd.pid                  # daemon PID file (v2)
-└── repos/
-    └── <repo_id>/
-        ├── repo.json            # repo metadata
-        ├── .lock                # repo lock file
-        │
-        │   # v1 (legacy runs)
-        ├── runs/
-        │   └── <run_id>/
-        │       ├── meta.json    # run metadata
-        │       ├── events.jsonl # event log
-        │       ├── verify_record.json
-        │       ├── transcript.txt
-        │       └── logs/
-        │           ├── setup.log
-        │           ├── verify.log
-        │           └── archive.log
-        ├── worktrees/
-        │   └── <run_id>/        # git worktree (v1 runs)
-        │       ├── .agency/
-        │       │   ├── report.md
-        │       │   ├── INSTRUCTIONS.md
-        │       │   ├── out/
-        │       │   ├── tmp/
-        │       │   └── state/
-        │       └── <repo files>
-        │
-        │   # v2 (daemon-managed)
-        ├── integration_worktrees/
-        │   └── <worktree_id>/
-        │       ├── meta.json    # worktree metadata (state, name, branch)
-        │       └── tree/        # git worktree
-        │           ├── .agency/
-        │           │   └── INTEGRATION_MARKER
-        │           └── <repo files>
-        └── invocations/
-            └── <invocation_id>/
-                ├── meta.json    # invocation metadata (status, pid, exit_reason)
-                └── sandbox/
-                    ├── tree/    # sandbox git worktree
-                    │   ├── .agency/
-                    │   │   └── SANDBOX_MARKER
-                    │   └── <repo files>
-                    └── logs/
-                        ├── raw.jsonl    # stdout stream
-                        └── stderr.log   # stderr capture
-```
+- `config.json` owns global defaults, explicit runner and editor command mappings, and the user default for Claude `permission_mode`.
+- `agency.json` owns repo scripts and optional repo-scoped runner defaults.
+- Repo-shared `agency.json` belongs to the registered repo canonical root, not to integration worktrees or sandboxes.
+- Use repo-scoped runner defaults when a repo needs different model or effort settings from your user defaults.
+- Repo config may override user Claude `model` and `effort`. Claude `permission_mode` comes from explicit `--permission-mode`, then user config.

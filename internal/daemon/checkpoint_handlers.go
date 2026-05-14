@@ -1,70 +1,52 @@
 package daemon
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// handleCheckpoints handles requests to /invocations/{id}/checkpoints/...
-func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
-
-	// Parse path: /invocations/{id}/checkpoints/{action}
-	path := r.URL.Path
-	checkpointsPrefix := "/invocations/" + invocationID + "/checkpoints/"
-
-	if !strings.HasPrefix(path, checkpointsPrefix) {
-		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, "E_NOT_FOUND", "endpoint not found", "use /invocations/{id}/checkpoints/apply")
-		return
-	}
-
-	action := strings.TrimPrefix(path, checkpointsPrefix)
-
-	switch action {
-	case "apply":
-		if r.Method != http.MethodPost {
-			s.writeErrorWithRequestID(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
-			return
-		}
-		s.handleCheckpointApply(w, r, invocationID)
-	default:
-		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, "E_NOT_FOUND", "unknown action: "+action, "supported actions: apply")
-	}
-}
-
-// handleCheckpointApply handles POST /invocations/{id}/checkpoints/apply.
+// handleCheckpointApply handles POST /invocations/{ref}/checkpoints/apply.
 func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, invocationID string) {
-	requestID := getOrCreateRequestID(r)
-	setRequestIDHeader(w, requestID)
+	requestID := prepareRequestID(w, r)
 
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	// Parse request body
 	var req CheckpointApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
 		return
 	}
 
 	if req.CheckpointID <= 0 {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "checkpoint_id must be positive", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "checkpoint_id must be positive", "")
+		return
+	}
+
+	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
+	if resolveErr != nil {
+		code := errors.GetCode(resolveErr)
+		if code == "" {
+			code = errors.EInvocationNotFound
+		}
+		status := http.StatusNotFound
+		if code == errors.EInvocationIDAmbiguous {
+			status = http.StatusConflict
+		}
+		s.writeCheckpointError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}
 
 	// Repo-scoped lock serializes rollback mutations with other git-mutating flows.
-	unlock, err := s.repoLock.Lock(repoID, "checkpoint_apply")
+	unlock, err := s.repoLock.Lock(record.RepoID, "checkpoint_apply")
 	if err != nil {
 		s.writeCheckpointError(
 			w,
@@ -79,7 +61,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	defer func() { _ = unlock() }()
 
 	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
@@ -93,26 +75,37 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if meta.Mode != store.RunnerModeHeadless {
 		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvocationInvalidMode),
 			"checkpoint apply is only supported for headless invocations",
-			"headed invocations do not have automated checkpoints")
+			"use 'agency agent <invocation-ref> recreate' to start a new headed tmux session in the same sandbox")
 		return
 	}
 
-	// Precondition: invocation must be finished or failed
-	if meta.Status == store.InvocationStatusRunning || meta.Status == store.InvocationStatusStarting {
+	// Precondition: invocation must already be terminal.
+	if meta.Status == store.InvocationStatusStarting ||
+		meta.Status == store.InvocationStatusRunning ||
+		meta.Status == store.InvocationStatusStopping {
 		s.writeCheckpointError(w, http.StatusConflict, requestID, string(errors.EInvocationStillRunning),
-			"invocation is still running",
-			"stop the invocation first with 'agency agent stop' or 'agency agent kill'")
+			"invocation is still active",
+			"stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'")
 		return
 	}
 
 	// Get sandbox path and checkpoints directory
 	sandboxPath := meta.SandboxPath
-	checkpointsDir := s.Store.SandboxDir(repoID, invocationID)
-	eventsPath := s.Store.InvocationEventsPath(repoID, invocationID)
+	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
+	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
+	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EExecutionProfileNotFound
+		}
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+		return
+	}
 
 	// Create applier and apply checkpoint
 	applier := checkpoint.NewApplierWithWriter(
-		invocationID,
+		record.InvocationID,
 		sandboxPath,
 		checkpointsDir,
 		eventsPath,
@@ -122,12 +115,12 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		s.InvocationEvents,
 	)
 
-	cp, err := applier.Apply(r.Context(), req.CheckpointID)
+	cp, err := applier.ApplyWithOptions(r.Context(), req.CheckpointID, checkpoint.ApplyOptions{Env: prSyncNonInteractiveEnv(profileEnv)})
 	if err != nil {
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:
 			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.ECheckpointNotFound),
-				err.Error(), "run 'agency checkpoint ls' to see available checkpoints")
+				err.Error(), "run 'agency agent <invocation_ref> history' to inspect available checkpoints and turn ids")
 		case errors.ERollbackFailed:
 			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
 				err.Error(), "")
@@ -138,29 +131,5 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	// Return success
-	resp := CheckpointApplyResponse{
-		OK:             true,
-		APIVersion:     APIVersion,
-		BuildVersion:   version.FullVersion(),
-		RequestID:      requestID,
-		CheckpointID:   cp.ID,
-		SnapshotCommit: cp.SnapshotCommit,
-		RestoredAt:     s.Clock().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-	s.writeJSON(w, http.StatusOK, resp)
-}
-
-// writeCheckpointError writes an error response for checkpoint endpoints.
-func (s *Server) writeCheckpointError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	resp := CheckpointApplyResponse{
-		OK:           false,
-		APIVersion:   APIVersion,
-		BuildVersion: version.FullVersion(),
-		RequestID:    requestID,
-		ErrorCode:    code,
-		Message:      message,
-		Hint:         hint,
-	}
-	s.writeJSON(w, status, resp)
+	s.writeCheckpointSuccess(w, requestID, cp.ID, cp.SnapshotCommit, s.Clock().UTC().Format("2006-01-02T15:04:05Z"))
 }

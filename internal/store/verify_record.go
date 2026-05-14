@@ -1,8 +1,7 @@
 package store
 
 // VerifyRecord is the canonical evidence record for a verify run.
-// Written to ${AGENCY_DATA_DIR}/repos/<repo_id>/runs/<run_id>/verify_record.json.
-// This is a public contract per the S5 spec.
+// Written to a store-owned verify_record.json path for the verified execution surface.
 type VerifyRecord struct {
 	// SchemaVersion is always "1.0" for v1.
 	SchemaVersion string `json:"schema_version"`
@@ -32,7 +31,7 @@ type VerifyRecord struct {
 	// TimedOut and Cancelled are mutually exclusive.
 	TimedOut bool `json:"timed_out"`
 
-	// Cancelled is true if the user interrupted agency verify (SIGINT).
+	// Cancelled is true if the user interrupted the verify script (SIGINT).
 	// TimedOut and Cancelled are mutually exclusive.
 	Cancelled bool `json:"cancelled"`
 

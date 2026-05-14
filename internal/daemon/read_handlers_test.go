@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
@@ -60,6 +61,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	repoID := "test-repo-read"
+	writeTestUserConfig(t, configDir)
 
 	// Fixed clock for deterministic time-based tests (stall detection, etc.)
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
@@ -68,14 +70,23 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	st := store.NewStore(fs.NewRealFS(), dataDir, clock)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
 	srv.Clock = clock
+	repoPath := filepath.Join(dataDir, "fixtures", "repo")
+	worktreeAlphaPath := filepath.Join(dataDir, "fixtures", "worktrees", "alpha")
+	worktreeBetaPath := filepath.Join(dataDir, "fixtures", "worktrees", "beta")
+	checkoutRoot := filepath.Join(dataDir, "fixtures", "checkouts", repoID)
+	sandboxRoot := filepath.Join(dataDir, "fixtures", "sandboxes")
+	require.NoError(t, os.MkdirAll(worktreeAlphaPath, 0o755))
+	require.NoError(t, os.MkdirAll(worktreeBetaPath, 0o755))
+	require.NoError(t, os.MkdirAll(checkoutRoot, 0o755))
+	require.NoError(t, os.MkdirAll(sandboxRoot, 0o755))
 
 	// Create repo index
 	idx := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {
 				RepoID:     repoID,
-				Paths:      []string{"/tmp/repo"},
+				Paths:      []string{repoPath},
 				LastSeenAt: "2026-02-05T12:00:00Z",
 			},
 		},
@@ -86,64 +97,76 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, "wt-1")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, "wt-1", &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "wt-1",
-		Name:          "alpha",
-		RepoID:        repoID,
-		Branch:        "agency/alpha",
-		ParentBranch:  "main",
-		TreePath:      "/tmp/worktrees/alpha",
-		CreatedAt:     "2026-02-05T10:00:00Z",
-		LastUsedAt:    "2026-02-05T11:50:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       "wt-1",
+		Name:             "alpha",
+		RepoID:           repoID,
+		Branch:           "agency/alpha",
+		BaseBranch:       "main",
+		TreePath:         worktreeAlphaPath,
+		CheckoutRoot:     checkoutRoot,
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-02-05T10:00:00Z",
+		LastUsedAt:       "2026-02-05T11:50:00Z",
+		State:            store.WorktreeStatePresent,
 	}))
 
 	// Create worktree wt-2 "beta" (archived)
 	_, err = st.EnsureIntegrationWorktreeDir(repoID, "wt-2")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, "wt-2", &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "wt-2",
-		Name:          "beta",
-		RepoID:        repoID,
-		Branch:        "agency/beta",
-		ParentBranch:  "main",
-		TreePath:      "/tmp/worktrees/beta",
-		CreatedAt:     "2026-02-05T09:00:00Z",
-		LastUsedAt:    "2026-02-05T11:00:00Z",
-		State:         store.WorktreeStateArchived,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       "wt-2",
+		Name:             "beta",
+		RepoID:           repoID,
+		Branch:           "agency/beta",
+		BaseBranch:       "main",
+		TreePath:         worktreeBetaPath,
+		CheckoutRoot:     checkoutRoot,
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-02-05T09:00:00Z",
+		LastUsedAt:       "2026-02-05T11:00:00Z",
+		State:            store.WorktreeStateArchived,
 	}))
 
-	// Create invocation inv-1: running, headless, wt-1, started 10min ago
-	semanticWorking := runnerstatus.StatusWorking
+	// Create invocation inv-1: running, headless, wt-1, started 10min ago.
 	_, err = st.EnsureInvocationDir(repoID, "inv-1")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-1", &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-1",
 		IntegrationWorktreeID: "wt-1",
-		SandboxPath:           "/tmp/sandbox/inv-1",
+		SandboxPath:           filepath.Join(sandboxRoot, "inv-1"),
+		CheckoutRoot:          checkoutRoot,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-inv-1",
 		BaseCommit:            "abc123",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-10 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
-		SemanticStatus:        &semanticWorking,
 	}))
+	writeRunnerStatusForInvocation(t, st, repoID, "inv-1", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateRunning,
+		UpdatedAt:     now.Add(-9 * time.Minute).Format(time.RFC3339),
+		Summary:       "still running",
+	})
 
-	// Create invocation inv-2: finished, headed, wt-1, started 5min ago, landed
+	// Create invocation inv-2: finished, headed, wt-1, started 5min ago, landed.
 	_, err = st.EnsureInvocationDir(repoID, "inv-2")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-2", &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-2",
 		InvocationName:        "feature-work",
 		IntegrationWorktreeID: "wt-1",
-		SandboxPath:           "/tmp/sandbox/inv-2",
+		SandboxPath:           filepath.Join(sandboxRoot, "inv-2"),
+		CheckoutRoot:          checkoutRoot,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-inv-2",
 		BaseCommit:            "def456",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeaded,
 		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 		FinishedAt:            now.Add(-2 * time.Minute).Format(time.RFC3339),
@@ -151,18 +174,27 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		ExitReason:            "exited",
 		LandingStatus:         store.LandingStatusLanded,
 	}))
+	writeRunnerStatusForInvocation(t, st, repoID, "inv-2", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateSucceeded,
+		UpdatedAt:     now.Add(-2 * time.Minute).Format(time.RFC3339),
+		Summary:       "landed cleanly",
+		HowToTest:     "go test ./...",
+	})
 
 	// Create invocation inv-3: failed, headless, wt-2, started 1min ago
 	_, err = st.EnsureInvocationDir(repoID, "inv-3")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-3", &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-3",
 		IntegrationWorktreeID: "wt-2",
-		SandboxPath:           "/tmp/sandbox/inv-3",
+		SandboxPath:           filepath.Join(sandboxRoot, "inv-3"),
+		CheckoutRoot:          checkoutRoot,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-inv-3",
 		BaseCommit:            "ghi789",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-1 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusFailed,
@@ -176,6 +208,37 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		Store:  st,
 		RepoID: repoID,
 	}
+}
+
+func writeReadTestWorktreeMerge(t *testing.T, env *readTestEnv, worktreeID string, mutate func(*store.IntegrationWorktreeMergeMeta)) *store.IntegrationWorktreeMergeMeta {
+	t.Helper()
+
+	worktreeMeta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
+	require.NoError(t, err)
+	require.NotNil(t, worktreeMeta)
+
+	mergeMeta := store.NewIntegrationWorktreeMergeMeta(
+		env.RepoID,
+		worktreeID,
+		"merge-attempt-"+worktreeID,
+		"merge-request-"+worktreeID,
+		"squash",
+		true,
+		"",
+		env.Server.Clock(),
+	)
+	mergeMeta.Branch = worktreeMeta.Branch
+	mergeMeta.PRNumber = 77
+	mergeMeta.PRURL = "https://github.com/test/agent-repo/pull/77"
+	mergeMeta.MergeLogPath = filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "merge.log")
+	mergeMeta.VerifyLogPath = filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "verify.log")
+	mergeMeta.ArchiveLogPath = filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, worktreeID), "archive.log")
+	if mutate != nil {
+		mutate(mergeMeta)
+	}
+
+	require.NoError(t, env.Store.WriteIntegrationWorktreeMerge(env.RepoID, worktreeID, mergeMeta))
+	return mergeMeta
 }
 
 // doWorktreeRequest makes a request to the worktrees handler.
@@ -266,15 +329,19 @@ func decodeData(t *testing.T, resp APIResponse, target interface{}) {
 func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
+	writeReadTestWorktreeMerge(t, env, "wt-1", nil)
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
 
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
 	assert.NotZero(t, resp.APIVersion)
 	assert.NotEmpty(t, resp.RequestID)
+	assert.Contains(t, body, "\"worktree_name\":\"alpha\"")
+	assert.NotContains(t, body, "\"name\":\"alpha\"")
 
 	var data ListWorktreesData
 	decodeData(t, resp, &data)
@@ -282,7 +349,12 @@ func TestHandleListWorktrees_HappyPath(t *testing.T) {
 	// Default state filter is "present" → only wt-1 "alpha"
 	assert.Len(t, data.Worktrees, 1)
 	assert.Equal(t, "wt-1", data.Worktrees[0].WorktreeID)
-	assert.Equal(t, "alpha", data.Worktrees[0].Name)
+	assert.Equal(t, "alpha", data.Worktrees[0].WorktreeName)
+	assert.Equal(t, env.RepoID, data.Worktrees[0].RepoName)
+	require.NotNil(t, data.Worktrees[0].Merge)
+	assert.Equal(t, "running", data.Worktrees[0].Merge.State)
+	assert.Equal(t, "preflight", data.Worktrees[0].Merge.Stage)
+	assert.Equal(t, "preparing merge", data.Worktrees[0].Merge.StatusSummary)
 }
 
 func TestHandleListWorktrees_StateFilter(t *testing.T) {
@@ -314,42 +386,60 @@ func TestHandleListWorktrees_StateFilter(t *testing.T) {
 	}
 }
 
-func TestHandleListWorktrees_EmptyResult(t *testing.T) {
+func TestHandleListWorktrees_UnknownRepoReturnsNotFound(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id=nonexistent-repo")
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 
 	resp := decodeAPIResponse(t, w)
-	assert.True(t, resp.OK)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_REPO_NOT_FOUND", resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo not found")
 
-	var data ListWorktreesData
-	decodeData(t, resp, &data)
-
-	// Should be empty array, not null
-	assert.NotNil(t, data.Worktrees)
-	assert.Len(t, data.Worktrees, 0)
+	assert.Empty(t, resp.Details)
 }
 
 func TestHandleGetWorktree_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
+	writeReadTestWorktreeMerge(t, env, "wt-1", nil)
 
 	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1?repo_id="+env.RepoID)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
 
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
+	assert.Contains(t, body, "\"worktree_name\":\"alpha\"")
+	assert.NotContains(t, body, "\"name\":\"alpha\"")
 
 	var dto WorktreeDTO
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "wt-1", dto.WorktreeID)
-	assert.Equal(t, "alpha", dto.Name)
+	assert.Equal(t, "alpha", dto.WorktreeName)
+	assert.Equal(t, env.RepoID, dto.RepoName)
 	assert.Equal(t, "present", dto.State)
+	require.NotNil(t, dto.Merge)
+	assert.Equal(t, "merge-attempt-wt-1", dto.Merge.AttemptID)
+	assert.Equal(t, "merge-request-wt-1", dto.Merge.RequestID)
+	assert.Equal(t, "running", dto.Merge.State)
+	assert.Equal(t, "preflight", dto.Merge.Stage)
+	assert.Equal(t, "preparing merge", dto.Merge.StatusSummary)
+	assert.Equal(t, "squash", dto.Merge.Strategy)
+	assert.True(t, dto.Merge.DeleteBranch)
+	assert.Equal(t, "agency/alpha", dto.Merge.Branch)
+	assert.Equal(t, 77, dto.Merge.PRNumber)
+	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", dto.Merge.PRURL)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "merge.log"), dto.Merge.MergeLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "verify.log"), dto.Merge.VerifyLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "archive.log"), dto.Merge.ArchiveLogPath)
+	assert.Equal(t, "2026-02-05T12:00:00Z", dto.Merge.StartedAt)
+	assert.Equal(t, "2026-02-05T12:00:00Z", dto.Merge.UpdatedAt)
 }
 
 func TestHandleGetWorktree_ByName(t *testing.T) {
@@ -367,6 +457,129 @@ func TestHandleGetWorktree_ByName(t *testing.T) {
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "wt-1", dto.WorktreeID)
+}
+
+func TestHandleGetWorktree_RequiresRepoID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo_id query parameter is required")
+}
+
+func TestHandleGetWorktreeMerge_HappyPath(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+	writeReadTestWorktreeMerge(t, env, "wt-1", func(meta *store.IntegrationWorktreeMergeMeta) {
+		meta.Status = store.WorktreeMergeStatusFailed
+		meta.Stage = store.WorktreeMergeStageArchive
+		meta.UpdatedAt = "2026-02-05T12:05:00Z"
+		meta.FinishedAt = "2026-02-05T12:05:00Z"
+		meta.ErrorCode = string(errors.EArchiveFailed)
+		meta.ErrorMessage = "git worktree remove timed out after archive cleanup"
+		meta.Hint = "inspect archive.log and retry merge cleanup"
+	})
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1/pr/merge?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var dto WorktreeMergeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "merge-attempt-wt-1", dto.AttemptID)
+	assert.Equal(t, "merge-request-wt-1", dto.RequestID)
+	assert.Equal(t, "failed", dto.State)
+	assert.Equal(t, "archive", dto.Stage)
+	assert.Equal(t, "merge failed during archive cleanup", dto.StatusSummary)
+	assert.Equal(t, "squash", dto.Strategy)
+	assert.True(t, dto.DeleteBranch)
+	assert.Equal(t, "agency/alpha", dto.Branch)
+	assert.Equal(t, 77, dto.PRNumber)
+	assert.Equal(t, "https://github.com/test/agent-repo/pull/77", dto.PRURL)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "merge.log"), dto.MergeLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "verify.log"), dto.VerifyLogPath)
+	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "archive.log"), dto.ArchiveLogPath)
+	assert.Equal(t, "2026-02-05T12:00:00Z", dto.StartedAt)
+	assert.Equal(t, "2026-02-05T12:05:00Z", dto.UpdatedAt)
+	assert.Equal(t, "2026-02-05T12:05:00Z", dto.FinishedAt)
+	assert.Equal(t, string(errors.EArchiveFailed), dto.ErrorCode)
+	assert.Equal(t, "git worktree remove timed out after archive cleanup", dto.ErrorMessage)
+	assert.Equal(t, "inspect archive.log and retry merge cleanup", dto.Hint)
+}
+
+func TestHandleGetWorktreeMerge_NotFound(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1/pr/merge?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EWorktreeMergeNotFound), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "does not have durable merge state")
+}
+
+func TestHandleGetWorktreeMerge_RequiresRepoID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1/pr/merge")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo_id query parameter is required")
+}
+
+func TestHandleGetWorktree_ByNameIgnoresArchivedDuplicate(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-2", func(meta *store.IntegrationWorktreeMeta) {
+		meta.Name = "alpha"
+	}))
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/alpha?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto WorktreeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "wt-1", dto.WorktreeID)
+	assert.Equal(t, "present", dto.State)
+}
+
+func TestHandleGetWorktree_ByExactArchivedID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-2?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var dto WorktreeDTO
+	decodeData(t, resp, &dto)
+
+	assert.Equal(t, "wt-2", dto.WorktreeID)
+	assert.Equal(t, "archived", dto.State)
 }
 
 func TestHandleGetWorktree_NotFound(t *testing.T) {
@@ -404,10 +617,27 @@ func TestHandleListInvocations_HappyPath(t *testing.T) {
 	assert.Equal(t, "inv-2", data.Invocations[1].InvocationID)
 	assert.Equal(t, "inv-1", data.Invocations[2].InvocationID)
 
-	// Each should have display_status populated
+	// Each should have state populated.
 	for _, inv := range data.Invocations {
-		assert.NotEmpty(t, inv.DisplayStatus, "display_status should be populated for %s", inv.InvocationID)
+		assert.NotEmpty(t, inv.State, "state should be populated for %s", inv.InvocationID)
 	}
+}
+
+func TestHandleListInvocations_ExactPathDoesNotRedirect(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Location"))
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+	assert.Len(t, data.Invocations, 3)
 }
 
 func TestHandleListInvocations_StateFilter(t *testing.T) {
@@ -418,7 +648,7 @@ func TestHandleListInvocations_StateFilter(t *testing.T) {
 		expectedCount int
 		expectedIDs   []string
 	}{
-		{"active", 1, []string{"inv-1"}},
+		{"unresolved", 2, []string{"inv-3", "inv-1"}},
 		{"finished", 2, []string{"inv-3", "inv-2"}},
 		{"all", 3, []string{"inv-3", "inv-2", "inv-1"}},
 	}
@@ -489,8 +719,279 @@ func TestHandleGetInvocation_HappyPath(t *testing.T) {
 	decodeData(t, resp, &dto)
 
 	assert.Equal(t, "inv-1", dto.InvocationID)
-	assert.Equal(t, "running", dto.Status)
-	assert.Equal(t, "working", dto.DisplayStatus)
+	assert.Equal(t, env.RepoID, dto.RepoName)
+	assert.Equal(t, "alpha", dto.WorktreeName)
+	assert.Equal(t, "running", dto.State)
+}
+
+func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxPath := filepath.Join(t.TempDir(), "inv-1-activity-sandbox")
+	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.SandboxPath = sandboxPath
+		meta.Status = store.InvocationStatusRunning
+	}))
+
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateRunning,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Summary:       "waiting on api contract",
+		Risks:         []string{},
+	})
+
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(streamLine+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationRawLogPath(env.RepoID, "inv-1"), []byte(`{"raw":true}`+"\n"), 0o644))
+
+	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
+	require.True(t, listResp.OK)
+	var listData ListInvocationsData
+	decodeData(t, listResp, &listData)
+
+	var listed InvocationDTO
+	found := false
+	for _, inv := range listData.Invocations {
+		if inv.InvocationID == "inv-1" {
+			listed = inv
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected inv-1 in invocation list")
+	require.NotNil(t, listed.LatestActivity)
+	require.NotNil(t, listed.Navigation)
+	assert.Equal(t, "running", listed.State)
+	assert.Equal(t, "waiting on api contract", listed.StatusSummary)
+	assert.Equal(t, "stream:1", listed.LatestActivity.TurnID)
+	assert.Equal(t, "latest activity summary", listed.LatestActivity.Summary)
+	assert.Equal(t, "stream:1", listed.Navigation.LatestTurnID)
+	assert.Empty(t, listed.Navigation.AttachCommand)
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	require.NotNil(t, shown.LatestActivity)
+	require.NotNil(t, shown.Navigation)
+	assert.Equal(t, listed.State, shown.State)
+	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
+	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
+	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
+	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
+	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
+	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
+	assert.Empty(t, shown.Navigation.AttachCommand)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Equal(t, shown.State, check.State)
+	assert.Equal(t, shown.StatusSummary, check.RunnerSummary)
+	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
+	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
+	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)
+	assert.Empty(t, check.Navigation.AttachCommand)
+}
+
+func TestInvocationAttachCommand_ConvergesAcrossListShowAndCheckForActiveHeaded(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-2", runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateWaiting,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Reason:        runnerstatus.ReasonAwaitingApproval,
+		Summary:       "waiting in tmux",
+	})
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.FinishedAt = ""
+		meta.LandingStatus = ""
+	}))
+
+	wantAttachCommand := "agency agent inv-2 attach --repo " + env.RepoID
+
+	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
+	require.True(t, listResp.OK)
+	var listData ListInvocationsData
+	decodeData(t, listResp, &listData)
+
+	var listed InvocationDTO
+	found := false
+	for _, inv := range listData.Invocations {
+		if inv.InvocationID == "inv-2" {
+			listed = inv
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected inv-2 in invocation list")
+	require.NotNil(t, listed.Navigation)
+	assert.Equal(t, wantAttachCommand, listed.Navigation.AttachCommand)
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	require.NotNil(t, shown.Navigation)
+	assert.Equal(t, wantAttachCommand, shown.Navigation.AttachCommand)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Equal(t, wantAttachCommand, check.Navigation.AttachCommand)
+}
+
+func TestInvocationAttachCommand_OmittedForFinishedHeaded(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	listResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID))
+	require.True(t, listResp.OK)
+	var listData ListInvocationsData
+	decodeData(t, listResp, &listData)
+
+	var listed InvocationDTO
+	found := false
+	for _, inv := range listData.Invocations {
+		if inv.InvocationID == "inv-2" {
+			listed = inv
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected inv-2 in invocation list")
+	require.NotNil(t, listed.Navigation)
+	assert.Empty(t, listed.Navigation.AttachCommand)
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	require.NotNil(t, shown.Navigation)
+	assert.Empty(t, shown.Navigation.AttachCommand)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Empty(t, check.Navigation.AttachCommand)
+}
+
+func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	sandboxPath := filepath.Join(t.TempDir(), "inv-1-sandbox-cleanup")
+	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
+
+	status := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateRunning,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Summary:       "invocation-owned summary survives cleanup",
+		Risks:         []string{},
+	}
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
+	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.SandboxPath = sandboxPath
+		meta.Status = store.InvocationStatusRunning
+	}))
+	require.NoError(t, os.RemoveAll(sandboxPath))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var dto InvocationDTO
+	decodeData(t, resp, &dto)
+	assert.Equal(t, "invocation-owned summary survives cleanup", dto.StatusSummary)
+}
+
+func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusStopping
+		meta.Flags.NeedsAttention = true
+	}))
+
+	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
+	require.True(t, showResp.OK)
+
+	var shown InvocationDTO
+	decodeData(t, showResp, &shown)
+	assert.Equal(t, string(InvocationStateStopping), shown.State)
+	assert.Contains(t, shown.AttentionFlags, AttentionFlagNeedsAttention)
+
+	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
+	require.True(t, checkResp.OK)
+
+	var check InvocationCheckData
+	decodeData(t, checkResp, &check)
+	assert.Equal(t, string(InvocationStateStopping), check.State)
+	assert.Contains(t, check.BlockingReasons, InvocationCheckReason{
+		Code:    checkReasonInvocationActive,
+		Message: "invocation is still active",
+		Hint:    "wait for completion before workflow progression",
+	})
+}
+
+func TestHandleCheckpointApply_StoppingInvocationReturnsConflict(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusStopping
+	}))
+
+	body := []byte(`{"checkpoint_id":1}`)
+	req := env.newInvocationRequestWithHeaders(t, http.MethodPost, "/invocations/inv-1/checkpoints/apply?repo_id="+env.RepoID, body, nil)
+	w := httptest.NewRecorder()
+	env.apiHandler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
+	assert.Equal(t, "invocation is still active", resp.Message)
+}
+
+func TestHandleRepoRm_StoppingInvocationReturnsConflict(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusStopping
+	}))
+
+	body := []byte(`{"repo_ref":"` + env.RepoID + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/repos/rm", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.apiHandler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_REPO_HAS_INVOCATIONS", resp.ErrorCode)
+	assert.Equal(t, "active invocations exist for repo "+env.RepoID, resp.Message)
 }
 
 func TestHandleGetInvocation_NotFound(t *testing.T) {
@@ -510,12 +1011,10 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	// Seed checkpoints.json in the sandbox dir for inv-1
-	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
-		SchemaVersion: "1.0",
+		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
 			{
 				ID:                   1,
@@ -533,7 +1032,7 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	}
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
 
@@ -548,11 +1047,50 @@ func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	// 3 checkpoints, ordered by ID desc (latest first)
 	require.Len(t, data.Checkpoints, 3)
 	assert.Equal(t, 3, data.Checkpoints[0].ID)
+	assert.True(t, data.Checkpoints[0].Degraded)
 	assert.Equal(t, 2, data.Checkpoints[1].ID)
 	assert.Equal(t, 1, data.Checkpoints[2].ID)
+	assert.False(t, data.Checkpoints[2].Degraded)
 	assert.Equal(t, []string{"README.md", "cmd/main.go"}, data.Checkpoints[2].ChangedPaths)
 	assert.Equal(t, 2, data.Checkpoints[2].ChangedPathCount)
 	assert.False(t, data.Checkpoints[2].ChangedPathTruncated)
+}
+
+func TestHandleGetInvocationCheckpoints_UsesInvocationOwnedAfterSandboxCleanup(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	// Seed invocation-owned checkpoints and remove sandbox dir to simulate
+	// post-land/discard lifecycle cleanup.
+	cpFile := &checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                9,
+				CreatedAt:         "2026-02-05T11:59:00Z",
+				SnapshotCommit:    "invocation-owned",
+				IncludesUntracked: true,
+			},
+		},
+	}
+	cpData, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
+	meta, err := env.Store.ReadInvocationMeta(env.RepoID, "inv-1")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(meta.SandboxPath))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.True(t, resp.OK)
+
+	var data ListCheckpointsData
+	decodeData(t, resp, &data)
+	require.Len(t, data.Checkpoints, 1)
+	assert.Equal(t, 9, data.Checkpoints[0].ID)
+	assert.Equal(t, "invocation-owned", data.Checkpoints[0].SnapshotCommit)
 }
 
 func TestHandleGetInvocationCheckpoints_Empty(t *testing.T) {
@@ -578,9 +1116,8 @@ func TestHandleGetInvocationCheckpoints_MalformedFileReturnsInternalError(t *tes
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), []byte("{malformed"), 0o644))
+	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(env.Store.InvocationDir(env.RepoID, "inv-1"), "checkpoints.json"), []byte("{malformed"), 0o644))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -654,6 +1191,20 @@ func TestResponseEnvelope_RequestID(t *testing.T) {
 	})
 }
 
+func TestHandleInvocationRouteMissingRefReturnsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	req := httptest.NewRequest(http.MethodGet, "/invocations//stop?repo_id="+env.RepoID, nil)
+	w := httptest.NewRecorder()
+	env.Server.handleInvocations(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
+	assert.Equal(t, "invocation ref required", resp.Message)
+}
+
 func TestResponseEnvelope_ErrorFormat(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -686,7 +1237,6 @@ func TestMatchesWorktreeState(t *testing.T) {
 		{store.WorktreeStateArchived, "present", false},
 		{store.WorktreeStateArchived, "archived", true},
 		{store.WorktreeStateArchived, "all", true},
-		{store.WorktreeStatePresent, "", true},
 	}
 
 	for _, tt := range tests {
@@ -707,15 +1257,19 @@ func TestMatchesInvocationState(t *testing.T) {
 		filter   string
 		expected bool
 	}{
-		{"starting_active", store.InvocationStatusStarting, "", "active", true},
-		{"running_active", store.InvocationStatusRunning, "", "active", true},
-		{"finished_no_landing_active", store.InvocationStatusFinished, "", "active", true},
-		{"finished_landed_active", store.InvocationStatusFinished, store.LandingStatusLanded, "active", false},
-		{"finished_discarded_active", store.InvocationStatusFinished, store.LandingStatusDiscarded, "active", false},
+		{"starting_unresolved", store.InvocationStatusStarting, "", "unresolved", true},
+		{"running_unresolved", store.InvocationStatusRunning, "", "unresolved", true},
+		{"stopping_unresolved", store.InvocationStatusStopping, "", "unresolved", true},
+		{"finished_no_landing_unresolved", store.InvocationStatusFinished, "", "unresolved", true},
+		{"finished_landed_unresolved", store.InvocationStatusFinished, store.LandingStatusLanded, "unresolved", false},
+		{"finished_discarded_unresolved", store.InvocationStatusFinished, store.LandingStatusDiscarded, "unresolved", false},
+		{"failed_no_landing_unresolved", store.InvocationStatusFailed, "", "unresolved", true},
 		{"finished_finished", store.InvocationStatusFinished, "", "finished", true},
 		{"failed_finished", store.InvocationStatusFailed, "", "finished", true},
 		{"running_finished", store.InvocationStatusRunning, "", "finished", false},
+		{"stopping_finished", store.InvocationStatusStopping, "", "finished", false},
 		{"running_all", store.InvocationStatusRunning, "", "all", true},
+		{"stopping_all", store.InvocationStatusStopping, "", "all", true},
 	}
 
 	for _, tt := range tests {
@@ -737,7 +1291,6 @@ func TestMatchesInvocationMode(t *testing.T) {
 		{store.RunnerModeHeaded, "headed", true},
 		{store.RunnerModeHeaded, "headless", false},
 		{store.RunnerModeHeaded, "all", true},
-		{store.RunnerModeHeaded, "", true},
 		{store.RunnerModeHeadless, "headless", true},
 		{store.RunnerModeHeadless, "headed", false},
 	}
@@ -907,91 +1460,12 @@ func TestPaginateCheckpoints(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// TIER 2: Log reading tests (Tests 26-29)
-// ---------------------------------------------------------------------------
-
-func TestReadLogFile(t *testing.T) {
-	t.Parallel()
-
-	t.Run("full_file", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "line1\nline2\nline3\n"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
-		require.NoError(t, err)
-
-		assert.Equal(t, content, data.Content)
-		assert.False(t, data.Truncated)
-		assert.False(t, data.StartsMidline)
-		assert.False(t, data.EndsMidline)
-		assert.Equal(t, int64(len(content)), data.TotalBytes)
-	})
-
-	t.Run("truncated_file", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "A long line that exceeds our tiny tail bytes limit.\nAnother line.\n"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 20})
-		require.NoError(t, err)
-
-		assert.True(t, data.Truncated)
-		assert.True(t, data.StartsMidline)
-		assert.Equal(t, int64(len(content)), data.TotalBytes)
-		assert.Equal(t, 20, data.ReturnedBytes)
-	})
-
-	t.Run("ends_midline", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "no trailing newline"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
-		require.NoError(t, err)
-
-		assert.True(t, data.EndsMidline)
-	})
-
-	t.Run("ends_newline", func(t *testing.T) {
-		t.Parallel()
-		tmpDir := t.TempDir()
-		logPath := filepath.Join(tmpDir, "test.log")
-		content := "with trailing newline\n"
-		require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-
-		st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-		srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-		data, err := srv.readLogFile(logPath, GetLogsParams{Kind: "raw", TailBytes: 65536})
-		require.NoError(t, err)
-
-		assert.False(t, data.EndsMidline)
-	})
-}
-
 func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
 	// Seed a raw log file for inv-1
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 	logContent := "{\"event\":\"start\"}\n{\"event\":\"output\",\"data\":\"hello\"}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1003,11 +1477,14 @@ func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
 
-	var data InvocationLogsData
+	var data InvocationLogsOffsetData
 	decodeData(t, resp, &data)
 
 	assert.Equal(t, "raw", data.Kind)
-	assert.Equal(t, logContent, data.Content)
+	assert.Equal(t, int64(len(logContent)), data.NextOffset)
+	decoded, err := base64.StdEncoding.DecodeString(data.DataB64)
+	require.NoError(t, err)
+	assert.Equal(t, logContent, string(decoded))
 	assert.Equal(t, int64(len(logContent)), data.TotalBytes)
 }
 
@@ -1023,11 +1500,12 @@ func TestHandleGetInvocationLogs_MissingFile(t *testing.T) {
 	resp := decodeAPIResponse(t, w)
 	assert.True(t, resp.OK)
 
-	var data InvocationLogsData
+	var data InvocationLogsOffsetData
 	decodeData(t, resp, &data)
-
-	assert.Equal(t, "", data.Content)
-	assert.Equal(t, int64(0), data.TotalBytes)
+	assert.Equal(t, "raw", data.Kind)
+	assert.Empty(t, data.DataB64)
+	assert.Zero(t, data.NextOffset)
+	assert.Zero(t, data.TotalBytes)
 }
 
 func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
@@ -1040,6 +1518,8 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 		{"raw", "raw.jsonl"},
 		{"stderr", "stderr.log"},
 		{"stream", "stream.jsonl"},
+		{"hooks", "hooks.jsonl"},
+		{"terminal", "terminal.log"},
 	}
 
 	for _, tt := range tests {
@@ -1048,7 +1528,7 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 			env := setupReadTestEnv(t)
 
 			// Create the log file
-			logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+			logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 			require.NoError(t, os.MkdirAll(logsDir, 0o700))
 			content := "content for " + tt.kind + "\n"
 			require.NoError(t, os.WriteFile(filepath.Join(logsDir, tt.fileSuffix), []byte(content), 0o644))
@@ -1058,11 +1538,13 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code)
 
 			resp := decodeAPIResponse(t, w)
-			var data InvocationLogsData
+			var data InvocationLogsOffsetData
 			decodeData(t, resp, &data)
 
 			assert.Equal(t, tt.kind, data.Kind)
-			assert.Equal(t, content, data.Content)
+			decoded, err := base64.StdEncoding.DecodeString(data.DataB64)
+			require.NoError(t, err)
+			assert.Equal(t, content, string(decoded))
 		})
 	}
 }
@@ -1114,7 +1596,8 @@ func TestParseListWorktreesParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/worktrees", nil)
-		params := parseListWorktreesParams(req)
+		params, invalid := parseListWorktreesParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "present", params.State)
 		assert.Equal(t, 100, params.Limit)
 		assert.Empty(t, params.RepoID)
@@ -1124,11 +1607,32 @@ func TestParseListWorktreesParams(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/worktrees?repo_id=r1&state=all&limit=50&cursor=abc", nil)
-		params := parseListWorktreesParams(req)
+		params, invalid := parseListWorktreesParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "r1", params.RepoID)
 		assert.Equal(t, "all", params.State)
 		assert.Equal(t, 50, params.Limit)
 		assert.Equal(t, "abc", params.Cursor)
+	})
+
+	t.Run("invalid_state", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/worktrees?state=bogus", nil)
+		_, invalid := parseListWorktreesParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "state", invalid.Param)
+		assert.Equal(t, "bogus", invalid.Value)
+		assert.Equal(t, validWorktreeStates, invalid.AllowedValues)
+	})
+
+	t.Run("invalid_limit", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/worktrees?limit=0", nil)
+		_, invalid := parseListWorktreesParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "limit", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
+		assert.Nil(t, invalid.AllowedValues)
 	})
 }
 
@@ -1138,7 +1642,8 @@ func TestParseListInvocationsParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations", nil)
-		params := parseListInvocationsParams(req)
+		params, invalid := parseListInvocationsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "all", params.State)
 		assert.Equal(t, "all", params.Mode)
 		assert.Equal(t, 100, params.Limit)
@@ -1146,12 +1651,33 @@ func TestParseListInvocationsParams(t *testing.T) {
 
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations?state=active&mode=headless&limit=25&worktree_ref=alpha", nil)
-		params := parseListInvocationsParams(req)
-		assert.Equal(t, "active", params.State)
+		req := httptest.NewRequest(http.MethodGet, "/invocations?state=unresolved&mode=headless&limit=25&worktree_ref=alpha", nil)
+		params, invalid := parseListInvocationsParams(req)
+		require.Nil(t, invalid)
+		assert.Equal(t, "unresolved", params.State)
 		assert.Equal(t, "headless", params.Mode)
 		assert.Equal(t, 25, params.Limit)
 		assert.Equal(t, "alpha", params.WorktreeRef)
+	})
+
+	t.Run("invalid_mode", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations?mode=bogus", nil)
+		_, invalid := parseListInvocationsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "mode", invalid.Param)
+		assert.Equal(t, "bogus", invalid.Value)
+		assert.Equal(t, validInvocationModes, invalid.AllowedValues)
+	})
+
+	t.Run("invalid_limit", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations?limit=0", nil)
+		_, invalid := parseListInvocationsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "limit", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
+		assert.Nil(t, invalid.AllowedValues)
 	})
 }
 
@@ -1161,7 +1687,8 @@ func TestParseGetDiffParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff", nil)
-		params := parseGetDiffParams(req)
+		params, invalid := parseGetDiffParams(req)
+		require.Nil(t, invalid)
 		assert.True(t, params.IncludePatch)
 		assert.Equal(t, 2097152, params.MaxPatchBytes)
 		assert.True(t, params.IncludeUncommitted)
@@ -1170,10 +1697,20 @@ func TestParseGetDiffParams(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?include_patch=false&max_patch_bytes=1000&include_uncommitted=0", nil)
-		params := parseGetDiffParams(req)
+		params, invalid := parseGetDiffParams(req)
+		require.Nil(t, invalid)
 		assert.False(t, params.IncludePatch)
 		assert.Equal(t, 1000, params.MaxPatchBytes)
 		assert.False(t, params.IncludeUncommitted)
+	})
+
+	t.Run("invalid_max_patch_bytes", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?max_patch_bytes=0", nil)
+		_, invalid := parseGetDiffParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "max_patch_bytes", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
 	})
 }
 
@@ -1183,17 +1720,55 @@ func TestParseGetLogsParams(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs", nil)
-		params := parseGetLogsParams(req)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "raw", params.Kind)
-		assert.Equal(t, 65536, params.TailBytes)
+		assert.Zero(t, params.Offset)
+		assert.Equal(t, 65536, params.Limit)
 	})
 
 	t.Run("overrides", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&tail_bytes=1024", nil)
-		params := parseGetLogsParams(req)
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&offset=128&limit=1024", nil)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
 		assert.Equal(t, "stderr", params.Kind)
-		assert.Equal(t, 1024, params.TailBytes)
+		assert.Equal(t, int64(128), params.Offset)
+		assert.Equal(t, 1024, params.Limit)
+	})
+
+	t.Run("terminal_kind", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=terminal", nil)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
+		assert.Equal(t, "terminal", params.Kind)
+	})
+
+	t.Run("hooks_kind", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=hooks", nil)
+		params, invalid := parseGetLogsParams(req)
+		require.Nil(t, invalid)
+		assert.Equal(t, "hooks", params.Kind)
+	})
+
+	t.Run("invalid_offset", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?offset=-1", nil)
+		_, invalid := parseGetLogsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "offset", invalid.Param)
+		assert.Equal(t, "-1", invalid.Value)
+	})
+
+	t.Run("invalid_limit", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?limit=0", nil)
+		_, invalid := parseGetLogsParams(req)
+		require.NotNil(t, invalid)
+		assert.Equal(t, "limit", invalid.Param)
+		assert.Equal(t, "0", invalid.Value)
 	})
 }
 
@@ -1241,6 +1816,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	// 3. Set up daemon + store with invocation pointing to this repo
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
+	writeTestUserConfig(t, configDir)
 	repoID := "test-repo-diff"
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
@@ -1249,7 +1825,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{repoDir}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -1259,13 +1835,15 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	_, err = st.EnsureInvocationDir(repoID, invID)
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invID,
 		IntegrationWorktreeID: "wt-1",
 		SandboxPath:           repoDir,
+		CheckoutRoot:          filepath.Dir(repoDir),
+		ExecutionProfile:      "work",
 		SandboxBranch:         "main",
 		BaseCommit:            baseCommit,
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusRunning,
@@ -1326,6 +1904,60 @@ func TestHandleListInvocations_WorktreeRefFilter(t *testing.T) {
 	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
 }
 
+func TestHandleListInvocations_WorktreeRefFilter_RequiresRepoID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?worktree_ref=alpha")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "repo_id query parameter is required")
+}
+
+func TestHandleListInvocations_WorktreeRefFilter_IgnoresArchivedDuplicateName(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-2", func(meta *store.IntegrationWorktreeMeta) {
+		meta.Name = "alpha"
+	}))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_ref=alpha")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Invocations, 2)
+	var gotIDs []string
+	for _, inv := range data.Invocations {
+		gotIDs = append(gotIDs, inv.InvocationID)
+	}
+	assert.ElementsMatch(t, []string{"inv-1", "inv-2"}, gotIDs)
+}
+
+func TestHandleListInvocations_WorktreeRefFilter_ByExactArchivedID(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_ref=wt-2")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	require.Len(t, data.Invocations, 1)
+	assert.Equal(t, "inv-3", data.Invocations[0].InvocationID)
+}
+
 func TestHandleListInvocations_WorktreeRefFilter_NotFound(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -1342,6 +1974,26 @@ func TestHandleListInvocations_WorktreeRefFilter_NotFound(t *testing.T) {
 	assert.Len(t, data.Invocations, 0, "nonexistent worktree_ref should return empty list")
 }
 
+func TestHandleListInvocations_WorktreeIDQueryParamIgnored(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_id=wt-1")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	var data ListInvocationsData
+	decodeData(t, resp, &data)
+
+	assert.Len(t, data.Invocations, 3)
+	assert.ElementsMatch(t, []string{"inv-1", "inv-2", "inv-3"}, []string{
+		data.Invocations[0].InvocationID,
+		data.Invocations[1].InvocationID,
+		data.Invocations[2].InvocationID,
+	})
+}
+
 // ---------------------------------------------------------------------------
 // TIER 3: Handler pagination (Tests 38-40)
 // ---------------------------------------------------------------------------
@@ -1351,11 +2003,10 @@ func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
 	env := setupReadTestEnv(t)
 
 	// Seed 5 checkpoints
-	sandboxDir := env.Store.SandboxDir(env.RepoID, "inv-1")
-	require.NoError(t, os.MkdirAll(sandboxDir, 0o700))
+	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
-		SchemaVersion: "1.0",
+		SchemaVersion: checkpoint.SchemaVersion,
 		Checkpoints: []checkpoint.Checkpoint{
 			{ID: 1, CreatedAt: "2026-02-05T11:51:00Z", SnapshotCommit: "aaa", IncludesUntracked: true},
 			{ID: 2, CreatedAt: "2026-02-05T11:52:00Z", SnapshotCommit: "bbb", IncludesUntracked: true},
@@ -1366,7 +2017,7 @@ func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
 	}
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "checkpoints.json"), cpData, 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
 
 	// First page: limit=2
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=2")
@@ -1406,7 +2057,7 @@ func TestHandleListWorktrees_Pagination(t *testing.T) {
 	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -1418,16 +2069,18 @@ func TestHandleListWorktrees_Pagination(t *testing.T) {
 		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, &store.IntegrationWorktreeMeta{
-			SchemaVersion: "1.0",
-			WorktreeID:    wtID,
-			Name:          "name-" + string(rune('a'+i)),
-			RepoID:        repoID,
-			Branch:        "agency/" + wtID,
-			ParentBranch:  "main",
-			TreePath:      "/tmp/wt/" + wtID,
-			CreatedAt:     "2026-02-05T10:00:00Z",
-			LastUsedAt:    time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
-			State:         store.WorktreeStatePresent,
+			SchemaVersion:    store.SchemaVersion,
+			WorktreeID:       wtID,
+			Name:             "name-" + string(rune('a'+i)),
+			RepoID:           repoID,
+			Branch:           "agency/" + wtID,
+			BaseBranch:       "main",
+			TreePath:         "/tmp/wt/" + wtID,
+			CheckoutRoot:     "/tmp/checkouts/" + repoID,
+			ExecutionProfile: "work",
+			CreatedAt:        "2026-02-05T10:00:00Z",
+			LastUsedAt:       time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			State:            store.WorktreeStatePresent,
 		}))
 	}
 
@@ -1468,7 +2121,7 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -1480,13 +2133,15 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 		_, err := st.EnsureInvocationDir(repoID, invID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
-			SchemaVersion:         "1.0",
+			SchemaVersion:         store.SchemaVersion,
 			InvocationID:          invID,
 			IntegrationWorktreeID: "wt-1",
 			SandboxPath:           "/tmp/sandbox/" + invID,
+			CheckoutRoot:          "/tmp/checkouts/" + repoID,
+			ExecutionProfile:      "work",
 			SandboxBranch:         "agency/sandbox-" + invID,
 			BaseCommit:            "abc",
-			Runner:                "claude",
+			Runner:                "claude-code",
 			Mode:                  store.RunnerModeHeadless,
 			StartedAt:             now.Add(-time.Duration(i) * time.Minute).Format(time.RFC3339),
 			Status:                store.InvocationStatusRunning,
@@ -1560,7 +2215,7 @@ func TestCheckpointsRouting(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// PR-B: Offset-based logs tests
+// Offset-based logs tests.
 // ---------------------------------------------------------------------------
 
 func TestReadLogFileAtOffset(t *testing.T) {
@@ -1617,11 +2272,13 @@ func TestReadLogFileAtOffset(t *testing.T) {
 			wantTotal: 6,
 		},
 		{
-			name:    "file_not_found",
-			offset:  0,
-			limit:   65536,
-			noFile:  true,
-			wantErr: true,
+			name:      "file_not_found",
+			offset:    0,
+			limit:     65536,
+			noFile:    true,
+			wantData:  "",
+			wantNext:  0,
+			wantTotal: 0,
 		},
 	}
 	for _, tt := range tests {
@@ -1639,10 +2296,6 @@ func TestReadLogFileAtOffset(t *testing.T) {
 			srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
 			data, err := srv.readLogFileAtOffset(logPath, tt.offset, tt.limit)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantNext, data.NextOffset)
@@ -1659,7 +2312,7 @@ func TestReadLogFileAtOffset(t *testing.T) {
 	}
 }
 
-func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
+func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 	t.Parallel()
 
 	t.Run("offset_read_happy_path", func(t *testing.T) {
@@ -1667,7 +2320,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		env := setupReadTestEnv(t)
 
 		// Seed a raw log file for inv-1
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		logContent := "abcdef"
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1693,7 +2346,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		logContent := "abcdef"
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1717,7 +2370,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		logContent := "abcdef"
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte(logContent), 0o644))
@@ -1740,7 +2393,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		env := setupReadTestEnv(t)
 
 		// Seed log file so we get past resolution
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
 
@@ -1754,34 +2407,85 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 	})
 
-	t.Run("offset_missing_file_returns_not_found", func(t *testing.T) {
+	t.Run("offset_missing_file_returns_empty", func(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
-		// inv-2 has no log files; offset mode should return E_LOG_NOT_FOUND
+		// inv-2 has no log files; offset mode should now return an empty log payload.
 		w := env.doInvocationRequest(t, http.MethodGet,
 			"/invocations/inv-2/logs?repo_id="+env.RepoID+"&offset=0&limit=65536")
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		resp := decodeAPIResponse(t, w)
-		assert.False(t, resp.OK)
-		assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "raw", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
 	})
 
-	t.Run("offset_stream_kind_missing_file", func(t *testing.T) {
+	t.Run("offset_stream_kind_missing_file_returns_empty", func(t *testing.T) {
 		t.Parallel()
 		env := setupReadTestEnv(t)
 
 		w := env.doInvocationRequest(t, http.MethodGet,
 			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=stream&offset=0&limit=65536")
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		resp := decodeAPIResponse(t, w)
-		assert.False(t, resp.OK)
-		assert.Equal(t, "E_LOG_NOT_FOUND", resp.ErrorCode)
-		assert.Contains(t, resp.Hint, "try --kind raw")
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "stream", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
+	})
+
+	t.Run("offset_terminal_kind_missing_file_returns_empty", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=terminal&offset=0&limit=65536")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "terminal", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
+	})
+
+	t.Run("offset_hooks_kind_missing_file_returns_empty", func(t *testing.T) {
+		t.Parallel()
+		env := setupReadTestEnv(t)
+
+		w := env.doInvocationRequest(t, http.MethodGet,
+			"/invocations/inv-1/logs?repo_id="+env.RepoID+"&kind=hooks&offset=0&limit=65536")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		resp := decodeAPIResponse(t, w)
+		assert.True(t, resp.OK)
+
+		var data InvocationLogsOffsetData
+		decodeData(t, resp, &data)
+		assert.Equal(t, "hooks", data.Kind)
+		assert.Empty(t, data.DataB64)
+		assert.Zero(t, data.NextOffset)
+		assert.Zero(t, data.TotalBytes)
 	})
 
 	t.Run("offset_invalid_limit_returns_error", func(t *testing.T) {
@@ -1789,7 +2493,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 		env := setupReadTestEnv(t)
 
 		// Seed log file so we get past resolution
-		logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+		logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 		require.NoError(t, os.MkdirAll(logsDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
 
@@ -1805,7 +2509,7 @@ func TestHandleGetInvocationLogs_OffsetMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2 PR-01: Daemon Read API Contract Hardening — Acceptance Tests
+// Daemon read API contract hardening acceptance tests.
 // ---------------------------------------------------------------------------
 
 // decodeDetails extracts and decodes the Details field from an APIResponse.
@@ -1835,6 +2539,19 @@ func TestHandleListWorktrees_InvalidStateReturnsEInvalidArgument(t *testing.T) {
 	assert.Equal(t, []string{"present", "archived", "all"}, details.AllowedValues)
 }
 
+func TestHandleListWorktrees_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID+"&limit=0")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+}
+
 func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -1851,7 +2568,20 @@ func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T)
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "bogus", details.Value)
-	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+	assert.Equal(t, []string{"unresolved", "finished", "all"}, details.AllowedValues)
+}
+
+func TestHandleListInvocations_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&limit=0")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 }
 
 func TestHandleListInvocations_InvalidModeReturnsEInvalidArgument(t *testing.T) {
@@ -1890,13 +2620,13 @@ func TestHandleListInvocations_InvalidFiltersFailClosed_DeterministicPrecedence(
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "badstate", details.Value)
-	assert.Equal(t, []string{"active", "finished", "all"}, details.AllowedValues)
+	assert.Equal(t, []string{"unresolved", "finished", "all"}, details.AllowedValues)
 }
 
 func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {
 	t.Parallel()
 
-	// Server with NO repo index loaded — getRepoIDsForQuery would fail with E_INTERNAL.
+	// Validation should fail before any repo resolution work happens.
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
@@ -1919,7 +2649,7 @@ func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T
 func TestHandleListInvocations_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T) {
 	t.Parallel()
 
-	// Server with NO repo index loaded.
+	// Validation should fail before any repo resolution work happens.
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
@@ -1966,49 +2696,6 @@ func TestHandleListInvocations_Limit500Accepted(t *testing.T) {
 	assert.Len(t, data.Invocations, 3)
 }
 
-func TestHandleListInvocations_WorktreeIDFilter_Compatibility(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_id=wt-1")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	var data ListInvocationsData
-	decodeData(t, resp, &data)
-
-	// inv-1 and inv-2 are in wt-1; inv-3 is in wt-2
-	assert.Len(t, data.Invocations, 2)
-	for _, inv := range data.Invocations {
-		assert.Equal(t, "wt-1", inv.WorktreeID,
-			"worktree_id filter must not widen to all invocations")
-	}
-}
-
-func TestHandleListInvocations_WorktreeFilterPrecedence_WorktreeRefWins(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	// worktree_ref=alpha resolves to wt-1; worktree_id=wt-2 would select wt-2.
-	// worktree_ref takes precedence.
-	w := env.doInvocationRequest(t, http.MethodGet,
-		"/invocations/?repo_id="+env.RepoID+"&worktree_ref=alpha&worktree_id=wt-2")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	var data ListInvocationsData
-	decodeData(t, resp, &data)
-
-	// worktree_ref=alpha → wt-1: inv-1 and inv-2
-	assert.Len(t, data.Invocations, 2)
-	for _, inv := range data.Invocations {
-		assert.Equal(t, "wt-1", inv.WorktreeID,
-			"worktree_ref must take precedence over worktree_id")
-	}
-}
-
 func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -2022,7 +2709,7 @@ func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
 	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -2033,15 +2720,17 @@ func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
 		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, &store.IntegrationWorktreeMeta{
-			SchemaVersion: "1.0",
-			WorktreeID:    wtID,
-			Name:          "alpha",
-			RepoID:        repoID,
-			Branch:        "agency/" + wtID,
-			ParentBranch:  "main",
-			TreePath:      "/tmp/wt/" + wtID,
-			CreatedAt:     "2026-02-05T10:00:00Z",
-			State:         store.WorktreeStatePresent,
+			SchemaVersion:    store.SchemaVersion,
+			WorktreeID:       wtID,
+			Name:             "alpha",
+			RepoID:           repoID,
+			Branch:           "agency/" + wtID,
+			BaseBranch:       "main",
+			TreePath:         "/tmp/wt/" + wtID,
+			CheckoutRoot:     "/tmp/checkouts/" + repoID,
+			ExecutionProfile: "work",
+			CreatedAt:        "2026-02-05T10:00:00Z",
+			State:            store.WorktreeStatePresent,
 		}))
 	}
 
@@ -2077,7 +2766,7 @@ func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -2088,14 +2777,16 @@ func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
 		_, err := st.EnsureInvocationDir(repoID, invID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
-			SchemaVersion:         "1.0",
+			SchemaVersion:         store.SchemaVersion,
 			InvocationID:          invID,
 			InvocationName:        "shared-run",
 			IntegrationWorktreeID: "wt-1",
 			SandboxPath:           "/tmp/sandbox/" + invID,
+			CheckoutRoot:          "/tmp/checkouts/" + repoID,
+			ExecutionProfile:      "work",
 			SandboxBranch:         "agency/sandbox-" + invID,
 			BaseCommit:            "abc",
-			Runner:                "claude",
+			Runner:                "claude-code",
 			Mode:                  store.RunnerModeHeadless,
 			StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 			Status:                store.InvocationStatusRunning,
@@ -2149,68 +2840,8 @@ func TestWorktreesRouting_MethodNotAllowed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// End S2 PR-01 acceptance tests
+// End daemon read API contract hardening acceptance tests.
 // ---------------------------------------------------------------------------
-
-func TestParseGetLogsParams_OffsetMode(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		query          string
-		wantOffsetMode bool
-		wantOffset     int64
-		wantLimit      int
-		wantTailBytes  int
-	}{
-		{
-			name:           "offset_present_enables_offset_mode",
-			query:          "offset=100&limit=1024",
-			wantOffsetMode: true,
-			wantOffset:     100,
-			wantLimit:      1024,
-		},
-		{
-			name:           "offset_zero_is_offset_mode",
-			query:          "offset=0",
-			wantOffsetMode: true,
-			wantOffset:     0,
-			wantLimit:      65536, // default
-		},
-		{
-			name:          "no_offset_is_tail_mode",
-			query:         "tail_bytes=1024",
-			wantTailBytes: 1024,
-		},
-		{
-			name:           "invalid_offset_value",
-			query:          "offset=abc",
-			wantOffsetMode: true,
-			wantOffset:     -1,    // parse failure → -1
-			wantLimit:      65536, // default when limit not specified
-		},
-		{
-			name:           "invalid_limit_value",
-			query:          "offset=0&limit=abc",
-			wantOffsetMode: true,
-			wantLimit:      -1, // parse failure → -1
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?"+tt.query, nil)
-			params := parseGetLogsParams(req)
-			assert.Equal(t, tt.wantOffsetMode, params.OffsetMode)
-			if tt.wantOffsetMode {
-				assert.Equal(t, tt.wantOffset, params.Offset)
-				assert.Equal(t, tt.wantLimit, params.Limit)
-			} else {
-				assert.Equal(t, tt.wantTailBytes, params.TailBytes)
-			}
-		})
-	}
-}
 
 func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 	t.Parallel()
@@ -2222,10 +2853,10 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 		meta.PromptPath = promptPath
 	}))
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
 	require.NoError(t, os.WriteFile(
-		env.Store.SandboxRawLogPath(env.RepoID, "inv-1"),
+		env.Store.InvocationRawLogPath(env.RepoID, "inv-1"),
 		[]byte("{\"type\":\"raw\"}\n{\"type\":\"raw2\"}\n"),
 		0o644,
 	))
@@ -2236,7 +2867,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 			"seq":            1,
 			"timestamp":      "2026-02-05T11:50:10Z",
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role":         "assistant",
@@ -2249,7 +2880,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 			"seq":            2,
 			"timestamp":      "2026-02-05T11:50:20Z",
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "tool_start",
 			"data": map[string]any{
 				"name":    "shell",
@@ -2261,7 +2892,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 			"seq":            3,
 			"timestamp":      "2026-02-05T11:50:30Z",
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "tool_end",
 			"data": map[string]any{
 				"name":      "shell",
@@ -2271,7 +2902,7 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 		},
 	}
 
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	for _, ev := range streamEvents {
@@ -2304,23 +2935,195 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 
 	require.NotEmpty(t, data.Entries)
 	seenKinds := map[string]bool{}
-	toolUseCount := 0
-	var toolUseEntry map[string]any
+	toolUseEntries := make([]map[string]any, 0, 2)
 	for _, entry := range data.Entries {
 		seenKinds[entry.Kind] = true
 		if entry.Kind == "tool_use" {
-			toolUseCount++
-			toolUseEntry = entry.Data
+			toolUseEntries = append(toolUseEntries, entry.Data)
 		}
 	}
 	assert.True(t, seenKinds["prompt_seed"], "timeline must include prompt seed context")
 	assert.True(t, seenKinds["message"], "timeline must include assistant/user messages")
 	assert.True(t, seenKinds["tool_use"], "timeline must include tool-use activity")
 	assert.True(t, seenKinds["raw_log_coverage"], "timeline must include raw-log coverage marker")
-	assert.Equal(t, 1, toolUseCount, "tool_start and tool_end should collapse to one tool_use entry")
-	require.NotNil(t, toolUseEntry)
-	assert.Equal(t, "go test ./...", toolUseEntry["command"])
-	assert.Equal(t, float64(0), toolUseEntry["exit_code"])
+	require.Len(t, toolUseEntries, 2, "tool_start and tool_end should remain distinct tool_use entries")
+	hasInProgress := false
+	hasCompleted := false
+	for _, toolUseEntry := range toolUseEntries {
+		assert.Equal(t, "go test ./...", toolUseEntry["command"])
+		if inProgress, ok := toolUseEntry["in_progress"].(bool); ok && inProgress {
+			hasInProgress = true
+		}
+		if exitCode, ok := toolUseEntry["exit_code"].(float64); ok && exitCode == 0 {
+			hasCompleted = true
+		}
+	}
+	assert.True(t, hasInProgress, "normalized tool_start row must expose in_progress=true")
+	assert.True(t, hasCompleted, "normalized tool_end row must preserve exit_code")
+}
+
+func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+
+	largeText := strings.Repeat("x", 5*1024*1024)
+
+	streamEvent := map[string]any{
+		"schema_version": "1.0",
+		"seq":            1,
+		"timestamp":      "2026-02-05T11:50:10Z",
+		"invocation_id":  "inv-1",
+		"runner":         "claude-code",
+		"kind":           "message",
+		"data": map[string]any{
+			"role": "assistant",
+			"text": largeText,
+		},
+	}
+	streamLine, err := json.Marshal(streamEvent)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"),
+		append(streamLine, '\n'),
+		0o644,
+	))
+
+	invocationEvent := map[string]any{
+		"schema_version": "1.0",
+		"seq":            1,
+		"timestamp":      "2026-02-05T11:50:20Z",
+		"invocation_id":  "inv-1",
+		"kind":           "agency.followup_prompt",
+		"data": map[string]any{
+			"text": largeText,
+		},
+	}
+	eventLine, err := json.Marshal(invocationEvent)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		env.Store.InvocationEventsPath(env.RepoID, "inv-1"),
+		append(eventLine, '\n'),
+		0o644,
+	))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=200")
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+		} `json:"entries"`
+	}
+	decodeData(t, resp, &data)
+
+	entryIDs := make([]string, 0, len(data.Entries))
+	for _, entry := range data.Entries {
+		entryIDs = append(entryIDs, entry.EntryID)
+	}
+	assert.Contains(t, entryIDs, "stream:1", "timeline replay must preserve 5MB stream lines accepted by live capture")
+	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt", "timeline replay must preserve 5MB invocation-event lines accepted by live capture")
+}
+
+func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		streamLine string
+		eventLine  string
+	}{
+		{
+			name:       "unsupported_schema_version",
+			streamLine: `{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}` + "\n",
+			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}` + "\n",
+		},
+		{
+			name:       "malformed_json",
+			streamLine: `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}` + "\n",
+			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"broken"` + "\n",
+		},
+		{
+			name:       "missing_kind",
+			streamLine: `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"","data":{"role":"assistant","text":"missing-kind"}}` + "\n",
+			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"","event":"","data":{"text":"missing-kind-and-event"}}` + "\n",
+		},
+		{
+			name:       "oversized_line",
+			streamLine: strings.Repeat("x", 9*1024*1024) + "\n",
+			eventLine:  strings.Repeat("x", 9*1024*1024) + "\n",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+
+			logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+			require.NoError(t, os.MkdirAll(logsDir, 0o700))
+			require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(tc.streamLine), 0o644))
+			require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(tc.eventLine), 0o644))
+
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			assert.True(t, resp.OK)
+
+			var data struct {
+				Entries []struct {
+					Kind string `json:"kind"`
+				} `json:"entries"`
+			}
+			decodeData(t, resp, &data)
+			require.NotEmpty(t, data.Entries)
+
+			sawParseError := false
+			for _, entry := range data.Entries {
+				if entry.Kind == "parse_error" {
+					sawParseError = true
+					break
+				}
+			}
+			assert.True(t, sawParseError, "tolerant replay must preserve a parse_error diagnostic")
+		})
+	}
+}
+
+func TestHandleGetInvocationTimeline_InvocationEventIDsStayUniqueAcrossLineAndSeqFallback(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	eventLines := strings.Join([]string{
+		`{"schema_version":"1.0","seq":0,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"line-based-id"}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"seq-based-id"}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=100")
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+		} `json:"entries"`
+	}
+	decodeData(t, resp, &data)
+
+	entryIDs := make([]string, 0, len(data.Entries))
+	for _, entry := range data.Entries {
+		entryIDs = append(entryIDs, entry.EntryID)
+	}
+
+	assert.Contains(t, entryIDs, "inv_event:line:1:agency.followup_prompt")
+	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt")
 }
 
 func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) {
@@ -2333,11 +3136,11 @@ func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) 
 		meta.PromptPath = promptPath
 	}))
 
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(env.Store.SandboxRawLogPath(env.RepoID, "inv-1"), []byte("raw-log\n"), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationRawLogPath(env.RepoID, "inv-1"), []byte("raw-log\n"), 0o644))
 
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
@@ -2347,7 +3150,7 @@ func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) 
 			"seq":            i,
 			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role": "assistant",
@@ -2451,9 +3254,9 @@ func TestHandleGetInvocationTimeline_OrderDescReturnsReversedEntries(t *testing.
 	env := setupReadTestEnv(t)
 
 	// Seed 4 stream messages with ascending timestamps.
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
@@ -2463,7 +3266,7 @@ func TestHandleGetInvocationTimeline_OrderDescReturnsReversedEntries(t *testing.
 			"seq":            i,
 			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role": "assistant",
@@ -2506,9 +3309,9 @@ func TestHandleGetInvocationTimeline_OrderDescLimit1ReturnsLastEntry(t *testing.
 	env := setupReadTestEnv(t)
 
 	// Seed stream messages.
-	logsDir := env.Store.SandboxLogsDir(env.RepoID, "inv-1")
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamPath := env.Store.SandboxStreamLogPath(env.RepoID, "inv-1")
+	streamPath := env.Store.InvocationStreamLogPath(env.RepoID, "inv-1")
 	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	require.NoError(t, err)
 	baseTS := time.Date(2026, 2, 5, 11, 51, 0, 0, time.UTC)
@@ -2518,7 +3321,7 @@ func TestHandleGetInvocationTimeline_OrderDescLimit1ReturnsLastEntry(t *testing.
 			"seq":            i,
 			"timestamp":      baseTS.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
 			"invocation_id":  "inv-1",
-			"runner":         "claude",
+			"runner":         "claude-code",
 			"kind":           "message",
 			"data": map[string]any{
 				"role": "assistant",
@@ -2566,35 +3369,7 @@ func TestHandleGetInvocationTimeline_OrderDescWithCursorReturnsEInvalidArgument(
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 }
 
-func TestHandleGetInvocationLogs_TailBytesInvalidReturnsEInvalidArgument(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	tests := []struct {
-		name      string
-		tailBytes string
-	}{
-		{name: "zero", tailBytes: "0"},
-		{name: "too_large", tailBytes: "1048577"},
-		{name: "non_numeric", tailBytes: "abc"},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			w := env.doInvocationRequest(t, http.MethodGet,
-				"/invocations/inv-1/logs?repo_id="+env.RepoID+"&tail_bytes="+tc.tailBytes)
-
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-			resp := decodeAPIResponse(t, w)
-			assert.False(t, resp.OK)
-			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
-		})
-	}
-}
-
-func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocation(t *testing.T) {
+func TestHandleControlPlaneFollowUp_WritesTimelineEntryWithoutNewInvocation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -2609,7 +3384,7 @@ func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocatio
 	require.NoError(t, err)
 
 	w := env.doInvocationRequestWithBody(t, http.MethodPost,
-		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var writeResp map[string]any
@@ -2643,7 +3418,7 @@ func TestHandleControlPlaneFollowUpPrompt_WritesTimelineEntryWithoutNewInvocatio
 	assert.True(t, found, "accepted follow-up prompt must appear in unified timeline")
 }
 
-func TestHandleControlPlaneFollowUpPrompt_IdempotentRetryNoDuplicateTimelineWrites(t *testing.T) {
+func TestHandleControlPlaneFollowUp_IdempotentRetryNoDuplicateTimelineWrites(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
@@ -2654,12 +3429,15 @@ func TestHandleControlPlaneFollowUpPrompt_IdempotentRetryNoDuplicateTimelineWrit
 	require.NoError(t, err)
 
 	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
-		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w1.Code)
 
 	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
-		"/invocations/inv-1/chat?repo_id="+env.RepoID, reqBody)
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w2.Code)
+	var retryResp ControlPlaneFollowUpResponse
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&retryResp))
+	assert.True(t, retryResp.AlreadyApplied)
 
 	wTimeline := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=500")
 	assert.Equal(t, http.StatusOK, wTimeline.Code)
@@ -2681,4 +3459,61 @@ func TestHandleControlPlaneFollowUpPrompt_IdempotentRetryNoDuplicateTimelineWrit
 		}
 	}
 	assert.Equal(t, 1, count, "duplicate follow-up submissions must not write duplicate timeline entries")
+}
+
+func TestHandleControlPlaneFollowUp_IdempotencyConflictDifferentPrompt(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	firstBody, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-conflict",
+		"prompt":            "original follow-up",
+	})
+	require.NoError(t, err)
+	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, firstBody)
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	secondBody, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-conflict",
+		"prompt":            "different follow-up",
+	})
+	require.NoError(t, err)
+	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, secondBody)
+
+	var resp ControlPlaneFollowUpResponse
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&resp))
+	assert.Equal(t, http.StatusConflict, w2.Code)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EIdempotencyConflict), resp.ErrorCode)
+}
+
+func TestHandleControlPlaneFollowUp_IdempotencyConflictDifferentInvocation(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-3", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.ExitReason = ""
+		meta.FailureReason = ""
+	}))
+
+	body, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-target-conflict",
+		"prompt":            "same prompt",
+	})
+	require.NoError(t, err)
+	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, body)
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-3/followup?repo_id="+env.RepoID, body)
+
+	var resp ControlPlaneFollowUpResponse
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&resp))
+	assert.Equal(t, http.StatusConflict, w2.Code)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EIdempotencyConflict), resp.ErrorCode)
 }

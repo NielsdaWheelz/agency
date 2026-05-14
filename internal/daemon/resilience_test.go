@@ -40,7 +40,7 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 
 	// Create repo_index.json so recovery scan finds our repo.
 	repoIndex := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {
 				RepoID: repoID,
@@ -56,14 +56,21 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(invDir, 0o700), "mkdir")
 
 	meta := &store.InvocationMeta{
-		SchemaVersion:    "1.0",
-		InvocationID:     invocationID,
-		Mode:             store.RunnerModeHeadless,
-		Status:           store.InvocationStatusRunning,
-		PID:              &deadPID,
-		PGID:             &deadPGID,
-		DaemonInstanceID: "old-daemon-instance",
-		StartedAt:        time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
+		SchemaVersion:         store.SchemaVersion,
+		InvocationID:          invocationID,
+		IntegrationWorktreeID: "test-worktree",
+		SandboxPath:           "/tmp/sandbox/" + invocationID,
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
+		SandboxBranch:         "agency/sandbox-" + invocationID,
+		BaseCommit:            "abc123",
+		Runner:                "claude-code",
+		Mode:                  store.RunnerModeHeadless,
+		Status:                store.InvocationStatusRunning,
+		PID:                   &deadPID,
+		PGID:                  &deadPGID,
+		DaemonInstanceID:      "old-daemon-instance",
+		StartedAt:             time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
 	}
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta), "write meta")
 
@@ -124,7 +131,7 @@ func TestDaemonRecoveryStaleStarting(t *testing.T) {
 
 	// Create repo_index.json.
 	repoIndex := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {
 				RepoID: repoID,
@@ -140,11 +147,18 @@ func TestDaemonRecoveryStaleStarting(t *testing.T) {
 	require.NoError(t, os.MkdirAll(invDir, 0o700), "mkdir")
 
 	meta := &store.InvocationMeta{
-		SchemaVersion: "1.0",
-		InvocationID:  invocationID,
-		Mode:          store.RunnerModeHeadless,
-		Status:        store.InvocationStatusStarting,
-		StartedAt:     time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
+		SchemaVersion:         store.SchemaVersion,
+		InvocationID:          invocationID,
+		IntegrationWorktreeID: "test-worktree",
+		SandboxPath:           "/tmp/sandbox/" + invocationID,
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
+		SandboxBranch:         "agency/sandbox-" + invocationID,
+		BaseCommit:            "abc123",
+		Runner:                "claude-code",
+		Mode:                  store.RunnerModeHeadless,
+		Status:                store.InvocationStatusStarting,
+		StartedAt:             time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
 		// No PID set.
 	}
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta), "write meta")

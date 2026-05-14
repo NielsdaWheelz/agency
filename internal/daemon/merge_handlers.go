@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
-	"github.com/NielsdaWheelz/agency/internal/report"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -38,19 +38,18 @@ type normalizedMergeRequest struct {
 	Strategy         mergeStrategy
 	ConfirmationMode string
 	DeleteBranch     bool
+	AgencyConfigPath string
 }
 
 type mergeResult struct {
-	Branch             string
-	PRNumber           int
-	PRURL              string
-	Strategy           mergeStrategy
-	DeleteBranch       bool
-	MergeLogPath       string
-	VerifyLog          string
-	ReportSource       string
-	ReportFallbackUsed bool
-	ReportDiagnostics  []report.Diagnostic
+	Branch         string
+	PRNumber       int
+	PRURL          string
+	Strategy       mergeStrategy
+	DeleteBranch   bool
+	MergeLogPath   string
+	ArchiveLogPath string
+	VerifyLog      string
 }
 
 type mergePRView struct {
@@ -99,15 +98,25 @@ func normalizeMergeRequest(req WorktreePRMergeRequest) (normalizedMergeRequest, 
 		)
 	}
 
+	agencyConfigPath := strings.TrimSpace(req.AgencyConfigPath)
+	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
+		return normalizedMergeRequest{}, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"agency_config_path must be absolute",
+			map[string]string{"agency_config_path": agencyConfigPath},
+		)
+	}
+
 	return normalizedMergeRequest{
 		Strategy:         strategy,
 		ConfirmationMode: mode,
 		DeleteBranch:     !req.NoDeleteBranch,
+		AgencyConfigPath: agencyConfigPath,
 	}, nil
 }
 
-func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner string) (*mergePRView, error) {
-	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, wtMeta.TreePath, owner, wtMeta.Branch)
+func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner, workDir string, env map[string]string) (*mergePRView, error) {
+	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, workDir, owner, wtMeta.Branch, env)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +126,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 			fmt.Sprintf("no pull request found for branch %q", wtMeta.Branch),
 			map[string]string{
 				"branch": wtMeta.Branch,
-				"hint":   "run 'agency worktree pr sync <worktree_ref>' first",
+				"hint":   "run 'agency worktree <worktree_ref> pr sync' first",
 			},
 		)
 	}
@@ -132,19 +141,9 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 		)
 	}
 
-	pr, err := mergeViewPR(ctx, s.Runner, wtMeta.TreePath, ghRepo, prs[0].Number)
+	pr, err := mergeViewPR(ctx, s.Runner, workDir, ghRepo, prs[0].Number, env)
 	if err != nil {
 		return nil, err
-	}
-	if strings.ToUpper(pr.State) != "OPEN" {
-		return nil, errors.NewWithDetails(
-			errors.EPRNotOpen,
-			fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, pr.State),
-			map[string]string{
-				"pr_number": fmt.Sprintf("%d", pr.Number),
-				"state":     pr.State,
-			},
-		)
 	}
 	if pr.IsDraft {
 		return nil, errors.NewWithDetails(
@@ -163,16 +162,30 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 			},
 		)
 	}
-	if err := mergeEnsureMergeable(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number); err != nil {
-		return nil, err
+	switch strings.ToUpper(strings.TrimSpace(pr.State)) {
+	case "OPEN":
+		if err := mergeEnsureMergeable(ctx, s.Runner, workDir, ghRepo, pr.Number, env); err != nil {
+			return nil, err
+		}
+	case "MERGED":
+		return pr, nil
+	default:
+		return nil, errors.NewWithDetails(
+			errors.EPRNotOpen,
+			fmt.Sprintf("PR #%d exists but state is %s (expected OPEN or MERGED)", pr.Number, pr.State),
+			map[string]string{
+				"pr_number": fmt.Sprintf("%d", pr.Number),
+				"state":     pr.State,
+			},
+		)
 	}
 
 	return pr, nil
 }
 
-func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string) ([]prSyncPR, error) {
+func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) ([]prSyncPR, error) {
 	headWithOwner := prSyncHeadRef(owner, branch)
-	prs, err := mergeListPRsByHeadWithRetry(ctx, runner, workDir, headWithOwner)
+	prs, err := mergeListPRsByHeadWithRetry(ctx, runner, workDir, headWithOwner, env)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +195,7 @@ func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunn
 
 	// GitHub can surface head refs without owner prefix for same-repo branches.
 	if strings.TrimSpace(owner) != "" {
-		prs, err = mergeListPRsByHeadWithRetry(ctx, runner, workDir, branch)
+		prs, err = mergeListPRsByHeadWithRetry(ctx, runner, workDir, branch, env)
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +203,7 @@ func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunn
 	return prs, nil
 }
 
-func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, head string) ([]prSyncPR, error) {
+func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, head string, env map[string]string) ([]prSyncPR, error) {
 	delays := []time.Duration{
 		0,
 		250 * time.Millisecond,
@@ -212,7 +225,7 @@ func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner,
 		}
 
 		var err error
-		prs, err = prSyncListPRsByHead(ctx, runner, workDir, head)
+		prs, err = prSyncListPRsByHead(ctx, runner, workDir, head, env)
 		if err != nil {
 			return nil, err
 		}
@@ -224,14 +237,14 @@ func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner,
 	return prs, nil
 }
 
-func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int) (*mergePRView, error) {
+func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) (*mergePRView, error) {
 	result, err := runner.Run(ctx, "gh", []string{
 		"pr", "view", fmt.Sprintf("%d", prNumber),
 		"-R", ghRepo,
 		"--json", "number,url,state,isDraft,mergeable,headRefName",
 	}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return nil, errors.Wrap(errors.EGHPRViewFailed, "gh pr view failed to start", err)
@@ -257,7 +270,7 @@ func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo
 	return &pr, nil
 }
 
-func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int) error {
+func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) error {
 	delays := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
 
 	for idx, delay := range delays {
@@ -271,7 +284,7 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 			}
 		}
 
-		pr, err := mergeViewPR(ctx, runner, workDir, ghRepo, prNumber)
+		pr, err := mergeViewPR(ctx, runner, workDir, ghRepo, prNumber, env)
 		if err != nil {
 			continue
 		}
@@ -309,10 +322,11 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 }
 
 func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot string) (string, error) {
-	return mergeflow.ResolveRepoRoot(ctx, s.Runner, s.Store, repoID, workspaceRoot)
+	_ = ctx
+	return mergeflow.ResolveRepoRoot(s.Store, repoID, workspaceRoot)
 }
 
-func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string) (string, string, error) {
+func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string, env map[string]string) (string, string, error) {
 	originURL := ""
 	if repoRecord, exists, err := s.Store.LoadRepoRecord(repoID); err == nil && exists {
 		originURL = strings.TrimSpace(repoRecord.OriginURL)
@@ -320,7 +334,7 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 	if originURL == "" {
 		result, err := s.Runner.Run(ctx, "git", []string{"config", "--get", "remote.origin.url"}, exec.RunOpts{
 			Dir: workDir,
-			Env: prSyncNonInteractiveEnv(),
+			Env: env,
 		})
 		if err != nil || result.ExitCode != 0 {
 			return "", "", errors.New(errors.EGHRepoParseFailed, "failed to determine GitHub repository from origin remote")
@@ -339,7 +353,7 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 	return owner + "/" + repo, owner, nil
 }
 
-func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int) (bool, error) {
+func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) (bool, error) {
 	delays := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
 
 	for idx, delay := range delays {
@@ -359,7 +373,7 @@ func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDi
 			"--json", "state",
 		}, exec.RunOpts{
 			Dir: workDir,
-			Env: prSyncNonInteractiveEnv(),
+			Env: env,
 		})
 		if err != nil || result.ExitCode != 0 {
 			continue
@@ -398,25 +412,33 @@ func mergeHTTPStatusForCode(code errors.Code) int {
 		return http.StatusNotFound
 	case errors.EWorktreeIDAmbiguous:
 		return http.StatusConflict
+	case errors.EWorktreeMergeNotFound:
+		return http.StatusNotFound
 	case errors.EInvocationNotFound, errors.ENoPR:
 		return http.StatusNotFound
 	case errors.EInvocationIDAmbiguous:
 		return http.StatusConflict
 	case errors.ERepoLocked:
 		return http.StatusConflict
+	case errors.EWorktreeMergeActive:
+		return http.StatusConflict
+	case errors.EWorktreeHasUnresolvedInvocations:
+		return http.StatusConflict
 	case errors.EInvocationStillRunning:
 		return http.StatusConflict
 	case errors.EConfirmationRequired:
 		return http.StatusConflict
+	case errors.EArchiveFailed:
+		return http.StatusConflict
 	case errors.EDirtyWorktree:
+		return http.StatusConflict
+	case errors.EWorktreeMergeInterrupted:
 		return http.StatusConflict
 	case errors.EPRNotOpen, errors.EPRDraft, errors.EPRMismatch, errors.EPRNotMergeable, errors.EPRMergeabilityUnknown:
 		return http.StatusConflict
 	case errors.EGHPRMergeFailed, errors.EGHPRViewFailed:
 		return http.StatusConflict
 	case errors.EScriptFailed:
-		return http.StatusConflict
-	case errors.EReportMissing, errors.EReportMalformed, errors.EReportOversized, errors.EReportSchemaIncompatible, errors.EReportIncomplete:
 		return http.StatusConflict
 	case errors.EInvalidArgument, errors.EGHRepoParseFailed, errors.EGhNotInstalled, errors.EGhNotAuthenticated:
 		return http.StatusBadRequest

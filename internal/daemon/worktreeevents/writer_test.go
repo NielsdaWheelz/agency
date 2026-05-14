@@ -3,8 +3,10 @@ package worktreeevents
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -49,7 +51,7 @@ func TestWriter_AppendConcurrentCrossSurfaceMonotonicSeq(t *testing.T) {
 	const perProducer = 40
 	kinds := []string{
 		"agency.pr_sync_started",
-		"agency.worktree_update_started",
+		"agency.worktree_rebase_started",
 		"agency.merge_started",
 	}
 
@@ -160,4 +162,23 @@ func TestWriter_Append_UsesPrivatePermissions(t *testing.T) {
 
 	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+}
+
+func TestWriter_Append_RejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	writer := NewWriter(time.Now)
+
+	_, err := writer.Append(
+		eventsPath,
+		"wt-oversized",
+		"agency.pr_sync_started",
+		map[string]any{
+			"text": strings.Repeat("z", maxEventLineBytes+1024),
+		},
+		AppendOptions{},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d", maxEventLineBytes))
 }

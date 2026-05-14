@@ -39,9 +39,18 @@ func HermeticGitEnv(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
 
-	// Provide a deterministic committer/author identity.
-	t.Setenv("GIT_AUTHOR_NAME", "Test User")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@test.com")
-	t.Setenv("GIT_COMMITTER_NAME", "Test User")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@test.com")
+	for k, v := range GitIdentityEnv() {
+		t.Setenv(k, v)
+	}
+}
+
+// GitIdentityEnv returns deterministic Git identity variables for tests that
+// need per-command or profile-scoped environment instead of process-wide env.
+func GitIdentityEnv() map[string]string {
+	return map[string]string{
+		"GIT_AUTHOR_NAME":     "Test User",
+		"GIT_AUTHOR_EMAIL":    "test@test.com",
+		"GIT_COMMITTER_NAME":  "Test User",
+		"GIT_COMMITTER_EMAIL": "test@test.com",
+	}
 }

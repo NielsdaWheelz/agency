@@ -1330,7 +1330,7 @@ func TestApplier_Apply_EmitsStartedAndAppliedEvents(t *testing.T) {
 	assert.Equal(t, EventKindCheckpointApplied, events[1].Kind)
 }
 
-func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing.T) {
+func TestApplier_ApplyWithOptions_RewindHeadUsesSandboxHeadSHA(t *testing.T) {
 	t.Parallel()
 	sandboxPath := t.TempDir()
 	checkpointsDir := t.TempDir()
@@ -1338,9 +1338,9 @@ func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
 
 	cpFile := &CheckpointsFile{
-		SchemaVersion: SchemaVersionLegacy,
+		SchemaVersion: SchemaVersion,
 		Checkpoints: []Checkpoint{
-			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111"},
+			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111", SandboxHeadSHA: "parent0001"},
 		},
 	}
 	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
@@ -1351,7 +1351,6 @@ func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing
 	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
 
 	sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
-	sr.stub(fmt.Sprintf("git -C %s rev-parse aaa111^", sandboxPath), exec.CmdResult{Stdout: "parent0001\n"})
 	sr.stub(fmt.Sprintf("git -C %s cat-file -t parent0001", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
 	sr.stub(fmt.Sprintf("git -C %s rev-parse HEAD", sandboxPath), exec.CmdResult{Stdout: "head-before-apply\n"})
 	sr.stub(fmt.Sprintf("git -C %s update-ref refs/agency/restore-backups/test-inv/20260115T120000.000000000Z-cp1 head-before-apply", sandboxPath), exec.CmdResult{})
@@ -1364,6 +1363,36 @@ func TestApplier_ApplyWithOptions_RewindHeadFallsBackToSnapshotParent(t *testing
 
 	calls := sr.callKeys()
 	assert.Contains(t, calls, fmt.Sprintf("git -C %s reset --hard parent0001", sandboxPath))
+	assert.NotContains(t, calls, fmt.Sprintf("git -C %s rev-parse aaa111^", sandboxPath))
+}
+
+func TestApplier_ApplyWithOptions_RewindHeadRequiresSandboxHeadSHA(t *testing.T) {
+	t.Parallel()
+	sandboxPath := t.TempDir()
+	checkpointsDir := t.TempDir()
+	eventsDir := t.TempDir()
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+
+	cpFile := &CheckpointsFile{
+		SchemaVersion: SchemaVersion,
+		Checkpoints: []Checkpoint{
+			{ID: 1, SnapshotRef: "refs/agency/snapshots/inv/1", SnapshotCommit: "aaa111"},
+		},
+	}
+	cpData, _ := json.MarshalIndent(cpFile, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(checkpointsDir, "checkpoints.json"), cpData, 0o644))
+
+	sr := newStubRunner()
+	clock := newTestClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	applier := NewApplier("test-inv", sandboxPath, checkpointsDir, eventsPath, sr, fs.NewRealFS(), clock.Now)
+
+	sr.stub(fmt.Sprintf("git -C %s cat-file -t aaa111", sandboxPath), exec.CmdResult{Stdout: "commit\n"})
+
+	_, err := applier.ApplyWithOptions(context.Background(), 1, ApplyOptions{RewindHeadToSnapshotBase: true})
+	require.Error(t, err)
+	assert.Equal(t, errors.ECheckpointFailed, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "sandbox_head_sha")
+	assert.NotContains(t, sr.callKeys(), fmt.Sprintf("git -C %s rev-parse", sandboxPath))
 }
 
 // 1.12 TestApplier_Apply_NotFound
@@ -1892,8 +1921,8 @@ func TestValidSchemaVersion(t *testing.T) {
 		v    string
 		want bool
 	}{
-		{"1.0", true},
 		{"1.1", true},
+		{"1.0", false},
 		{"2.0", false},
 		{"", false},
 		{"0.9", false},
@@ -2151,27 +2180,6 @@ func TestCheckpoint_SchemaVersion_Writes1_1(t *testing.T) {
 	t.Parallel()
 	f := NewCheckpointsFile()
 	assert.Equal(t, "1.1", f.SchemaVersion, "new checkpoints files should use schema 1.1")
-}
-
-func TestCheckpoint_SchemaVersion_Reads1_0(t *testing.T) {
-	t.Parallel()
-
-	// Simulate loading a legacy 1.0 checkpoints.json
-	legacy := `{"schema_version":"1.0","checkpoints":[{"id":1,"snapshot_ref":"refs/agency/snapshots/inv/1","snapshot_commit":"abc","sandbox_head_sha":"def","created_at":"2026-01-01T00:00:00Z","includes_untracked":true,"diffstat":"+1 -0 in 1 files","tree_sha":"tree1"}]}`
-
-	dir := t.TempDir()
-	cpPath := filepath.Join(dir, "checkpoints.json")
-	require.NoError(t, os.WriteFile(cpPath, []byte(legacy), 0o644))
-
-	cpFile, err := LoadCheckpointsFile(fs.NewRealFS(), dir)
-	require.NoError(t, err)
-	require.Len(t, cpFile.Checkpoints, 1)
-
-	// Legacy checkpoints should load fine without trigger metadata
-	cp := cpFile.Checkpoints[0]
-	assert.Equal(t, 1, cp.ID)
-	assert.Empty(t, cp.Trigger, "legacy checkpoint should have no trigger metadata")
-	assert.Empty(t, cp.ToolName)
 }
 
 func TestCheckpoint_SchemaVersion_RejectsUnknown(t *testing.T) {

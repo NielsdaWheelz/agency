@@ -39,10 +39,11 @@ type testDaemonEnv struct {
 }
 
 type fakeRunnerLaunchCapture struct {
-	Args           []string `json:"args"`
-	CWD            string   `json:"cwd"`
-	Mode           string   `json:"mode"`
-	FirstStdinLine string   `json:"first_stdin_line,omitempty"`
+	Args           []string          `json:"args"`
+	CWD            string            `json:"cwd"`
+	Mode           string            `json:"mode"`
+	FirstStdinLine string            `json:"first_stdin_line,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
 }
 
 // startTestDaemon boots a real daemon server on a temp Unix socket and
@@ -55,28 +56,9 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 
-	// Write config.json pointing "claude" at the fake runner binary.
-	// Must include "defaults" for LoadUserConfig validation to pass.
-	runnerPath := fakeRunnerPath(t)
-	cfg := map[string]any{
-		"version": 1,
-		"defaults": map[string]string{
-			"runner": "claude",
-			"editor": "code",
-		},
-		"runners": map[string]string{
-			"claude":      runnerPath,
-			"claude-code": runnerPath,
-			"codex":       runnerPath,
-			"amp":         runnerPath,
-			"opencode":    runnerPath,
-			"cursor":      runnerPath,
-			"cursor-cli":  runnerPath,
-			"droid":       runnerPath,
-		},
-	}
-	cfgBytes, _ := json.Marshal(cfg)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644), "write config.json")
+	writeDaemonUserConfig(t, configDir, map[string]map[string]string{
+		"personal": testutil.GitIdentityEnv(),
+	})
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
@@ -87,7 +69,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 
 	// Unix sockets on macOS have a ~104 byte path limit.
 	// Use a short temp dir for the socket to avoid exceeding it.
-	sockDir, err := os.MkdirTemp("", "dsock")
+	sockDir, err := os.MkdirTemp("/tmp", "dsock")
 	require.NoError(t, err, "mkdir sockdir")
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
@@ -125,35 +107,43 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	}
 }
 
+func writeDaemonUserConfig(t *testing.T, configDir string, profiles map[string]map[string]string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
+
+	profileData := map[string]any{}
+	for name, env := range profiles {
+		profileData[name] = map[string]any{"env": env}
+	}
+	if _, ok := profileData["personal"]; !ok {
+		profileData["personal"] = map[string]any{"env": testutil.GitIdentityEnv()}
+	}
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": fakeRunnerPath(t),
+			"codex":       fakeRunnerPath(t),
+			"amp":         fakeRunnerPath(t),
+			"opencode":    fakeRunnerPath(t),
+			"cursor":      fakeRunnerPath(t),
+			"droid":       fakeRunnerPath(t),
+		},
+		"execution_profiles": profileData,
+	}
+	cfgBytes, _ := json.Marshal(cfg)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644), "write config.json")
+}
+
 // setupTestGitRepo creates a temporary git repo with one initial commit.
-// Uses t.Setenv via HermeticGitEnv — incompatible with t.Parallel().
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
-	testutil.HermeticGitEnv(t)
-
-	repoDir := t.TempDir()
-	cr := exec.NewRealRunner()
-	ctx := context.Background()
-
-	result, err := cr.Run(ctx, "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		require.FailNow(t, "git init failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
-
-	testFile := filepath.Join(repoDir, "README.md")
-	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644), "failed to write test file")
-
-	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		require.FailNow(t, "git add failed", "err=%v, exit %d", err, result.ExitCode)
-	}
-
-	result, err = cr.Run(ctx, "git", []string{"commit", "-m", "Initial commit"}, exec.RunOpts{Dir: repoDir})
-	if err != nil || result.ExitCode != 0 {
-		require.FailNow(t, "git commit failed", "err=%v, exit %d, stderr: %s", err, result.ExitCode, result.Stderr)
-	}
-
-	return repoDir
+	return setupTestGitRepoParallel(t)
 }
 
 // hermeticGitEnv returns per-command env vars that isolate git from the host
@@ -161,14 +151,14 @@ func setupTestGitRepo(t *testing.T) string {
 // test can use t.Parallel().
 func hermeticGitEnv(t *testing.T) map[string]string {
 	t.Helper()
-	return map[string]string{
+	env := map[string]string{
 		"GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
-		"GIT_AUTHOR_NAME":     "Test User",
-		"GIT_AUTHOR_EMAIL":    "test@test.com",
-		"GIT_COMMITTER_NAME":  "Test User",
-		"GIT_COMMITTER_EMAIL": "test@test.com",
 	}
+	for k, v := range testutil.GitIdentityEnv() {
+		env[k] = v
+	}
+	return env
 }
 
 // setupTestGitRepoParallel creates a temp git repo without touching process
@@ -189,6 +179,7 @@ func setupTestGitRepoParallel(t *testing.T) string {
 
 	testFile := filepath.Join(repoDir, "README.md")
 	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644))
+	writeTestAgencyConfig(t, repoDir)
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir, Env: gitEnv})
 	if err != nil || result.ExitCode != 0 {
@@ -203,15 +194,26 @@ func setupTestGitRepoParallel(t *testing.T) string {
 	return repoDir
 }
 
+func writeTestAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	for _, script := range []string{"setup", "verify", "archive"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script+".sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755))
+	}
+	agencyJSON := `{"version":4,"scripts":{"setup":{"path":"scripts/setup.sh","timeout":"10m"},"verify":{"path":"scripts/verify.sh","timeout":"30m"},"archive":{"path":"scripts/archive.sh","timeout":"5m"}},"execution":{"checkout_root":"repo-sibling"}}`
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0o644))
+}
+
 // createTestWorktree creates an integration worktree via the daemon client.
 func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, name string) (worktreeID, treePath, repoID string) {
 	t.Helper()
 	ctx := context.Background()
 
 	resp, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
-		RepoRoot:     repoRoot,
-		Name:         name,
-		ParentBranch: "main",
+		RepoRoot:   repoRoot,
+		Name:       name,
+		BaseBranch: "main",
 	})
 	require.NoError(t, err, "worktree create")
 	require.True(t, resp.OK, "worktree create failed: %s - %s", resp.ErrorCode, resp.Message)
@@ -222,7 +224,7 @@ func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, nam
 // startTestInvocation starts a headless invocation via the control plane.
 func startTestInvocation(t *testing.T, client *daemonclient.Client, repoRoot, worktreeRef, mode string) *daemon.ControlPlaneStartResponse {
 	t.Helper()
-	return startTestInvocationWithRunner(t, client, repoRoot, worktreeRef, "claude", mode)
+	return startTestInvocationWithRunner(t, client, repoRoot, worktreeRef, "claude-code", mode)
 }
 
 // startTestInvocationWithRunner starts a headless invocation with an explicit runner.
@@ -266,15 +268,10 @@ func waitForInvocationTerminal(t *testing.T, st *store.Store, repoID, invocation
 func gitExec(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cr := exec.NewRealRunner()
-	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir})
+	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir, Env: hermeticGitEnv(t)})
 	require.NoError(t, err, "git %s", strings.Join(args, " "))
 	require.Equal(t, 0, result.ExitCode, "git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
 	return strings.TrimSpace(result.Stdout)
-}
-
-// newFakeTmuxClient returns a testutil.FakeTmuxClient for daemon tests.
-func newFakeTmuxClient() *testutil.FakeTmuxClient {
-	return testutil.NewFakeTmuxClient()
 }
 
 // startTestHeadedInvocation starts a headed invocation via the daemon client.
@@ -286,7 +283,7 @@ func startTestHeadedInvocation(t *testing.T, client *daemonclient.Client, repoRo
 	resp, err := client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
 		RepoRoot:    repoRoot,
 		WorktreeRef: worktreeRef,
-		Runner:      "claude",
+		Runner:      "claude-code",
 	})
 	require.NoError(t, err, "control plane start headed")
 	require.True(t, resp.OK, "control plane start headed failed: %s - %s", resp.ErrorCode, resp.Message)

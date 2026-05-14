@@ -1,4 +1,4 @@
-// Package core provides foundational utilities for agency slice 1.
+// Package core provides foundational utilities for agency.
 package core
 
 import (

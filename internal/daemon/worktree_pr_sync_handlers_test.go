@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -15,7 +17,32 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
-func TestHandleWorktreePRSync_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
+func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
+	t.Parallel()
+
+	fakeRunner := testutil.NewFakeCommandRunner()
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout:   "?? .agency/state/runner_status.json\n?? .agency/tmp/pr_body.md\n M README.md\n",
+		ExitCode: 0,
+	}
+
+	clean, status, err := prSyncDirtyStatus(context.Background(), fakeRunner, "/repo", prSyncNonInteractiveEnv(nil))
+	require.NoError(t, err)
+	assert.False(t, clean)
+	assert.Equal(t, " M README.md", status)
+
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
+		Stdout:   "?? .agency/state/runner_status.json\n?? .agency/tmp/pr_body.md\n",
+		ExitCode: 0,
+	}
+
+	clean, status, err = prSyncDirtyStatus(context.Background(), fakeRunner, "/repo", prSyncNonInteractiveEnv(nil))
+	require.NoError(t, err)
+	assert.True(t, clean)
+	assert.Empty(t, status)
+}
+
+func TestHandleWorktreePRSync_MissingRepoIDReturnsInvalidRequest(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -25,7 +52,7 @@ func TestHandleWorktreePRSync_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	var resp WorktreePRSyncResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
-	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
 	assert.Equal(t, "repo_id query parameter is required", resp.Message)
 }
 
@@ -45,7 +72,7 @@ func TestHandleWorktreePRSync_StrictDecodeFailures(t *testing.T) {
 	var resp WorktreePRSyncResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
-	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
 	assert.Equal(t, `invalid request body: unknown field "unknown"`, resp.Message)
 }
 
@@ -96,6 +123,38 @@ func TestHandleWorktreePRSync_ParsesForceWithLeaseWhenContentLengthUnknown(t *te
 	assert.NotContains(t, fakeRunner.Calls, "git push -u origin agency/alpha")
 }
 
+func TestHandleWorktreePRSync_FetchFailureReturnsTypedError(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.Runner = fakeRunner
+
+	_ = setupWorktreeMutationReadyState(t, env)
+	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
+	fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
+	fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
+	fakeRunner.Responses["git fetch origin"] = testutil.FakeResponse{
+		ExitCode: 128,
+		Stderr:   "fatal: could not read from remote repository",
+	}
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/wt-1/pr/sync?repo_id="+env.RepoID,
+		[]byte(`{}`),
+	)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+
+	var resp WorktreePRSyncResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EGitFetchFailed), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "git fetch origin failed")
+}
+
 func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 
@@ -134,7 +193,7 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 		env.Server.Runner = fakeRunner
 
 		treePath := setupWorktreeMutationReadyState(t, env)
-		reportPath := filepath.Join(treePath, ".agency", "report.md")
+		prBodyPath := filepath.Join(treePath, ".agency", "tmp", "pr_body.md")
 		fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
 		fakeRunner.Responses["gh --version"] = testutil.FakeResponse{Stdout: "gh version 2.0.0\n", ExitCode: 0}
 		fakeRunner.Responses["gh auth status"] = testutil.FakeResponse{Stdout: "ok\n", ExitCode: 0}
@@ -147,7 +206,7 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 			Stdout:   `[{"number":88,"url":"https://github.com/test/agent-repo/pull/88","state":"OPEN"}]`,
 			ExitCode: 0,
 		}
-		fakeRunner.Responses["gh pr edit 88 --body-file "+reportPath] = testutil.FakeResponse{ExitCode: 0}
+		fakeRunner.Responses["gh pr edit 88 --body-file "+prBodyPath] = testutil.FakeResponse{ExitCode: 0}
 
 		w := doWorktreeRequestWithBody(
 			t,
@@ -164,5 +223,20 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 		require.True(t, ok, "request_id must be present in success payload")
 		assert.NotEmpty(t, requestID)
 		assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+
+		prBody, err := os.ReadFile(prBodyPath)
+		require.NoError(t, err)
+		assert.Equal(t, "## summary\nready for mutation\n\n## how to test\ngo test ./...\n", string(prBody))
+
+		var sawPush bool
+		for i, call := range fakeRunner.Calls {
+			if call == "git push -u origin agency/alpha" {
+				sawPush = true
+				assert.Equal(t, "Test User", fakeRunner.CallEnvs[i]["GIT_AUTHOR_NAME"])
+				assert.Equal(t, "0", fakeRunner.CallEnvs[i]["GIT_TERMINAL_PROMPT"])
+				assert.Equal(t, "1", fakeRunner.CallEnvs[i]["GH_PROMPT_DISABLED"])
+			}
+		}
+		assert.True(t, sawPush, "expected git push to run")
 	})
 }

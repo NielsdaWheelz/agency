@@ -15,10 +15,27 @@ import (
 )
 
 type launchCapture struct {
-	Args           []string `json:"args"`
-	CWD            string   `json:"cwd"`
-	Mode           string   `json:"mode"`
-	FirstStdinLine string   `json:"first_stdin_line,omitempty"`
+	Args           []string          `json:"args"`
+	CWD            string            `json:"cwd"`
+	Mode           string            `json:"mode"`
+	FirstStdinLine string            `json:"first_stdin_line,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+}
+
+func capturedEnv() map[string]string {
+	raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_CAPTURE_ENV_KEYS"))
+	if raw == "" {
+		return nil
+	}
+	env := map[string]string{}
+	for _, key := range strings.Split(raw, ",") {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		env[key] = os.Getenv(key)
+	}
+	return env
 }
 
 func writeCapture(path, mode, firstStdinLine string) error {
@@ -34,6 +51,7 @@ func writeCapture(path, mode, firstStdinLine string) error {
 		CWD:            cwd,
 		Mode:           mode,
 		FirstStdinLine: firstStdinLine,
+		Env:            capturedEnv(),
 	})
 	if err != nil {
 		return err
@@ -233,6 +251,74 @@ func main() {
 		fmt.Fprintf(os.Stdout, "{\"type\":\"tool_call\",\"subtype\":\"completed\",\"tool_call\":{\"bashToolCall\":{\"command\":%q,\"exitCode\":0}}}\n", command)
 		time.Sleep(sleepDuration)
 		fmt.Fprintln(os.Stdout, `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`)
+		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
+		os.Exit(0)
+
+	case "claude-session-final-sleep":
+		sleepDuration := 4 * time.Second
+		if raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SLEEP_MS")); raw != "" {
+			if ms, err := strconv.Atoi(raw); err == nil && ms >= 0 {
+				sleepDuration = time.Duration(ms) * time.Millisecond
+			}
+		}
+		sessionID := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SESSION_ID"))
+		if sessionID == "" {
+			sessionID = "sess_claude_final_sleep"
+		}
+		fmt.Fprintf(os.Stdout, "{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/sandbox\",\"model\":\"claude-opus-test\",\"session_id\":%q}\n", sessionID)
+		fmt.Fprintln(os.Stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"turn complete"}]}}`)
+		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
+		time.Sleep(sleepDuration)
+		os.Exit(0)
+
+	case "claude-session-mutate-then-exit-ok":
+		sleepDuration := 350 * time.Millisecond
+		if raw := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SLEEP_MS")); raw != "" {
+			if ms, err := strconv.Atoi(raw); err == nil && ms >= 0 {
+				sleepDuration = time.Duration(ms) * time.Millisecond
+			}
+		}
+		sessionID := strings.TrimSpace(os.Getenv("FAKE_RUNNER_SESSION_ID"))
+		if sessionID == "" {
+			sessionID = "sess_claude_resume_test"
+		}
+		targetFile := strings.TrimSpace(os.Getenv("FAKE_RUNNER_MUTATION_FILE"))
+		if targetFile == "" {
+			targetFile = "claude-followup.txt"
+		}
+		isResumeTurn := false
+		for i := 1; i < len(os.Args); i++ {
+			if os.Args[i] == "--resume" || os.Args[i] == "-r" {
+				isResumeTurn = true
+				break
+			}
+		}
+		toolID := "tool-seed"
+		toolResult := "seed complete"
+		if isResumeTurn {
+			f, err := os.OpenFile(targetFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "failed to open mutation file for append:", err)
+				os.Exit(2)
+			}
+			if _, err := f.WriteString("followup turn\n"); err != nil {
+				_ = f.Close()
+				fmt.Fprintln(os.Stderr, "failed to append followup mutation:", err)
+				os.Exit(2)
+			}
+			_ = f.Close()
+			toolID = "tool-followup"
+			toolResult = "followup complete"
+		} else {
+			if err := os.WriteFile(targetFile, []byte("seed turn\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, "failed to write seed mutation file:", err)
+				os.Exit(2)
+			}
+		}
+		fmt.Fprintf(os.Stdout, "{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/sandbox\",\"model\":\"claude-opus-test\",\"session_id\":%q}\n", sessionID)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"id\":%q,\"input\":{\"path\":%q}}]}}\n", toolID, targetFile)
+		fmt.Fprintf(os.Stdout, "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":%q,\"content\":%q}]}}\n", toolID, toolResult)
+		time.Sleep(sleepDuration)
 		fmt.Fprintln(os.Stdout, `{"type":"result","subtype":"success"}`)
 		os.Exit(0)
 

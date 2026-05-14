@@ -1,9 +1,8 @@
 // Package store provides persistence for agency data.
-// This file implements filesystem-based invocation discovery (Slice 8 PR-02).
+// This file implements filesystem-based invocation discovery.
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,12 +72,6 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 			InvocationDir: invocationDir,
 		}
 
-		// Check if sandbox tree exists
-		sandboxTreePath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
-		if _, err := os.Stat(sandboxTreePath); err == nil {
-			record.SandboxExists = true
-		}
-
 		// Try to read and parse meta.json
 		data, err := os.ReadFile(metaPath)
 		if err != nil {
@@ -89,15 +82,20 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 		}
 
 		var meta InvocationMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
+		if err := decodeStrictJSON(data, &meta); err != nil {
 			// Invalid JSON - mark as broken
 			record.Broken = true
 			records = append(records, record)
 			continue
 		}
 
-		// Validate minimal required fields for non-broken status
-		if meta.SchemaVersion == "" || meta.StartedAt == "" || meta.InvocationID == "" {
+		fields, err := strictJSONObjectFields(data)
+		if err != nil {
+			record.Broken = true
+			records = append(records, record)
+			continue
+		}
+		if err := validateInvocationMeta(meta, invocationID, metaPath, fields); err != nil {
 			record.Broken = true
 			records = append(records, record)
 			continue
@@ -106,6 +104,9 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 		record.Meta = &meta
 		record.IntegrationWorktreeID = meta.IntegrationWorktreeID
 		record.InvocationName = meta.InvocationName
+		if _, err := os.Stat(meta.SandboxPath); err == nil {
+			record.SandboxExists = true
+		}
 		records = append(records, record)
 	}
 
@@ -134,82 +135,6 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 		}
 
 		// Tie-breaker: invocation_id descending
-		return records[i].InvocationID > records[j].InvocationID
-	})
-
-	return records, nil
-}
-
-// ScanInvocationsForWorktree discovers invocations for a specific integration worktree.
-// Returns records sorted by started_at descending (newest first).
-func ScanInvocationsForWorktree(dataDir, repoID, worktreeID string) ([]InvocationRecord, error) {
-	allRecords, err := ScanInvocationsForRepo(dataDir, repoID)
-	if err != nil {
-		return nil, err
-	}
-
-	var filtered []InvocationRecord
-	for _, r := range allRecords {
-		if r.IntegrationWorktreeID == worktreeID {
-			filtered = append(filtered, r)
-		}
-	}
-
-	return filtered, nil
-}
-
-// ScanAllInvocations discovers invocations across all repos.
-// Returns records sorted by RepoID asc, then started_at desc, then InvocationID desc.
-func ScanAllInvocations(dataDir string) ([]InvocationRecord, error) {
-	reposDir := filepath.Join(dataDir, "repos")
-
-	entries, err := os.ReadDir(reposDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var records []InvocationRecord
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		repoID := entry.Name()
-		repoRecords, err := ScanInvocationsForRepo(dataDir, repoID)
-		if err != nil {
-			// Skip repos with errors (e.g., permission denied)
-			continue
-		}
-		records = append(records, repoRecords...)
-	}
-
-	// Sort by RepoID, then started_at desc, then InvocationID
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].RepoID != records[j].RepoID {
-			return records[i].RepoID < records[j].RepoID
-		}
-		// Broken records sort last within repo
-		if records[i].Broken != records[j].Broken {
-			return !records[i].Broken
-		}
-		if records[i].Broken && records[j].Broken {
-			return records[i].InvocationID > records[j].InvocationID
-		}
-
-		ti, erri := time.Parse(time.RFC3339, records[i].Meta.StartedAt)
-		tj, errj := time.Parse(time.RFC3339, records[j].Meta.StartedAt)
-
-		if erri != nil || errj != nil {
-			return records[i].InvocationID > records[j].InvocationID
-		}
-
-		if !ti.Equal(tj) {
-			return ti.After(tj)
-		}
-
 		return records[i].InvocationID > records[j].InvocationID
 	})
 

@@ -14,23 +14,20 @@ const (
 	RunnerCursor     = "cursor"
 	RunnerDroid      = "droid"
 
-	LegacyRunnerClaude    = "claude"
-	LegacyRunnerCursorCLI = "cursor-cli"
-
 	launchTokenExtraArgs   = "{extra_args}"
 	launchTokenPrompt      = "{prompt}"
 	launchTokenSandboxPath = "{sandbox_path}"
 )
 
-// ChatMode describes how a runner accepts follow-up messages in headless mode.
-type ChatMode string
+// FollowUpMode describes how a runner accepts follow-up messages in headless mode.
+type FollowUpMode string
 
 const (
-	// ChatModeStdin delivers messages via the runner's stdin pipe in real time (JSONL).
-	ChatModeStdin ChatMode = "stdin"
+	// FollowUpModeStdin delivers messages via the runner's stdin pipe in real time (JSONL).
+	FollowUpModeStdin FollowUpMode = "stdin"
 
-	// ChatModeResume queues messages and delivers them by resuming the session.
-	ChatModeResume ChatMode = "resume"
+	// FollowUpModeResume queues messages and delivers them by resuming the session.
+	FollowUpModeResume FollowUpMode = "resume"
 )
 
 // InitialPromptMode describes how a runner expects the first prompt in headless mode.
@@ -50,12 +47,11 @@ type Capability struct {
 	SupportsHeadless   bool
 	SupportsHeaded     bool
 	HasSemanticAdapter bool
-	ChatMode           ChatMode // how follow-up messages are delivered in headless mode
+	FollowUpMode       FollowUpMode // how follow-up messages are delivered in headless mode
 	InitialPromptMode  InitialPromptMode
 
 	reservedArgs         []string // flags reserved in both headless and headed modes
 	reservedHeadlessArgs []string // flags reserved only in headless mode (permission/approval)
-	aliases              []string
 	headlessTemplate     []string
 	resumeTemplate       []string // template for session-resume follow-up turns (if supported)
 	headedTemplate       []string
@@ -72,22 +68,29 @@ var canonicalIDs = []string{
 
 var capabilityByID = map[string]Capability{
 	RunnerClaudeCode: {
-		ID:                   RunnerClaudeCode,
-		SupportsHeadless:     true,
-		SupportsHeaded:       true,
-		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeStdin,
-		InitialPromptMode:    InitialPromptStdin,
-		reservedArgs:         []string{"--output-format", "--input-format", "-p", "--print", "--verbose"},
-		reservedHeadlessArgs: []string{"--dangerously-skip-permissions", "--permission-mode"},
-		aliases:              []string{LegacyRunnerClaude},
+		ID:                 RunnerClaudeCode,
+		SupportsHeadless:   true,
+		SupportsHeaded:     true,
+		HasSemanticAdapter: true,
+		FollowUpMode:       FollowUpModeResume,
+		InitialPromptMode:  InitialPromptPositional,
+		reservedArgs:       []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume", "--settings", "--bare", "--dangerously-skip-permissions"},
 		headlessTemplate: []string{
 			"-p",
 			"--output-format", "stream-json",
-			"--input-format", "stream-json",
+			"--input-format", "text",
 			"--verbose",
-			"--dangerously-skip-permissions",
 			launchTokenExtraArgs,
+			launchTokenPrompt,
+		},
+		resumeTemplate: []string{
+			"-p",
+			"--output-format", "stream-json",
+			"--input-format", "text",
+			"--verbose",
+			"--continue",
+			launchTokenExtraArgs,
+			launchTokenPrompt,
 		},
 		headedTemplate: []string{launchTokenExtraArgs},
 	},
@@ -96,34 +99,41 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"exec", "resume", "--json", "-C", "--cd", "--last"},
-		reservedHeadlessArgs: []string{"--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
+		reservedHeadlessArgs: []string{"-a", "--ask-for-approval", "-s", "--sandbox", "--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
 		headlessTemplate: []string{
+			// Codex approval and sandbox policy are global flags, so they must precede `exec`.
+			"--ask-for-approval", "never",
+			"--sandbox", "workspace-write",
 			"exec",
 			"--cd", launchTokenSandboxPath,
 			"--json",
-			"--full-auto",
 			launchTokenExtraArgs,
+			// codex unified_exec drops early command output for long-running commands.
+			// keep this disabled so aggregated_output remains complete.
+			"--disable", "unified_exec",
 			launchTokenPrompt,
 		},
 		resumeTemplate: []string{
+			"--ask-for-approval", "never",
+			"--sandbox", "workspace-write",
 			"exec",
 			"resume",
 			"--last",
 			"--json",
-			"--full-auto",
 			launchTokenExtraArgs,
+			"--disable", "unified_exec",
 			launchTokenPrompt,
 		},
-		headedTemplate: []string{launchTokenExtraArgs},
+		headedTemplate: []string{launchTokenExtraArgs, "--enable", "codex_hooks"},
 	},
 	RunnerAmp: {
 		ID:                RunnerAmp,
 		SupportsHeadless:  true,
 		SupportsHeaded:    true,
-		ChatMode:          ChatModeStdin,
+		FollowUpMode:      FollowUpModeStdin,
 		InitialPromptMode: InitialPromptStdin,
 		reservedArgs:      []string{"-x", "--execute", "--stream-json", "--stream-json-input"},
 		headlessTemplate:  []string{"-x", "--stream-json", "--stream-json-input", launchTokenExtraArgs},
@@ -134,7 +144,7 @@ var capabilityByID = map[string]Capability{
 		ID:                   RunnerOpenCode,
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"run"},
 		reservedHeadlessArgs: []string{"--mode"},
@@ -146,11 +156,10 @@ var capabilityByID = map[string]Capability{
 		SupportsHeadless:     true,
 		SupportsHeaded:       true,
 		HasSemanticAdapter:   true,
-		ChatMode:             ChatModeResume,
+		FollowUpMode:         FollowUpModeResume,
 		InitialPromptMode:    InitialPromptPositional,
 		reservedArgs:         []string{"-p", "--print", "--output-format", "--resume", "--continue", "--workspace"},
 		reservedHeadlessArgs: []string{"--force", "-f", "--yolo", "--trust"},
-		aliases:              []string{LegacyRunnerCursorCLI},
 		headlessTemplate: []string{
 			"-p",
 			"--output-format", "stream-json",
@@ -174,7 +183,7 @@ var capabilityByID = map[string]Capability{
 		ID:                RunnerDroid,
 		SupportsHeadless:  true,
 		SupportsHeaded:    true,
-		ChatMode:          ChatModeStdin,
+		FollowUpMode:      FollowUpModeStdin,
 		InitialPromptMode: InitialPromptStdin,
 		reservedArgs:      []string{"exec", "--output-format", "--input-format"},
 		headlessTemplate:  []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs},
@@ -184,14 +193,12 @@ var capabilityByID = map[string]Capability{
 }
 
 var canonicalByInput = map[string]string{
-	RunnerClaudeCode:      RunnerClaudeCode,
-	LegacyRunnerClaude:    RunnerClaudeCode,
-	RunnerCodex:           RunnerCodex,
-	RunnerAmp:             RunnerAmp,
-	RunnerOpenCode:        RunnerOpenCode,
-	RunnerCursor:          RunnerCursor,
-	LegacyRunnerCursorCLI: RunnerCursor,
-	RunnerDroid:           RunnerDroid,
+	RunnerClaudeCode: RunnerClaudeCode,
+	RunnerCodex:      RunnerCodex,
+	RunnerAmp:        RunnerAmp,
+	RunnerOpenCode:   RunnerOpenCode,
+	RunnerCursor:     RunnerCursor,
+	RunnerDroid:      RunnerDroid,
 }
 
 // CanonicalIDs returns the supported canonical runner IDs in stable order.
@@ -201,7 +208,7 @@ func CanonicalIDs() []string {
 	return out
 }
 
-// Canonicalize resolves a runner input (including aliases) to canonical ID.
+// Canonicalize validates a canonical runner ID.
 func Canonicalize(runner string) (string, error) {
 	input := strings.TrimSpace(runner)
 	canonical, ok := canonicalByInput[input]
@@ -244,9 +251,7 @@ func ConfigLookupKeys(runner string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys := []string{capability.ID}
-	keys = append(keys, capability.aliases...)
-	return keys, nil
+	return []string{capability.ID}, nil
 }
 
 // ValidateArgs rejects user-supplied args that conflict with universal reserved flags.
@@ -334,7 +339,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 	if len(capability.resumeTemplate) == 0 {
 		return nil, errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
-			"runner '"+capability.ID+"' does not support session-resume chat mode",
+			"runner '"+capability.ID+"' does not support session-resume follow-up mode",
 			map[string]string{
 				"runner": capability.ID,
 				"mode":   "resume",
@@ -355,7 +360,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 			}
 		}
 	}
-	if capability.ID == RunnerCursor && resumeSessionID != "" {
+	if (capability.ID == RunnerCursor || capability.ID == RunnerClaudeCode) && resumeSessionID != "" {
 		rewritten := make([]string, 0, len(args)+1)
 		replaced := false
 		for _, arg := range args {
@@ -399,13 +404,13 @@ func BuildHeadedArgs(runner string, extraArgs []string) ([]string, error) {
 	return renderLaunchTemplate(capability.headedTemplate, "", "", extraArgs)
 }
 
-// ResolveChatMode returns the ChatMode for a runner (including aliases).
-func ResolveChatMode(runner string) (ChatMode, error) {
+// ResolveFollowUpMode returns the FollowUpMode for a runner.
+func ResolveFollowUpMode(runner string) (FollowUpMode, error) {
 	capability, err := Resolve(runner)
 	if err != nil {
 		return "", err
 	}
-	return capability.ChatMode, nil
+	return capability.FollowUpMode, nil
 }
 
 // ResolveInitialPromptMode returns how the runner expects the first headless prompt.

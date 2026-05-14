@@ -2,7 +2,7 @@ package watch
 
 import (
 	"context"
-	"fmt"
+	"sort"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -10,134 +10,114 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-const defaultPageLimit = 500
+const workspacePageLimit = 500
 
 // Snapshot is one full workspace state refresh composed from daemon read APIs.
 type Snapshot struct {
 	Repos       []daemon.RepoDTO
 	Worktrees   []daemon.WorktreeDTO
 	Invocations []daemon.InvocationDTO
-	Reviews     map[string]daemon.InvocationReviewData
-	Warnings    []string
 	UpdatedAt   time.Time
 }
 
-type snapshotClient interface {
-	ListRepos(ctx context.Context) (*daemonclient.ListReposResult, error)
-	ListWorktrees(ctx context.Context, opts daemonclient.ListWorktreesOpts) (*daemonclient.ListWorktreesResult, error)
-	ListInvocations(ctx context.Context, opts daemonclient.ListInvocationsOpts) (*daemonclient.ListInvocationsResult, error)
-	GetInvocationReview(ctx context.Context, ref string, repoID string) (*daemonclient.GetInvocationReviewResult, error)
-}
-
-// SnapshotLoader composes watch workspace state from canonical daemon reads.
-type SnapshotLoader struct {
-	client    snapshotClient
-	pageLimit int
-}
-
-// NewSnapshotLoader creates a loader for watch snapshot composition.
-func NewSnapshotLoader(client snapshotClient) *SnapshotLoader {
-	return &SnapshotLoader{
-		client:    client,
-		pageLimit: defaultPageLimit,
+func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client, repoID, worktreeID, worktreeState, invocationState string) (Snapshot, error) {
+	if client == nil {
+		return Snapshot{}, errors.New(errors.EInternal, "watch runtime requires a daemon client")
 	}
-}
-
-// Load composes one snapshot of repos/worktrees/invocations/reviews.
-func (l *SnapshotLoader) Load(ctx context.Context) (Snapshot, error) {
-	if l == nil || l.client == nil {
-		return Snapshot{}, errors.New(errors.EInternal, "watch snapshot loader is not configured")
+	if worktreeID != "" && repoID == "" {
+		return Snapshot{}, errors.New(errors.EInternal, "worktree-scoped workspace load requires repo scope")
+	}
+	if worktreeState == "" {
+		worktreeState = "present"
+	}
+	if invocationState == "" {
+		invocationState = "unresolved"
 	}
 
-	reposResult, err := l.client.ListRepos(ctx)
+	reposResult, err := client.ListRepos(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	worktrees, err := l.fetchAllWorktrees(ctx)
+	worktrees, err := loadAllWorkspaceWorktrees(ctx, client, repoID, worktreeState)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	invocations, err := l.fetchAllInvocations(ctx)
+	invocations, err := loadAllWorkspaceInvocations(ctx, client, repoID, worktreeID, invocationState)
 	if err != nil {
 		return Snapshot{}, err
 	}
-
-	reviews, warnings := l.fetchReviews(ctx, invocations)
 
 	return Snapshot{
-		Repos:       reposResult.Repos,
+		Repos:       reposResult.Data.Repos,
 		Worktrees:   worktrees,
 		Invocations: invocations,
-		Reviews:     reviews,
-		Warnings:    warnings,
 		UpdatedAt:   time.Now().UTC(),
 	}, nil
 }
 
-func (l *SnapshotLoader) fetchAllWorktrees(ctx context.Context) ([]daemon.WorktreeDTO, error) {
+func loadAllWorkspaceWorktrees(ctx context.Context, client *daemonclient.Client, repoID, state string) ([]daemon.WorktreeDTO, error) {
 	worktrees := make([]daemon.WorktreeDTO, 0, 128)
 	cursor := ""
 
 	for {
-		result, err := l.client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
-			State:  "all",
-			Limit:  l.pageLimit,
+		result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+			RepoID: repoID,
+			State:  state,
+			Limit:  workspacePageLimit,
 			Cursor: cursor,
 		})
 		if err != nil {
 			return nil, err
 		}
 
-		worktrees = append(worktrees, result.Worktrees...)
-		if result.NextCursor == "" {
+		worktrees = append(worktrees, result.Data.Worktrees...)
+		if result.Data.NextCursor == "" {
 			return worktrees, nil
 		}
-		if result.NextCursor == cursor {
+		if result.Data.NextCursor == cursor {
 			return nil, errors.New(errors.EInternal, "worktree pagination cursor did not advance")
 		}
-		cursor = result.NextCursor
+		cursor = result.Data.NextCursor
 	}
 }
 
-func (l *SnapshotLoader) fetchAllInvocations(ctx context.Context) ([]daemon.InvocationDTO, error) {
+func loadAllWorkspaceInvocations(ctx context.Context, client *daemonclient.Client, repoID, worktreeID, state string) ([]daemon.InvocationDTO, error) {
 	invocations := make([]daemon.InvocationDTO, 0, 128)
 	cursor := ""
 
 	for {
-		result, err := l.client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-			State:  "all",
-			Limit:  l.pageLimit,
-			Cursor: cursor,
+		result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+			RepoID:      repoID,
+			WorktreeRef: worktreeID,
+			State:       state,
+			Limit:       workspacePageLimit,
+			Cursor:      cursor,
 		})
 		if err != nil {
 			return nil, err
 		}
 
-		invocations = append(invocations, result.Invocations...)
-		if result.NextCursor == "" {
-			return invocations, nil
+		invocations = append(invocations, result.Data.Invocations...)
+		if result.Data.NextCursor == "" {
+			break
 		}
-		if result.NextCursor == cursor {
+		if result.Data.NextCursor == cursor {
 			return nil, errors.New(errors.EInternal, "invocation pagination cursor did not advance")
 		}
-		cursor = result.NextCursor
+		cursor = result.Data.NextCursor
 	}
-}
 
-func (l *SnapshotLoader) fetchReviews(ctx context.Context, invocations []daemon.InvocationDTO) (map[string]daemon.InvocationReviewData, []string) {
-	reviews := make(map[string]daemon.InvocationReviewData, len(invocations))
-	warnings := make([]string, 0)
-
-	for _, inv := range invocations {
-		result, err := l.client.GetInvocationReview(ctx, inv.InvocationID, inv.RepoID)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("review refresh failed for %s: %v", inv.InvocationID, err))
-			continue
+	sort.Slice(invocations, func(i, j int) bool {
+		if invocations[i].SortKey != invocations[j].SortKey {
+			return invocations[i].SortKey < invocations[j].SortKey
 		}
-		reviews[inv.InvocationID] = result.Review
-	}
+		if invocations[i].StartedAt != invocations[j].StartedAt {
+			return invocations[i].StartedAt > invocations[j].StartedAt
+		}
+		return invocations[i].InvocationID < invocations[j].InvocationID
+	})
 
-	return reviews, warnings
+	return invocations, nil
 }

@@ -1,5 +1,5 @@
 // Package commands implements agency CLI commands.
-// This file tests worktree command convergence (S2 PR-03).
+// This file tests worktree command behavior.
 // All tests are non-parallel due to AGENCY_DATA_DIR env overrides.
 package commands
 
@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -51,6 +52,31 @@ func setupWorktreeEnv(t *testing.T, name string) worktreeTestEnv {
 	treePath := createWorktreeInStore(t, dataTmp, repoID, wtID, name,
 		"agency/"+name+"-abcd", "main")
 
+	repoRoot := filepath.Join(dataTmp, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+	st := store.NewStore(fs.NewRealFS(), dataTmp, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}))
+
 	startTestDaemonForWorktree(t, dataTmp)
 
 	configDir := filepath.Join(dataTmp, "config")
@@ -67,7 +93,37 @@ func setupWorktreeEnv(t *testing.T, name string) worktreeTestEnv {
 	}
 }
 
-func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, parentBranch string) string {
+func seedRepoIndexForWorktreeAmbiguityTests(t *testing.T, dataDir, repoID string) {
+	t.Helper()
+
+	repoRoot := filepath.Join(dataDir, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}))
+}
+
+func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, baseBranch string) string {
 	t.Helper()
 
 	wtDir := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", wtID)
@@ -81,15 +137,17 @@ func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, pa
 		[]byte("# Integration worktree\n"), 0644))
 
 	meta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    wtID,
-		Name:          name,
-		RepoID:        repoID,
-		Branch:        branch,
-		ParentBranch:  parentBranch,
-		TreePath:      treePath,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       wtID,
+		Name:             name,
+		RepoID:           repoID,
+		Branch:           branch,
+		BaseBranch:       baseBranch,
+		TreePath:         treePath,
+		CheckoutRoot:     filepath.Join(dataDir, "repos", repoID),
+		ExecutionProfile: "personal",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), metaBytes, 0644))
@@ -140,6 +198,69 @@ func createShimScript(t *testing.T) (shimPath, recordFile string) {
 	return shimPath, recordFile
 }
 
+func writeWorktreeUserConfig(t *testing.T, configDir string) {
+	t.Helper()
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"base_branch":       "main",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": "/bin/echo",
+		},
+		"editors": map[string]string{
+			"code": "/bin/echo",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
+		},
+	}
+	payload, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), payload, 0o644))
+}
+
+func writeMinimalAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	for _, script := range []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
+  "version": 4,
+  "scripts": {
+    "setup": { "path": "scripts/agency_setup.sh", "timeout": "10m" },
+    "verify": { "path": "scripts/agency_verify.sh", "timeout": "30m" },
+    "archive": { "path": "scripts/agency_archive.sh", "timeout": "5m" }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
+  }
+}`), 0o644))
+}
+
+func writeCommittedAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	writeMinimalAgencyConfig(t, repoRoot)
+	runner := agencyexec.NewRealRunner()
+	result, err := runner.Run(context.Background(), "git", []string{"add", "agency.json", "scripts"}, agencyexec.RunOpts{Dir: repoRoot})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git add agency config failed: %s", result.Stderr)
+	result, err = runner.Run(context.Background(), "git", []string{"commit", "-m", "Add agency config"}, agencyexec.RunOpts{Dir: repoRoot})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git commit agency config failed: %s", result.Stderr)
+}
+
 func readShimRecord(t *testing.T, recordFile string) (cwd, args string) {
 	t.Helper()
 	data, err := os.ReadFile(recordFile)
@@ -162,7 +283,7 @@ func TestWorktreeLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
@@ -176,15 +297,14 @@ func TestWorktreeShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
-	assert.Contains(t, out, "worktree_id:   "+env.WorktreeID)
-	assert.Contains(t, out, "name:          alpha")
-	assert.Contains(t, out, "repo_id:       "+env.RepoID)
+	assert.Contains(t, out, "worktree:    alpha ("+env.WorktreeID+")")
+	assert.Contains(t, out, "repo:        root ("+env.RepoID+")")
 	assert.Contains(t, out, "branch:        agency/alpha-abcd")
-	assert.Contains(t, out, "parent_branch: main")
+	assert.Contains(t, out, "base_branch: main")
 	assert.Contains(t, out, "state:         present")
 	assert.Contains(t, out, "tree_path:     "+env.TreePath)
 }
@@ -194,7 +314,7 @@ func TestWorktreeLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dtos []daemon.WorktreeDTO
@@ -202,10 +322,11 @@ func TestWorktreeLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 	require.Len(t, dtos, 1)
 
 	assert.Equal(t, env.WorktreeID, dtos[0].WorktreeID)
-	assert.Equal(t, "alpha", dtos[0].Name)
+	assert.Equal(t, "alpha", dtos[0].WorktreeName)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
+	assert.Equal(t, "root", dtos[0].RepoName)
 	assert.Equal(t, "agency/alpha-abcd", dtos[0].Branch)
-	assert.Equal(t, "main", dtos[0].ParentBranch)
+	assert.Equal(t, "main", dtos[0].BaseBranch)
 	assert.Equal(t, env.TreePath, dtos[0].TreePath)
 	assert.Equal(t, "present", dtos[0].State)
 }
@@ -215,15 +336,16 @@ func TestWorktreeShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		WorktreeShowOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dto daemon.WorktreeDTO
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dto))
 
 	assert.Equal(t, env.WorktreeID, dto.WorktreeID)
-	assert.Equal(t, "alpha", dto.Name)
+	assert.Equal(t, "alpha", dto.WorktreeName)
 	assert.Equal(t, env.RepoID, dto.RepoID)
+	assert.Equal(t, "root", dto.RepoName)
 	assert.Equal(t, env.TreePath, dto.TreePath)
 }
 
@@ -237,6 +359,7 @@ func TestWorktreeShow_AmbiguousPreservesCandidates(t *testing.T) {
 	wtID2 := "20260201000000-bbbb"
 	createWorktreeInStore(t, dataTmp, repoID, wtID1, "feat-a", "agency/a", "main")
 	createWorktreeInStore(t, dataTmp, repoID, wtID2, "feat-b", "agency/b", "main")
+	seedRepoIndexForWorktreeAmbiguityTests(t, dataTmp, repoID)
 	startTestDaemonForWorktree(t, dataTmp)
 
 	t.Setenv("AGENCY_DATA_DIR", dataTmp)
@@ -244,7 +367,7 @@ func TestWorktreeShow_AmbiguousPreservesCandidates(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShowOpts{WorktreeRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		WorktreeShowOpts{WorktreeRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EWorktreeIDAmbiguous, errors.GetCode(err),
@@ -260,19 +383,19 @@ func TestWorktreeShow_AmbiguousPreservesCandidates(t *testing.T) {
 // Acceptance 2: worktree path/open/shell daemon-first navigation
 // ---------------------------------------------------------------------------
 
-func TestWorktreePath_UsesNavigationKernelDaemonResolution(t *testing.T) {
+func TestWorktreePath_UsesDaemonResolution(t *testing.T) {
 	env := setupWorktreeEnv(t, "alpha")
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreePathOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreePathOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	assert.Equal(t, env.TreePath+"\n", stdout.String(),
 		"stdout must be exactly the daemon-resolved tree_path plus newline")
 }
 
-func TestWorktreeOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestWorktreeOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupWorktreeEnv(t, "open-test")
 	shimPath, recordFile := createShimScript(t)
 
@@ -280,7 +403,7 @@ func TestWorktreeOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T
 	err := WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		WorktreeOpenOpts{
 			WorktreeRef: env.WorktreeID,
-			RepoFlag:    env.RepoID,
+			RepoRef:     env.RepoID,
 			Editor:      shimPath,
 		}, &stdout, &stderr)
 	require.NoError(t, err)
@@ -293,7 +416,7 @@ func TestWorktreeOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T
 		"editor must receive daemon-resolved tree_path as argument")
 }
 
-func TestWorktreeShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestWorktreeShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupWorktreeEnv(t, "shell-test")
 	shimPath, recordFile := createShimScript(t)
 
@@ -301,7 +424,7 @@ func TestWorktreeShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeShellOpts{WorktreeRef: env.WorktreeID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreeShellOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	cwd, args := readShimRecord(t, recordFile)
@@ -312,6 +435,70 @@ func TestWorktreeShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.
 		"shell should be invoked with -l (login)")
 }
 
+func TestWorktreePath_ArchivedExactIDFails(t *testing.T) {
+	env := setupWorktreeEnv(t, "archived-path")
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(env.RepoID, env.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreePathOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "archived")
+}
+
+func TestWorktreeOpen_ArchivedExactIDFailsWithoutDispatch(t *testing.T) {
+	env := setupWorktreeEnv(t, "archived-open")
+	shimPath, recordFile := createShimScript(t)
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(env.RepoID, env.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreeOpenOpts{
+			WorktreeRef: env.WorktreeID,
+			RepoRef:     env.RepoID,
+			Editor:      shimPath,
+		}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "archived")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr), "editor shim must not run for archived worktrees")
+}
+
+func TestWorktreeShell_ArchivedExactIDFailsWithoutDispatch(t *testing.T) {
+	env := setupWorktreeEnv(t, "archived-shell")
+	shimPath, recordFile := createShimScript(t)
+	t.Setenv("SHELL", shimPath)
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateIntegrationWorktreeMeta(env.RepoID, env.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
+		meta.State = store.WorktreeStateArchived
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := WorktreeShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		WorktreeShellOpts{WorktreeRef: env.WorktreeID, RepoRef: env.RepoID}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "archived")
+
+	_, readErr := os.ReadFile(recordFile)
+	assert.True(t, os.IsNotExist(readErr), "shell shim must not run for archived worktrees")
+}
+
 func TestWorktreePath_AmbiguityUsesEAmbiguous(t *testing.T) {
 	dataTmp, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
@@ -320,6 +507,7 @@ func TestWorktreePath_AmbiguityUsesEAmbiguous(t *testing.T) {
 	repoID := "r1"
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-aaaa", "feat-a", "agency/a", "main")
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-bbbb", "feat-b", "agency/b", "main")
+	seedRepoIndexForWorktreeAmbiguityTests(t, dataTmp, repoID)
 	startTestDaemonForWorktree(t, dataTmp)
 
 	t.Setenv("AGENCY_DATA_DIR", dataTmp)
@@ -327,7 +515,7 @@ func TestWorktreePath_AmbiguityUsesEAmbiguous(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreePathOpts{WorktreeRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		WorktreePathOpts{WorktreeRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err),
@@ -348,6 +536,7 @@ func TestWorktreeOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	repoID := "r1"
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-aaaa", "feat-a", "agency/a", "main")
 	createWorktreeInStore(t, dataTmp, repoID, "20260201000000-bbbb", "feat-b", "agency/b", "main")
+	seedRepoIndexForWorktreeAmbiguityTests(t, dataTmp, repoID)
 	startTestDaemonForWorktree(t, dataTmp)
 
 	configDir := filepath.Join(dataTmp, "config")
@@ -361,7 +550,7 @@ func TestWorktreeOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	err = WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		WorktreeOpenOpts{
 			WorktreeRef: "20260201000000",
-			RepoFlag:    repoID,
+			RepoRef:     repoID,
 			Editor:      shimPath,
 		}, &stdout, &stderr)
 
@@ -389,7 +578,7 @@ func TestWorktreeLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 	createWorktreeInStore(t, dataTmp, repo2, "20260131000000-bbbb", "bravo", "agency/bravo", "main")
 
 	repoIndex := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			"key1": {RepoID: repo1, Paths: []string{"/r1"}, LastSeenAt: "2026-01-31T12:00:00Z"},
 			"key2": {RepoID: repo2, Paths: []string{"/r2"}, LastSeenAt: "2026-01-31T12:00:00Z"},
@@ -426,7 +615,7 @@ func TestWorktreePath_OutputsDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreePath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreePathOpts{WorktreeRef: "pathout", RepoFlag: env.RepoID}, &stdout, &stderr)
+		WorktreePathOpts{WorktreeRef: "pathout", RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	printedPath := strings.TrimSpace(stdout.String())
@@ -440,11 +629,11 @@ func TestWorktreeHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testi
 	var humanOut, jsonOut, stderr bytes.Buffer
 
 	err := WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID}, &humanOut, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID}, &humanOut, &stderr)
 	require.NoError(t, err)
 
 	err = WorktreeLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		WorktreeLSOpts{RepoFlag: env.RepoID, JSON: true}, &jsonOut, &stderr)
+		WorktreeLSOpts{RepoRef: env.RepoID, JSON: true}, &jsonOut, &stderr)
 	require.NoError(t, err)
 
 	humanStr := humanOut.String()
@@ -470,14 +659,14 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 		err := WorktreeOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 			WorktreeOpenOpts{
 				WorktreeRef: "nonexistent-worktree",
-				RepoFlag:    env.RepoID,
+				RepoRef:     env.RepoID,
 				Editor:      shimPath,
 			}, &stdout, &stderr)
 
 		require.Error(t, err)
 		code := errors.GetCode(err)
 		assert.NotEqual(t, errors.EWorktreeBroken, code,
-			"navigation target resolution must not return E_WORKTREE_BROKEN after PR-03 migration")
+			"navigation target resolution must not return E_WORKTREE_BROKEN after canonical navigation migration")
 		assert.Equal(t, errors.EWorktreeNotFound, code,
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})
@@ -489,12 +678,12 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 
 		var stdout, stderr bytes.Buffer
 		err := WorktreeShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			WorktreeShellOpts{WorktreeRef: "nonexistent-worktree", RepoFlag: env.RepoID}, &stdout, &stderr)
+			WorktreeShellOpts{WorktreeRef: "nonexistent-worktree", RepoRef: env.RepoID}, &stdout, &stderr)
 
 		require.Error(t, err)
 		code := errors.GetCode(err)
 		assert.NotEqual(t, errors.EWorktreeBroken, code,
-			"navigation target resolution must not return E_WORKTREE_BROKEN after PR-03 migration")
+			"navigation target resolution must not return E_WORKTREE_BROKEN after canonical navigation migration")
 		assert.Equal(t, errors.EWorktreeNotFound, code,
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})
@@ -506,99 +695,253 @@ func TestWorktreeRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *tes
 	var stdout, stderr bytes.Buffer
 	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
 		WorktreeRef:   env.WorktreeID,
-		RepoFlag:      env.RepoID,
+		RepoRef:       env.RepoID,
 		IsInteractive: func() bool { return false },
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
 }
 
-func TestWorktreeRm_NonInteractiveWithYes_Proceeds(t *testing.T) {
-	env := setupWorktreeEnv(t, "rm-yes")
-
-	var stdout, stderr bytes.Buffer
-	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
-		WorktreeRef:   env.WorktreeID,
-		RepoFlag:      env.RepoID,
-		Yes:           true,
-		IsInteractive: func() bool { return false },
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.NotEqual(t, errors.EConfirmationRequired, errors.GetCode(err))
-	assert.NotEqual(t, errors.EAborted, errors.GetCode(err))
-}
-
 func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T) {
 	env := setupWorktreeEnv(t, "rm-reject")
 
 	var stdout, stderr bytes.Buffer
-	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
-		WorktreeRef:    env.WorktreeID,
-		RepoFlag:       env.RepoID,
-		IsInteractive:  func() bool { return true },
-		ConfirmationIn: strings.NewReader("no\n"),
-	}, &stdout, &stderr)
+	err := awaitConfirmationLineBeforeEOF(t, "no\n", func(confirmIn io.Reader) error {
+		return WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
+			WorktreeRef:    env.WorktreeID,
+			RepoRef:        env.RepoID,
+			IsInteractive:  func() bool { return true },
+			ConfirmationIn: confirmIn,
+		}, &stdout, &stderr)
+	})
 	require.Error(t, err)
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }
 
-func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *testing.T) {
+func TestWorktreeCreate_DefaultsRepoAndBaseFromCWD(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name: "default-context",
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Created integration worktree 'default-context'")
+
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{State: "present"})
+	require.NoError(t, listErr)
+	require.Len(t, listResp.Data.Worktrees, 1)
+	assert.Equal(t, "default-context", listResp.Data.Worktrees[0].WorktreeName)
+	assert.Equal(t, "main", listResp.Data.Worktrees[0].BaseBranch)
+	assert.Empty(t, stderr.String())
+}
+
+func TestWorktreeCreate_ExplicitRepoWorksFromUnrelatedCWD(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, regErr)
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), t.TempDir(), WorktreeCreateOpts{
+		RepoRef:    reg.Data.RepoID,
+		Name:       "explicit-repo-unrelated-cwd",
+		BaseBranch: "main",
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Created integration worktree 'explicit-repo-unrelated-cwd'")
+	assert.Empty(t, stderr.String())
+}
+
+func TestWorktreeCreate_UnrelatedCWDRequiresRepo(t *testing.T) {
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), t.TempDir(), WorktreeCreateOpts{
+		Name: "missing-repo-context",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepoContext, errors.GetCode(err))
+}
+
+func TestWorktreeCreate_DefaultBaseRequiresCurrentBranch(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
+	detach, err := agencyexec.NewRealRunner().Run(context.Background(), "git", []string{"checkout", "--detach"}, agencyexec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, detach.ExitCode, "git checkout --detach failed: %s", detach.Stderr)
+
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name: "detached-default-base",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EBaseBranchNotFound, errors.GetCode(err))
+}
+
+func TestWorktreeCreate_ExplicitMissingBaseBranchFailsBeforeCreate(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name:       "missing-base",
+		BaseBranch: "does-not-exist",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EBaseBranchNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "local base branch 'does-not-exist' was not found")
+}
+
+func TestWorktreeCreate_EmptyRepoFailsBeforeCreate(t *testing.T) {
+	testutil.HermeticGitEnv(t)
+	repoDir := t.TempDir()
+	initResult, err := agencyexec.NewRealRunner().Run(context.Background(), "git", []string{"init", "-b", "main"}, agencyexec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, initResult.ExitCode, "git init failed: %s", initResult.Stderr)
+
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+
+	var stdout, stderr bytes.Buffer
+	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
+		Name:       "empty-repo",
+		BaseBranch: "main",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EEmptyRepo, errors.GetCode(err))
+}
+
+func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *testing.T) {
+	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
+	dataDir, err := os.MkdirTemp("", "wd")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
+
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, regErr)
 
 	editorPath := filepath.Join(t.TempDir(), "editor-fail.sh")
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 17\n"), 0o755))
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name:   "open-fail",
-		Open:   true,
-		Editor: editorPath,
+		RepoRef:    reg.Data.RepoID,
+		Name:       "open-fail",
+		BaseBranch: "main",
+		Open:       true,
+		Editor:     editorPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "open_status: failed")
 	assert.Contains(t, stderr.String(), "warning: workspace created but open dispatch failed: editor exited with code 17")
 
-	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
-	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
-	require.NoError(t, regErr)
 	listResp, listErr := client.ListWorktrees(context.Background(), daemonclient.ListWorktreesOpts{
-		RepoID: reg.RepoID,
+		RepoID: reg.Data.RepoID,
 		State:  "present",
 	})
 	require.NoError(t, listErr)
-	require.Len(t, listResp.Worktrees, 1)
-	assert.Equal(t, "open-fail", listResp.Worktrees[0].Name)
+	require.Len(t, listResp.Data.Worktrees, 1)
+	assert.Equal(t, "open-fail", listResp.Data.Worktrees[0].WorktreeName)
 }
 
 func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	startTestDaemonForWorktreeWithRunner(t, dataDir, agencyexec.NewRealRunner())
+	client := daemonclient.NewClient(filepath.Join(dataDir, "agencyd.sock"))
+	reg, regErr := client.RegisterRepo(context.Background(), repoDir)
+	require.NoError(t, regErr)
 
 	editorPath := filepath.Join(t.TempDir(), "editor-ok.sh")
 	require.NoError(t, os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	var stdout, stderr bytes.Buffer
 	err = WorktreeCreate(context.Background(), agencyexec.NewRealRunner(), fs.NewRealFS(), repoDir, WorktreeCreateOpts{
-		Name:   "open-ok",
-		Open:   true,
-		Editor: editorPath,
+		RepoRef:    reg.Data.RepoID,
+		Name:       "open-ok",
+		BaseBranch: "main",
+		Open:       true,
+		Editor:     editorPath,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "open_status: opened")

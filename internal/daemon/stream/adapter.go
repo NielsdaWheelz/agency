@@ -2,22 +2,17 @@ package stream
 
 import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // ParseResult contains the result of parsing a single line.
 type ParseResult struct {
 	// Events are the normalized events derived from this line.
 	Events []*NormalizedEvent
-
-	// SemanticStatus is the inferred semantic status from this line.
-	// May be nil if no status inference is applicable.
-	SemanticStatus *runnerstatus.Status
 }
 
 // Adapter defines the interface for runner-specific stream parsers.
 type Adapter interface {
-	// Name returns the runner name (e.g., "claude", "codex").
+	// Name returns the canonical runner name (e.g., "claude-code", "codex").
 	Name() string
 
 	// ParseLine parses a single JSONL line and returns normalized events.

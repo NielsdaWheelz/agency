@@ -14,37 +14,21 @@ import (
 
 // ResolveRunnerCmd resolves the runner command from user config and runner name.
 func ResolveRunnerCmd(cr agencyexec.CommandRunner, fsys fs.FS, configDir string, cfg UserConfig, runnerName string) (string, error) {
-	runnerKeys, capabilityErr := runners.ConfigLookupKeys(runnerName)
-	cmd := ""
-
-	if capabilityErr == nil {
-		// For known runners, prefer canonical key first, then compatibility aliases.
-		if cfg.Runners != nil {
-			for _, key := range runnerKeys {
-				if val, ok := cfg.Runners[key]; ok && val != "" {
-					cmd = val
-					break
-				}
-			}
-		}
-	} else if cfg.Runners != nil {
-		// Preserve support for explicitly configured non-target custom runner names.
-		if val, ok := cfg.Runners[runnerName]; ok && val != "" {
-			cmd = val
-		}
-	}
-
-	if cmd == "" {
-		if capabilityErr == nil {
-			return "", errors.New(errors.ERunnerNotConfigured,
-				"runner \""+runnerName+"\" not configured; set runners."+runnerName+
-					" (explicit runner config is required; supported runners: "+strings.Join(runners.CanonicalIDs(), ", ")+")")
-		}
+	canonicalRunner, err := runners.Canonicalize(runnerName)
+	if err != nil {
 		return "", errors.New(errors.ERunnerNotConfigured,
-			"runner \""+runnerName+"\" not configured; set runners."+runnerName+" (explicit runner config is required)")
+			"runner \""+runnerName+"\" not configured; supported runners: "+strings.Join(runners.CanonicalIDs(), ", "))
 	}
 
-	return resolveCommand(cr, fsys, configDir, cmd, errors.ERunnerNotConfigured, "runner")
+	if cfg.Runners != nil {
+		if cmd, ok := cfg.Runners[canonicalRunner]; ok && cmd != "" {
+			return resolveCommand(cr, fsys, configDir, cmd, errors.ERunnerNotConfigured, "runner")
+		}
+	}
+
+	return "", errors.New(errors.ERunnerNotConfigured,
+		"runner \""+canonicalRunner+"\" not configured; set runners."+canonicalRunner+
+			" (explicit runner config is required; supported runners: "+strings.Join(runners.CanonicalIDs(), ", ")+")")
 }
 
 // ResolveEditorCmd resolves the editor command from user config and editor name.

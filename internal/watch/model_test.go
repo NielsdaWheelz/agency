@@ -2,117 +2,86 @@ package watch
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
-type noopLoader struct{}
-
-func (noopLoader) Load(_ context.Context) (Snapshot, error) {
-	return Snapshot{}, nil
-}
-
-type fakeActionDispatcher struct {
-	enterErr  error
-	openErr   error
-	prSyncErr error
-
-	enterCalls  []string
-	openCalls   []string
-	prSyncCalls []string
-}
-
-func (f *fakeActionDispatcher) Enter(_ context.Context, invocationID, repoID string) error {
-	f.enterCalls = append(f.enterCalls, invocationID+"@"+repoID)
-	return f.enterErr
-}
-
-func (f *fakeActionDispatcher) Open(_ context.Context, invocationID, repoID string) error {
-	f.openCalls = append(f.openCalls, invocationID+"@"+repoID)
-	return f.openErr
-}
-
-func (f *fakeActionDispatcher) PRSync(_ context.Context, worktreeID, repoID string) error {
-	f.prSyncCalls = append(f.prSyncCalls, worktreeID+"@"+repoID)
-	return f.prSyncErr
-}
-
-func TestModel_SnapshotRefresh_KeepsSelectionByInvocationID(t *testing.T) {
+func TestModel_WorkspaceSelection_ReconcilesByInvocationID(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1"},
-			{InvocationID: "inv-2"},
-			{InvocationID: "inv-3"},
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+			{InvocationID: "inv-2", RepoID: "repo-2"},
+			{InvocationID: "inv-3", RepoID: "repo-3"},
 		},
 	}
 	m.selectedInvocationID = "inv-2"
 	m.selectedIndex = 1
-	m.refreshing = true
+	m.selectedRepoID = "repo-old"
+	m.workspaceLoading = true
 
-	newSnapshot := Snapshot{
-		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-3"},
-			{InvocationID: "inv-2"},
-			{InvocationID: "inv-1"},
+	next, _ := m.Update(snapshotLoadedMsg{
+		snapshot: Snapshot{
+			Invocations: []daemon.InvocationDTO{
+				{InvocationID: "inv-3", RepoID: "repo-3"},
+				{InvocationID: "inv-2", RepoID: "repo-2"},
+				{InvocationID: "inv-1", RepoID: "repo-1"},
+			},
 		},
-	}
+	})
+	nextModel := next.(model)
 
-	next, _ := m.Update(snapshotLoadedMsg{snapshot: newSnapshot})
-	nextModel, ok := next.(model)
-	require.True(t, ok)
-
-	assert.False(t, nextModel.refreshing)
+	assert.False(t, nextModel.workspaceLoading)
 	assert.Equal(t, "inv-2", nextModel.selectedInvocationID)
 	assert.Equal(t, 1, nextModel.selectedIndex)
+	assert.Equal(t, "repo-2", nextModel.selectedRepoID)
 }
 
-func TestModel_SnapshotRefresh_ErrorKeepsPriorWorkspace(t *testing.T) {
+func TestModel_WorkspaceSelection_SelectsFirstAgentWhenPreviousSelectionDisappears(t *testing.T) {
 	t.Parallel()
 
-	oldSnapshot := Snapshot{
-		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1"},
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.selectedInvocationID = "inv-missing"
+	m.selectedIndex = 3
+	m.workspaceLoading = true
+
+	next, _ := m.Update(snapshotLoadedMsg{
+		snapshot: Snapshot{
+			Invocations: []daemon.InvocationDTO{
+				{InvocationID: "inv-1", RepoID: "repo-1"},
+				{InvocationID: "inv-2", RepoID: "repo-2"},
+			},
 		},
-		Warnings: []string{"old warning"},
-	}
+	})
+	nextModel := next.(model)
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
-	m.snapshot = oldSnapshot
-	m.selectedInvocationID = "inv-1"
-	m.selectedIndex = 0
-	m.refreshing = true
-
-	next, _ := m.Update(snapshotLoadedMsg{err: fmt.Errorf("daemon temporarily unavailable")})
-	nextModel, ok := next.(model)
-	require.True(t, ok)
-
-	assert.False(t, nextModel.refreshing)
-	assert.Equal(t, oldSnapshot, nextModel.snapshot)
-	assert.Equal(t, "inv-1", nextModel.selectedInvocationID)
 	assert.Equal(t, 0, nextModel.selectedIndex)
-	assert.Contains(t, nextModel.lastError, "daemon temporarily unavailable")
+	assert.Equal(t, "inv-1", nextModel.selectedInvocationID)
+	assert.Equal(t, "repo-1", nextModel.selectedRepoID)
 }
 
-func TestModel_KeyNavigation_TracksSelectedInvocationIdentity(t *testing.T) {
+func TestModel_WorkspaceNavigation_TracksSelectedInvocationIdentity(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1"},
-			{InvocationID: "inv-2"},
-			{InvocationID: "inv-3"},
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+			{InvocationID: "inv-2", RepoID: "repo-2"},
+			{InvocationID: "inv-3", RepoID: "repo-3"},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -120,176 +89,301 @@ func TestModel_KeyNavigation_TracksSelectedInvocationIdentity(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	nextModel := next.(model)
+
 	assert.Equal(t, 1, nextModel.selectedIndex)
 	assert.Equal(t, "inv-2", nextModel.selectedInvocationID)
+	assert.Equal(t, "repo-2", nextModel.selectedRepoID)
 }
 
-func TestModel_View_NarrowTerminalRendersWithoutBreakingPanels(t *testing.T) {
+func TestModel_WorkspaceFocusCyclesAcrossResourcePanes(t *testing.T) {
 	t.Parallel()
 
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
-	m.width = 48
-	m.height = 18
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneAgents, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, workspacePaneAgents, nextModel.workspaceFocus)
+}
+
+func TestModel_WorkspaceEnterScopesRepoAndWorktree(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{
+			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
+			{RepoID: "repo-2", RepoKey: "github.com/acme/two"},
+		},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-old", RepoID: "repo-1"}},
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-old", RepoID: "repo-1", WorktreeID: "wt-old"},
+		},
+	}
+	m.workspaceFocus = workspacePaneRepos
+	m.selectedRepoIndex = 2
+	m.selectedInvocationID = "inv-old"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, "repo-2", nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Worktrees)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+	assert.Empty(t, nextModel.selectedInvocationID)
+
+	nextModel.snapshot.Repos = m.snapshot.Repos
+	nextModel.snapshot.Worktrees = []daemon.WorktreeDTO{{WorktreeID: "wt-2", RepoID: "repo-2", WorktreeName: "auth"}}
+	nextModel.workspaceLoading = false
+	nextModel.selectedWorktreeIndex = 1
+
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "repo-2", nextModel.activeRepoID)
+	assert.Equal(t, "wt-2", nextModel.activeWorktreeID)
+	assert.Equal(t, 2, nextModel.selectedRepoIndex)
+	assert.Equal(t, workspacePaneAgents, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+}
+
+func TestModel_WorkspaceBroadensWorktreeThenRepo(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.activeRepoID = "repo-1"
+	m.activeWorktreeID = "wt-1"
+	m.workspaceFocus = workspacePaneAgents
+	m.snapshot = Snapshot{
+		Repos:       []daemon.RepoDTO{{RepoID: "repo-1"}},
+		Worktrees:   []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1"}},
+		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"}},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "b"})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, "repo-1", nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+	assert.Equal(t, workspacePaneWorktrees, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+	assert.Empty(t, nextModel.selectedInvocationID)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Empty(t, nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+	assert.Equal(t, workspacePaneRepos, nextModel.workspaceFocus)
+	assert.Empty(t, nextModel.snapshot.Worktrees)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+}
+
+func TestModel_WorkspaceSnapshotInvalidScopeTriggersReload(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.activeRepoID = "repo-missing"
+	m.workspaceLoading = true
+
+	next, cmd := m.Update(snapshotLoadedMsg{
+		repoID: "repo-missing",
+		snapshot: Snapshot{
+			Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
+		},
+	})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.True(t, nextModel.workspaceLoading)
+	assert.Empty(t, nextModel.activeRepoID)
+	assert.Empty(t, nextModel.activeWorktreeID)
+}
+
+func TestModel_PageSwitchingBetweenWorkspaceHistoryAndLogs(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "h"})
+	require.NotNil(t, cmd)
+	historyModel := next.(model)
+	assert.Equal(t, pageHistory, historyModel.page)
+	assert.Equal(t, pageWorkspace, historyModel.backPage)
+	assert.True(t, historyModel.historyLoading)
+
+	next, cmd = historyModel.Update(tea.KeyPressMsg{Text: "l"})
+	require.NotNil(t, cmd)
+	logsModel := next.(model)
+	assert.Equal(t, pageLogs, logsModel.page)
+	assert.Equal(t, pageHistory, logsModel.backPage)
+	assert.True(t, logsModel.logsLoading)
+}
+
+func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", State: string(runnerstatus.StateRunning)},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+	m.selectedSession = daemon.InvocationSessionData{
+		InvocationID:  "inv-1",
+		RepoID:        "repo-1",
+		SessionStatus: "live",
+		TmuxSession:   "agency_inv-1",
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
+
+	nextModel := next.(model)
+	invocationID, repoID, ok := nextModel.requestedAttach()
+	require.True(t, ok)
+	assert.Equal(t, "inv-1", invocationID)
+	assert.Equal(t, "repo-1", repoID)
+	assert.False(t, nextModel.actionRunning)
+	assert.Empty(t, nextModel.lastActionMessage)
+}
+
+func TestModel_ActionAttach_MissingSessionOpensActionsAndAllowsRecreate(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{
+		Recreate: func(context.Context, string, string) (string, error) {
+			return "", nil
+		},
+	})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", State: string(runnerstatus.StateRunning)},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+	m.selectedSession = daemon.InvocationSessionData{
+		InvocationID:      "inv-1",
+		RepoID:            "repo-1",
+		SessionStatus:     "missing",
+		TmuxSession:       "agency_inv-1",
+		RecreateAvailable: true,
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+
+	assert.True(t, nextModel.actionMenuOpen)
+	assert.False(t, nextModel.canStartAction(actionAttach))
+	assert.True(t, nextModel.canStartAction(actionRecreate))
+}
+
+func TestModel_ActionAttach_HeadlessInvocationStaysInTUI(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headless", State: string(runnerstatus.StateRunning)},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Nil(t, cmd)
+	nextModel := next.(model)
+
+	_, _, ok := nextModel.requestedAttach()
+	assert.False(t, ok)
+	assert.True(t, nextModel.actionMenuOpen)
+	assert.False(t, nextModel.lastActionError)
+	assert.Empty(t, nextModel.lastActionMessage)
+}
+
+func TestModel_ActionAttach_NonRunningInvocationStaysInTUI(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{
 				InvocationID: "inv-1",
 				RepoID:       "repo-1",
-				WorktreeID:   "wt-1",
-				Runner:       "claude",
-				Mode:         "headless",
-				Status:       "running",
-			},
-		},
-		Worktrees: []daemon.WorktreeDTO{
-			{
-				WorktreeID: "wt-1",
-				Name:       "feature-auth",
-			},
-		},
-		Reviews: map[string]daemon.InvocationReviewData{
-			"inv-1": {
-				InvocationID:   "inv-1",
-				Readiness:      "ready",
-				Ready:          true,
-				PRSyncEligible: true,
+				Mode:         "headed",
+				State:        string(runnerstatus.StateSucceeded),
+				FinishedAt:   "2026-02-05T12:00:00Z",
 			},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
-	m.selectedIndex = 0
-
-	view := m.View()
-	assert.NotEmpty(t, view.Content)
-	assert.Contains(t, view.Content, "invocations")
-	assert.Contains(t, view.Content, "invocation details")
-}
-
-func TestModel_View_ShowsWatchActionSet(t *testing.T) {
-	t.Parallel()
-
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, nil)
-	m.width = 96
-	m.height = 22
-
-	view := m.View()
-	assert.Contains(t, view.Content, "enter")
-	assert.Contains(t, view.Content, "open")
-	assert.Contains(t, view.Content, "pr sync")
-}
-
-func TestModel_ActionEnter_SessionEndedIsRecoverable(t *testing.T) {
-	t.Parallel()
-
-	dispatcher := &fakeActionDispatcher{
-		enterErr: errors.NewWithDetails(
-			errors.ESessionEnded,
-			"tmux session not found",
-			map[string]string{
-				"hint": "session ended; use 'agency agent logs' or 'agency agent open' to view",
-			},
-		),
-	}
-
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
-	m.snapshot = Snapshot{
-		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", RepoID: "repo-1"},
-		},
-	}
-	m.selectedInvocationID = "inv-1"
-	m.selectedIndex = 0
+	m.selectedRepoID = "repo-1"
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.NotNil(t, cmd)
-
-	msg := cmd()
-	next, _ = next.(model).Update(msg)
+	require.Nil(t, cmd)
 	nextModel := next.(model)
 
-	assert.Equal(t, "inv-1", nextModel.selectedInvocationID)
-	assert.Equal(t, 0, nextModel.selectedIndex)
-	assert.Contains(t, nextModel.lastActionMessage, string(errors.ESessionEnded))
-	assert.Contains(t, nextModel.lastActionMessage, "session ended")
-	require.Len(t, dispatcher.enterCalls, 1)
-	assert.Equal(t, "inv-1@repo-1", dispatcher.enterCalls[0])
-}
-
-func TestModel_ActionFailure_RemainsInteractive(t *testing.T) {
-	t.Parallel()
-
-	dispatcher := &fakeActionDispatcher{
-		prSyncErr: errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"pr sync blocked by contract validation",
-			map[string]string{"hint": "address blocking reasons and retry"},
-		),
-	}
-
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
-	m.snapshot = Snapshot{
-		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-1", WorktreeID: "wt-1", RepoID: "repo-1"},
-			{InvocationID: "inv-2", WorktreeID: "wt-2", RepoID: "repo-1"},
-		},
-	}
-	m.selectedInvocationID = "inv-1"
-	m.selectedIndex = 0
-
-	next, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
-	require.NotNil(t, cmd)
-	msg := cmd()
-	next, _ = next.(model).Update(msg)
-	nextModel := next.(model)
-
-	assert.Contains(t, nextModel.lastActionMessage, string(errors.EInvalidArgument))
-
-	moved, _ := nextModel.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	movedModel := moved.(model)
-	assert.Equal(t, 1, movedModel.selectedIndex, "watch should continue handling navigation after recoverable action failure")
-	require.Len(t, dispatcher.prSyncCalls, 1)
-	assert.Equal(t, "wt-1@repo-1", dispatcher.prSyncCalls[0])
-}
-
-func TestModel_ActionPRSync_MessagesIncludeWorktreeTarget(t *testing.T) {
-	t.Parallel()
-
-	dispatcher := &fakeActionDispatcher{}
-
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
-	m.snapshot = Snapshot{
-		Invocations: []daemon.InvocationDTO{
-			{InvocationID: "inv-abcdefghij", WorktreeID: "wt-1", RepoID: "repo-1"},
-		},
-	}
-	m.selectedInvocationID = "inv-abcdefghij"
-	m.selectedIndex = 0
-
-	next, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
-	nextModel := next.(model)
-	require.NotNil(t, cmd)
-	assert.Contains(t, nextModel.lastActionMessage, "worktree wt-1")
-	assert.Contains(t, nextModel.lastActionMessage, "invocation")
-
-	msg := cmd()
-	next, _ = nextModel.Update(msg)
-	nextModel = next.(model)
-	assert.Contains(t, nextModel.lastActionMessage, "worktree wt-1")
-	assert.Contains(t, nextModel.lastActionMessage, "complete")
-	require.Len(t, dispatcher.prSyncCalls, 1)
-	assert.Equal(t, "wt-1@repo-1", dispatcher.prSyncCalls[0])
+	_, _, ok := nextModel.requestedAttach()
+	assert.False(t, ok)
+	assert.True(t, nextModel.actionMenuOpen)
+	assert.False(t, nextModel.lastActionError)
+	assert.Empty(t, nextModel.lastActionMessage)
 }
 
 func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
 	t.Parallel()
 
-	dispatcher := &fakeActionDispatcher{}
-
-	m := newModel(context.Background(), noopLoader{}, 2*time.Second, dispatcher)
+	m := newModel(context.Background(), nil, RunOptions{
+		PRSync: func(context.Context, string, string) (string, error) {
+			t.Fatal("pr sync callback should not be called for a missing worktree")
+			return "", nil
+		},
+	})
 	m.snapshot = Snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1"},
-			{InvocationID: "inv-2", WorktreeID: "wt-2", RepoID: "repo-1"},
+			{InvocationID: "inv-2", RepoID: "repo-2", WorktreeID: "wt-2"},
 		},
 	}
 	m.selectedInvocationID = "inv-1"
@@ -302,9 +396,307 @@ func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
 	assert.Contains(t, nextModel.lastActionMessage, string(errors.EInvalidArgument))
 	assert.Contains(t, nextModel.lastActionMessage, "worktree")
 	assert.Contains(t, nextModel.lastActionMessage, "inv-1")
-	require.Empty(t, dispatcher.prSyncCalls)
+}
 
-	moved, _ := nextModel.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	movedModel := moved.(model)
-	assert.Equal(t, 1, movedModel.selectedIndex)
+func TestModel_ActionOpenSuccessUsesConfiguredOutput(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{
+		Open: func(context.Context, string, string) (string, error) {
+			return "opened sandbox", nil
+		},
+	})
+	m.snapshot = Snapshot{
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", RepoID: "repo-1"},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	next, _ = next.(model).Update(msg)
+	nextModel := next.(model)
+
+	assert.Equal(t, "opened sandbox", nextModel.lastActionMessage)
+	assert.False(t, nextModel.lastActionError)
+}
+
+func TestModel_WorkspaceStateTogglesReload(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.activeWorktreeID = "wt-archived"
+	m.snapshot = Snapshot{
+		Worktrees: []daemon.WorktreeDTO{
+			{WorktreeID: "wt-present", State: "present"},
+			{WorktreeID: "wt-archived", State: "archived"},
+		},
+		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1"}},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.NotNil(t, cmd)
+	nextModel := next.(model)
+	assert.Equal(t, "archived", nextModel.worktreeStateFilter)
+	assert.True(t, nextModel.workspaceLoading)
+	assert.Empty(t, nextModel.snapshot.Worktrees)
+	assert.Empty(t, nextModel.snapshot.Invocations)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "all", nextModel.worktreeStateFilter)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "present", nextModel.worktreeStateFilter)
+	assert.Empty(t, nextModel.activeWorktreeID)
+
+	nextModel.workspaceLoading = false
+	next, cmd = nextModel.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	require.NotNil(t, cmd)
+	nextModel = next.(model)
+	assert.Equal(t, "all", nextModel.invocationStateFilter)
+	assert.True(t, nextModel.workspaceLoading)
+}
+
+func TestModel_WorkspaceView_FiltersArchivedWorktreesByDefault(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.width = 160
+	m.height = 30
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
+		Worktrees: []daemon.WorktreeDTO{
+			{WorktreeID: "wt-present", WorktreeName: "live-work", RepoID: "repo-1", State: "present"},
+			{WorktreeID: "wt-archived", WorktreeName: "old-work", RepoID: "repo-1", State: "archived"},
+		},
+		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-present"}},
+	}
+
+	content := m.View().Content
+	assert.Contains(t, content, "live-work")
+	assert.NotContains(t, content, "old-work")
+	assert.Contains(t, content, "worktrees:present")
+
+	m.worktreeStateFilter = "all"
+	content = m.View().Content
+	assert.Contains(t, content, "old-work")
+	assert.Contains(t, content, "[archived]")
+	assert.Contains(t, content, "worktrees:all")
+}
+
+func TestModel_WorkspaceView_CompactLayoutDoesNotStackEveryPane(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{})
+	m.width = 100
+	m.height = 24
+	m.snapshot = Snapshot{
+		Repos:     []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", WorktreeName: "auth", RepoID: "repo-1", State: "present"}},
+		Invocations: []daemon.InvocationDTO{
+			{InvocationID: "inv-1", InvocationName: "agent auth", RepoID: "repo-1", WorktreeID: "wt-1", State: "running"},
+		},
+	}
+
+	content := m.View().Content
+	assert.Contains(t, content, "Agents")
+	assert.NotContains(t, content, "Repos")
+	assert.NotContains(t, content, "Worktrees")
+	assert.NotContains(t, content, "Selected")
+	assert.LessOrEqual(t, len(strings.Split(content, "\n")), m.height)
+}
+
+func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing.T) {
+	t.Parallel()
+
+	const invocationID = "invocation-selected-pane-1234567890abcdef"
+	const worktreeID = "20260421103000-c3d4"
+	const repoID = "769749d77af0806f"
+
+	m := newModel(context.Background(), nil, RunOptions{
+		Open:     func(context.Context, string, string) (string, error) { return "", nil },
+		Stop:     func(context.Context, string, string) (string, error) { return "", nil },
+		Kill:     func(context.Context, string, string) (string, error) { return "", nil },
+		Followup: func(context.Context, string, string, string) (string, error) { return "", nil },
+		PRSync:   func(context.Context, string, string) (string, error) { return "", nil },
+		PRMerge:  func(context.Context, string, string) (string, error) { return "", nil },
+		Rebase:   func(context.Context, string, string) (string, error) { return "", nil },
+	})
+	m.width = 420
+	m.height = 28
+	m.snapshot = Snapshot{
+		Repos:     []daemon.RepoDTO{{RepoID: repoID, RepoKey: "github.com/acme/one"}},
+		Worktrees: []daemon.WorktreeDTO{{WorktreeID: worktreeID, WorktreeName: "feature-auth"}},
+		Invocations: []daemon.InvocationDTO{
+			{
+				InvocationID:   invocationID,
+				InvocationName: "agent auth",
+				RepoID:         repoID,
+				WorktreeID:     worktreeID,
+				Runner:         "claude-code",
+				Mode:           "headless",
+				State:          string(runnerstatus.StateWaiting),
+				LandingStatus:  "landed",
+				PRSyncEligible: true,
+				StatusSummary:  "waiting on api contract",
+				LatestActivity: &daemon.InvocationLatestActivity{
+					TurnID:        "stream:1",
+					Kind:          "assistant",
+					Summary:       "latest activity summary",
+					ToolCallCount: 1,
+					ToolCalls: []daemon.InvocationActivityToolCall{
+						{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1},
+					},
+					CheckpointID:           3,
+					Restorable:             true,
+					CheckpointDescription:  "checkpoint after edits",
+					CheckpointDiffstat:     "2 files changed, 12 insertions(+), 3 deletions(-)",
+					CheckpointChangedPaths: []string{"internal/watch/model.go", "internal/watch/model_test.go"},
+					CheckpointChangedCount: 2,
+				},
+				Navigation: &daemon.InvocationActivityNavigation{
+					HistoryCommand: "agency agent " + invocationID + " history --repo " + repoID,
+					DiffCommand:    "agency agent " + invocationID + " diff --repo " + repoID + " --turn stream:1",
+					LatestTurnID:   "stream:1",
+				},
+			},
+		},
+	}
+	m.selectedInvocationID = invocationID
+	m.selectedIndex = 0
+	m.actionMenuOpen = true
+
+	view := m.View()
+	assert.Contains(t, view.Content, "Repos")
+	assert.Contains(t, view.Content, "Worktrees")
+	assert.Contains(t, view.Content, "Agents")
+	assert.Contains(t, view.Content, "Selected")
+	assert.Contains(t, view.Content, "STATE")
+	assert.Contains(t, view.Content, "AGENT")
+	assert.Contains(t, view.Content, "Agent:      agent auth ("+invocationID+")")
+	assert.Contains(t, view.Content, "Worktree:   feature-auth ("+worktreeID+")")
+	assert.Contains(t, view.Content, "Repo:       github.com/acme/one ("+repoID+")")
+	assert.Contains(t, view.Content, "State:      waiting")
+	assert.Contains(t, view.Content, "Latest:     [assistant] latest activity summary (tools=1, checkpoint=3)")
+	assert.NotContains(t, view.Content, "Next:")
+	assert.Contains(t, view.Content, "Actions:")
+	assert.Contains(t, view.Content, "open sandbox")
+	assert.Contains(t, view.Content, "send follow-up")
+	assert.Contains(t, view.Content, "sync PR")
+	assert.Contains(t, view.Content, "merge PR")
+	assert.Contains(t, view.Content, "rebase worktree")
+	assert.Contains(t, view.Content, "stop invocation")
+	assert.Contains(t, view.Content, "kill invocation")
+	assert.Contains(t, view.Content, "open")
+	assert.NotContains(t, view.Content, "IDs:")
+}
+
+func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(context.Background(), nil, RunOptions{
+		Recreate: func(context.Context, string, string) (string, error) { return "", nil },
+		SessionLoader: func(context.Context, string, string) (daemon.InvocationSessionData, error) {
+			return daemon.InvocationSessionData{}, nil
+		},
+	})
+	m.width = 360
+	m.height = 28
+	m.snapshot = Snapshot{
+		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
+		Invocations: []daemon.InvocationDTO{
+			{
+				InvocationID:   "inv-1",
+				InvocationName: "headed auth",
+				RepoID:         "repo-1",
+				Runner:         "codex",
+				Mode:           "headed",
+				State:          string(runnerstatus.StateRunning),
+			},
+		},
+	}
+	m.selectedInvocationID = "inv-1"
+	m.selectedRepoID = "repo-1"
+	m.selectedSession = daemon.InvocationSessionData{
+		InvocationID:      "inv-1",
+		RepoID:            "repo-1",
+		SessionStatus:     "missing",
+		TmuxSession:       "agency_inv-1",
+		ClientCount:       2,
+		AttachCommand:     "agency agent inv-1 attach --repo repo-1",
+		RecreateAvailable: true,
+		ConnectedClients: []daemon.InvocationSessionClient{
+			{Name: "tty1"},
+			{Name: "tty2", ReadOnly: true},
+		},
+	}
+	m.selectedSessionInvocation = "inv-1"
+	m.selectedSessionRepo = "repo-1"
+
+	content := m.View().Content
+	assert.Contains(t, content, "Session:     missing")
+	assert.Contains(t, content, "Tmux:        agency_inv-1")
+	assert.Contains(t, content, "Clients:     2")
+	assert.Contains(t, content, "Attach:      agency agent inv-1 attach --repo repo-1")
+	assert.Contains(t, content, "Recreate:    yes")
+	assert.Contains(t, content, "Hint:        use recreate to start a new headed session in the")
+	assert.Contains(t, content, "tty2 (read-only)")
+}
+
+func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {
+	t.Parallel()
+
+	value := "café résumé"
+	truncated := truncateWithEllipsis(value, 7)
+	assert.Equal(t, "café...", truncated)
+	assert.True(t, utf8.ValidString(truncated))
+	assert.LessOrEqual(t, lipgloss.Width(truncated), 7)
+
+	tiny := truncateWithEllipsis("🙂🙂🙂🙂", 3)
+	assert.True(t, utf8.ValidString(tiny))
+	assert.LessOrEqual(t, lipgloss.Width(tiny), 3)
+
+	wide := truncateWithEllipsis("古古古古", 5)
+	assert.Equal(t, "古...", wide)
+	assert.True(t, utf8.ValidString(wide))
+	assert.LessOrEqual(t, lipgloss.Width(wide), 5)
+
+	row := model{
+		snapshot: Snapshot{
+			Invocations: []daemon.InvocationDTO{
+				{
+					InvocationID:   "inv-wide",
+					InvocationName: "古古古古古古古",
+					WorktreeID:     "wt-wide",
+					WorktreeName:   "🙂🙂🙂🙂",
+					RepoID:         "repo-wide",
+					RepoName:       "github.com/acme/repo",
+					State:          "running",
+				},
+			},
+		},
+		selectedInvocationID: "inv-wide",
+	}
+	for _, line := range strings.Split(row.renderAgentsPanel(40, 12), "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), 40)
+	}
+}
+
+func TestShortID_UTF8Safe(t *testing.T) {
+	t.Parallel()
+
+	short := shortID("résumé-123", 4)
+	assert.Equal(t, "résu", short)
+	assert.True(t, utf8.ValidString(short))
 }

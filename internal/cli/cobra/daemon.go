@@ -17,21 +17,12 @@ func newDaemonCmd() *cobra.Command {
 		Short: "Manage the agency daemon",
 		Long: `Manage the agency daemon.
 
-The daemon supervises headless agent invocations, providing:
-- Streaming stdout/stderr capture
-- Correct process lifecycle management
-- Reliable PID tracking and recovery
-
-Subcommands:
-  start     Start the daemon (background by default, --foreground for service managers)
-  stop      Stop the daemon
-  status    Show daemon status
-  install   Install as an OS service (launchd/systemd)
-  uninstall Remove the OS service`,
+The daemon supervises headless agent invocations, capturing output and
+tracking process state.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency daemon <start|stop|status|install|uninstall>")
+			return errors.New(errors.EUsage, "specify a subcommand")
 		},
 	}
 

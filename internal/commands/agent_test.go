@@ -1,5 +1,4 @@
 // Package commands implements agency CLI commands.
-// This file tests agent commands for headed execution (Slice 8 PR-03).
 package commands
 
 import (
@@ -8,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,75 +18,18 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/tui/historypicker"
+	"github.com/NielsdaWheelz/agency/internal/watch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// setupAgentTestEnv creates a test environment with integration worktree for agent tests.
-func setupAgentTestEnv(t *testing.T, worktreeName string) (string, string, string, string, *testutil.FakeCommandRunner, fs.FS) {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	repoDir := filepath.Join(tempDir, "repo")
-	dataDir := filepath.Join(tempDir, "data")
-
-	require.NoError(t, os.MkdirAll(repoDir, 0755))
-
-	// Initialize git repo (minimal)
-	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".git"), 0755))
-
-	originURL := "git@github.com:test/agent-repo.git"
-	repoIdentity := identity.DeriveRepoIdentity(repoDir, originURL)
-	repoID := repoIdentity.RepoID
-
-	// Create fake command runner
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
-
-	fsys := fs.NewRealFS()
-
-	// Create store directories
-	repoStoreDir := filepath.Join(dataDir, "repos", repoID)
-	require.NoError(t, os.MkdirAll(repoStoreDir, 0755))
-
-	// Create integration worktree
-	worktreeID := "20260131120000-abcd"
-	worktreeDir := filepath.Join(repoStoreDir, "integration_worktrees", worktreeID)
-	worktreeTreeDir := filepath.Join(worktreeDir, "tree")
-	require.NoError(t, os.MkdirAll(worktreeTreeDir, 0755))
-
-	// Write integration marker
-	agencyDir := filepath.Join(worktreeTreeDir, ".agency")
-	require.NoError(t, os.MkdirAll(agencyDir, 0755))
-	markerPath := filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName)
-	require.NoError(t, os.WriteFile(markerPath, []byte("# Integration worktree\n"), 0644))
-
-	// Write integration worktree meta.json
-	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          worktreeName,
-		RepoID:        repoID,
-		Branch:        "agency/" + worktreeName + "-abcd",
-		ParentBranch:  "main",
-		TreePath:      worktreeTreeDir,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
-	}
-	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
-	metaPath := filepath.Join(worktreeDir, "meta.json")
-	require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
-
-	return repoDir, dataDir, repoID, worktreeID, cr, fsys
-}
 
 // createTestInvocation creates a test invocation for testing attach/stop/kill.
 func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationID string, mode store.RunnerMode, status store.InvocationStatus) {
@@ -100,13 +43,15 @@ func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationI
 	require.NoError(t, os.MkdirAll(sandboxTreeDir, 0755))
 
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: worktreeID,
 		SandboxPath:           sandboxTreeDir,
+		CheckoutRoot:          filepath.Join(dataDir, "repos", repoID),
+		ExecutionProfile:      "personal",
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123def456",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  mode,
 		StartedAt:             time.Now().UTC().Format(time.RFC3339),
 		Status:                status,
@@ -143,6 +88,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 
 	require.NoError(t, os.MkdirAll(repoDir, 0755))
 	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".git"), 0755))
+	writeMinimalAgencyConfig(t, repoDir)
 
 	originURL := "git@github.com:test/agent-repo.git"
 	repoIdentity := identity.DeriveRepoIdentity(repoDir, originURL)
@@ -151,8 +97,10 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
+	cr.Responses["git -C "+repoDir+" rev-parse agency/"+worktreeName+"-abcd"] = testutil.FakeResponse{Stdout: "abc123def456\n"}
 
 	fsys := fs.NewRealFS()
+	st := store.NewStore(fsys, dataDir, time.Now)
 
 	// Create store directories
 	repoStoreDir := filepath.Join(dataDir, "repos", repoID)
@@ -170,24 +118,71 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	require.NoError(t, os.WriteFile(markerPath, []byte("# Integration worktree\n"), 0644))
 
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          worktreeName,
-		RepoID:        repoID,
-		Branch:        "agency/" + worktreeName + "-abcd",
-		ParentBranch:  "main",
-		TreePath:      worktreeTreeDir,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       worktreeID,
+		Name:             worktreeName,
+		RepoID:           repoID,
+		Branch:           "agency/" + worktreeName + "-abcd",
+		BaseBranch:       "main",
+		TreePath:         worktreeTreeDir,
+		CheckoutRoot:     repoStoreDir,
+		ExecutionProfile: "personal",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	metaPath := filepath.Join(worktreeDir, "meta.json")
 	require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
 
-	// Start test daemon
-	st := store.NewStore(fsys, dataDir, time.Now)
+	// Register the repo through the canonical registry before starting the daemon.
+	repoIndex := store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoIdentity.RepoKey: {
+				RepoID:     repoID,
+				Paths:      []string{repoDir},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}
+	repoRecord := store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoDir,
+		PreferredRoot:    repoDir,
+		AgencyJSONPath:   filepath.Join(repoDir, "agency.json"),
+		OriginPresent:    true,
+		OriginURL:        originURL,
+		OriginHost:       "github.com",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}
+	require.NoError(t, st.SaveRepoIndex(repoIndex))
+	require.NoError(t, st.SaveRepoRecord(repoRecord))
 	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "runners": {
+    "claude-code": "claude"
+  },
+  "editors": {
+    "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
+  }
+}`), 0o644))
 	srv := daemon.NewServer(st, cr, fsys, configDir)
+	srv.TmuxClient = testutil.NewFakeTmuxClient()
 
 	socketPath := st.DaemonSocketPath()
 	listener, err := net.Listen("unix", socketPath)
@@ -212,115 +207,73 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	return repoDir, dataDir, repoID, worktreeID, cr, fsys
 }
 
-func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
-	t.Parallel()
-	// Use short paths to stay under macOS socket 104-byte limit
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "test-feature")
-	invocationID := "20260131130000-efgh"
-
-	// Create a headless invocation (after daemon is started)
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
-
-	// Need a separate FakeCommandRunner for the client call (daemon has its own)
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	fakeTmux := testutil.NewFakeTmuxClient()
-
-	var stdout, stderr bytes.Buffer
-	opts := AgentAttachOpts{
-		InvocationRef:   invocationID,
-		TmuxClient:      fakeTmux,
-		IsInteractive:   func() bool { return true },
-		DataDirOverride: dataDir,
-	}
-
-	err := AgentAttach(context.Background(), cr2, fsys, repoDir, opts, &stdout, &stderr)
-	require.Error(t, err, "AgentAttach error = nil, want E_INVOCATION_INVALID_MODE")
-
-	assert.Equal(t, errors.EInvocationInvalidMode, errors.GetCode(err))
+type agentStartHeadedTestEnv struct {
+	RepoDir      string
+	DataDir      string
+	RepoID       string
+	WorktreeID   string
+	WorktreePath string
+	Runner       exec.CommandRunner
+	FS           fs.FS
+	RecordFile   string
 }
 
-func TestAgentAttach_HeadedInvocation_SessionMissing(t *testing.T) {
-	t.Parallel()
-	// Use short paths to stay under macOS socket 104-byte limit
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "test-feature")
-	invocationID := "20260131130000-efgh"
+func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCode int) agentStartHeadedTestEnv {
+	t.Helper()
 
-	// Create a headed invocation (after daemon is started)
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeaded, store.InvocationStatusRunning)
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	fakeTmux := testutil.NewFakeTmuxClient()
-	// default: Sessions map is empty, so HasSession returns false
-
-	var stdout, stderr bytes.Buffer
-	opts := AgentAttachOpts{
-		InvocationRef:   invocationID,
-		TmuxClient:      fakeTmux,
-		IsInteractive:   func() bool { return true },
-		DataDirOverride: dataDir,
+	repoDir, dataDir, repoID, worktreeID, fakeRunner, fsys := setupAgentTestEnvShort(t, worktreeName)
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	runnerPath := os.Getenv("TEST_FAKE_RUNNER_PATH")
+	if runnerPath == "" {
+		runnerPath = "fake-runner"
 	}
 
-	err := AgentAttach(context.Background(), cr2, fsys, repoDir, opts, &stdout, &stderr)
-	require.Error(t, err, "AgentAttach error = nil, want E_SESSION_ENDED")
-
-	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
-}
-
-func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
-	env := setupAgentNavEnv(t, "attach-ambig", store.RunnerModeHeaded)
-
-	secondID := "20260131130000-zzzz"
-	secondInvDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations", secondID)
-	require.NoError(t, os.MkdirAll(secondInvDir, 0o755))
-
-	secondSandbox := filepath.Join(env.DataDir, "repos", env.RepoID, "sandboxes", secondID, "tree")
-	require.NoError(t, os.MkdirAll(secondSandbox, 0o755))
-
-	secondMeta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
-		InvocationID:          secondID,
-		IntegrationWorktreeID: env.WorktreeID,
-		SandboxPath:           secondSandbox,
-		SandboxBranch:         "agency/sandbox-" + secondID,
-		BaseCommit:            "abc123def456",
-		Runner:                "claude",
-		Mode:                  store.RunnerModeHeaded,
-		StartedAt:             "2026-01-31T13:10:00Z",
-		Status:                store.InvocationStatusRunning,
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": runnerPath,
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
+		},
 	}
-	secondMetaBytes, _ := json.MarshalIndent(secondMeta, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(secondInvDir, "meta.json"), secondMetaBytes, 0o644))
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
-	fakeTmux := testutil.NewFakeTmuxClient()
-	var stdout, stderr bytes.Buffer
-	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentAttachOpts{
-			InvocationRef:   "20260131130000",
-			RepoFlag:        env.RepoID,
-			TmuxClient:      fakeTmux,
-			IsInteractive:   func() bool { return true },
-			DataDirOverride: env.DataDir,
-		}, &stdout, &stderr)
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
-	require.Error(t, err)
-	assert.Equal(t, errors.EAmbiguous, errors.GetCode(err),
-		"compatibility attach should use shared navigation ambiguity semantics")
-	assert.Len(t, fakeTmux.HasSessionCalls, 0, "tmux preflight must not run for ambiguous targets")
+	shimDir := t.TempDir()
+	recordFile := filepath.Join(shimDir, "record.txt")
+	shimPath := filepath.Join(shimDir, "tmux")
+	script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\nexit %d\n", recordFile, recordFile, tmuxExitCode)
+	require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	ae, ok := errors.AsAgencyError(err)
-	require.True(t, ok)
-	assert.Equal(t, "invocation", ae.Details["target_kind"])
-	assert.Equal(t, "2", ae.Details["candidate_count"])
+	return agentStartHeadedTestEnv{
+		RepoDir:      repoDir,
+		DataDir:      dataDir,
+		RepoID:       repoID,
+		WorktreeID:   worktreeID,
+		WorktreePath: filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree"),
+		Runner:       fakeRunner,
+		FS:           fsys,
+		RecordFile:   recordFile,
+	}
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04: Agent navigation convergence — setup helper
+// Agent navigation setup helper.
 // ---------------------------------------------------------------------------
 
 type agentNavTestEnv struct {
@@ -329,6 +282,7 @@ type agentNavTestEnv struct {
 	WorktreeID   string
 	InvocationID string
 	SandboxPath  string
+	Tmux         *testutil.FakeTmuxClient
 }
 
 // setupAgentNavEnv creates a test environment with a daemon, one integration
@@ -357,15 +311,17 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		[]byte("# Integration worktree\n"), 0644))
 
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    wtID,
-		Name:          name,
-		RepoID:        repoID,
-		Branch:        "agency/" + name + "-abcd",
-		ParentBranch:  "main",
-		TreePath:      treePath,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       wtID,
+		Name:             name,
+		RepoID:           repoID,
+		Branch:           "agency/" + name + "-abcd",
+		BaseBranch:       "main",
+		TreePath:         treePath,
+		CheckoutRoot:     filepath.Join(dataTmp, "repos", repoID),
+		ExecutionProfile: "personal",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), metaBytes, 0644))
@@ -379,13 +335,15 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	require.NoError(t, os.MkdirAll(sandboxTreeDir, 0755))
 
 	invMeta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invID,
 		IntegrationWorktreeID: wtID,
 		SandboxPath:           sandboxTreeDir,
+		CheckoutRoot:          filepath.Join(dataTmp, "repos", repoID),
+		ExecutionProfile:      "personal",
 		SandboxBranch:         "agency/sandbox-" + invID,
 		BaseCommit:            "abc123def456",
-		Runner:                "claude",
+		Runner:                "claude-code",
 		Mode:                  mode,
 		StartedAt:             "2026-01-31T13:00:00Z",
 		Status:                store.InvocationStatusRunning,
@@ -396,13 +354,58 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	imBytes, _ := json.MarshalIndent(invMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(invDir, "meta.json"), imBytes, 0644))
 
-	// Start daemon
 	fsys := fs.NewRealFS()
-	cr := testutil.NewFakeCommandRunner()
 	st := store.NewStore(fsys, dataTmp, time.Now)
+	repoRoot := filepath.Join(dataTmp, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+	repoIndex := store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}
+	require.NoError(t, st.SaveRepoIndex(repoIndex))
+	repoRecord := store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}
+	require.NoError(t, st.SaveRepoRecord(repoRecord))
+
+	// Start daemon
+	cr := testutil.NewFakeCommandRunner()
 	configDir := filepath.Join(dataTmp, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0755))
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": "claude-code",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
 	srv := daemon.NewServer(st, cr, fsys, configDir)
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv.TmuxClient = fakeTmux
 
 	socketPath := st.DaemonSocketPath()
 	listener, listenErr := net.Listen("unix", socketPath)
@@ -432,11 +435,42 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		WorktreeID:   wtID,
 		InvocationID: invID,
 		SandboxPath:  sandboxTreeDir,
+		Tmux:         fakeTmux,
 	}
 }
 
+func seedRepoIndexForNavigationTests(t *testing.T, dataDir, repoID string) {
+	t.Helper()
+
+	repoRoot := filepath.Join(dataDir, "repos", repoID, "root")
+	require.NoError(t, os.MkdirAll(repoRoot, 0755))
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:" + repoID: {
+				RepoID:     repoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-31T12:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		UpdatedAt:        "2026-01-31T12:00:00Z",
+	}))
+}
+
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 1: agent ls/show daemon-of-record read behavior
+// Agent ls/show daemon-of-record read behavior.
 // ---------------------------------------------------------------------------
 
 func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
@@ -444,13 +478,76 @@ func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
 	assert.Contains(t, out, env.InvocationID)
-	assert.Contains(t, out, "claude")
+	assert.Contains(t, out, "claude-code")
 	assert.Contains(t, out, "headed")
+}
+
+func TestAgentLS_DefaultRequestsUnresolvedState(t *testing.T) {
+	dataDir, err := os.MkdirTemp("", "ag")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	socketPath := st.DaemonSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o755))
+
+	var requestedState string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK:         true,
+				APIVersion: daemon.APIVersion,
+			})
+		case "/repos/repo-1":
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK: true,
+				Data: daemon.RepoDTO{
+					RepoID: "repo-1",
+				},
+			})
+		case "/invocations":
+			requestedState = r.URL.Query().Get("state")
+			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+				OK: true,
+				Data: daemon.ListInvocationsData{
+					Invocations: []daemon.InvocationDTO{},
+				},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	srv := &http.Server{Handler: handler}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveDone
+	})
+
+	var stdout, stderr bytes.Buffer
+	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoRef: "repo-1"}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Equal(t, "unresolved", requestedState)
 }
 
 func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
@@ -458,15 +555,18 @@ func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	out := stdout.String()
 	assert.Contains(t, out, "invocation_id:          "+env.InvocationID)
-	assert.Contains(t, out, "worktree_id:            "+env.WorktreeID)
-	assert.Contains(t, out, "runner:                 claude")
+	assert.Contains(t, out, "worktree:               show-test ("+env.WorktreeID+")")
+	assert.Contains(t, out, "repo:                   ")
+	assert.Contains(t, out, "("+env.RepoID+")")
+	assert.Contains(t, out, "runner:                 claude-code")
 	assert.Contains(t, out, "mode:                   headed")
 	assert.Contains(t, out, "sandbox_path:           "+env.SandboxPath)
+	assert.Contains(t, out, "attach_command:         agency agent "+env.InvocationID+" attach --repo "+env.RepoID)
 }
 
 func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
@@ -474,7 +574,7 @@ func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dtos []daemon.InvocationDTO
@@ -483,7 +583,9 @@ func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	assert.Equal(t, env.InvocationID, dtos[0].InvocationID)
 	assert.Equal(t, env.RepoID, dtos[0].RepoID)
-	assert.Equal(t, "claude", dtos[0].Runner)
+	assert.NotEmpty(t, dtos[0].RepoName)
+	assert.Equal(t, "lsjson", dtos[0].WorktreeName)
+	assert.Equal(t, "claude-code", dtos[0].Runner)
 	assert.Equal(t, "headless", dtos[0].Mode)
 	assert.Equal(t, env.SandboxPath, dtos[0].SandboxPath)
 }
@@ -493,16 +595,221 @@ func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, JSON: true}, &stdout, &stderr)
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	var dto daemon.InvocationDTO
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dto))
 
 	assert.Equal(t, env.InvocationID, dto.InvocationID)
+	assert.Equal(t, "showjson", dto.WorktreeName)
 	assert.Equal(t, env.RepoID, dto.RepoID)
-	assert.Equal(t, "claude", dto.Runner)
+	assert.NotEmpty(t, dto.RepoName)
+	assert.Equal(t, "claude-code", dto.Runner)
 	assert.Equal(t, env.SandboxPath, dto.SandboxPath)
+}
+
+func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(t *testing.T) {
+	env := setupAgentNavEnv(t, "activity-converge", store.RunnerModeHeadless)
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	runnerStatusPath := st.InvocationRunnerStatusPath(env.RepoID, env.InvocationID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
+	runner := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateRunning,
+		UpdatedAt:     "2026-02-05T11:59:30Z",
+		Summary:       "waiting on api contract",
+		Questions:     []string{},
+		HowToTest:     "",
+		Risks:         []string{},
+	}
+	runnerBytes, err := json.Marshal(runner)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(runnerStatusPath, runnerBytes, 0o600))
+
+	logsDir := st.InvocationLogsDir(env.RepoID, env.InvocationID)
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
+
+	var lsJSON, showJSON, checkJSON, stderr bytes.Buffer
+
+	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &lsJSON, &stderr)
+	require.NoError(t, err)
+
+	var listedRows []daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(lsJSON.Bytes(), &listedRows))
+	require.Len(t, listedRows, 1)
+	listed := listedRows[0]
+	require.NotNil(t, listed.LatestActivity)
+	require.NotNil(t, listed.Navigation)
+
+	err = AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true}, &showJSON, &stderr)
+	require.NoError(t, err)
+	var shown daemon.InvocationDTO
+	require.NoError(t, json.Unmarshal(showJSON.Bytes(), &shown))
+	require.NotNil(t, shown.LatestActivity)
+	require.NotNil(t, shown.Navigation)
+
+	err = AgentCheck(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentCheckOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &checkJSON, &stderr)
+	require.NoError(t, err)
+	var check daemon.InvocationCheckData
+	require.NoError(t, json.Unmarshal(checkJSON.Bytes(), &check))
+
+	assert.Equal(t, listed.State, shown.State)
+	assert.Equal(t, shown.State, check.State)
+	assert.Equal(t, string(runnerstatus.StateRunning), check.RunnerState)
+
+	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
+	assert.Equal(t, shown.StatusSummary, check.RunnerSummary)
+	assert.Equal(t, "waiting on api contract", check.RunnerSummary)
+
+	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
+	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
+
+	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
+	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
+	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
+	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
+	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
+	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)
+}
+
+func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := writeAgentLSHumanFromDTO(&out, []daemon.InvocationDTO{
+		{
+			InvocationID: "inv-1",
+			RepoID:       "repo-1",
+			RepoName:     "agency",
+			WorktreeID:   "wt-1",
+			WorktreeName: "feature-x",
+			Runner:       "claude-code",
+			Mode:         "headless",
+			State:        string(runnerstatus.StateRunning),
+			LatestActivity: &daemon.InvocationLatestActivity{
+				TurnID:        "stream:9",
+				Kind:          "assistant",
+				Summary:       "applied migration",
+				ToolCallCount: 2,
+				CheckpointID:  4,
+				Restorable:    true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "repo: agency (repo-1)")
+	assert.Contains(t, out.String(), "worktree: feature-x (wt-1)")
+	assert.Contains(t, out.String(), "latest[stream:9]: [assistant] applied migration (tools=2, checkpoint=4)")
+}
+
+func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := writeAgentShowHumanFromDTO(&out, &daemon.InvocationDTO{
+		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		RepoName:     "agency",
+		WorktreeID:   "wt-1",
+		WorktreeName: "feature-x",
+		Runner:       "claude-code",
+		Mode:         "headed",
+		State:        string(runnerstatus.StateRunning),
+		StartedAt:    "2026-02-05T11:50:00Z",
+		SandboxPath:  "/tmp/sandbox/inv-1",
+		LatestActivity: &daemon.InvocationLatestActivity{
+			TurnID:                 "stream:9",
+			Kind:                   "assistant",
+			Summary:                "applied migration",
+			ToolCallCount:          1,
+			ToolCalls:              []daemon.InvocationActivityToolCall{{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1}},
+			CheckpointID:           4,
+			Restorable:             true,
+			CheckpointDescription:  "checkpoint after migration",
+			CheckpointDiffstat:     "2 files changed, 10 insertions(+), 2 deletions(-)",
+			CheckpointChangedPaths: []string{"internal/apply.go", "internal/apply_test.go"},
+			CheckpointChangedCount: 2,
+		},
+		Navigation: &daemon.InvocationActivityNavigation{
+			AttachCommand: "agency agent inv-1 attach --repo repo-1",
+		},
+	})
+	require.NoError(t, err)
+	output := out.String()
+	assert.Contains(t, output, "repo:                   agency (repo-1)")
+	assert.Contains(t, output, "worktree:               feature-x (wt-1)")
+	assert.Contains(t, output, "latest_activity:        [assistant] applied migration (tools=1, checkpoint=4)")
+	assert.Contains(t, output, "latest_activity_tool:   ▶ Bash go test ./... (exit=1)")
+	assert.Contains(t, output, "latest_activity_checkpoint: 4")
+	assert.Contains(t, output, "latest_activity_checkpoint_description: checkpoint after migration")
+	assert.Contains(t, output, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
+	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
+	assert.Contains(t, output, "attach_command:         agency agent inv-1 attach --repo repo-1")
+}
+
+func TestWriteAgentCheckHumanFromDTO_IncludesRunnerMetadata(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	check := &daemon.InvocationCheckData{
+		InvocationID:    "inv-1",
+		RepoID:          "repo-1",
+		State:           string(runnerstatus.StateRunning),
+		RunnerState:     string(runnerstatus.StateWaiting),
+		RunnerReason:    "awaiting_user_input",
+		RunnerSummary:   "needs your answer",
+		RunnerUpdatedAt: "2026-02-05T12:00:00Z",
+		HowToTest:       "run go test ./...",
+		Navigation: daemon.InvocationCheckNavigation{
+			HistoryCommand: "agency agent inv-1 history --repo repo-1",
+			AttachCommand:  "agency agent inv-1 attach --repo repo-1",
+		},
+	}
+	err := writeAgentCheckHumanFromDTO(&out, check)
+	require.NoError(t, err)
+	output := out.String()
+	assert.Contains(t, output, "runner_state:         waiting")
+	assert.Contains(t, output, "runner_reason:        awaiting_user_input")
+	assert.Contains(t, output, "runner_summary:       needs your answer")
+	assert.Contains(t, output, "runner_updated_at:    2026-02-05T12:00:00Z")
+	assert.Contains(t, output, "how_to_test:          run go test ./...")
+	assert.Contains(t, output, "attach_command:      agency agent inv-1 attach --repo repo-1")
+}
+
+func TestWriteAgentCheckHumanFromDTO_RendersSucceededState(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	check := &daemon.InvocationCheckData{
+		InvocationID: "inv-1",
+		RepoID:       "repo-1",
+		State:        string(runnerstatus.StateSucceeded),
+		RunnerState:  string(runnerstatus.StateSucceeded),
+		Navigation: daemon.InvocationCheckNavigation{
+			HistoryCommand: "agency agent inv-1 history --repo repo-1",
+		},
+	}
+
+	err := writeAgentCheckHumanFromDTO(&out, check)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "state:                succeeded")
+	assert.Contains(t, out.String(), "runner_state:         succeeded")
+}
+
+func TestWriteAgentCheckHumanFromDTO_NilCheckReturnsInternalError(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := writeAgentCheckHumanFromDTO(&out, nil)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInternal, errors.GetCode(err))
 }
 
 func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
@@ -523,12 +830,14 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
 
 	// Two invocations with shared prefix
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
@@ -537,10 +846,11 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -575,7 +885,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	showErr := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		AgentShowOpts{InvocationRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, showErr)
 	assert.Equal(t, errors.EInvocationIDAmbiguous, errors.GetCode(showErr),
@@ -588,28 +898,28 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 2: canonical agent path/open/shell/enter daemon-first navigation
+// Canonical agent path/open/shell/attach daemon-first navigation.
 // ---------------------------------------------------------------------------
 
-func TestAgentPath_UsesNavigationKernelDaemonResolution(t *testing.T) {
+func TestAgentPath_UsesDaemonResolution(t *testing.T) {
 	env := setupAgentNavEnv(t, "path-test", store.RunnerModeHeaded)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentPathOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	assert.Equal(t, env.SandboxPath+"\n", stdout.String(),
 		"stdout must be exactly the daemon-resolved sandbox_path plus newline")
 }
 
-func TestAgentOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestAgentOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupAgentNavEnv(t, "open-test", store.RunnerModeHeaded)
 	shimPath, recordFile := createShimScript(t)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	cwd, args := readShimRecord(t, recordFile)
@@ -620,14 +930,14 @@ func TestAgentOpen_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
 		"editor must receive daemon-resolved sandbox_path as argument")
 }
 
-func TestAgentShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) {
+func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 	env := setupAgentNavEnv(t, "shell-test", store.RunnerModeHeaded)
 	shimPath, recordFile := createShimScript(t)
 	t.Setenv("SHELL", shimPath)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShellOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentShellOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	cwd, args := readShimRecord(t, recordFile)
@@ -638,35 +948,805 @@ func TestAgentShell_UsesNavigationKernelDaemonPath_NoLocalResolve(t *testing.T) 
 		"shell should be invoked with -l (login)")
 }
 
-func TestAgentEnter_UsesNavigationKernelInvocationResolution_HeadedOnly(t *testing.T) {
-	env := setupAgentNavEnv(t, "enter-test", store.RunnerModeHeaded)
+// ---------------------------------------------------------------------------
+// Headed start attach cutover.
+// ---------------------------------------------------------------------------
 
-	fakeTmux := testutil.NewFakeTmuxClient()
-	sessionName := tmux.SessionName(env.InvocationID)
-	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
-
-	var attachCalled bool
-	var attachedSession string
+func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-noterm", 1)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-noterm",
+		Runner:        "claude-code",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
+
+	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
+	_, statErr := os.Stat(invocationsDir)
+	assert.True(t, os.IsNotExist(statErr), "headed start must not create an invocation before the interactive gate")
+
+	_, recordErr := os.Stat(env.RecordFile)
+	assert.True(t, os.IsNotExist(recordErr), "tmux attach shim must not be invoked")
+}
+
+func TestAgentStart_NormalRepoRequiresWorktree(t *testing.T) {
+	repoDir, dataDir, _, _, cr, fsys := setupAgentTestEnvShort(t, "start-missing-worktree")
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+		Mode:   "headless",
+		Prompt: "hello",
+	}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentStart_UnrelatedCWDRequiresRepo(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-no-repo-context", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), exec.NewRealRunner(), env.FS, t.TempDir(), AgentStartOpts{
+		Mode:   "headless",
+		Prompt: "hello",
+	}, &stdout, &stderr)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoRepoContext, errors.GetCode(err))
+}
+
+func TestAgentStart_HeadlessPromptRequiredBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode: "headless",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
+}
+
+func TestAgentStart_InvalidModeBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode:   "bogus",
+		Prompt: "hello",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestAgentStart_HeadedPromptRejectedBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode:     "headed",
+		Prompt:   "hello",
+		Detached: true,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentStart_HeadlessDetachedRejectedBeforeDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
+		Mode:     "headless",
+		Prompt:   "hello",
+		Detached: true,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+}
+
+func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-infer", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.WorktreePath, AgentStartOpts{
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "Session started in detached mode.")
+	assert.Contains(t, output, "  worktree:       start-infer ("+env.WorktreeID+")")
+	invocationID := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  invocation_id:") {
+			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+			break
+		}
+	}
+	require.NotEmpty(t, invocationID)
+	assert.Contains(t, output, "Use 'agency agent "+invocationID+" attach --repo "+env.RepoID+"' to attach.")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-detached", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-detached",
+		Runner:        "claude-code",
+		Mode:          "headed",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "Session started in detached mode.")
+	invocationID := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  invocation_id:") {
+			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+			break
+		}
+	}
+	require.NotEmpty(t, invocationID)
+	assert.Contains(t, output, "Use 'agency agent "+invocationID+" attach --repo "+env.RepoID+"' to attach.")
+	assert.Empty(t, stderr.String())
+
+	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
+	entries, readErr := os.ReadDir(invocationsDir)
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1, "headed start should create exactly one invocation")
+
+	_, recordErr := os.Stat(env.RecordFile)
+	assert.True(t, os.IsNotExist(recordErr), "detached headed start must not attach")
+}
+
+func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-defaults", 1)
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"model":  "user-opus",
+				"effort": "max",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-user-runner-defaults",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "user-opus", "--effort", "max"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-agency-runner-defaults", 1)
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"model":  "user-opus",
+				"effort": "high",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	agencyJSON := `{
+  "version": 4,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "agency-opus",
+      "effort": "max"
+    }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
+  }
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(agencyJSON), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-agency-runner-defaults",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "agency-opus", "--effort", "max"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-cli-runner-defaults", 1)
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"model":  "user-opus",
+				"effort": "high",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	agencyJSON := `{
+  "version": 4,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "agency-opus",
+      "effort": "max"
+    }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
+  }
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(agencyJSON), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-cli-runner-defaults",
+		Runner:        "claude-code",
+		Model:         "cli-opus",
+		Effort:        "medium",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--model", "cli-opus", "--effort", "medium"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_UsesUserClaudePermissionModeWhenCLIUnset(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-permission-mode", 1)
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runner_defaults": map[string]map[string]string{
+			"claude-code": {
+				"permission_mode": "bypassPermissions",
+			},
+		},
+		"runners": map[string]string{
+			"claude-code": "fake-runner",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err = AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-user-runner-permission-mode",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--permission-mode", "bypassPermissions"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_HeadlessClaudeDefaultsPermissionModeToBypassPermissions(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-headless-default-permission-mode", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-headless-default-permission-mode",
+		Runner:        "claude-code",
+		Mode:          "headless",
+		Prompt:        "headless default permissions",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	entries, readErr := os.ReadDir(filepath.Join(env.DataDir, "repos", env.RepoID, "invocations"))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	meta, err := st.ReadInvocationMeta(env.RepoID, entries[0].Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--permission-mode", "bypassPermissions"}, meta.RunnerArgs)
+}
+
+func TestAgentStart_HeadlessClaudeRejectsPromptingPermissionModes(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-headless-invalid-permission-mode", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:        env.RepoID,
+		WorktreeRef:    "start-headless-invalid-permission-mode",
+		Runner:         "claude-code",
+		Mode:           "headless",
+		Prompt:         "headless invalid permissions",
+		PermissionMode: "default",
+		IsInteractive:  func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "headless Claude requires an autonomous permission mode")
+}
+
+func TestAgentStart_ExplicitMissingAgencyConfigFails(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-missing-agency-config", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:          env.RepoID,
+		WorktreeRef:      "start-missing-agency-config",
+		Runner:           "claude-code",
+		AgencyConfigPath: filepath.Join(env.RepoDir, "missing-agency.json"),
+		Detached:         true,
+		IsInteractive:    func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoAgencyJSON, errors.GetCode(err))
+}
+
+func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-invalid-agency-config", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(`{
+  "version": 1,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh"
+    }
+  }
+}`), 0o644))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-invalid-agency-config",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	expectedRepoDir := env.RepoDir
+	if resolvedRepoDir, resolveErr := filepath.EvalSymlinks(env.RepoDir); resolveErr == nil {
+		expectedRepoDir = resolvedRepoDir
+	}
+	assert.Equal(t, filepath.Join(expectedRepoDir, "agency.json"), ae.Details["path"])
+	assert.Equal(t, "repo", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(expectedRepoDir)+" --repo-config --force")
+}
+
+func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-attach-fail",
+		Runner:        "claude-code",
+		IsInteractive: func() bool { return true },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	require.Contains(t, output, "tmux_session:")
+	session := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  tmux_session:") {
+			session = strings.TrimSpace(strings.TrimPrefix(line, "  tmux_session:"))
+			break
+		}
+	}
+	require.NotEmpty(t, session, "headed start must print the tmux session it attached to")
+
+	cwd, args := readShimRecord(t, env.RecordFile)
+	assert.NotEmpty(t, cwd)
+	assert.Equal(t, "attach-session -t "+session, args)
+	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
+	invocationID := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "  invocation_id:") {
+			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+			break
+		}
+	}
+	require.NotEmpty(t, invocationID)
+	assert.Contains(t, stderr.String(), "Use 'agency agent "+invocationID+" attach --repo "+env.RepoID+"' to attach later.")
+}
+
+func TestAgentRecreate_Headed_DetachedPrintsCanonicalAttachCommand(t *testing.T) {
+	env := setupAgentNavEnv(t, "recreate-detached", store.RunnerModeHeaded)
+	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentRecreateOpts{
 			InvocationRef:   env.InvocationID,
-			RepoFlag:        env.RepoID,
-			IsInteractive:   func() bool { return true },
-			TmuxClient:      fakeTmux,
+			RepoRef:         env.RepoID,
+			Detached:        true,
 			DataDirOverride: env.DataDir,
-			TmuxAttachFn: func(sess string) error {
-				attachCalled = true
-				attachedSession = sess
-				return nil
+			IsInteractive:   func() bool { return false },
+		}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "Session recreated in detached mode.")
+	assert.Contains(t, stdout.String(), "Use 'agency agent "+env.InvocationID+" attach --repo "+env.RepoID+"' to attach.")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentRecreate_JSONIncludesExecutionContext(t *testing.T) {
+	env := setupAgentNavEnv(t, "recreate-json", store.RunnerModeHeaded)
+	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+		meta.CustomEnvKeys = []string{"CODEX_HOME", "GH_CONFIG_DIR"}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentRecreateOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			JSON:            true,
+			DataDirOverride: env.DataDir,
+		}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var got struct {
+		OK               bool     `json:"ok"`
+		ExecutionProfile string   `json:"execution_profile"`
+		CheckoutRoot     string   `json:"checkout_root"`
+		CustomEnvKeys    []string `json:"custom_env_keys"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	assert.True(t, got.OK)
+	assert.Equal(t, "personal", got.ExecutionProfile)
+	assert.Equal(t, filepath.Join(env.DataDir, "repos", env.RepoID), got.CheckoutRoot)
+	assert.Equal(t, []string{"CODEX_HOME", "GH_CONFIG_DIR"}, got.CustomEnvKeys)
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentRecreate_Headed_AttachFailureWarnsWithCanonicalAttachCommand(t *testing.T) {
+	env := setupAgentNavEnv(t, "recreate-attach-fail", store.RunnerModeHeaded)
+	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
+
+	var attachedSession string
+	var stdout, stderr bytes.Buffer
+	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentRecreateOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			DataDirOverride: env.DataDir,
+			IsInteractive:   func() bool { return true },
+			TmuxAttachFn: func(sessionName string) error {
+				attachedSession = sessionName
+				return fmt.Errorf("attach failed")
 			},
 		}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	assert.True(t, attachCalled, "tmux attach must be called")
-	assert.Equal(t, sessionName, attachedSession,
-		"tmux session target must be derived from daemon-resolved invocation_id via tmux.SessionName")
+	assert.NotEmpty(t, attachedSession)
+	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session: attach failed")
+	assert.Contains(t, stderr.String(), "Use 'agency agent "+env.InvocationID+" attach --repo "+env.RepoID+"' to attach later.")
+}
+
+func TestAgentStart_ExplicitSelectorsWorkFromUnrelatedCWD(t *testing.T) {
+	env := setupAgentStartHeadedTestEnv(t, "start-explicit-selectors", 1)
+
+	var stdout, stderr bytes.Buffer
+	err := AgentStart(context.Background(), env.Runner, env.FS, t.TempDir(), AgentStartOpts{
+		RepoRef:       env.RepoID,
+		WorktreeRef:   "start-explicit-selectors",
+		Runner:        "claude-code",
+		Detached:      true,
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout.String(), "  worktree:       start-explicit-selectors ("+env.WorktreeID+")")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
+	t.Run("stored session wins", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "attach-stored", store.RunnerModeHeaded)
+		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+		storedSession := "agency_explicit_attach"
+		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+			meta.TmuxSession = storedSession
+		}))
+		env.Tmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
+
+		var attachCalled bool
+		var attachedSession string
+
+		var stdout, stderr bytes.Buffer
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
+				InvocationRef:   env.InvocationID,
+				RepoRef:         env.RepoID,
+				IsInteractive:   func() bool { return true },
+				DataDirOverride: env.DataDir,
+				TmuxAttachFn: func(sess string) error {
+					attachCalled = true
+					attachedSession = sess
+					return nil
+				},
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		assert.True(t, attachCalled, "tmux attach must be called")
+		assert.Equal(t, storedSession, attachedSession, "stored tmux_session must win over the derived name")
+	})
+
+	t.Run("fallback to derived session", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "attach-fallback", store.RunnerModeHeaded)
+		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+			meta.TmuxSession = ""
+		}))
+
+		fallbackSession := tmux.SessionName(env.InvocationID)
+		env.Tmux.Sessions[fallbackSession] = testutil.FakeTmuxSession{Name: fallbackSession}
+
+		var attachCalled bool
+		var attachedSession string
+
+		var stdout, stderr bytes.Buffer
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
+				InvocationRef:   env.InvocationID,
+				RepoRef:         env.RepoID,
+				IsInteractive:   func() bool { return true },
+				DataDirOverride: env.DataDir,
+				TmuxAttachFn: func(sess string) error {
+					attachCalled = true
+					attachedSession = sess
+					return nil
+				},
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		assert.True(t, attachCalled, "tmux attach must be called")
+		assert.Equal(t, fallbackSession, attachedSession, "agent attach must fall back to tmux.SessionName(invocation_id)")
+	})
+}
+
+func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
+	t.Run("outside tmux uses attach-session", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "attach-outside-tmux", store.RunnerModeHeaded)
+		sessionName := tmux.SessionName(env.InvocationID)
+		env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+		shimDir := t.TempDir()
+		recordFile := filepath.Join(shimDir, "record.txt")
+		shimPath := filepath.Join(shimDir, "tmux")
+		script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
+		require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
+
+		t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("TMUX", "")
+
+		var stdout, stderr bytes.Buffer
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
+				InvocationRef:   env.InvocationID,
+				RepoRef:         env.RepoID,
+				IsInteractive:   func() bool { return true },
+				DataDirOverride: env.DataDir,
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		_, args := readShimRecord(t, recordFile)
+		assert.Equal(t, "attach-session -t "+sessionName, args)
+	})
+
+	t.Run("inside tmux uses switch-client", func(t *testing.T) {
+		env := setupAgentNavEnv(t, "attach-inside-tmux", store.RunnerModeHeaded)
+		sessionName := tmux.SessionName(env.InvocationID)
+		env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+
+		shimDir := t.TempDir()
+		recordFile := filepath.Join(shimDir, "record.txt")
+		shimPath := filepath.Join(shimDir, "tmux")
+		script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
+		require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
+
+		t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("TMUX", "/tmp/tmux-test/default,123,0")
+
+		var stdout, stderr bytes.Buffer
+		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+			AgentAttachOpts{
+				InvocationRef:   env.InvocationID,
+				RepoRef:         env.RepoID,
+				IsInteractive:   func() bool { return true },
+				DataDirOverride: env.DataDir,
+			}, &stdout, &stderr)
+		require.NoError(t, err)
+
+		_, args := readShimRecord(t, recordFile)
+		assert.Equal(t, "switch-client -t "+sessionName, args)
+	})
+}
+
+func TestAgentAttach_MissingSessionReturnsESessionEnded(t *testing.T) {
+	env := setupAgentNavEnv(t, "attach-missing", store.RunnerModeHeaded)
+
+	var attachCalled bool
+	var stdout, stderr bytes.Buffer
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			IsInteractive:   func() bool { return true },
+			DataDirOverride: env.DataDir,
+			TmuxAttachFn: func(string) error {
+				attachCalled = true
+				return nil
+			},
+		}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ESessionEnded, errors.GetCode(err))
+	assert.False(t, attachCalled, "tmux attach must NOT be called for a missing session")
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Contains(t, ae.Details["hint"], "recreate")
+}
+
+func TestAgentClients_PrintsDaemonSessionFacts(t *testing.T) {
+	env := setupAgentNavEnv(t, "clients-live", store.RunnerModeHeaded)
+	sessionName := tmux.SessionName(env.InvocationID)
+	env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{
+		Name: sessionName,
+		Clients: []tmux.AttachedClient{
+			{Name: "client-1", TTY: "/dev/ttys001", PID: 101, ReadOnly: false},
+			{Name: "client-2", TTY: "/dev/ttys002", PID: 202, ReadOnly: true},
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentClients(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentClientsOpts{
+		InvocationRef:   env.InvocationID,
+		RepoRef:         env.RepoID,
+		DataDirOverride: env.DataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "invocation: "+env.InvocationID)
+	assert.Contains(t, stdout.String(), "tmux session: "+sessionName)
+	assert.Contains(t, stdout.String(), "connected clients: 2")
+	assert.Contains(t, stdout.String(), "/dev/ttys001 (client-1) pid=101 read-write")
+	assert.Contains(t, stdout.String(), "/dev/ttys002 (client-2) pid=202 read-only")
 }
 
 func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
@@ -686,12 +1766,15 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
 
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
 		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
@@ -699,10 +1782,11 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -736,7 +1820,7 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	pathErr := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: "20260201000000", RepoFlag: repoID}, &stdout, &stderr)
+		AgentPathOpts{InvocationRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, pathErr)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(pathErr),
@@ -765,12 +1849,15 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
 
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
 		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
@@ -778,10 +1865,11 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -816,7 +1904,7 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	openErr := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: "20260201000000", RepoFlag: repoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: "20260201000000", RepoRef: repoID, Editor: shimPath}, &stdout, &stderr)
 
 	require.Error(t, openErr)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(openErr),
@@ -827,7 +1915,7 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		"editor shim must NOT be executed on ambiguous target")
 }
 
-func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
+func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	dataTmp, err := os.MkdirTemp("", "an")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataTmp) })
@@ -843,12 +1931,14 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
-		RepoID: repoID, Branch: "agency/ambig", ParentBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
+		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
+	seedRepoIndexForNavigationTests(t, dataTmp, repoID)
 
 	for _, id := range []string{"20260201000000-aaaa", "20260201000000-bbbb"} {
 		invDir := filepath.Join(dataTmp, "repos", repoID, "invocations", id)
@@ -856,10 +1946,11 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imB, _ := json.MarshalIndent(im, "", "  ")
@@ -891,15 +1982,12 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
 	var attachCalled bool
-	fakeTmux := testutil.NewFakeTmuxClient()
-
 	var stdout, stderr bytes.Buffer
-	enterErr := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	attachErr := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
 			InvocationRef:   "20260201000000",
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			IsInteractive:   func() bool { return true },
-			TmuxClient:      fakeTmux,
 			DataDirOverride: dataTmp,
 			TmuxAttachFn: func(sess string) error {
 				attachCalled = true
@@ -907,14 +1995,14 @@ func TestAgentEnter_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 			},
 		}, &stdout, &stderr)
 
-	require.Error(t, enterErr)
-	assert.Equal(t, errors.EAmbiguous, errors.GetCode(enterErr),
+	require.Error(t, attachErr)
+	assert.Equal(t, errors.EAmbiguous, errors.GetCode(attachErr),
 		"navigation ambiguity must return E_AMBIGUOUS")
 	assert.False(t, attachCalled, "tmux attach must NOT be invoked on ambiguous target")
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 3: command-family policy + deterministic target selection
+// Command-family policy and deterministic target selection.
 // ---------------------------------------------------------------------------
 
 func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
@@ -937,9 +2025,10 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(ad, integrationworktree.IntegrationMarkerFileName),
 			[]byte("# Integration worktree\n"), 0644))
 		wm := &store.IntegrationWorktreeMeta{
-			SchemaVersion: "1.0", WorktreeID: r.wtID, Name: "wt-" + r.repoID,
-			RepoID: r.repoID, Branch: "agency/b", ParentBranch: "main",
-			TreePath: tp, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+			SchemaVersion: store.SchemaVersion, WorktreeID: r.wtID, Name: "wt-" + r.repoID,
+			RepoID: r.repoID, Branch: "agency/b", BaseBranch: "main",
+			TreePath: tp, CheckoutRoot: filepath.Join(dataTmp, "repos", r.repoID), ExecutionProfile: "personal",
+			CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 		}
 		wmb, _ := json.MarshalIndent(wm, "", "  ")
 		require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), wmb, 0644))
@@ -949,10 +2038,11 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 		sp := filepath.Join(dataTmp, "repos", r.repoID, "sandboxes", r.invID, "tree")
 		require.NoError(t, os.MkdirAll(sp, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: r.invID,
+			SchemaVersion: store.SchemaVersion, InvocationID: r.invID,
 			IntegrationWorktreeID: r.wtID, SandboxPath: sp,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", r.repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + r.invID, BaseCommit: "abc",
-			Runner: "claude", Mode: store.RunnerModeHeaded,
+			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-01-31T10:00:00Z", Status: store.InvocationStatusRunning,
 		}
 		imb, _ := json.MarshalIndent(im, "", "  ")
@@ -960,7 +2050,7 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 	}
 
 	repoIndex := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			"k1": {RepoID: repo1, Paths: []string{"/r1"}, LastSeenAt: "2026-01-31T12:00:00Z"},
 			"k2": {RepoID: repo2, Paths: []string{"/r2"}, LastSeenAt: "2026-01-31T12:00:00Z"},
@@ -1016,7 +2106,7 @@ func TestAgentPath_OutputsDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentPathOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
 	printedPath := strings.TrimSpace(stdout.String())
@@ -1030,11 +2120,11 @@ func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.
 	var humanOut, jsonOut, stderr bytes.Buffer
 
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID}, &humanOut, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID}, &humanOut, &stderr)
 	require.NoError(t, err)
 
 	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoFlag: env.RepoID, JSON: true}, &jsonOut, &stderr)
+		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &jsonOut, &stderr)
 	require.NoError(t, err)
 
 	humanStr := humanOut.String()
@@ -1052,22 +2142,20 @@ func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 4: invocation-mode validity + E_INVOCATION_INVALID_MODE
+// Invocation-mode validity and E_INVOCATION_INVALID_MODE.
 // ---------------------------------------------------------------------------
 
-func TestAgentEnter_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
-	env := setupAgentNavEnv(t, "headless-enter", store.RunnerModeHeadless)
+func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
+	env := setupAgentNavEnv(t, "headless-attach", store.RunnerModeHeadless)
 
-	fakeTmux := testutil.NewFakeTmuxClient()
 	var attachCalled bool
 
 	var stdout, stderr bytes.Buffer
-	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
 			InvocationRef:   env.InvocationID,
-			RepoFlag:        env.RepoID,
+			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return true },
-			TmuxClient:      fakeTmux,
 			DataDirOverride: env.DataDir,
 			TmuxAttachFn: func(sess string) error {
 				attachCalled = true
@@ -1081,18 +2169,18 @@ func TestAgentEnter_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 
 	ae, ok := errors.AsAgencyError(err)
 	require.True(t, ok)
-	assert.Contains(t, ae.Details["hint"], "logs",
+	assert.Contains(t, ae.Details["hint"], "history",
 		"error hint should suggest alternative for headless")
 }
 
-func TestAgentEnter_NotInteractive_ReturnsENotInteractive(t *testing.T) {
-	env := setupAgentNavEnv(t, "noterm-enter", store.RunnerModeHeaded)
+func TestAgentAttach_NotInteractive_ReturnsENotInteractive(t *testing.T) {
+	env := setupAgentNavEnv(t, "noterm-attach", store.RunnerModeHeaded)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentEnterOpts{
+	err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
 			InvocationRef:   env.InvocationID,
-			RepoFlag:        env.RepoID,
+			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return false },
 			DataDirOverride: env.DataDir,
 		}, &stdout, &stderr)
@@ -1106,13 +2194,13 @@ func TestAgentEnter_NotInteractive_ReturnsENotInteractive(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04: D-004 — no E_INVOCATION_BROKEN on canonical navigation surfaces
+// Canonical navigation surfaces do not return E_INVOCATION_BROKEN.
 // ---------------------------------------------------------------------------
 
 func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *testing.T) {
 	env := setupAgentNavEnv(t, "brk-nav", store.RunnerModeHeaded)
 
-	for _, verb := range []string{"path", "open", "shell", "enter"} {
+	for _, verb := range []string{"path", "open", "shell", "attach"} {
 		t.Run(verb, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			var navErr error
@@ -1121,23 +2209,22 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 			switch verb {
 			case "path":
 				navErr = AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentPathOpts{InvocationRef: ref, RepoFlag: env.RepoID}, &stdout, &stderr)
+					AgentPathOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
 			case "open":
 				shimPath, _ := createShimScript(t)
 				navErr = AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentOpenOpts{InvocationRef: ref, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+					AgentOpenOpts{InvocationRef: ref, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
 			case "shell":
 				shimPath, _ := createShimScript(t)
 				t.Setenv("SHELL", shimPath)
 				navErr = AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentShellOpts{InvocationRef: ref, RepoFlag: env.RepoID}, &stdout, &stderr)
-			case "enter":
-				navErr = AgentEnter(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentEnterOpts{
+					AgentShellOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
+			case "attach":
+				navErr = AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+					AgentAttachOpts{
 						InvocationRef:   ref,
-						RepoFlag:        env.RepoID,
+						RepoRef:         env.RepoID,
 						IsInteractive:   func() bool { return true },
-						TmuxClient:      testutil.NewFakeTmuxClient(),
 						DataDirOverride: env.DataDir,
 						TmuxAttachFn:    func(string) error { return nil },
 					}, &stdout, &stderr)
@@ -1146,7 +2233,7 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 			require.Error(t, navErr)
 			code := errors.GetCode(navErr)
 			assert.NotEqual(t, errors.EInvocationBroken, code,
-				"canonical navigation must not return E_INVOCATION_BROKEN after PR-04 migration")
+				"canonical navigation must not return E_INVOCATION_BROKEN after canonical navigation migration")
 			assert.Equal(t, errors.EInvocationNotFound, code,
 				"expected daemon-first E_INVOCATION_NOT_FOUND for missing target")
 		})
@@ -1154,7 +2241,7 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04: D-005 — sandbox missing uses daemon-resolved path
+// Sandbox missing uses daemon-resolved path.
 // ---------------------------------------------------------------------------
 
 func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
@@ -1166,7 +2253,7 @@ func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))
@@ -1191,7 +2278,7 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShellOpts{InvocationRef: env.InvocationID, RepoFlag: env.RepoID}, &stdout, &stderr)
+		AgentShellOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))
@@ -1207,7 +2294,7 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S3 PR-01: AgentHistory integration tests
+// Agent history integration tests.
 // ---------------------------------------------------------------------------
 
 func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
@@ -1224,14 +2311,14 @@ func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("{\"raw\":1}\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("{\"raw\":1}\n"), 0o644))
 
-	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamPath := st.InvocationStreamLogPath(repoID, invocationID)
 	streamBytes := "" +
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"checking"}}` + "\n" +
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"shell","command":"go test ./...","exit_code":0}}` + "\n"
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"checking"}}` + "\n" +
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"shell","command":"go test ./...","exit_code":0}}` + "\n"
 	require.NoError(t, os.WriteFile(streamPath, []byte(streamBytes), 0o644))
 
 	eventsPath := st.InvocationEventsPath(repoID, invocationID)
@@ -1284,15 +2371,15 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("raw\n"), 0o644))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("raw\n"), 0o644))
 
-	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamPath := st.InvocationStreamLogPath(repoID, invocationID)
 	streamBytes := []string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"one"}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"message","data":{"role":"assistant","text":"two"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_start","data":{"name":"shell","command":"echo hi"}}`,
-		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude","kind":"tool_end","data":{"name":"shell","command":"echo hi","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"one"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"two"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_start","data":{"name":"shell","command":"echo hi"}}`,
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"shell","command":"echo hi","exit_code":0}}`,
 	}
 	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(streamBytes, "\n")+"\n"), 0o644))
 
@@ -1343,11 +2430,47 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 	assert.Equal(t, allIDs, pagedIDs)
 }
 
+func TestAgentHistory_InteractiveUsesSharedWatchRuntime(t *testing.T) {
+	t.Parallel()
+
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-watch")
+	invocationID := "20260131190500-watch"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var captured watch.RunOptions
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           50,
+		DataDirOverride: dataDir,
+		IsInteractive: func() bool {
+			return true
+		},
+		RunWatch: func(_ context.Context, client *daemonclient.Client, opts watch.RunOptions) (watch.RunResult, error) {
+			require.NotNil(t, client)
+			captured = opts
+			return watch.RunResult{}, nil
+		},
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	assert.Equal(t, watch.InitialPageHistory, captured.InitialPage)
+	assert.Equal(t, invocationID, captured.InvocationID)
+	assert.Equal(t, repoID, captured.RepoID)
+	assert.NotNil(t, captured.Open)
+	assert.NotNil(t, captured.PRSync)
+	assert.NotNil(t, captured.Restore)
+}
+
 // ---------------------------------------------------------------------------
-// PR-B: AgentLogs integration tests
+// Agent history log integration tests.
 // ---------------------------------------------------------------------------
 
-func TestAgentLogs_PageToEOF(t *testing.T) {
+func TestAgentHistoryLogs_PageToEOF(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "logs-test")
 	invocationID := "20260131140000-logs"
@@ -1356,16 +2479,16 @@ func TestAgentLogs_PageToEOF(t *testing.T) {
 
 	// Seed a raw log file with known content
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("hello world\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("hello world\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(context.Background(), cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -1374,7 +2497,7 @@ func TestAgentLogs_PageToEOF(t *testing.T) {
 	assert.Equal(t, "hello world\n", stdout.String())
 }
 
-func TestAgentLogs_FollowMode(t *testing.T) {
+func TestAgentHistoryLogs_FollowMode(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "follow-test")
 	invocationID := "20260131150000-foll"
@@ -1382,15 +2505,16 @@ func TestAgentLogs_FollowMode(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	logPath := st.SandboxRawLogPath(repoID, invocationID)
+	logPath := st.InvocationRawLogPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(logPath, []byte("line1\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	appendCalls := 0
 	sleepFn := func(d time.Duration) {
 		appendCalls++
@@ -1401,14 +2525,15 @@ func TestAgentLogs_FollowMode(t *testing.T) {
 				_, _ = f.WriteString("line2\n")
 				_ = f.Close()
 			}
+			return
 		}
+		cancel()
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(ctx, cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
-		MaxIterations:   2,
 		SleepFn:         sleepFn,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
@@ -1418,7 +2543,7 @@ func TestAgentLogs_FollowMode(t *testing.T) {
 	assert.Contains(t, stdout.String(), "line2\n")
 }
 
-func TestAgentLogs_ContextCancellation(t *testing.T) {
+func TestAgentHistoryLogs_ContextCancellation(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "ctx-test")
 	invocationID := "20260131160000-cctx"
@@ -1426,9 +2551,9 @@ func TestAgentLogs_ContextCancellation(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxRawLogPath(repoID, invocationID), []byte("data\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("data\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -1441,7 +2566,7 @@ func TestAgentLogs_ContextCancellation(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(ctx, cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(ctx, cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
 		SleepFn:         sleepFn,
@@ -1453,7 +2578,7 @@ func TestAgentLogs_ContextCancellation(t *testing.T) {
 	assert.Contains(t, stdout.String(), "data\n")
 }
 
-func TestAgentLogs_StderrKind(t *testing.T) {
+func TestAgentHistoryLogs_StderrKind(t *testing.T) {
 	t.Parallel()
 	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "stderr-test")
 	invocationID := "20260131170000-stde"
@@ -1461,16 +2586,16 @@ func TestAgentLogs_StderrKind(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	logsDir := st.SandboxLogsDir(repoID, invocationID)
+	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	require.NoError(t, os.WriteFile(st.SandboxStderrLogPath(repoID, invocationID), []byte("error output\n"), 0o644))
+	require.NoError(t, os.WriteFile(st.InvocationStderrLogPath(repoID, invocationID), []byte("error output\n"), 0o644))
 
 	cr2 := testutil.NewFakeCommandRunner()
 	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentLogs(context.Background(), cr2, fsys, repoDir, AgentLogsOpts{
+	err := AgentHistoryLogs(context.Background(), cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Kind:            "stderr",
 		DataDirOverride: dataDir,
@@ -1511,14 +2636,14 @@ func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
 	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 
 	// Write 5 stream messages.
-	streamPath := st.SandboxStreamLogPath(repoID, invocationID)
+	streamPath := st.InvocationStreamLogPath(repoID, invocationID)
 	var lines []string
 	for i := 1; i <= 5; i++ {
 		lines = append(lines, fmt.Sprintf(
-			`{"schema_version":"1.0","seq":%d,"timestamp":"2026-02-05T11:50:%02dZ","invocation_id":"%s","runner":"claude","kind":"message","data":{"role":"assistant","text":"msg-%d"}}`,
+			`{"schema_version":"1.0","seq":%d,"timestamp":"2026-02-05T11:50:%02dZ","invocation_id":"%s","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"msg-%d"}}`,
 			i, 10+i, invocationID, i))
 	}
 	require.NoError(t, os.WriteFile(streamPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644))
@@ -1550,6 +2675,54 @@ func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
 	assert.Equal(t, "msg-5", payload.Entries[0].Data["text"], "--last must return the last message content")
 }
 
+func TestAgentHistory_LastJSONReturnsAllEntriesFromLatestTurn(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last-turn-entries")
+	invocationID := "20260131180001-last-turn"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"working"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_start","data":{"name":"Bash","command":"echo hi"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Bash","command":"echo hi","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":4,"timestamp":"2026-02-05T11:50:13Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
+	}
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Last:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var payload struct {
+		Entries []daemon.TimelineEntryDTO `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	entryIDs := make([]string, 0, len(payload.Entries))
+	for _, entry := range payload.Entries {
+		entryIDs = append(entryIDs, entry.EntryID)
+	}
+	assert.Contains(t, entryIDs, "stream:1")
+	assert.Contains(t, entryIDs, "stream:2")
+	assert.Contains(t, entryIDs, "stream:3")
+	assert.NotContains(t, entryIDs, "stream:4")
+}
+
 func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 
@@ -1564,10 +2737,255 @@ func TestAgentHistory_LastWithCursorReturnsEInvalidArgument(t *testing.T) {
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
-func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
+func TestAgentHistory_HumanTurnOutput_ConvergesWithRestoreTurnSelection(t *testing.T) {
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-turn-converge")
+	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
+	invocationID := "20260131200000-hturn"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	promptPath := st.InvocationPromptPath(repoID, invocationID)
+	require.NoError(t, os.WriteFile(promptPath, []byte("investigate restore convergence"), 0o600))
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PromptPath = promptPath
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"first assistant turn"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Write","command":"internal/service.go","exit_code":0}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:40Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"second assistant turn"}}`,
+	}
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	eventsLines := strings.Join([]string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:15Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","kind":"agency.followup_prompt","data":{"text":"continue from checkpoint one"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(eventsLines), 0o644))
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                1,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
+				SnapshotCommit:    "deadbeef",
+				SandboxHeadSHA:    "deadbeef",
+				CreatedAt:         "2026-02-05T11:50:15Z",
+				IncludesUntracked: true,
+				Diffstat:          "+1 -0 in 1 files",
+			},
+			{
+				ID:                2,
+				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/2",
+				SnapshotCommit:    "feedface",
+				SandboxHeadSHA:    "feedface",
+				CreatedAt:         "2026-02-05T11:50:30Z",
+				IncludesUntracked: true,
+				Diffstat:          "+2 -1 in 2 files",
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(repoID, invocationID), cpBytes, 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var historyOut, historyErr bytes.Buffer
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &historyOut, &historyErr)
+	require.NoError(t, err)
+
+	ns, err := setupDaemonNav(context.Background(), fsys, dataDir)
+	require.NoError(t, err)
+	entries, err := fetchAllTimelineEntries(context.Background(), ns.client, invocationID, repoID)
+	require.NoError(t, err)
+	checkpoints, err := fetchAllCheckpoints(context.Background(), ns.client, invocationID, repoID)
+	require.NoError(t, err)
+	projectedTurns := daemon.ProjectTimelineTurns(entries, checkpoints)
+	require.NotEmpty(t, projectedTurns)
+
+	human := historyOut.String()
+	for _, turn := range projectedTurns {
+		assert.Contains(t, human, turn.EntryID, "history output should expose the same projected turn ids")
+	}
+	assert.Contains(t, human, "[prompt]")
+	assert.Contains(t, human, "[assistant]")
+	assert.Contains(t, human, "[follow-up]")
+	assert.Contains(t, human, "checkpoint=1")
+	assert.Contains(t, human, "checkpoint=2")
+}
+
+func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testing.T) {
 	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-file-limit")
-	invocationID := "20260131181000-chat"
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-concise")
+	invocationID := "20260131201000-hconcise"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	payloadMarker := "S8_PR03_LARGE_TOOL_PAYLOAD_" + strings.Repeat("x", 256)
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"applying edits","content_blocks":[{"type":"tool_use","name":"Edit","input":{"patch":"` + payloadMarker + `"}}]}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Edit","command":"internal/service.go","exit_code":0}}`,
+	}
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var humanOut, jsonOut, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &humanOut, &stderr)
+	require.NoError(t, err)
+
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &stderr)
+	require.NoError(t, err)
+
+	assert.NotContains(t, humanOut.String(), payloadMarker, "default human history should summarize, not dump huge tool payloads")
+	assert.Contains(t, jsonOut.String(), payloadMarker, "json output must preserve full payload fidelity")
+}
+
+func TestAgentHistory_InvalidCursorReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-invalid-cursor")
+	invocationID := "20260131201700-hcursor"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"first"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"second"}}`,
+	}
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Cursor:          "missing-turn-id",
+		Limit:           50,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-last-meaningful")
+	invocationID := "20260131202000-hlast"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"meaningful assistant turn"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
+	}
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		JSON:            true,
+		Last:            true,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var payload struct {
+		Entries []struct {
+			EntryID string `json:"entry_id"`
+			Kind    string `json:"kind"`
+		} `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &payload))
+	require.Len(t, payload.Entries, 1)
+	assert.Equal(t, "stream:1", payload.Entries[0].EntryID)
+	assert.Equal(t, "message", payload.Entries[0].Kind)
+}
+
+func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-human-unknown")
+	invocationID := "20260131202101-hunknown"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.StartedAt = "2026-02-05T11:50:00Z"
+	}))
+
+	streamLines := []string{
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"working"}}`,
+		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"unknown","data":{"runner_event_type":"cursor.weird_event","reason":"unrecognized_event_shape"}}`,
+		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
+	}
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(repoID, invocationID), []byte(strings.Join(streamLines, "\n")+"\n"), 0o644))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var stdout, stderr bytes.Buffer
+	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+		InvocationRef:   invocationID,
+		Limit:           100,
+		DataDirOverride: dataDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	human := stdout.String()
+	assert.Contains(t, human, "stream:2", "unknown diagnostics must not disappear from turn-projected human history")
+	assert.Contains(t, human, "unknown runner event")
+}
+
+func TestAgentFollowup_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "followup-file-limit")
+	invocationID := "20260131181000-followup"
 
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
@@ -1579,7 +2997,7 @@ func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+	err := AgentFollowup(context.Background(), cr2, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   invocationID,
 		PromptFile:      oversizedPromptPath,
 		DataDirOverride: dataDir,
@@ -1588,9 +3006,9 @@ func TestAgentChat_PromptFileOverLimitReturnsEPromptTooLarge(t *testing.T) {
 	assert.Equal(t, errors.EPromptTooLarge, errors.GetCode(err))
 }
 
-func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
+func TestAgentFollowup_HumanAndJSONAligned(t *testing.T) {
 	t.Parallel()
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "chat-output")
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "followup-output")
 	invocationID := "20260131182000-cout"
 
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
@@ -1600,14 +3018,14 @@ func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var humanOut, jsonOut, stderr bytes.Buffer
-	err := AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+	err := AgentFollowup(context.Background(), cr2, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   invocationID,
 		Prompt:          "continue with regression analysis",
 		DataDirOverride: dataDir,
 	}, &humanOut, &stderr)
 	require.NoError(t, err)
 
-	err = AgentChat(context.Background(), cr2, fsys, repoDir, AgentChatOpts{
+	err = AgentFollowup(context.Background(), cr2, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   invocationID,
 		Prompt:          "second follow-up",
 		JSON:            true,
@@ -1623,152 +3041,6 @@ func TestAgentChat_HumanAndJSONAligned(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
-}
-
-func TestAgentRestart_InvalidCheckpointIDReturnsUsage(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef: "inv-123",
-		CheckpointID:  0,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-}
-
-func TestAgentRestart_NegativeCheckpointIDReturnsUsage(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef: "inv-123",
-		CheckpointID:  -1,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "--checkpoint must be a positive integer")
-}
-
-func TestAgentRestart_HumanAndJSONAligned(t *testing.T) {
-	t.Parallel()
-
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-output")
-	invocationID := "20260131183000-rout"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.PromptPath = promptPath
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	cpFile := checkpoint.CheckpointsFile{
-		SchemaVersion: checkpoint.SchemaVersion,
-		Checkpoints: []checkpoint.Checkpoint{
-			{
-				ID:                1,
-				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
-				SnapshotCommit:    "deadbeef",
-				SandboxHeadSHA:    "deadbeef",
-				CreatedAt:         "2026-02-05T11:50:30Z",
-				IncludesUntracked: true,
-				Diffstat:          "+0 -0 in 0 files",
-			},
-		},
-	}
-	cpBytes, err := json.Marshal(cpFile)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"),
-		cpBytes,
-		0o644,
-	))
-
-	runnerDir := t.TempDir()
-	runnerPath := filepath.Join(runnerDir, "restart-runner.sh")
-	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-
-	configDir := filepath.Join(dataDir, "config")
-	require.NoError(t, os.MkdirAll(configDir, 0o755))
-	cfg := map[string]any{
-		"version": 1,
-		"defaults": map[string]string{
-			"runner": "claude",
-			"editor": "code",
-		},
-		"runners": map[string]string{
-			"claude": runnerPath,
-		},
-	}
-	cfgBytes, err := json.Marshal(cfg)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var humanOut, jsonOut, stderr bytes.Buffer
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:   invocationID,
-		CheckpointID:    1,
-		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
-		DataDirOverride: dataDir,
-	}, &humanOut, &stderr)
-	require.NoError(t, err)
-
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:   invocationID,
-		CheckpointID:    1,
-		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
-		JSON:            true,
-		DataDirOverride: dataDir,
-	}, &jsonOut, &stderr)
-	require.NoError(t, err)
-
-	assert.Contains(t, humanOut.String(), invocationID)
-	assert.Contains(t, strings.ToLower(humanOut.String()), "checkpoint")
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
-	assertMutationEnvelopeShape(t, payload)
-	assert.Equal(t, true, payload["ok"])
-	assert.Equal(t, invocationID, payload["invocation_id"])
-	assert.Equal(t, float64(1), payload["checkpoint_id"])
-}
-
-func TestAgentRestart_RequiresExplicitEnvReplayWhenProfilePresent(t *testing.T) {
-	t.Parallel()
-
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-env-required")
-	invocationID := "20260131184000-renv"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.PromptPath = promptPath
-		meta.CustomEnvKeys = []string{"API_TOKEN"}
-	}))
-
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), cr, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:   invocationID,
-		CheckpointID:    1,
-		DataDirOverride: dataDir,
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.Code("E_INVALID_REQUEST"), errors.GetCode(err))
-	assert.Contains(t, err.Error(), "explicit env values")
 }
 
 func TestResolveBoundedPromptInput_MissingPromptUsesContextMessage(t *testing.T) {
@@ -1801,126 +3073,7 @@ func TestResolveBoundedPromptInput_EmptyFileUsesContextMessage(t *testing.T) {
 	assert.Contains(t, err.Error(), "context-specific empty file message")
 }
 
-func TestAgentRestart_InteractiveHistory_NonInteractiveFailsFast(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", AgentRestartOpts{
-		InvocationRef:       "inv-123",
-		InteractiveHistory:  true,
-		IsInteractive:       func() bool { return false },
-		DataDirOverride:     t.TempDir(),
-		HistoryPickerInput:  bytes.NewBuffer(nil),
-		HistoryPickerOutput: &bytes.Buffer{},
-	}, &stdout, &stderr)
-	require.Error(t, err)
-	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
-}
-
-func TestAgentRestart_InteractiveHistory_MapsToCheckpointAndUsesCanonicalRestartFlow(t *testing.T) {
-	t.Parallel()
-
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "restart-history")
-	invocationID := "20260131185000-rhist"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	promptPath := st.InvocationPromptPath(repoID, invocationID)
-	require.NoError(t, os.WriteFile(promptPath, []byte("restart prompt"), 0o600))
-	require.NoError(t, os.MkdirAll(st.SandboxLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.PromptPath = promptPath
-		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
-
-	cpFile := checkpoint.CheckpointsFile{
-		SchemaVersion: checkpoint.SchemaVersion,
-		Checkpoints: []checkpoint.Checkpoint{
-			{
-				ID:                1,
-				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/1",
-				SnapshotCommit:    "deadbeef",
-				SandboxHeadSHA:    "deadbeef",
-				CreatedAt:         "2026-02-05T11:50:10Z",
-				IncludesUntracked: true,
-				Diffstat:          "+1 -0 in 1 files",
-			},
-			{
-				ID:                2,
-				SnapshotRef:       checkpoint.RefPrefix + invocationID + "/2",
-				SnapshotCommit:    "feedface",
-				SandboxHeadSHA:    "feedface",
-				CreatedAt:         "2026-02-05T11:50:30Z",
-				IncludesUntracked: true,
-				Diffstat:          "+1 -0 in 1 files",
-			},
-		},
-	}
-	cpBytes, err := json.Marshal(cpFile)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(st.SandboxDir(repoID, invocationID), "checkpoints.json"), cpBytes, 0o644))
-
-	eventsLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`,
-		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"` + invocationID + `","kind":"agency.followup_prompt","data":{"text":"continue from cp1"}}`,
-		`{"schema_version":"1.0","seq":3,"timestamp":"2026-02-05T11:50:30Z","invocation_id":"` + invocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":2}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(st.InvocationEventsPath(repoID, invocationID), []byte(eventsLines), 0o644))
-
-	runnerDir := t.TempDir()
-	runnerPath := filepath.Join(runnerDir, "restart-runner.sh")
-	require.NoError(t, os.WriteFile(runnerPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-
-	configDir := filepath.Join(dataDir, "config")
-	require.NoError(t, os.MkdirAll(configDir, 0o755))
-	cfg := map[string]any{
-		"version": 1,
-		"defaults": map[string]string{
-			"runner": "claude",
-			"editor": "code",
-		},
-		"runners": map[string]string{
-			"claude": runnerPath,
-		},
-	}
-	cfgBytes, err := json.Marshal(cfg)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var jsonOut, stderr bytes.Buffer
-	err = AgentRestart(context.Background(), cr2, fsys, repoDir, AgentRestartOpts{
-		InvocationRef:      invocationID,
-		InteractiveHistory: true,
-		IsInteractive:      func() bool { return true },
-		HistoryPickerRun: func(turns []historypicker.Turn, _ historypicker.RunOptions) (historypicker.Turn, error) {
-			// Find the followup turn — it should be grouped as its own turn
-			for _, turn := range turns {
-				if turn.Kind == historypicker.TurnFollowup {
-					return turn, nil
-				}
-			}
-			t.Fatalf("expected follow-up turn in picker turns; got %d turns", len(turns))
-			return historypicker.Turn{}, nil
-		},
-		Env:             map[string]string{"FAKE_RUNNER_MODE": "exit-ok"},
-		JSON:            true,
-		DataDirOverride: dataDir,
-	}, &jsonOut, &stderr)
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
-	assert.Equal(t, true, payload["ok"])
-	assert.Equal(t, invocationID, payload["invocation_id"])
-	// The followup turn inherits checkpoint 1 (the latest before it).
-	assert.Equal(t, float64(1), payload["checkpoint_id"])
-}
-
-func TestConvertToPickerTurns_SparseAssistantSummary_IncludesCheckpointMetadata(t *testing.T) {
+func TestProjectTimelineTurns_SparseAssistantSummary_IncludesCheckpointMetadata(t *testing.T) {
 	t.Parallel()
 
 	entries := []daemon.TimelineEntryDTO{
@@ -1953,9 +3106,9 @@ func TestConvertToPickerTurns_SparseAssistantSummary_IncludesCheckpointMetadata(
 		},
 	}
 
-	turns := convertToPickerTurns(entries, checkpoints)
+	turns := daemon.ProjectTimelineTurns(entries, checkpoints)
 	require.Len(t, turns, 1)
-	require.Equal(t, historypicker.TurnAssistant, turns[0].Kind)
+	require.Equal(t, daemon.TurnAssistant, turns[0].Kind)
 	assert.Equal(t, 1, turns[0].CheckpointID)
 	assert.True(t, turns[0].Restorable)
 

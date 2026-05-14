@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,17 +42,15 @@ func assertMutationEnvelopeShape(t *testing.T, payload map[string]any) {
 }
 
 func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "start-json")
+	_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "start-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
+		RepoRef:     repoID,
 		WorktreeRef: "start-json",
-		Headless:    true,
+		Mode:        "headless",
 		JSON:        true,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "json failure mode should not return a human-formatted error")
@@ -62,18 +62,16 @@ func TestAgentStart_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 }
 
 func TestAgentStart_JSONFailureDaemonDeclaredEnvelopeIncludesRequestID(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "start-json-daemon-fail")
+	_, dataDir, repoID, _, _, fsys := setupAgentTestEnvShort(t, "start-json-daemon-fail")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
-
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	var stdout, stderr bytes.Buffer
-	err := AgentStart(context.Background(), cr, fsys, repoDir, AgentStartOpts{
+	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), fsys, "", AgentStartOpts{
+		RepoRef:     repoID,
 		WorktreeRef: "does-not-exist",
-		Runner:      "claude",
-		Headless:    true,
+		Runner:      "claude-code",
+		Mode:        "headless",
 		Prompt:      "hello",
 		JSON:        true,
 	}, &stdout, &stderr)
@@ -138,6 +136,11 @@ func TestAgentLand_JSONFailureEnvelope(t *testing.T) {
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	invocationID := "20260302171800-lnd1"
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
+	pid := os.Getpid()
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.PID = &pid
+	}))
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
@@ -155,6 +158,35 @@ func TestAgentLand_JSONFailureEnvelope(t *testing.T) {
 	assert.Equal(t, false, payload["ok"])
 	assert.Equal(t, string(errors.EInvocationStillRunning), payload["error_code"])
 	assert.NotEmpty(t, payload["request_id"])
+}
+
+func TestAgentLand_CleanupModeHumanOutputDoesNotRequireHeads(t *testing.T) {
+	repoDir, dataDir, repoID, worktreeID, cr, fsys := setupAgentTestEnvShort(t, "land-cleanup")
+	t.Setenv("AGENCY_DATA_DIR", dataDir)
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
+
+	invocationID := "20260302171900-lnd2"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.LandingStatus = store.LandingStatusLanded
+		meta.FinishedAt = "2026-03-02T17:19:00Z"
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentLand(context.Background(), cr, fsys, repoDir, AgentLandOpts{
+		InvocationRef: invocationID,
+		RepoRef:       repoID,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	assert.Contains(t, out, "Successfully completed landing cleanup for invocation "+invocationID)
+	assert.Contains(t, out, "mode:        cleanup")
+	assert.NotContains(t, out, "head_before")
+	assert.NotContains(t, out, "head_after")
+	assert.Empty(t, stderr.String())
 }
 
 func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
@@ -181,9 +213,9 @@ func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentChat_JSONFailurePromptRequiredEnvelope(t *testing.T) {
+func TestAgentFollowup_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentChatOpts{
+	err := AgentFollowup(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentFollowupOpts{
 		InvocationRef: "missing",
 		JSON:          true,
 	}, &stdout, &stderr)
@@ -195,15 +227,15 @@ func TestAgentChat_JSONFailurePromptRequiredEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EPromptRequired), payload["error_code"])
 }
 
-func TestAgentChat_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "chat-json-daemon-fail")
+func TestAgentFollowup_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "followup-json-daemon-fail")
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), cr, fsys, repoDir, AgentChatOpts{
+	err := AgentFollowup(context.Background(), cr, fsys, repoDir, AgentFollowupOpts{
 		InvocationRef:   "does-not-exist",
 		Prompt:          "continue",
 		JSON:            true,
@@ -218,11 +250,11 @@ func TestAgentChat_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentChat_JSONFailureTransportEnvelope(t *testing.T) {
+func TestAgentFollowup_JSONFailureTransportEnvelope(t *testing.T) {
 	missingDataDir := filepath.Join(t.TempDir(), "missing")
 
 	var stdout, stderr bytes.Buffer
-	err := AgentChat(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentChatOpts{
+	err := AgentFollowup(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentFollowupOpts{
 		InvocationRef:   "any",
 		Prompt:          "continue",
 		JSON:            true,
@@ -236,11 +268,10 @@ func TestAgentChat_JSONFailureTransportEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EDaemonStartFailed), payload["error_code"])
 }
 
-func TestAgentRestart_JSONFailureValidationEnvelope(t *testing.T) {
+func TestAgentRestore_JSONFailureValidationEnvelope(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestartOpts{
+	err := AgentRestore(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestoreOpts{
 		InvocationRef: "inv-123",
-		CheckpointID:  0,
 		JSON:          true,
 	}, &stdout, &stderr)
 	require.NoError(t, err, "json validation failures should not return a human-formatted error")
@@ -251,15 +282,16 @@ func TestAgentRestart_JSONFailureValidationEnvelope(t *testing.T) {
 	assert.Equal(t, string(errors.EUsage), payload["error_code"])
 }
 
-func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
-	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "restart-json-daemon-fail")
+func TestAgentRestore_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
+	repoDir, dataDir, _, _, _, fsys := setupAgentTestEnvShort(t, "restore-json-daemon-fail")
+	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(dataDir, "config"))
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), cr, fsys, repoDir, AgentRestartOpts{
+	err := AgentRestore(context.Background(), cr, fsys, repoDir, AgentRestoreOpts{
 		InvocationRef:   "does-not-exist",
 		CheckpointID:    1,
 		JSON:            true,
@@ -274,11 +306,11 @@ func TestAgentRestart_JSONFailureDaemonDeclaredEnvelope(t *testing.T) {
 	assert.NotEmpty(t, payload["request_id"])
 }
 
-func TestAgentRestart_JSONFailureTransportEnvelope(t *testing.T) {
+func TestAgentRestore_JSONFailureTransportEnvelope(t *testing.T) {
 	missingDataDir := filepath.Join(t.TempDir(), "missing")
 
 	var stdout, stderr bytes.Buffer
-	err := AgentRestart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestartOpts{
+	err := AgentRestore(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentRestoreOpts{
 		InvocationRef:   "any",
 		CheckpointID:    1,
 		JSON:            true,

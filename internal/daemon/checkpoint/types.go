@@ -10,9 +10,6 @@ import (
 // Bumped to 1.1 for semantic trigger metadata (Trigger, ToolName, StreamSeq, Description).
 const SchemaVersion = "1.1"
 
-// SchemaVersionLegacy is the previous schema version (accepted on read).
-const SchemaVersionLegacy = "1.0"
-
 // MaxCheckpoints is the maximum number of checkpoints retained per invocation.
 const MaxCheckpoints = 200
 
@@ -80,7 +77,7 @@ type Checkpoint struct {
 
 // CheckpointsFile represents the checkpoints.json structure.
 type CheckpointsFile struct {
-	// SchemaVersion is the schema version string (e.g., "1.0").
+	// SchemaVersion is the schema version string (e.g., "1.1").
 	SchemaVersion string `json:"schema_version"`
 
 	// Checkpoints is the ordered list of checkpoints (oldest first).
@@ -166,9 +163,9 @@ func NewEvent(invocationID string, seq uint64, kind EventKind, data map[string]a
 	}
 }
 
-// ValidSchemaVersion reports whether v is a known checkpoints.json schema version.
+// ValidSchemaVersion reports whether v matches the current checkpoints.json schema version.
 func ValidSchemaVersion(v string) bool {
-	return v == SchemaVersion || v == SchemaVersionLegacy
+	return v == SchemaVersion
 }
 
 // CheckpointCreatedData returns the data map for a checkpoint_created event.
@@ -256,6 +253,7 @@ var MutatingTools = map[string]bool{
 	"MultiEdit":    true,
 	"NotebookEdit": true,
 	"Bash":         true,
+	"FileChange":   true,
 }
 
 // IsMutatingTool reports whether the given tool name modifies the filesystem.
@@ -283,6 +281,9 @@ type Config struct {
 	// DriftInterval is the minimum time between fsnotify-based drift checkpoints.
 	// If zero, defaults to 60 seconds. Only applies when semantic triggers are active.
 	DriftInterval time.Duration
+
+	// Env overlays every git command the checkpoint engine runs.
+	Env map[string]string
 }
 
 // DefaultConfig returns the default checkpoint configuration.

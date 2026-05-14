@@ -1,8 +1,8 @@
 {
-  "version": 1,
+  "version": 4,
   "defaults": {
-    "parent_branch": "main",
-    "runner": "claude"
+    "base_branch": "main",
+    "runner": "claude-code"
   },
   "scripts": {
     "setup": "scripts/agency_setup.sh",
@@ -10,6 +10,6 @@
     "archive": "scripts/agency_archive.sh"
   },
   "runners": {
-    "claude": "asdf exec claude"
+    "claude-code": "asdf exec claude"
   }
 }

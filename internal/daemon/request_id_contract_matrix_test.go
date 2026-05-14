@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing.T) {
+func TestRequestIDContractMatrix_InvocationMutationAndCheckEndpoints(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
@@ -32,12 +32,6 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			name:   "control_plane_start_headed",
 			method: http.MethodPost,
 			path:   "/invocations/start_headed",
-			body:   []byte(`{}`),
-		},
-		{
-			name:   "legacy_start_headless",
-			method: http.MethodPost,
-			path:   "/invocations/inv-1/start_headless",
 			body:   []byte(`{}`),
 		},
 		{
@@ -71,16 +65,16 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 			body:   []byte(`{}`),
 		},
 		{
-			name:   "chat_missing_repo",
+			name:   "followup_missing_repo",
 			method: http.MethodPost,
-			path:   "/invocations/inv-1/chat",
+			path:   "/invocations/inv-1/followup",
 			body:   []byte(`{"client_request_id":"req-1","prompt":"continue"}`),
 		},
 		{
-			name:   "restart_missing_repo",
+			name:   "recreate_missing_repo",
 			method: http.MethodPost,
-			path:   "/invocations/inv-1/restart",
-			body:   []byte(`{"checkpoint_id":1}`),
+			path:   "/invocations/inv-1/recreate",
+			body:   nil,
 		},
 		{
 			name:   "worktree_pr_sync_missing_repo",
@@ -91,19 +85,25 @@ func TestRequestIDContractMatrix_InvocationMutationAndReviewEndpoints(t *testing
 		{
 			name:   "worktree_merge_missing_repo",
 			method: http.MethodPost,
-			path:   "/worktrees/wt-1/merge",
+			path:   "/worktrees/wt-1/pr/merge",
 			body:   []byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
 		},
 		{
-			name:   "worktree_update_missing_repo",
+			name:   "worktree_rebase_missing_repo",
 			method: http.MethodPost,
-			path:   "/worktrees/wt-1/update",
+			path:   "/worktrees/wt-1/rebase",
 			body:   []byte(`{}`),
 		},
 		{
-			name:   "review",
+			name:   "check",
 			method: http.MethodGet,
-			path:   "/invocations/inv-1/review?repo_id=" + env.RepoID,
+			path:   "/invocations/inv-1/check?repo_id=" + env.RepoID,
+			body:   nil,
+		},
+		{
+			name:   "session",
+			method: http.MethodGet,
+			path:   "/invocations/inv-2/session?repo_id=" + env.RepoID,
 			body:   nil,
 		},
 	}

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/jsonl"
 )
 
 const (
@@ -20,7 +21,8 @@ const (
 	timelineSourceRankStream    = 20
 	timelineSourceRankEvent     = 30
 	timelineSourceRankRawMarker = 40
-	maxTimelineLineBytes        = 4 * 1024 * 1024
+	maxTimelineLineBytes        = stream.MaxLineSize
+	expectedTimelineSchema      = "1.0"
 )
 
 type timelineSortKey struct {
@@ -38,10 +40,6 @@ type timelineSortableEntry struct {
 // handleGetInvocationTimeline handles GET /invocations/{ref}/timeline.
 func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
-	if r.Method != http.MethodGet {
-		s.writeAPIError(w, http.StatusMethodNotAllowed, requestID, "E_METHOD_NOT_ALLOWED", "method not allowed", "", nil)
-		return
-	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	params, invalidLimit, invalidOrder := parseGetTimelineParams(r)
@@ -145,13 +143,13 @@ func (s *Server) collectTimelineEntries(record *resolvedInvocation) []timelineSo
 	}
 
 	// Stream entries (message/tool activity and other normalized events).
-	result = append(result, readStreamTimelineEntries(s.Store.SandboxStreamLogPath(record.RepoID, record.InvocationID), baseTimestamp)...)
+	result = append(result, readStreamTimelineEntries(s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream"), baseTimestamp)...)
 
 	// Invocation events (checkpoint lifecycle, landing events, etc).
 	result = append(result, readInvocationEventTimelineEntries(s.Store.InvocationEventsPath(record.RepoID, record.InvocationID), baseTimestamp)...)
 
 	// Raw-log coverage marker.
-	if info, err := os.Stat(s.Store.SandboxRawLogPath(record.RepoID, record.InvocationID)); err == nil && info.Size() > 0 {
+	if info, err := os.Stat(s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw")); err == nil && info.Size() > 0 {
 		result = append(result, newTimelineEntry(
 			TimelineEntryDTO{
 				EntryID:   "raw:" + strconv.FormatInt(info.Size(), 10),
@@ -173,115 +171,337 @@ func (s *Server) collectTimelineEntries(record *resolvedInvocation) []timelineSo
 }
 
 func readStreamTimelineEntries(path, fallbackTimestamp string) []timelineSortableEntry {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = f.Close() }()
-
-	entries := make([]timelineSortableEntry, 0)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxTimelineLineBytes)
-	for scanner.Scan() {
-		var event struct {
-			Seq       uint64                 `json:"seq"`
-			Timestamp string                 `json:"timestamp"`
-			Kind      string                 `json:"kind"`
-			Data      map[string]interface{} `json:"data"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		if event.Kind == "" {
-			continue
-		}
-		kind := event.Kind
-		switch event.Kind {
-		case "message":
-			kind = "message"
-		case "tool_start":
-			// Prefer completed tool records to avoid duplicate tool rows.
-			continue
-		case "tool_end":
-			kind = "tool_use"
-		}
-		entryID := "stream:" + strconv.FormatUint(event.Seq, 10)
-		entries = append(entries, newTimelineEntry(
-			TimelineEntryDTO{
-				EntryID:   entryID,
-				Kind:      kind,
-				Source:    "stream",
-				Timestamp: nonEmpty(event.Timestamp, fallbackTimestamp),
-				Seq:       event.Seq,
-				Data:      event.Data,
-			},
-			timelineSourceRankStream,
-		))
-	}
-
+	entries, _ := readTimelineJSONL(path, fallbackTimestamp, "stream", timelineSourceRankStream, buildStreamTimelineEntry)
 	return entries
 }
 
 func readInvocationEventTimelineEntries(path, fallbackTimestamp string) []timelineSortableEntry {
+	entries, _ := readTimelineJSONL(path, fallbackTimestamp, "invocation_event", timelineSourceRankEvent, buildInvocationEventTimelineEntry)
+	return entries
+}
+
+func readTimelineJSONL(
+	path string,
+	fallbackTimestamp string,
+	source string,
+	sourceRank int,
+	build func(line jsonl.Line, fallbackTimestamp string) (timelineSortableEntry, error),
+) ([]timelineSortableEntry, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, nil
 	}
 	defer func() { _ = f.Close() }()
 
 	entries := make([]timelineSortableEntry, 0)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxTimelineLineBytes)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		var event struct {
-			Seq       uint64                 `json:"seq"`
-			Timestamp string                 `json:"timestamp"`
-			Kind      string                 `json:"kind"`
-			Event     string                 `json:"event"`
-			Data      map[string]interface{} `json:"data"`
+	lastLineNumber := 0
+	visitErr := jsonl.Visit(f, maxTimelineLineBytes, jsonl.VisitOptions{}, func(line jsonl.Line) error {
+		lastLineNumber = line.Number
+		entry, buildErr := build(line, fallbackTimestamp)
+		if buildErr != nil {
+			return buildErr
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
+		entries = append(entries, entry)
+		return nil
+	})
+	if visitErr != nil {
+		nextLine := lastLineNumber + 1
+		if nextLine < 1 {
+			nextLine = 1
 		}
-
-		kind := nonEmpty(event.Kind, event.Event)
-		if kind == "" {
-			continue
-		}
-		entryKind := "invocation_event"
-		if strings.HasPrefix(kind, "agency.checkpoint_") {
-			entryKind = "checkpoint_event"
-		} else if kind == followUpPromptEventKind {
-			entryKind = "followup_prompt"
-		}
-
-		entryID := "inv_event:" + strconv.Itoa(lineNumber) + ":" + kind
-		if event.Seq > 0 {
-			entryID = "inv_event:" + strconv.FormatUint(event.Seq, 10) + ":" + kind
-		}
-
-		payload := event.Data
-		if payload == nil {
-			payload = map[string]interface{}{}
-		}
-		payload["event_kind"] = kind
-
-		entries = append(entries, newTimelineEntry(
-			TimelineEntryDTO{
-				EntryID:   entryID,
-				Kind:      entryKind,
-				Source:    "invocation_event",
-				Timestamp: nonEmpty(event.Timestamp, fallbackTimestamp),
-				Seq:       event.Seq,
-				Data:      payload,
-			},
-			timelineSourceRankEvent,
+		entries = append(entries, newTimelineReadFailureEntry(
+			source,
+			sourceRank,
+			nextLine,
+			fallbackTimestamp,
+			"scan_failed",
+			visitErr,
 		))
 	}
 
-	return entries
+	return entries, nil
+}
+
+func buildStreamTimelineEntry(line jsonl.Line, fallbackTimestamp string) (timelineSortableEntry, error) {
+	if line.Oversized {
+		return newTimelineReadFailureEntry(
+			"stream",
+			timelineSourceRankStream,
+			line.Number,
+			fallbackTimestamp,
+			"line_too_large",
+			nil,
+		), nil
+	}
+	var event struct {
+		SchemaVersion string                 `json:"schema_version"`
+		Seq           uint64                 `json:"seq"`
+		Timestamp     string                 `json:"timestamp"`
+		Kind          string                 `json:"kind"`
+		Data          map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(line.Bytes, &event); err != nil {
+		return newTimelineReadFailureEntry(
+			"stream",
+			timelineSourceRankStream,
+			line.Number,
+			fallbackTimestamp,
+			"json_unmarshal_failed",
+			err,
+		), nil
+	}
+	if event.SchemaVersion != expectedTimelineSchema {
+		return newSchemaMismatchTimelineEntry(
+			"stream",
+			timelineSourceRankStream,
+			line.Number,
+			event.Seq,
+			event.Timestamp,
+			fallbackTimestamp,
+			event.SchemaVersion,
+			event.Kind,
+		), nil
+	}
+	normalizedKind := strings.TrimSpace(event.Kind)
+	if normalizedKind == "" {
+		return newMissingEventKindTimelineEntry(
+			"stream",
+			timelineSourceRankStream,
+			line.Number,
+			event.Seq,
+			event.Timestamp,
+			fallbackTimestamp,
+		), nil
+	}
+	kind := normalizedKind
+	switch normalizedKind {
+	case "message":
+		kind = "message"
+	case "tool_start":
+		kind = "tool_use"
+		if event.Data == nil {
+			event.Data = map[string]interface{}{}
+		}
+		event.Data["in_progress"] = true
+	case "tool_end":
+		kind = "tool_use"
+	}
+	entryID := "stream:" + strconv.FormatUint(event.Seq, 10)
+	return newTimelineEntry(
+		TimelineEntryDTO{
+			EntryID:   entryID,
+			Kind:      kind,
+			Source:    "stream",
+			Timestamp: nonEmpty(event.Timestamp, fallbackTimestamp),
+			Seq:       event.Seq,
+			Data:      event.Data,
+		},
+		timelineSourceRankStream,
+	), nil
+}
+
+func buildInvocationEventTimelineEntry(line jsonl.Line, fallbackTimestamp string) (timelineSortableEntry, error) {
+	if line.Oversized {
+		return newTimelineReadFailureEntry(
+			"invocation_event",
+			timelineSourceRankEvent,
+			line.Number,
+			fallbackTimestamp,
+			"line_too_large",
+			nil,
+		), nil
+	}
+	var event struct {
+		SchemaVersion string                 `json:"schema_version"`
+		Seq           uint64                 `json:"seq"`
+		Timestamp     string                 `json:"timestamp"`
+		Kind          string                 `json:"kind"`
+		Event         string                 `json:"event"`
+		Data          map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(line.Bytes, &event); err != nil {
+		return newTimelineReadFailureEntry(
+			"invocation_event",
+			timelineSourceRankEvent,
+			line.Number,
+			fallbackTimestamp,
+			"json_unmarshal_failed",
+			err,
+		), nil
+	}
+	if event.SchemaVersion != expectedTimelineSchema {
+		return newSchemaMismatchTimelineEntry(
+			"invocation_event",
+			timelineSourceRankEvent,
+			line.Number,
+			event.Seq,
+			event.Timestamp,
+			fallbackTimestamp,
+			event.SchemaVersion,
+			nonEmpty(event.Kind, event.Event),
+		), nil
+	}
+
+	kind := strings.TrimSpace(event.Kind)
+	if kind == "" {
+		kind = strings.TrimSpace(event.Event)
+	}
+	if kind == "" {
+		return newMissingEventKindTimelineEntry(
+			"invocation_event",
+			timelineSourceRankEvent,
+			line.Number,
+			event.Seq,
+			event.Timestamp,
+			fallbackTimestamp,
+		), nil
+	}
+	entryKind := "invocation_event"
+	if strings.HasPrefix(kind, "agency.checkpoint_") {
+		entryKind = "checkpoint_event"
+	} else if kind == followUpPromptEventKind {
+		entryKind = "followup_prompt"
+	}
+
+	entryID := "inv_event:line:" + strconv.Itoa(line.Number) + ":" + kind
+	if event.Seq > 0 {
+		entryID = "inv_event:" + strconv.FormatUint(event.Seq, 10) + ":" + kind
+	}
+
+	payload := event.Data
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	payload["event_kind"] = kind
+
+	return newTimelineEntry(
+		TimelineEntryDTO{
+			EntryID:   entryID,
+			Kind:      entryKind,
+			Source:    "invocation_event",
+			Timestamp: nonEmpty(event.Timestamp, fallbackTimestamp),
+			Seq:       event.Seq,
+			Data:      payload,
+		},
+		timelineSourceRankEvent,
+	), nil
+}
+
+func newTimelineReadFailureEntry(
+	source string,
+	sourceRank int,
+	lineNumber int,
+	fallbackTimestamp string,
+	reason string,
+	readErr error,
+) timelineSortableEntry {
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "timeline"
+	}
+	if lineNumber < 1 {
+		lineNumber = 1
+	}
+	data := map[string]interface{}{
+		"reason": reason,
+		"line":   lineNumber,
+	}
+	if readErr != nil {
+		if trimmedErr := strings.TrimSpace(readErr.Error()); trimmedErr != "" {
+			data["error"] = trimmedErr
+		}
+	}
+	return newTimelineEntry(
+		TimelineEntryDTO{
+			EntryID:   fmt.Sprintf("%s:parse_error:line:%d", normalizedSource, lineNumber),
+			Kind:      "parse_error",
+			Source:    normalizedSource,
+			Timestamp: fallbackTimestamp,
+			Data:      data,
+		},
+		sourceRank,
+	)
+}
+
+func newSchemaMismatchTimelineEntry(
+	source string,
+	sourceRank int,
+	lineNumber int,
+	seq uint64,
+	timestamp string,
+	fallbackTimestamp string,
+	actualSchema string,
+	eventKind string,
+) timelineSortableEntry {
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "timeline"
+	}
+	entryID := fmt.Sprintf("%s:schema_mismatch:line:%d", normalizedSource, lineNumber)
+	if seq > 0 {
+		entryID = fmt.Sprintf("%s:schema_mismatch:%d", normalizedSource, seq)
+	}
+	trimmedSchema := strings.TrimSpace(actualSchema)
+	if trimmedSchema == "" {
+		trimmedSchema = "<empty>"
+	}
+	return newTimelineEntry(
+		TimelineEntryDTO{
+			EntryID:   entryID,
+			Kind:      "parse_error",
+			Source:    normalizedSource,
+			Timestamp: nonEmpty(timestamp, fallbackTimestamp),
+			Seq:       seq,
+			Data: map[string]interface{}{
+				"reason":                  "unsupported_schema_version",
+				"expected_schema_version": expectedTimelineSchema,
+				"actual_schema_version":   trimmedSchema,
+				"event_kind":              strings.TrimSpace(eventKind),
+			},
+		},
+		sourceRank,
+	)
+}
+
+func newMissingEventKindTimelineEntry(
+	source string,
+	sourceRank int,
+	lineNumber int,
+	seq uint64,
+	timestamp string,
+	fallbackTimestamp string,
+) timelineSortableEntry {
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "timeline"
+	}
+	if lineNumber < 1 {
+		lineNumber = 1
+	}
+	entryID := fmt.Sprintf("%s:missing_event_kind:line:%d", normalizedSource, lineNumber)
+	if seq > 0 {
+		entryID = fmt.Sprintf("%s:missing_event_kind:%d", normalizedSource, seq)
+	}
+
+	data := map[string]interface{}{
+		"reason": "missing_event_kind",
+		"line":   lineNumber,
+	}
+
+	return newTimelineEntry(
+		TimelineEntryDTO{
+			EntryID:   entryID,
+			Kind:      "parse_error",
+			Source:    normalizedSource,
+			Timestamp: nonEmpty(timestamp, fallbackTimestamp),
+			Seq:       seq,
+			Data:      data,
+		},
+		sourceRank,
+	)
 }
 
 func timelineBaseTimestamp(record *resolvedInvocation) string {

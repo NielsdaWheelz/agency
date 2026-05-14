@@ -2,7 +2,6 @@ package render
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +30,7 @@ func TestWriteTranscript_PromptSeed(t *testing.T) {
 
 func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 	t.Parallel()
+	payloadMarker := "S8_PR06_TOOL_INPUT_PAYLOAD_SHOULD_BE_HIDDEN"
 	entries := []TranscriptEntry{
 		{
 			Kind: "message",
@@ -39,7 +39,7 @@ func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 				"text": "Let me check",
 				"content_blocks": []map[string]interface{}{
 					{"type": "text", "text": "Let me check"},
-					{"type": "tool_use", "name": "Read", "id": "t1", "input": map[string]interface{}{"path": "/foo"}},
+					{"type": "tool_use", "name": "Read", "id": "t1", "input": map[string]interface{}{"path": "/foo", "payload": payloadMarker}},
 				},
 			},
 		},
@@ -51,7 +51,8 @@ func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 	assert.Contains(t, out, "Assistant")
 	assert.Contains(t, out, "Let me check")
 	assert.Contains(t, out, "▶ Tool: Read")
-	assert.Contains(t, out, "/foo")
+	assert.NotContains(t, out, payloadMarker, "default transcript rendering should not dump full tool input payloads")
+	assert.Contains(t, out, "input hidden", "default transcript rendering should make explicit that tool payloads are summarized")
 }
 
 func TestWriteTranscript_AssistantWithoutContentBlocks(t *testing.T) {
@@ -142,6 +143,23 @@ func TestWriteTranscript_FinalEntryWithUsage(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "in=1234")
 	assert.Contains(t, out, "out=567")
+}
+
+func TestWriteTranscript_UsageEntry(t *testing.T) {
+	t.Parallel()
+	entries := []TranscriptEntry{
+		{
+			Kind: "usage",
+			Data: map[string]interface{}{
+				"input_tokens":  float64(42),
+				"output_tokens": float64(7),
+			},
+		},
+	}
+	var buf bytes.Buffer
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "Usage (in=42, out=7)")
 }
 
 func TestWriteTranscript_ErrorEntry(t *testing.T) {
@@ -265,7 +283,7 @@ func TestWriteTranscript_SessionStartWithTimestamp(t *testing.T) {
 	assert.Contains(t, buf.String(), "model=claude-3")
 }
 
-func TestWriteTranscript_UserMessageWithTextFallback(t *testing.T) {
+func TestWriteTranscript_UserMessageWithTextAndNoFamilyRendersAsUser(t *testing.T) {
 	t.Parallel()
 	entries := []TranscriptEntry{
 		{
@@ -279,8 +297,32 @@ func TestWriteTranscript_UserMessageWithTextFallback(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Tool Result")
+	assert.Contains(t, buf.String(), "User")
+	assert.NotContains(t, buf.String(), "Tool Result")
 	assert.Contains(t, buf.String(), "some tool output")
+}
+
+func TestWriteTranscript_UserPromptMessageRendersAsUser(t *testing.T) {
+	t.Parallel()
+	entries := []TranscriptEntry{
+		{
+			Kind: "message",
+			Data: map[string]interface{}{
+				"role":           "user",
+				"message_family": "prompt",
+				"text":           "please continue from checkpoint two",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "User")
+	assert.Contains(t, out, "please continue from checkpoint two")
+	assert.NotContains(t, out, "Tool Result")
 }
 
 func TestWriteTranscript_RawLogCoverageOmitted(t *testing.T) {
@@ -319,38 +361,31 @@ func TestWriteTranscript_UnknownKindSilentlySkipped(t *testing.T) {
 	assert.Empty(t, buf.String())
 }
 
-func TestWriteRawTranscript_ValidJSONL(t *testing.T) {
+func TestWriteTranscript_ParseErrorAndUnknownDiagnostics(t *testing.T) {
 	t.Parallel()
-	raw := []byte(`{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"role":"assistant"}}
-`)
+	entries := []TranscriptEntry{
+		{
+			Kind: "parse_error",
+			Data: map[string]interface{}{
+				"parse_error_count": float64(2),
+				"reason":            "line_too_large",
+			},
+		},
+		{
+			Kind: "unknown",
+			Data: map[string]interface{}{
+				"runner_event_type": "rate_limit_event",
+				"reason":            "unsupported_event_type",
+			},
+		},
+	}
+
 	var buf bytes.Buffer
-	err := WriteRawTranscript(&buf, raw, TranscriptOpts{NoColor: true})
+	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
 	require.NoError(t, err)
 	out := buf.String()
-	// Should be pretty-printed (indented)
-	assert.Contains(t, out, "  \"type\": \"system\"")
-	assert.Contains(t, out, "  \"type\": \"assistant\"")
-}
-
-func TestWriteRawTranscript_InvalidLines(t *testing.T) {
-	t.Parallel()
-	raw := []byte("not json\n{\"valid\":true}\nalso not json\n")
-	var buf bytes.Buffer
-	err := WriteRawTranscript(&buf, raw, TranscriptOpts{NoColor: true})
-	require.NoError(t, err)
-	out := buf.String()
-	assert.Contains(t, out, "not json")
-	assert.Contains(t, out, "also not json")
-	assert.Contains(t, out, "\"valid\": true")
-}
-
-func TestWriteRawTranscript_Empty(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	err := WriteRawTranscript(&buf, nil, TranscriptOpts{NoColor: true})
-	require.NoError(t, err)
-	assert.Equal(t, "No raw log content.\n", buf.String())
+	assert.Contains(t, out, "line_too_large")
+	assert.Contains(t, out, "rate_limit_event")
 }
 
 func TestWriteTranscript_ContentBlocksAfterJSONRoundTrip(t *testing.T) {
@@ -398,21 +433,4 @@ func TestWriteTranscript_InvocationEvent(t *testing.T) {
 	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "[invocation_started]")
-}
-
-func TestWriteRawTranscript_BlankLines(t *testing.T) {
-	t.Parallel()
-	raw := []byte("\n\n{\"a\":1}\n\n")
-	var buf bytes.Buffer
-	err := WriteRawTranscript(&buf, raw, TranscriptOpts{NoColor: true})
-	require.NoError(t, err)
-	// Blank lines should be skipped; only the valid JSON line should render
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	found := false
-	for _, line := range lines {
-		if strings.Contains(line, "\"a\"") {
-			found = true
-		}
-	}
-	assert.True(t, found, "expected JSON to be pretty-printed")
 }

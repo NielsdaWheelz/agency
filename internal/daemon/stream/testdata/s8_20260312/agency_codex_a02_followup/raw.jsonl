@@ -1,0 +1,23 @@
+{"type":"thread.started","thread_id":"019d01b4-2b36-7243-ab7f-77f48407247a"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Running `sleep 20` now; I'll reply once it exits."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'sleep 20'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'sleep 20'","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"done"}}
+{"type":"turn.completed","usage":{"input_tokens":23917,"cached_input_tokens":12032,"output_tokens":247}}
+{"type":"thread.started","thread_id":"019d01b4-2b36-7243-ab7f-77f48407247a"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’m checking `docs/notes.md` first so I can append the line without disturbing any existing content."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc pwd","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc pwd","aggregated_output":"/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318160757-2e69/tree\n","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc \"sed -n '1,200p' docs/notes.md\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc \"sed -n '1,200p' docs/notes.md\"","aggregated_output":"fixture-notes\nalpha\nbeta\n","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"/bin/zsh -lc \"rg --files | rg '\"'^docs/notes'\"\\\\.md\"'$'\"'\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/bin/zsh -lc \"rg --files | rg '\"'^docs/notes'\"\\\\.md\"'$'\"'\"","aggregated_output":"docs/notes.md\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"I found `docs/notes.md` with three existing lines. I’m appending the requested follow-up line now."}}
+{"type":"item.completed","item":{"id":"item_5","type":"file_change","changes":[{"path":"/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318160757-2e69/tree/docs/notes.md","kind":"update"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":"The edit is in place. I’m verifying the final file contents before I summarize."}}
+{"type":"item.started","item":{"id":"item_7","type":"command_execution","command":"/bin/zsh -lc \"sed -n '1,200p' docs/notes.md\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_7","type":"command_execution","command":"/bin/zsh -lc \"sed -n '1,200p' docs/notes.md\"","aggregated_output":"fixture-notes\nalpha\nbeta\nagency-followup: two\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_8","type":"agent_message","text":"Appended `agency-followup: two` to [docs/notes.md](/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318160757-2e69/tree/docs/notes.md). The file now has four lines: `fixture-notes`, `alpha`, `beta`, and `agency-followup: two`."}}
+{"type":"turn.completed","usage":{"input_tokens":73780,"cached_input_tokens":61184,"output_tokens":942}}

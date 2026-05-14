@@ -1,16 +1,39 @@
 // Package store provides persistence for agency data.
-// This file implements invocation metadata and operations (Slice 8 PR-02).
+// This file implements invocation metadata and operations.
 package store
 
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
+
+// invocationMetaLocks serializes read-modify-write updates per meta path.
+var invocationMetaLocks sync.Map // map[string]*sync.Mutex
+
+func invocationMetaLock(metaPath string) *sync.Mutex {
+	lock, _ := invocationMetaLocks.LoadOrStore(invocationMetaLockKey(metaPath), &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func invocationMetaLockKey(metaPath string) string {
+	clean := filepath.Clean(metaPath)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(clean)); err == nil {
+		return filepath.Join(parent, filepath.Base(clean))
+	}
+	return clean
+}
 
 // InvocationStatus represents the lifecycle status of an invocation.
 type InvocationStatus string
@@ -21,6 +44,10 @@ const (
 
 	// InvocationStatusRunning indicates the invocation is actively running.
 	InvocationStatusRunning InvocationStatus = "running"
+
+	// InvocationStatusStopping indicates graceful shutdown was requested and
+	// terminal exit has not been observed yet.
+	InvocationStatusStopping InvocationStatus = "stopping"
 
 	// InvocationStatusFinished indicates the runner exited normally.
 	InvocationStatusFinished InvocationStatus = "finished"
@@ -58,7 +85,7 @@ const (
 // This is the canonical record for both invocation lifecycle and sandbox state.
 // Persisted to meta.json in the invocation record directory.
 type InvocationMeta struct {
-	// SchemaVersion is the schema version string (e.g., "1.0").
+	// SchemaVersion is the store schema version string.
 	SchemaVersion string `json:"schema_version"`
 
 	// InvocationID is the unique identifier (format: <yyyymmddhhmmss>-<4hex>).
@@ -72,6 +99,12 @@ type InvocationMeta struct {
 
 	// SandboxPath is the absolute path to the sandbox tree (runner CWD).
 	SandboxPath string `json:"sandbox_path"`
+
+	// CheckoutRoot is the repo-scoped root that contains Agency-managed checkouts.
+	CheckoutRoot string `json:"checkout_root"`
+
+	// ExecutionProfile is the profile label selected when this invocation was created.
+	ExecutionProfile string `json:"execution_profile"`
 
 	// SandboxBranch is the git branch for the sandbox (agency/sandbox-<invocation_id>).
 	SandboxBranch string `json:"sandbox_branch"`
@@ -101,7 +134,7 @@ type InvocationMeta struct {
 	// FinishedAt is the finish timestamp in RFC3339 UTC format (null if running).
 	FinishedAt string `json:"finished_at,omitempty"`
 
-	// Status is the lifecycle status (starting, running, finished, failed).
+	// Status is the lifecycle status (starting, running, stopping, finished, failed).
 	Status InvocationStatus `json:"status"`
 
 	// ExitReason describes how the invocation ended (exited, killed, stopped, start_failed, unknown).
@@ -150,14 +183,6 @@ type InvocationMeta struct {
 	// Flags contains boolean flags for operational state.
 	Flags InvocationFlags `json:"flags,omitempty"`
 
-	// SemanticStatus is the derived semantic status from stream parsing (headless only).
-	// Values: working, needs_input, blocked, ready_for_review.
-	// This is set by the daemon during stream parsing and is optional.
-	SemanticStatus *runnerstatus.Status `json:"semantic_status,omitempty"`
-
-	// SemanticStatusUpdatedAt is the timestamp when semantic_status was last updated.
-	SemanticStatusUpdatedAt string `json:"semantic_status_updated_at,omitempty"`
-
 	// CheckpointIncludeUntracked determines whether checkpoints include untracked files.
 	// Set at invocation creation time based on CLI flag --no-include-untracked.
 	// Default is true (include untracked files).
@@ -170,6 +195,15 @@ type InvocationMeta struct {
 	// CustomEnvKeys stores environment key names that were provided at start time.
 	// Values are intentionally not persisted to avoid storing secrets at rest.
 	CustomEnvKeys []string `json:"custom_env_keys,omitempty"`
+
+	// TaskID is the high-level task that created this invocation, when any.
+	TaskID string `json:"task_id,omitempty"`
+
+	// ClientRequestID is the control-plane start idempotency key, when any.
+	ClientRequestID string `json:"client_request_id,omitempty"`
+
+	// RequestFingerprint is the durable fingerprint for ClientRequestID.
+	RequestFingerprint string `json:"request_fingerprint,omitempty"`
 }
 
 // InvocationFlags contains boolean flags for operational state.
@@ -192,6 +226,8 @@ func NewInvocationMeta(
 	invocationName string,
 	integrationWorktreeID string,
 	sandboxPath string,
+	checkoutRoot string,
+	executionProfile string,
 	sandboxBranch string,
 	baseCommit string,
 	runner string,
@@ -199,11 +235,13 @@ func NewInvocationMeta(
 	startedAt time.Time,
 ) *InvocationMeta {
 	return &InvocationMeta{
-		SchemaVersion:              "1.0",
+		SchemaVersion:              SchemaVersion,
 		InvocationID:               invocationID,
 		InvocationName:             invocationName,
 		IntegrationWorktreeID:      integrationWorktreeID,
 		SandboxPath:                sandboxPath,
+		CheckoutRoot:               checkoutRoot,
+		ExecutionProfile:           executionProfile,
 		SandboxBranch:              sandboxBranch,
 		BaseCommit:                 baseCommit,
 		Runner:                     runner,
@@ -251,48 +289,75 @@ func (s *Store) EnsureInvocationDir(repoID, invocationID string) (string, error)
 	return invocationDir, nil
 }
 
-// EnsureSandboxDir creates the sandbox directory with exclusive semantics.
-// Returns the sandbox dir path on success.
-// Does NOT create the tree/ directory - that's done by git worktree add.
-func (s *Store) EnsureSandboxDir(repoID, invocationID string) (string, error) {
-	sandboxDir := s.SandboxDir(repoID, invocationID)
-
-	// Ensure parent directories exist (sandboxes/)
-	parentDir := s.SandboxesDir(repoID)
-	if err := s.FS.MkdirAll(parentDir, 0o700); err != nil {
+// EnsureInvocationLogsDir creates the invocation-owned logs directory.
+func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, error) {
+	logsDir := s.InvocationLogsDir(repoID, invocationID)
+	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to create sandboxes directory",
+			errors.EInvocationCreateFailed,
+			"failed to create invocation logs directory",
 			err,
-			map[string]string{"dir": parentDir},
+			map[string]string{"logs_dir": logsDir},
 		)
 	}
-
-	// Create sandbox directory with exclusive semantics
-	if err := os.Mkdir(sandboxDir, 0o700); err != nil {
-		if os.IsExist(err) {
-			return "", errors.NewWithDetails(
-				errors.ESandboxCreateFailed,
-				"sandbox directory already exists (invocation_id collision or stale state)",
-				map[string]string{"sandbox_dir": sandboxDir},
-			)
-		}
+	if err := s.FS.Chmod(logsDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to create sandbox directory",
+			errors.EInvocationCreateFailed,
+			"failed to enforce invocation logs directory permissions",
 			err,
-			map[string]string{"sandbox_dir": sandboxDir},
+			map[string]string{"logs_dir": logsDir},
 		)
 	}
+	return logsDir, nil
+}
 
-	return sandboxDir, nil
+// EnsureInvocationRunnerStatusDir creates the invocation-owned runner status directory.
+func (s *Store) EnsureInvocationRunnerStatusDir(repoID, invocationID string) (string, error) {
+	statusDir := filepath.Dir(s.InvocationRunnerStatusPath(repoID, invocationID))
+	if err := s.FS.MkdirAll(statusDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to create invocation runner status directory",
+			err,
+			map[string]string{"status_dir": statusDir},
+		)
+	}
+	if err := s.FS.Chmod(statusDir, 0o700); err != nil {
+		return "", errors.WrapWithDetails(
+			errors.EInvocationCreateFailed,
+			"failed to enforce invocation runner status directory permissions",
+			err,
+			map[string]string{"status_dir": statusDir},
+		)
+	}
+	return statusDir, nil
+}
+
+// PrepareInvocationLogPath ensures the invocation-owned logs directory exists
+// before returning the canonical path.
+func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (string, error) {
+	if _, err := s.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
+		return "", err
+	}
+	switch kind {
+	case "stderr":
+		return s.InvocationStderrLogPath(repoID, invocationID), nil
+	case "stream":
+		return s.InvocationStreamLogPath(repoID, invocationID), nil
+	case "hooks":
+		return s.InvocationHooksLogPath(repoID, invocationID), nil
+	case "terminal":
+		return s.InvocationTerminalLogPath(repoID, invocationID), nil
+	default:
+		return s.InvocationRawLogPath(repoID, invocationID), nil
+	}
 }
 
 // WriteInvocationMeta writes the meta.json for an invocation atomically.
 func (s *Store) WriteInvocationMeta(repoID, invocationID string, meta *InvocationMeta) error {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
 
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o644); err != nil {
+	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write invocation meta.json atomically",
@@ -307,6 +372,9 @@ func (s *Store) WriteInvocationMeta(repoID, invocationID string, meta *Invocatio
 // UpdateInvocationMeta reads, updates, and writes meta.json atomically.
 func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(*InvocationMeta)) error {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
+	lock := invocationMetaLock(metaPath)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// Read current meta
 	meta, err := s.ReadInvocationMeta(repoID, invocationID)
@@ -318,7 +386,7 @@ func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(
 	updateFn(meta)
 
 	// Write back atomically
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o644); err != nil {
+	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write invocation meta.json atomically",
@@ -354,7 +422,7 @@ func (s *Store) ReadInvocationMeta(repoID, invocationID string) (*InvocationMeta
 	}
 
 	var meta InvocationMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
+	if err := decodeStrictJSON(data, &meta); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EStoreCorrupt,
 			"failed to parse invocation meta.json",
@@ -362,20 +430,129 @@ func (s *Store) ReadInvocationMeta(repoID, invocationID string) (*InvocationMeta
 			map[string]string{"meta_path": metaPath},
 		)
 	}
+	fields, err := strictJSONObjectFields(data)
+	if err != nil {
+		return nil, errors.WrapWithDetails(
+			errors.EStoreCorrupt,
+			"failed to parse invocation meta.json",
+			err,
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if err := validateInvocationMeta(meta, invocationID, metaPath, fields); err != nil {
+		return nil, err
+	}
 
 	return &meta, nil
+}
+
+func validateInvocationMeta(meta InvocationMeta, invocationID, metaPath string, fields map[string]json.RawMessage) error {
+	if meta.SchemaVersion == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json missing schema_version",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.SchemaVersion != SchemaVersion {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json has unsupported schema_version",
+			map[string]string{
+				"meta_path":       metaPath,
+				"schema_version":  meta.SchemaVersion,
+				"expected_schema": SchemaVersion,
+			},
+		)
+	}
+	if meta.InvocationID == "" || meta.IntegrationWorktreeID == "" || meta.SandboxPath == "" ||
+		meta.CheckoutRoot == "" || meta.ExecutionProfile == "" || meta.SandboxBranch == "" ||
+		meta.BaseCommit == "" || meta.Runner == "" || meta.Mode == "" || meta.StartedAt == "" || meta.Status == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json missing required fields",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if _, ok := fields["checkpoint_include_untracked"]; !ok {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json missing checkpoint_include_untracked",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.InvocationID != invocationID {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json id does not match record path",
+			map[string]string{
+				"meta_path":          metaPath,
+				"path_invocation_id": invocationID,
+				"meta_invocation_id": meta.InvocationID,
+			},
+		)
+	}
+	if !filepath.IsAbs(meta.SandboxPath) || !filepath.IsAbs(meta.CheckoutRoot) || (meta.PromptPath != "" && !filepath.IsAbs(meta.PromptPath)) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json paths must be absolute",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if !validRunnerMode(meta.Mode) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json has unsupported mode",
+			map[string]string{
+				"meta_path": metaPath,
+				"mode":      string(meta.Mode),
+			},
+		)
+	}
+	if !validInvocationStatus(meta.Status) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json has unsupported status",
+			map[string]string{
+				"meta_path": metaPath,
+				"status":    string(meta.Status),
+			},
+		)
+	}
+	if meta.LandingStatus != "" && !validLandingStatus(meta.LandingStatus) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"invocation meta.json has unsupported landing_status",
+			map[string]string{
+				"meta_path":      metaPath,
+				"landing_status": string(meta.LandingStatus),
+			},
+		)
+	}
+	return nil
+}
+
+func validInvocationStatus(status InvocationStatus) bool {
+	switch status {
+	case InvocationStatusStarting, InvocationStatusRunning, InvocationStatusStopping, InvocationStatusFinished, InvocationStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func validLandingStatus(status LandingStatus) bool {
+	switch status {
+	case LandingStatusPending, LandingStatusLanded, LandingStatusDiscarded:
+		return true
+	default:
+		return false
+	}
 }
 
 // RemoveInvocationDir removes the invocation record directory completely.
 // This is used for cleanup on failed creation.
 func (s *Store) RemoveInvocationDir(repoID, invocationID string) error {
 	invocationDir := s.InvocationDir(repoID, invocationID)
-	return os.RemoveAll(invocationDir)
-}
-
-// RemoveSandboxDir removes the sandbox directory completely.
-// This is used for cleanup on failed creation or after landing/discard.
-func (s *Store) RemoveSandboxDir(repoID, invocationID string) error {
-	sandboxDir := s.SandboxDir(repoID, invocationID)
-	return os.RemoveAll(sandboxDir)
+	return fs.SafeRemoveAll(invocationDir, s.DataDir)
 }

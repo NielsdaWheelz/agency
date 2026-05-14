@@ -3,8 +3,6 @@ package stream
 import (
 	"encoding/json"
 	"strings"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // ClaudeAdapter parses Claude CLI stream-json output.
@@ -12,7 +10,7 @@ type ClaudeAdapter struct{}
 
 // Name returns the runner name.
 func (a *ClaudeAdapter) Name() string {
-	return "claude"
+	return "claude-code"
 }
 
 // claudeRawEvent represents a raw event from Claude stream-json output.
@@ -27,6 +25,9 @@ type claudeRawEvent struct {
 
 	// For assistant/user messages
 	Message *claudeMessage `json:"message,omitempty"`
+
+	// Some tool results are also surfaced as a top-level structured field.
+	ToolUseResult interface{} `json:"tool_use_result,omitempty"`
 
 	// For result events
 	Result        string       `json:"result,omitempty"`
@@ -73,25 +74,25 @@ func (a *ClaudeAdapter) ParseLine(line []byte) (*ParseResult, error) {
 	case "system":
 		if raw.Subtype == "init" {
 			result.Events = a.parseSystemInit(&raw)
+		} else {
+			result.Events = []*NormalizedEvent{
+				newUnknownRunnerEvent(raw.Type, "unsupported_system_subtype", line),
+			}
 		}
-		// Ignore other system subtypes
 
 	case "assistant":
-		events, status := a.parseAssistant(&raw)
-		result.Events = events
-		result.SemanticStatus = status
+		result.Events = a.parseAssistant(&raw)
 
 	case "user":
 		result.Events = a.parseUser(&raw)
 
 	case "result":
-		events, status := a.parseResult(&raw)
-		result.Events = events
-		result.SemanticStatus = status
+		result.Events = a.parseResult(&raw)
 
 	default:
-		// Unknown event type - ignore
-		return &ParseResult{}, nil
+		result.Events = []*NormalizedEvent{
+			newUnknownRunnerEvent(raw.Type, "unsupported_event_type", line),
+		}
 	}
 
 	return result, nil
@@ -118,7 +119,7 @@ func (a *ClaudeAdapter) parseSystemInit(raw *claudeRawEvent) []*NormalizedEvent 
 }
 
 // parseAssistant handles assistant message events.
-func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) []*NormalizedEvent {
 	event := &NormalizedEvent{
 		Kind: EventKindMessage,
 		Data: make(map[string]interface{}),
@@ -126,6 +127,7 @@ func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) ([]*NormalizedEvent,
 
 	event.Data["role"] = "assistant"
 	event.Data["has_tool_use"] = false
+	event.Data["message_family"] = MessageFamilyAssistant
 
 	if raw.Message != nil && len(raw.Message.Content) > 0 {
 		// Parse content blocks
@@ -194,10 +196,7 @@ func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) ([]*NormalizedEvent,
 			}
 		}
 	}
-
-	// Any assistant event -> working status
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 // parseUser handles user message events (tool results).
@@ -209,6 +208,10 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 
 	event.Data["role"] = "user"
 	event.Data["has_tool_use"] = false
+	messageFamily := MessageFamilyPrompt
+	if raw.ToolUseResult != nil {
+		messageFamily = MessageFamilyToolResult
+	}
 
 	if raw.Message != nil && len(raw.Message.Content) > 0 {
 		// Try to extract text from content
@@ -223,11 +226,15 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 				if blocks, ok := content.([]interface{}); ok {
 					var textParts []string
 					var enrichedBlocks []map[string]interface{}
+					hasToolResult := false
 					for _, block := range blocks {
 						if blockMap, ok := block.(map[string]interface{}); ok {
 							enriched := map[string]interface{}{}
 							if t, ok := blockMap["type"].(string); ok {
 								enriched["type"] = t
+								if t == "tool_result" {
+									hasToolResult = true
+								}
 							}
 							if text, ok := blockMap["text"].(string); ok {
 								textParts = append(textParts, text)
@@ -243,6 +250,9 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 							enrichedBlocks = append(enrichedBlocks, enriched)
 						}
 					}
+					if hasToolResult {
+						messageFamily = MessageFamilyToolResult
+					}
 					if len(enrichedBlocks) > 0 {
 						event.Data["content_blocks"] = enrichedBlocks
 					}
@@ -253,29 +263,55 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 			}
 		}
 	}
+	if messageFamily == MessageFamilyToolResult {
+		if _, hasText := event.Data["text"]; !hasText && raw.ToolUseResult != nil {
+			switch v := raw.ToolUseResult.(type) {
+			case string:
+				if strings.TrimSpace(v) != "" {
+					event.Data["text"] = v
+				}
+			default:
+				if encoded, err := json.Marshal(v); err == nil {
+					text := strings.TrimSpace(string(encoded))
+					if text != "" && text != "null" {
+						event.Data["text"] = text
+					}
+				}
+			}
+		}
+	}
+	event.Data["message_family"] = messageFamily
 
 	return []*NormalizedEvent{event}
 }
 
 // parseResult handles result events (success/error).
-func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
-	if raw.Subtype == "error" || raw.Result == "error" {
+func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) []*NormalizedEvent {
+	success, failureReason := claudeResultSucceeded(raw)
+	if !success {
 		event := &NormalizedEvent{
 			Kind: EventKindError,
 			Data: make(map[string]interface{}),
 		}
 
-		if raw.ErrorMessage != "" {
-			event.Data["message"] = raw.ErrorMessage
-		} else {
-			event.Data["message"] = "unknown error"
+		message := strings.TrimSpace(raw.ErrorMessage)
+		if message == "" {
+			message = "runner reported non-success result"
+			if failureReason != "" {
+				message += ": " + failureReason
+			}
 		}
+		event.Data["message"] = message
 		if raw.ErrorCode != "" {
 			event.Data["code"] = raw.ErrorCode
 		}
-
-		// Error -> no semantic status (lifecycle handles it)
-		return []*NormalizedEvent{event}, nil
+		if subtype := strings.TrimSpace(raw.Subtype); subtype != "" {
+			event.Data["result_subtype"] = subtype
+		}
+		if failureReason != "" {
+			event.Data["result_state"] = failureReason
+		}
+		return []*NormalizedEvent{event}
 	}
 
 	// Success result
@@ -305,8 +341,28 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) ([]*NormalizedEvent, *r
 		}
 		event.Data["usage"] = usage
 	}
+	return []*NormalizedEvent{event}
+}
 
-	// Success -> ready_for_review
-	status := runnerstatus.StatusReadyForReview
-	return []*NormalizedEvent{event}, &status
+func claudeResultSucceeded(raw *claudeRawEvent) (bool, string) {
+	subtype := strings.ToLower(strings.TrimSpace(raw.Subtype))
+	switch subtype {
+	case "":
+		// Fall back to result status token checks below.
+	case "success":
+		return true, ""
+	case "error", "failed", "failure", "canceled", "cancelled", "timeout", "timed_out", "interrupted":
+		return false, subtype
+	default:
+		// Fail closed for unknown explicit subtypes to avoid misreporting success.
+		return false, subtype
+	}
+
+	resultState := strings.ToLower(strings.TrimSpace(raw.Result))
+	switch resultState {
+	case "error", "failed", "failure", "canceled", "cancelled", "timeout", "timed_out", "interrupted":
+		return false, resultState
+	default:
+		return true, ""
+	}
 }

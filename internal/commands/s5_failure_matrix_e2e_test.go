@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -25,7 +26,7 @@ import (
 func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("not_ready_invocation", func(t *testing.T) {
+	t.Run("merge_without_runner_status_still_checks_pr", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "s5-not-ready")
 
 		branch := "agency/s5-not-ready-abcd"
@@ -45,7 +46,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -76,7 +77,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -107,7 +108,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -138,7 +139,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -156,25 +157,30 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		st := store.NewStore(fsys, dataDir, time.Now)
 		client := daemonclient.NewClient(st.DaemonSocketPath())
 
-		resp, err := client.WorktreePRMerge(ctx, "wt-any", repoID, daemonclient.WorktreePRMergeOpts{
+		_, err := client.WorktreePRMerge(ctx, "wt-any", repoID, daemonclient.WorktreePRMergeOpts{
 			Strategy:         "squash",
 			ConfirmationMode: "yes",
 			Confirmed:        false,
 		})
-		require.NoError(t, err)
+
+		require.Error(t, err)
+		assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+
+		dae, ok := daemonclient.AsDaemonActionError(err)
+		require.True(t, ok, "expected daemon action error, got %v", err)
+
+		var resp daemon.WorktreePRMergeResponse
+		require.NoError(t, dae.DecodeResponse(&resp))
 		assert.False(t, resp.OK)
 		assert.Equal(t, string(errors.EConfirmationRequired), resp.ErrorCode)
 		assert.NotEmpty(t, resp.RequestID)
 	})
 
-	t.Run("bounded_input_handling", func(t *testing.T) {
+	t.Run("pr_sync_falls_back_when_runner_status_missing", func(t *testing.T) {
 		repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "s5-bounded-input")
 
 		integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-		reportDir := filepath.Join(integrationTree, ".agency")
-		require.NoError(t, os.MkdirAll(reportDir, 0o755))
-		oversized := "## summary\n" + strings.Repeat("x", 2*1024*1024) + "\n\n## how to test\n- go test ./...\n"
-		require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(oversized), 0o644))
+		prBodyPath := filepath.Join(integrationTree, ".agency", "tmp", "pr_body.md")
 
 		branch := "agency/s5-bounded-input-abcd"
 
@@ -190,30 +196,26 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 			Stdout:   `[{"number":81,"url":"https://github.com/test/agent-repo/pull/81","state":"OPEN"}]`,
 			ExitCode: 0,
 		}
+		daemonRunner.Responses["gh pr edit 81 --body-file "+prBodyPath] = testutil.FakeResponse{ExitCode: 0}
 
 		cr := newS5E2ECommandRunner(repoDir)
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRSync(ctx, cr, fsys, repoDir, WorktreePRSyncOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			JSON:            true,
 			DataDirOverride: dataDir,
 		}, &stdout, &stderr)
 		require.NoError(t, err)
 
-		// Worktree PR sync uses non-strict mode: oversized reports fall back
-		// to a generated body rather than failing, so sync succeeds with
-		// fallback diagnostics.
 		payload := decodeS5E2EMutationPayload(t, stdout.Bytes())
 		assert.Equal(t, true, payload["ok"])
-		assert.Equal(t, true, payload["report_fallback_used"])
+		assert.Equal(t, "updated", payload["pr_action"])
 		assertS5E2EHasRequestID(t, payload)
 
-		// Verify the oversized report was NOT sent to GitHub (fallback body was used instead).
-		diagnostics, _ := payload["report_diagnostics"].([]any)
-		require.NotEmpty(t, diagnostics, "expected report diagnostics for oversized fallback")
-		firstDiag, _ := diagnostics[0].(map[string]any)
-		assert.Equal(t, "report_oversized", firstDiag["code"])
+		prBody, readErr := os.ReadFile(prBodyPath)
+		require.NoError(t, readErr)
+		assert.Equal(t, "## summary\nSummary not provided.\n\n## how to test\nHow to test not provided.\n", string(prBody))
 	})
 
 	t.Run("merge_log_persistence_failure", func(t *testing.T) {
@@ -245,7 +247,7 @@ func TestS5E2EWorktreePRSyncMergeFailureMatrix(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		err := WorktreePRMerge(ctx, cr, fsys, repoDir, WorktreePRMergeOpts{
 			WorktreeRef:     worktreeID,
-			RepoFlag:        repoID,
+			RepoRef:         repoID,
 			Yes:             true,
 			JSON:            true,
 			DataDirOverride: dataDir,
@@ -268,13 +270,7 @@ func setupS5E2EMergeReadyInvocation(
 	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys = setupAgentTestEnvShort(t, worktreeName)
 	invocationID = ""
 
-	integrationTree := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
-	reportDir := filepath.Join(integrationTree, ".agency")
-	require.NoError(t, os.MkdirAll(reportDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(
-		"## summary\nmerge-ready report\n\n## how to test\ngo test ./...\n",
-	), 0o644))
-	writeWorktreeMergeScriptsAndConfig(t, integrationTree)
+	writeWorktreeMergeScriptsAndConfig(t, repoDir)
 	writeWorktreeMergeRepoRecord(t, dataDir, repoID, repoDir)
 
 	branch = "agency/" + worktreeName + "-abcd"

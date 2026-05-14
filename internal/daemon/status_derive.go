@@ -1,214 +1,263 @@
 // Package daemon implements the agency daemon supervisor.
-// This file implements display status derivation logic (PR-12).
 package daemon
 
 import (
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-// DerivedStatus contains the computed display status and related fields.
-type DerivedStatus struct {
-	DisplayStatus  string
-	AttentionFlags []string
-	SortKey        int
-}
-
 // StallThreshold is the duration after which an invocation with no output is considered stalled.
 const StallThreshold = 5 * time.Minute
 
-// DeriveDisplayStatus computes the display status from invocation metadata.
-// This implements the precedence rules defined in PR-12 spec.
-//
-// Precedence:
-//  1. lifecycle == failed → "failed"
-//  2. landing_status == landed → "landed"
-//  3. landing_status == discarded → "discarded"
-//  4. needs_attention flag → "needs attention"
-//  5. semantic == needs_input → "needs input"
-//  6. semantic == blocked → "blocked"
-//  7. semantic == ready_for_review → "ready for review"
-//  8. running + semantic working → "working"
-//  9. running → "running"
-//  10. finished → "finished"
-//  11. starting → "starting"
-func DeriveDisplayStatus(meta *store.InvocationMeta, now time.Time) DerivedStatus {
-	var flags []string
-
-	// Collect attention flags
+// InvocationMetaToDTO converts an InvocationMeta to an InvocationDTO.
+func InvocationMetaToDTO(
+	meta *store.InvocationMeta,
+	repoID string,
+	logsDir string,
+	runnerMeta *runnerstatus.RunnerStatus,
+	runnerStatusErr error,
+	now time.Time,
+) InvocationDTO {
+	flags := make([]string, 0, 4)
 	if meta.Flags.NeedsAttention {
 		flags = append(flags, AttentionFlagNeedsAttention)
 	}
 	if meta.Flags.Orphaned {
 		flags = append(flags, AttentionFlagOrphaned)
 	}
-
-	// Check for stalled (no output for > threshold while running)
 	if meta.Status == store.InvocationStatusRunning && meta.LastOutputAt != "" {
 		lastOutput, err := time.Parse(time.RFC3339, meta.LastOutputAt)
 		if err == nil && now.Sub(lastOutput) > StallThreshold {
 			flags = append(flags, AttentionFlagStalled)
 		}
 	}
-
-	// Check if landable (finished, not yet landed/discarded)
 	if meta.Status == store.InvocationStatusFinished &&
 		meta.LandingStatus != store.LandingStatusLanded &&
 		meta.LandingStatus != store.LandingStatusDiscarded {
 		flags = append(flags, AttentionFlagLandable)
 	}
 
-	// Get semantic status string
-	var semanticStatus string
-	if meta.SemanticStatus != nil {
-		semanticStatus = string(*meta.SemanticStatus)
-	}
+	runnerState, runnerReason, _, runnerValid := projectRunnerStatus(runnerMeta, runnerStatusErr)
 
-	// Apply precedence rules
-	//
-	// 1. Failed
-	if meta.Status == store.InvocationStatusFailed {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusFailed,
-			AttentionFlags: flags,
-			SortKey:        SortKeyFailed,
+	state := InvocationStateStarting
+	reason := ""
+	sortKey := SortKeyStarting
+
+	switch meta.Status {
+	case store.InvocationStatusStarting:
+		state = InvocationStateStarting
+		sortKey = SortKeyStarting
+	case store.InvocationStatusStopping:
+		state = InvocationStateStopping
+		sortKey = SortKeyStopping
+	case store.InvocationStatusFailed:
+		state = InvocationStateFailed
+		reason = strings.TrimSpace(meta.FailureReason)
+		sortKey = SortKeyFailed
+	case store.InvocationStatusRunning:
+		state = InvocationStateRunning
+		sortKey = SortKeyRunning
+		switch runnerState {
+		case string(runnerstatus.StateWaiting):
+			state = InvocationStateWaiting
+			reason = runnerReason
+			sortKey = SortKeyWaiting
+		case string(runnerstatus.StateFailed):
+			state = InvocationStateFailed
+			reason = firstNonEmpty(runnerReason, strings.TrimSpace(meta.FailureReason))
+			sortKey = SortKeyFailed
+		}
+	case store.InvocationStatusFinished:
+		switch {
+		case runnerStatusErr != nil:
+			state = InvocationStateFailed
+			reason = "runner_status_unreadable"
+			sortKey = SortKeyFailed
+		case runnerMeta == nil:
+			state = InvocationStateFailed
+			reason = "runner_status_missing"
+			sortKey = SortKeyFailed
+		case runnerMeta.SchemaVersion != runnerstatus.SchemaVersion:
+			state = InvocationStateFailed
+			reason = "runner_status_invalid"
+			sortKey = SortKeyFailed
+		case !runnerValid:
+			state = InvocationStateFailed
+			reason = "runner_status_invalid"
+			sortKey = SortKeyFailed
+		case runnerState == string(runnerstatus.StateSucceeded):
+			state = InvocationStateSucceeded
+			sortKey = SortKeySucceeded
+		case runnerState == string(runnerstatus.StateWaiting):
+			state = InvocationStateWaiting
+			reason = runnerReason
+			sortKey = SortKeyWaiting
+		case runnerState == string(runnerstatus.StateFailed):
+			state = InvocationStateFailed
+			reason = firstNonEmpty(runnerReason, "runner_failed")
+			sortKey = SortKeyFailed
+		default:
+			state = InvocationStateFailed
+			reason = "invalid_runner_state"
+			sortKey = SortKeyFailed
 		}
 	}
 
-	// 2. Landed
 	if meta.LandingStatus == store.LandingStatusLanded {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusLanded,
-			AttentionFlags: flags,
-			SortKey:        SortKeyLanded,
-		}
+		sortKey = SortKeyLanded
 	}
-
-	// 3. Discarded
 	if meta.LandingStatus == store.LandingStatusDiscarded {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusDiscarded,
-			AttentionFlags: flags,
-			SortKey:        SortKeyDiscarded,
-		}
+		sortKey = SortKeyDiscarded
 	}
-
-	// 4. Needs attention
-	if meta.Flags.NeedsAttention {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusNeedsAttention,
-			AttentionFlags: flags,
-			SortKey:        SortKeyNeedsAttention,
-		}
-	}
-
-	// 5. Semantic: needs_input
-	if semanticStatus == string(runnerstatus.StatusNeedsInput) {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusNeedsInput,
-			AttentionFlags: flags,
-			SortKey:        SortKeyNeedsInput,
-		}
-	}
-
-	// 6. Semantic: blocked
-	if semanticStatus == string(runnerstatus.StatusBlocked) {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusBlocked,
-			AttentionFlags: flags,
-			SortKey:        SortKeyBlocked,
-		}
-	}
-
-	// 7. Semantic: ready_for_review
-	if semanticStatus == string(runnerstatus.StatusReadyForReview) {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusReadyForReview,
-			AttentionFlags: flags,
-			SortKey:        SortKeyReadyForReview,
-		}
-	}
-
-	// 8. Running + working
-	if meta.Status == store.InvocationStatusRunning && semanticStatus == string(runnerstatus.StatusWorking) {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusWorking,
-			AttentionFlags: flags,
-			SortKey:        SortKeyWorking,
-		}
-	}
-
-	// 9. Running
-	if meta.Status == store.InvocationStatusRunning {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusRunning,
-			AttentionFlags: flags,
-			SortKey:        SortKeyRunning,
-		}
-	}
-
-	// 10. Finished
-	if meta.Status == store.InvocationStatusFinished {
-		return DerivedStatus{
-			DisplayStatus:  DisplayStatusFinished,
-			AttentionFlags: flags,
-			SortKey:        SortKeyFinished,
-		}
-	}
-
-	// 11. Starting (default)
-	return DerivedStatus{
-		DisplayStatus:  DisplayStatusStarting,
-		AttentionFlags: flags,
-		SortKey:        SortKeyStarting,
-	}
-}
-
-// InvocationMetaToDTO converts an InvocationMeta to an InvocationDTO.
-func InvocationMetaToDTO(meta *store.InvocationMeta, repoID string, logsDir string, now time.Time) InvocationDTO {
-	derived := DeriveDisplayStatus(meta, now)
-
-	var semanticStatus string
-	if meta.SemanticStatus != nil {
-		semanticStatus = string(*meta.SemanticStatus)
+	if meta.Flags.NeedsAttention && sortKey > SortKeyNeedsAttention {
+		sortKey = SortKeyNeedsAttention
 	}
 
 	return InvocationDTO{
-		InvocationID:   meta.InvocationID,
-		InvocationName: meta.InvocationName,
-		WorktreeID:     meta.IntegrationWorktreeID,
-		RepoID:         repoID,
-		Runner:         meta.Runner,
-		Mode:           string(meta.Mode),
-		StartedAt:      meta.StartedAt,
-		FinishedAt:     meta.FinishedAt,
-		LastOutputAt:   meta.LastOutputAt,
-		Status:         string(meta.Status),
-		ExitReason:     meta.ExitReason,
-		ExitCode:       meta.ExitCode,
-		SemanticStatus: semanticStatus,
-		LandingStatus:  string(meta.LandingStatus),
-		DisplayStatus:  derived.DisplayStatus,
-		AttentionFlags: derived.AttentionFlags,
-		SortKey:        derived.SortKey,
-		SandboxPath:    meta.SandboxPath,
-		LogsDir:        logsDir,
+		InvocationID:     meta.InvocationID,
+		InvocationName:   meta.InvocationName,
+		WorktreeID:       meta.IntegrationWorktreeID,
+		RepoID:           repoID,
+		Runner:           meta.Runner,
+		Mode:             string(meta.Mode),
+		TmuxSession:      meta.TmuxSession,
+		CheckoutRoot:     meta.CheckoutRoot,
+		ExecutionProfile: meta.ExecutionProfile,
+		StartedAt:        meta.StartedAt,
+		FinishedAt:       meta.FinishedAt,
+		LastOutputAt:     meta.LastOutputAt,
+		State:            string(state),
+		Reason:           reason,
+		ExitReason:       meta.ExitReason,
+		ExitCode:         meta.ExitCode,
+		LandingStatus:    string(meta.LandingStatus),
+		PRSyncEligible:   invocationPRSyncEligible(state, meta.LandingStatus),
+		AttentionFlags:   flags,
+		SortKey:          sortKey,
+		SandboxPath:      meta.SandboxPath,
+		LogsDir:          logsDir,
 	}
 }
 
-// WorktreeMetaToDTO converts an IntegrationWorktreeMeta to a WorktreeDTO.
-func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta) WorktreeDTO {
-	return WorktreeDTO{
-		WorktreeID:   meta.WorktreeID,
-		Name:         meta.Name,
-		RepoID:       meta.RepoID,
-		Branch:       meta.Branch,
-		ParentBranch: meta.ParentBranch,
-		TreePath:     meta.TreePath,
-		State:        string(meta.State),
-		CreatedAt:    meta.CreatedAt,
-		LastUsedAt:   meta.LastUsedAt,
+func projectRunnerStatus(
+	runnerMeta *runnerstatus.RunnerStatus,
+	runnerStatusErr error,
+) (state string, reason string, summary string, valid bool) {
+	if runnerStatusErr != nil || runnerMeta == nil || runnerMeta.SchemaVersion != runnerstatus.SchemaVersion {
+		return "", "", "", false
 	}
+	if err := runnerMeta.Validate(); err != nil {
+		return "", "", "", false
+	}
+	return string(runnerMeta.State), strings.TrimSpace(runnerMeta.Reason), strings.TrimSpace(runnerMeta.Summary), true
+}
+
+// WorktreeMetaToDTO converts an IntegrationWorktreeMeta and optional merge state to a WorktreeDTO.
+func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta, mergeMeta *store.IntegrationWorktreeMergeMeta) WorktreeDTO {
+	return WorktreeDTO{
+		WorktreeID:       meta.WorktreeID,
+		WorktreeName:     strings.TrimSpace(meta.Name),
+		RepoID:           meta.RepoID,
+		Branch:           meta.Branch,
+		BaseBranch:       meta.BaseBranch,
+		TreePath:         meta.TreePath,
+		CheckoutRoot:     meta.CheckoutRoot,
+		ExecutionProfile: meta.ExecutionProfile,
+		State:            string(meta.State),
+		CreatedAt:        meta.CreatedAt,
+		LastUsedAt:       meta.LastUsedAt,
+		Merge:            WorktreeMergeMetaToDTO(mergeMeta),
+	}
+}
+
+func invocationPRSyncEligible(state InvocationState, landingStatus store.LandingStatus) bool {
+	switch landingStatus {
+	case store.LandingStatusLanded:
+		return true
+	case store.LandingStatusPending, store.LandingStatusDiscarded:
+		return false
+	}
+
+	switch state {
+	case InvocationStateSucceeded:
+		return true
+	case InvocationStateStarting,
+		InvocationStateRunning,
+		InvocationStateWaiting,
+		InvocationStateStopping,
+		InvocationStateFailed:
+		return false
+	default:
+		return false
+	}
+}
+
+// WorktreeMergeMetaToDTO converts durable merge state to the canonical daemon read shape.
+func WorktreeMergeMetaToDTO(meta *store.IntegrationWorktreeMergeMeta) *WorktreeMergeDTO {
+	if meta == nil {
+		return nil
+	}
+	return &WorktreeMergeDTO{
+		AttemptID:      meta.AttemptID,
+		RequestID:      meta.RequestID,
+		State:          string(meta.Status),
+		Stage:          string(meta.Stage),
+		StatusSummary:  worktreeMergeStatusSummary(meta),
+		Strategy:       meta.Strategy,
+		DeleteBranch:   meta.DeleteBranch,
+		Branch:         meta.Branch,
+		PRNumber:       meta.PRNumber,
+		PRURL:          meta.PRURL,
+		MergeLogPath:   meta.MergeLogPath,
+		VerifyLogPath:  meta.VerifyLogPath,
+		ArchiveLogPath: meta.ArchiveLogPath,
+		StartedAt:      meta.StartedAt,
+		UpdatedAt:      meta.UpdatedAt,
+		FinishedAt:     meta.FinishedAt,
+		ErrorCode:      meta.ErrorCode,
+		ErrorMessage:   meta.ErrorMessage,
+		Hint:           meta.Hint,
+	}
+}
+
+func worktreeMergeStatusSummary(meta *store.IntegrationWorktreeMergeMeta) string {
+	if meta == nil {
+		return ""
+	}
+
+	switch meta.Status {
+	case store.WorktreeMergeStatusRunning:
+		switch meta.Stage {
+		case store.WorktreeMergeStagePreflight:
+			return "preparing merge"
+		case store.WorktreeMergeStageVerify:
+			return "running verify"
+		case store.WorktreeMergeStageMerge:
+			return "merging pull request"
+		case store.WorktreeMergeStageArchive:
+			return "archiving worktree"
+		case store.WorktreeMergeStageCompleted:
+			return "finishing merge"
+		}
+	case store.WorktreeMergeStatusSucceeded:
+		return "merge complete"
+	case store.WorktreeMergeStatusFailed:
+		switch meta.Stage {
+		case store.WorktreeMergeStageVerify:
+			return "merge failed during verify"
+		case store.WorktreeMergeStageMerge:
+			return "merge failed during pull request merge"
+		case store.WorktreeMergeStageArchive:
+			return "merge failed during archive cleanup"
+		case store.WorktreeMergeStageCompleted:
+			return "merge failed"
+		default:
+			return "merge failed before completion"
+		}
+	}
+
+	return ""
 }

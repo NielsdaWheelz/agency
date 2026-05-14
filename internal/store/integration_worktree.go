@@ -1,10 +1,10 @@
 // Package store provides persistence for agency data.
-// This file implements integration worktree metadata and operations (Slice 8 PR-01).
+// This file implements integration worktree metadata and operations.
 package store
 
 import (
-	"encoding/json"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -25,7 +25,7 @@ const (
 // IntegrationWorktreeMeta represents the metadata for an integration worktree.
 // This is persisted to meta.json in the worktree record directory.
 type IntegrationWorktreeMeta struct {
-	// SchemaVersion is the schema version string (e.g., "1.0").
+	// SchemaVersion is the store schema version string.
 	SchemaVersion string `json:"schema_version"`
 
 	// WorktreeID is the unique identifier (format: <yyyymmddhhmmss>-<4hex>).
@@ -40,11 +40,17 @@ type IntegrationWorktreeMeta struct {
 	// Branch is the git branch name (format: agency/<name>-<shortid>).
 	Branch string `json:"branch"`
 
-	// ParentBranch is the branch this worktree was created from.
-	ParentBranch string `json:"parent_branch"`
+	// BaseBranch is the branch this worktree was created from.
+	BaseBranch string `json:"base_branch"`
 
 	// TreePath is the absolute path to the tree/ directory (the actual worktree).
 	TreePath string `json:"tree_path"`
+
+	// CheckoutRoot is the repo-scoped root that contains Agency-managed checkouts.
+	CheckoutRoot string `json:"checkout_root"`
+
+	// ExecutionProfile is the profile label selected when this worktree was created.
+	ExecutionProfile string `json:"execution_profile"`
 
 	// CreatedAt is the creation timestamp in RFC3339 UTC format.
 	CreatedAt string `json:"created_at"`
@@ -54,20 +60,31 @@ type IntegrationWorktreeMeta struct {
 
 	// State is the lifecycle state (present or archived).
 	State WorktreeState `json:"state"`
+
+	// TaskID is the high-level task that created this worktree, when any.
+	TaskID string `json:"task_id,omitempty"`
+
+	// IdempotencyKey is the worktree create idempotency key, when any.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+
+	// RequestFingerprint is the durable fingerprint for IdempotencyKey.
+	RequestFingerprint string `json:"request_fingerprint,omitempty"`
 }
 
 // NewIntegrationWorktreeMeta creates a new IntegrationWorktreeMeta with required fields set.
-func NewIntegrationWorktreeMeta(worktreeID, name, repoID, branch, parentBranch, treePath string, createdAt time.Time) *IntegrationWorktreeMeta {
+func NewIntegrationWorktreeMeta(worktreeID, name, repoID, branch, baseBranch, treePath, checkoutRoot, executionProfile string, createdAt time.Time) *IntegrationWorktreeMeta {
 	return &IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          name,
-		RepoID:        repoID,
-		Branch:        branch,
-		ParentBranch:  parentBranch,
-		TreePath:      treePath,
-		CreatedAt:     createdAt.UTC().Format(time.RFC3339),
-		State:         WorktreeStatePresent,
+		SchemaVersion:    SchemaVersion,
+		WorktreeID:       worktreeID,
+		Name:             name,
+		RepoID:           repoID,
+		Branch:           branch,
+		BaseBranch:       baseBranch,
+		TreePath:         treePath,
+		CheckoutRoot:     checkoutRoot,
+		ExecutionProfile: executionProfile,
+		CreatedAt:        createdAt.UTC().Format(time.RFC3339),
+		State:            WorktreeStatePresent,
 	}
 }
 
@@ -112,7 +129,7 @@ func (s *Store) EnsureIntegrationWorktreeDir(repoID, worktreeID string) (string,
 func (s *Store) WriteIntegrationWorktreeMeta(repoID, worktreeID string, meta *IntegrationWorktreeMeta) error {
 	metaPath := s.IntegrationWorktreeMetaPath(repoID, worktreeID)
 
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o644); err != nil {
+	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write integration worktree meta.json atomically",
@@ -138,7 +155,7 @@ func (s *Store) UpdateIntegrationWorktreeMeta(repoID, worktreeID string, updateF
 	updateFn(meta)
 
 	// Write back atomically
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o644); err != nil {
+	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write integration worktree meta.json atomically",
@@ -174,7 +191,7 @@ func (s *Store) ReadIntegrationWorktreeMeta(repoID, worktreeID string) (*Integra
 	}
 
 	var meta IntegrationWorktreeMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
+	if err := decodeStrictJSON(data, &meta); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EStoreCorrupt,
 			"failed to parse integration worktree meta.json",
@@ -182,13 +199,86 @@ func (s *Store) ReadIntegrationWorktreeMeta(repoID, worktreeID string) (*Integra
 			map[string]string{"meta_path": metaPath},
 		)
 	}
+	if err := validateIntegrationWorktreeMeta(meta, repoID, worktreeID, metaPath); err != nil {
+		return nil, err
+	}
 
 	return &meta, nil
+}
+
+func validateIntegrationWorktreeMeta(meta IntegrationWorktreeMeta, repoID, worktreeID, metaPath string) error {
+	if meta.SchemaVersion == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json missing schema_version",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.SchemaVersion != SchemaVersion {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json has unsupported schema_version",
+			map[string]string{
+				"meta_path":       metaPath,
+				"schema_version":  meta.SchemaVersion,
+				"expected_schema": SchemaVersion,
+			},
+		)
+	}
+	if meta.WorktreeID == "" || meta.Name == "" || meta.RepoID == "" || meta.Branch == "" ||
+		meta.BaseBranch == "" || meta.TreePath == "" || meta.CheckoutRoot == "" ||
+		meta.ExecutionProfile == "" || meta.CreatedAt == "" || meta.State == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json missing required fields",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.WorktreeID != worktreeID || meta.RepoID != repoID {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json id does not match record path",
+			map[string]string{
+				"meta_path":        metaPath,
+				"path_worktree_id": worktreeID,
+				"meta_worktree_id": meta.WorktreeID,
+				"path_repo_id":     repoID,
+				"meta_repo_id":     meta.RepoID,
+			},
+		)
+	}
+	if !filepath.IsAbs(meta.TreePath) || !filepath.IsAbs(meta.CheckoutRoot) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json paths must be absolute",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if !validWorktreeState(meta.State) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree meta.json has unsupported state",
+			map[string]string{
+				"meta_path": metaPath,
+				"state":     string(meta.State),
+			},
+		)
+	}
+	return nil
+}
+
+func validWorktreeState(state WorktreeState) bool {
+	switch state {
+	case WorktreeStatePresent, WorktreeStateArchived:
+		return true
+	default:
+		return false
+	}
 }
 
 // RemoveIntegrationWorktreeDir removes the worktree record directory completely.
 // This is used for cleanup on failed creation.
 func (s *Store) RemoveIntegrationWorktreeDir(repoID, worktreeID string) error {
 	worktreeDir := s.IntegrationWorktreeDir(repoID, worktreeID)
-	return os.RemoveAll(worktreeDir)
+	return fs.SafeRemoveAll(worktreeDir, s.DataDir)
 }

@@ -1,6 +1,0 @@
-./adapter.go
-./claude.go
-./codex.go
-./events.go
-./parser.go
-./parser_test.go

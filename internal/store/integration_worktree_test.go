@@ -13,45 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationWorktreePaths(t *testing.T) {
-	t.Parallel()
-	st := NewStore(fs.NewRealFS(), "/data", time.Now)
-
-	tests := []struct {
-		name     string
-		repoID   string
-		wtID     string
-		wantDir  string
-		wantMeta string
-		wantTree string
-		wantEv   string
-		wantLogs string
-	}{
-		{
-			name:     "basic paths",
-			repoID:   "abc123",
-			wtID:     "20260131120000-a1b2",
-			wantDir:  "/data/repos/abc123/integration_worktrees/20260131120000-a1b2",
-			wantMeta: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/meta.json",
-			wantTree: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/tree",
-			wantEv:   "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/events.jsonl",
-			wantLogs: "/data/repos/abc123/integration_worktrees/20260131120000-a1b2/logs",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.wantDir, st.IntegrationWorktreeDir(tt.repoID, tt.wtID), "IntegrationWorktreeDir()")
-			assert.Equal(t, tt.wantMeta, st.IntegrationWorktreeMetaPath(tt.repoID, tt.wtID), "IntegrationWorktreeMetaPath()")
-			assert.Equal(t, tt.wantTree, st.IntegrationWorktreeTreePath(tt.repoID, tt.wtID), "IntegrationWorktreeTreePath()")
-			assert.Equal(t, tt.wantEv, st.IntegrationWorktreeEventsPath(tt.repoID, tt.wtID), "IntegrationWorktreeEventsPath()")
-			assert.Equal(t, tt.wantLogs, st.IntegrationWorktreeLogsDir(tt.repoID, tt.wtID), "IntegrationWorktreeLogsDir()")
-		})
-	}
-}
-
 func TestNewIntegrationWorktreeMeta(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
@@ -62,12 +23,17 @@ func TestNewIntegrationWorktreeMeta(t *testing.T) {
 		"agency/my-feature-a1b2",
 		"main",
 		"/path/to/tree",
+		"/path/to/checkouts",
+		"work",
 		now,
 	)
 
-	assert.Equal(t, "1.0", meta.SchemaVersion)
+	assert.Equal(t, SchemaVersion, meta.SchemaVersion)
 	assert.Equal(t, "20260131120000-a1b2", meta.WorktreeID)
 	assert.Equal(t, "my-feature", meta.Name)
+	assert.Equal(t, "main", meta.BaseBranch)
+	assert.Equal(t, "/path/to/checkouts", meta.CheckoutRoot)
+	assert.Equal(t, "work", meta.ExecutionProfile)
 	assert.Equal(t, WorktreeStatePresent, meta.State)
 	assert.Equal(t, "2026-01-31T12:00:00Z", meta.CreatedAt)
 }
@@ -80,18 +46,38 @@ func TestEnsureIntegrationWorktreeDir(t *testing.T) {
 	repoID := "abc123"
 	wtID := "20260131120000-a1b2"
 
-	// First call should succeed
 	dir, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.NoError(t, err)
-	assert.Equal(t, st.IntegrationWorktreeDir(repoID, wtID), dir)
+	assert.DirExists(t, dir)
 
-	// Directory should exist
-	_, err = os.Stat(dir)
-	assert.False(t, os.IsNotExist(err), "directory was not created")
-
-	// Second call should fail (exclusive)
 	_, err = st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.Error(t, err, "expected error on duplicate")
+}
+
+func TestRemoveIntegrationWorktreeDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	outsideRoot := t.TempDir()
+	st := NewStore(fs.NewRealFS(), dataDir, time.Now)
+
+	reposDir := filepath.Join(dataDir, "repos")
+	repoID, err := filepath.Rel(reposDir, outsideRoot)
+	require.NoError(t, err)
+
+	const wtID = "wt-escape"
+	targetDir := filepath.Join(outsideRoot, "integration_worktrees", wtID)
+	require.NoError(t, os.MkdirAll(targetDir, 0o700))
+	marker := filepath.Join(targetDir, "keep.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("do-not-delete"), 0o600))
+
+	err = st.RemoveIntegrationWorktreeDir(repoID, wtID)
+	require.Error(t, err)
+	var guardErr *fs.ErrNotUnderPrefix
+	require.ErrorAs(t, err, &guardErr)
+
+	_, statErr := os.Stat(marker)
+	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
 }
 
 func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
@@ -114,6 +100,8 @@ func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
 		"agency/my-feature-a1b2",
 		"main",
 		"/path/to/tree",
+		"/path/to/checkouts",
+		"work",
 		time.Now(),
 	)
 
@@ -125,6 +113,7 @@ func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
 
 	assert.Equal(t, meta.WorktreeID, read.WorktreeID)
 	assert.Equal(t, meta.Name, read.Name)
+	assert.Equal(t, meta.BaseBranch, read.BaseBranch)
 }
 
 func TestReadIntegrationWorktreeMeta_NotFound(t *testing.T) {
@@ -155,6 +144,8 @@ func TestUpdateIntegrationWorktreeMeta(t *testing.T) {
 		"agency/my-feature-a1b2",
 		"main",
 		"/path/to/tree",
+		"/path/to/checkouts",
+		"work",
 		time.Now(),
 	)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
@@ -188,24 +179,34 @@ func TestScanIntegrationWorktreesForRepo(t *testing.T) {
 
 	// Write meta for wt1
 	meta1 := &IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "20260131100000-a1b2",
-		Name:          "feature-a",
-		RepoID:        repoID,
-		State:         WorktreeStatePresent,
-		CreatedAt:     "2026-01-31T10:00:00Z",
+		SchemaVersion:    SchemaVersion,
+		WorktreeID:       "20260131100000-a1b2",
+		Name:             "feature-a",
+		RepoID:           repoID,
+		Branch:           "agency/feature-a-a1b2",
+		BaseBranch:       "main",
+		TreePath:         filepath.Join(tmpDir, "checkouts", repoID, "worktrees", "feature-a-a1b2"),
+		CheckoutRoot:     filepath.Join(tmpDir, "checkouts", repoID),
+		ExecutionProfile: "work",
+		State:            WorktreeStatePresent,
+		CreatedAt:        "2026-01-31T10:00:00Z",
 	}
 	data1, _ := json.MarshalIndent(meta1, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wt1Dir, "meta.json"), data1, 0o644))
 
 	// Write meta for wt2
 	meta2 := &IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "20260131110000-c3d4",
-		Name:          "feature-b",
-		RepoID:        repoID,
-		State:         WorktreeStateArchived,
-		CreatedAt:     "2026-01-31T11:00:00Z",
+		SchemaVersion:    SchemaVersion,
+		WorktreeID:       "20260131110000-c3d4",
+		Name:             "feature-b",
+		RepoID:           repoID,
+		Branch:           "agency/feature-b-c3d4",
+		BaseBranch:       "main",
+		TreePath:         filepath.Join(tmpDir, "checkouts", repoID, "worktrees", "feature-b-c3d4"),
+		CheckoutRoot:     filepath.Join(tmpDir, "checkouts", repoID),
+		ExecutionProfile: "work",
+		State:            WorktreeStateArchived,
+		CreatedAt:        "2026-01-31T11:00:00Z",
 	}
 	data2, _ := json.MarshalIndent(meta2, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wt2Dir, "meta.json"), data2, 0o644))
@@ -248,6 +249,247 @@ func TestLoad_CorruptWorktreeMeta(t *testing.T) {
 	_, err = st.ReadIntegrationWorktreeMeta(repoID, wtID)
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err), "expected E_STORE_CORRUPT for corrupt meta.json")
+}
+
+func TestReadIntegrationWorktreeMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "abc123"
+	wtID := "20260131120000-a1b2"
+
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	metaPath := st.IntegrationWorktreeMetaPath(repoID, wtID)
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"worktree_id":"20260131120000-a1b2"}`), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMeta(repoID, wtID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestReadIntegrationWorktreeMeta_UnsupportedSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "abc123"
+	wtID := "20260131120000-a1b2"
+
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+	require.NoError(t, err)
+
+	metaPath := st.IntegrationWorktreeMetaPath(repoID, wtID)
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"schema_version":"9.9","worktree_id":"20260131120000-a1b2"}`), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMeta(repoID, wtID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestReadIntegrationWorktreeMetaRejectsStrictViolations(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	const repoID = "abc123"
+
+	cases := []struct {
+		name       string
+		worktreeID string
+		mutate     func(*IntegrationWorktreeMeta)
+	}{
+		{
+			name:       "wrong worktree id",
+			worktreeID: "wt-wrong",
+			mutate: func(meta *IntegrationWorktreeMeta) {
+				meta.WorktreeID = "other"
+			},
+		},
+		{
+			name:       "wrong repo id",
+			worktreeID: "wt-repo",
+			mutate: func(meta *IntegrationWorktreeMeta) {
+				meta.RepoID = "other"
+			},
+		},
+		{
+			name:       "relative tree path",
+			worktreeID: "wt-relative",
+			mutate: func(meta *IntegrationWorktreeMeta) {
+				meta.TreePath = "tree"
+			},
+		},
+		{
+			name:       "missing required field",
+			worktreeID: "wt-missing",
+			mutate: func(meta *IntegrationWorktreeMeta) {
+				meta.Branch = ""
+			},
+		},
+		{
+			name:       "invalid state",
+			worktreeID: "wt-state",
+			mutate: func(meta *IntegrationWorktreeMeta) {
+				meta.State = "removed"
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := st.EnsureIntegrationWorktreeDir(repoID, tc.worktreeID)
+			require.NoError(t, err)
+			meta := NewIntegrationWorktreeMeta(tc.worktreeID, tc.worktreeID, repoID, "agency/"+tc.worktreeID, "main", "/tree/"+tc.worktreeID, "/checkouts/"+repoID, "work", time.Now())
+			tc.mutate(meta)
+			data, err := json.MarshalIndent(meta, "", "  ")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(st.IntegrationWorktreeMetaPath(repoID, tc.worktreeID), data, 0o600))
+
+			_, err = st.ReadIntegrationWorktreeMeta(repoID, tc.worktreeID)
+			require.Error(t, err)
+			assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+		})
+	}
+}
+
+func TestReadAndScanIntegrationWorktreeMetaRejectUnknownFields(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	const repoID = "abc123"
+	const worktreeID = "wt-unknown"
+
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(st.IntegrationWorktreeMetaPath(repoID, worktreeID), []byte(`{
+		"schema_version":"2.0",
+		"worktree_id":"wt-unknown",
+		"name":"feature",
+		"repo_id":"abc123",
+		"branch":"agency/feature",
+		"base_branch":"main",
+		"tree_path":"/tree/wt-unknown",
+		"checkout_root":"/checkouts/abc123",
+		"execution_profile":"work",
+		"created_at":"2026-01-01T00:00:00Z",
+		"state":"present",
+		"unexpected":true
+	}`), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMeta(repoID, worktreeID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+
+	records, err := ScanIntegrationWorktreesForRepo(tmpDir, repoID)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.True(t, records[0].Broken)
+	assert.Nil(t, records[0].Meta)
+}
+
+func TestNewIntegrationWorktreeMergeMeta(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 20, 19, 0, 0, 0, time.UTC)
+	meta := NewIntegrationWorktreeMergeMeta(
+		"repo-1",
+		"wt-1",
+		"20260420190000-a1b2",
+		"req-123",
+		"squash",
+		true,
+		"/tmp/agency.json",
+		now,
+	)
+
+	assert.Equal(t, SchemaVersion, meta.SchemaVersion)
+	assert.Equal(t, WorktreeMergeStatusRunning, meta.Status)
+	assert.Equal(t, WorktreeMergeStagePreflight, meta.Stage)
+	assert.Equal(t, "2026-04-20T19:00:00Z", meta.StartedAt)
+	assert.Equal(t, "2026-04-20T19:00:00Z", meta.UpdatedAt)
+	assert.Equal(t, "/tmp/agency.json", meta.AgencyConfigPath)
+}
+
+func TestWriteReadAndUpdateIntegrationWorktreeMerge(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "repo-1"
+	worktreeID := "wt-1"
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
+	require.NoError(t, err)
+
+	meta := NewIntegrationWorktreeMergeMeta(
+		repoID,
+		worktreeID,
+		"20260420190000-a1b2",
+		"req-123",
+		"squash",
+		true,
+		"",
+		time.Date(2026, 4, 20, 19, 0, 0, 0, time.UTC),
+	)
+	meta.Branch = "agency/example-a1b2"
+	meta.PRNumber = 42
+	meta.PRURL = "https://example.test/pr/42"
+	meta.VerifyLogPath = "/tmp/verify.log"
+
+	require.NoError(t, st.WriteIntegrationWorktreeMerge(repoID, worktreeID, meta))
+
+	read, err := st.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	require.NoError(t, err)
+	require.NotNil(t, read)
+	assert.Equal(t, meta.AttemptID, read.AttemptID)
+	assert.Equal(t, meta.PRNumber, read.PRNumber)
+	assert.Equal(t, meta.VerifyLogPath, read.VerifyLogPath)
+
+	err = st.UpdateIntegrationWorktreeMerge(repoID, worktreeID, func(m *IntegrationWorktreeMergeMeta) {
+		m.Status = WorktreeMergeStatusSucceeded
+		m.Stage = WorktreeMergeStageCompleted
+		m.FinishedAt = "2026-04-20T19:01:00Z"
+	})
+	require.NoError(t, err)
+
+	read, err = st.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	require.NoError(t, err)
+	require.NotNil(t, read)
+	assert.Equal(t, WorktreeMergeStatusSucceeded, read.Status)
+	assert.Equal(t, WorktreeMergeStageCompleted, read.Stage)
+	assert.Equal(t, "2026-04-20T19:01:00Z", read.FinishedAt)
+}
+
+func TestReadIntegrationWorktreeMerge_NotFoundReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	meta, err := st.ReadIntegrationWorktreeMerge("repo-1", "wt-1")
+	require.NoError(t, err)
+	assert.Nil(t, meta)
+}
+
+func TestReadIntegrationWorktreeMerge_CorruptReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
+
+	repoID := "repo-1"
+	worktreeID := "wt-1"
+	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
+	require.NoError(t, err)
+
+	mergePath := st.IntegrationWorktreeMergePath(repoID, worktreeID)
+	require.NoError(t, os.WriteFile(mergePath, []byte("{invalid"), 0o644))
+
+	_, err = st.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
 // TestLoad_WorktreeNotFound verifies that reading a non-existent meta.json
@@ -300,13 +542,19 @@ func TestScanIntegrationWorktrees_CorruptMetaMarkedBroken(t *testing.T) {
 	// Create a worktree with valid meta.json
 	goodDir := filepath.Join(wtDir, "20260131110000-good")
 	require.NoError(t, os.Mkdir(goodDir, 0o755))
+	checkoutRoot := filepath.Join(tmpDir, "checkouts", repoID)
 	goodMeta := &IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "20260131110000-good",
-		Name:          "good-feature",
-		RepoID:        repoID,
-		State:         WorktreeStatePresent,
-		CreatedAt:     "2026-01-31T11:00:00Z",
+		SchemaVersion:    SchemaVersion,
+		WorktreeID:       "20260131110000-good",
+		Name:             "good-feature",
+		RepoID:           repoID,
+		Branch:           "agency/good-feature-good",
+		BaseBranch:       "main",
+		TreePath:         filepath.Join(checkoutRoot, "worktrees", "good-feature-good"),
+		CheckoutRoot:     checkoutRoot,
+		ExecutionProfile: "work",
+		State:            WorktreeStatePresent,
+		CreatedAt:        "2026-01-31T11:00:00Z",
 	}
 	data, _ := json.MarshalIndent(goodMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(goodDir, "meta.json"), data, 0o644))

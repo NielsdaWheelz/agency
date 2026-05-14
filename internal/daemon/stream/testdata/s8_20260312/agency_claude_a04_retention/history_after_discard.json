@@ -1,0 +1,480 @@
+{
+  "entries": [
+    {
+      "entry_id": "prompt_seed",
+      "kind": "prompt_seed",
+      "source": "prompt",
+      "timestamp": "2026-03-18T16:19:19Z",
+      "data": {
+        "text": "Read docs/notes.md, append the line agency-seed: one, then update README.md with a short note that this workspace is for fixture capture. After that, summarize what changed."
+      }
+    },
+    {
+      "entry_id": "raw:21180",
+      "kind": "raw_log_coverage",
+      "source": "raw_log",
+      "timestamp": "2026-03-18T16:19:19Z",
+      "data": {
+        "bytes": 21180
+      }
+    },
+    {
+      "entry_id": "stream:1",
+      "kind": "session_start",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:21Z",
+      "seq": 1,
+      "data": {
+        "cwd": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree",
+        "model": "claude-opus-4-6[1m]",
+        "session_id": "8fa6a13b-6950-418e-8a78-097348b4587d"
+      }
+    },
+    {
+      "entry_id": "stream:2",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:24Z",
+      "seq": 2,
+      "data": {
+        "content_blocks": [
+          {
+            "id": "toolu_0141Bs7B4MafF1d43K4XkkFJ",
+            "input": {
+              "file_path": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ],
+        "has_tool_use": true,
+        "message_family": "assistant",
+        "role": "assistant",
+        "tool_names": [
+          "Read"
+        ]
+      }
+    },
+    {
+      "entry_id": "stream:3",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:25Z",
+      "seq": 3,
+      "data": {
+        "content_blocks": [
+          {
+            "content": "     1→fixture-notes\n     2→alpha\n     3→beta\n     4→",
+            "tool_use_id": "toolu_0141Bs7B4MafF1d43K4XkkFJ",
+            "type": "tool_result"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "tool_result",
+        "role": "user",
+        "text": "     1→fixture-notes\n     2→alpha\n     3→beta\n     4→"
+      }
+    },
+    {
+      "entry_id": "stream:4",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:25Z",
+      "seq": 4,
+      "data": {
+        "content_blocks": [
+          {
+            "id": "toolu_01GvXYHwN61ZPt5jALX2SVo8",
+            "input": {
+              "file_path": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/README.md"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ],
+        "has_tool_use": true,
+        "message_family": "assistant",
+        "role": "assistant",
+        "tool_names": [
+          "Read"
+        ]
+      }
+    },
+    {
+      "entry_id": "stream:5",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:25Z",
+      "seq": 5,
+      "data": {
+        "content_blocks": [
+          {
+            "content": "     1→# Agency S8 Fixture Workspace\n     2→\n     3→This repository exists only for runner fixture capture.\n     4→\n     5→- `src/math.js` contains simple math helpers\n     6→- `docs/notes.md` is safe to edit\n     7→- `data/large.txt` contains deterministic numbered lines\n     8→- `scripts/fail.sh` fails on purpose\n     9→- `tests/check.sh` performs a lightweight verification\n    10→",
+            "tool_use_id": "toolu_01GvXYHwN61ZPt5jALX2SVo8",
+            "type": "tool_result"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "tool_result",
+        "role": "user",
+        "text": "     1→# Agency S8 Fixture Workspace\n     2→\n     3→This repository exists only for runner fixture capture.\n     4→\n     5→- `src/math.js` contains simple math helpers\n     6→- `docs/notes.md` is safe to edit\n     7→- `data/large.txt` contains deterministic numbered lines\n     8→- `scripts/fail.sh` fails on purpose\n     9→- `tests/check.sh` performs a lightweight verification\n    10→"
+      }
+    },
+    {
+      "entry_id": "stream:6",
+      "kind": "unknown",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:25Z",
+      "seq": 6,
+      "data": {
+        "raw_json_preview": "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1773864000,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_disabled\",\"isUsingOverage\":false},\"uuid\":\"325216db-ff59-4ecd-9afa-8d13ccecc184\",\"session_id\":\"8fa6a13b-6950-418e-8a78-097348b4587d\"}",
+        "reason": "unsupported_event_type",
+        "runner_event_type": "rate_limit_event"
+      }
+    },
+    {
+      "entry_id": "stream:7",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:29Z",
+      "seq": 7,
+      "data": {
+        "content_blocks": [
+          {
+            "id": "toolu_01BRmbEXWv1P4kWNvFrchwP4",
+            "input": {
+              "file_path": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md",
+              "new_string": "beta\nagency-seed: one\n",
+              "old_string": "beta\n",
+              "replace_all": false
+            },
+            "name": "Edit",
+            "type": "tool_use"
+          }
+        ],
+        "has_tool_use": true,
+        "message_family": "assistant",
+        "role": "assistant",
+        "tool_names": [
+          "Edit"
+        ]
+      }
+    },
+    {
+      "entry_id": "stream:8",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:29Z",
+      "seq": 8,
+      "data": {
+        "content_blocks": [
+          {
+            "content": "The file /private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md has been updated successfully.",
+            "tool_use_id": "toolu_01BRmbEXWv1P4kWNvFrchwP4",
+            "type": "tool_result"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "tool_result",
+        "role": "user",
+        "text": "The file /private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md has been updated successfully."
+      }
+    },
+    {
+      "entry_id": "stream:9",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:29Z",
+      "seq": 9,
+      "data": {
+        "content_blocks": [
+          {
+            "id": "toolu_0181mr8x1TWa6E9yNpXEyGer",
+            "input": {
+              "file_path": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/README.md",
+              "new_string": "- `tests/check.sh` performs a lightweight verification\n\n## Note\n\nThis workspace is used for fixture capture.",
+              "old_string": "- `tests/check.sh` performs a lightweight verification",
+              "replace_all": false
+            },
+            "name": "Edit",
+            "type": "tool_use"
+          }
+        ],
+        "has_tool_use": true,
+        "message_family": "assistant",
+        "role": "assistant",
+        "tool_names": [
+          "Edit"
+        ]
+      }
+    },
+    {
+      "entry_id": "stream:10",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:29Z",
+      "seq": 10,
+      "data": {
+        "content_blocks": [
+          {
+            "content": "The file /private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/README.md has been updated successfully.",
+            "tool_use_id": "toolu_0181mr8x1TWa6E9yNpXEyGer",
+            "type": "tool_result"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "tool_result",
+        "role": "user",
+        "text": "The file /private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/README.md has been updated successfully."
+      }
+    },
+    {
+      "entry_id": "inv_event:1:agency.checkpoint_created",
+      "kind": "checkpoint_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:19:29Z",
+      "seq": 1,
+      "data": {
+        "checkpoint_id": 1,
+        "event_kind": "agency.checkpoint_created",
+        "includes_untracked": true,
+        "sandbox_head_sha": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793"
+      }
+    },
+    {
+      "entry_id": "inv_event:2:agency.checkpoint_created",
+      "kind": "checkpoint_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:19:30Z",
+      "seq": 2,
+      "data": {
+        "checkpoint_id": 2,
+        "event_kind": "agency.checkpoint_created",
+        "includes_untracked": true,
+        "sandbox_head_sha": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793"
+      }
+    },
+    {
+      "entry_id": "stream:11",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:33Z",
+      "seq": 11,
+      "data": {
+        "content_blocks": [
+          {
+            "text": "two changes:\n\n- **docs/notes.md** — appended `agency-seed: one` after the existing `beta` line.\n- **README.md** — added a `## Note` section at the bottom stating this workspace is for fixture capture.",
+            "type": "text"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "assistant",
+        "role": "assistant",
+        "text": "two changes:\n\n- **docs/notes.md** — appended `agency-seed: one` after the existing `beta` line.\n- **README.md** — added a `## Note` section at the bottom stating this workspace is for fixture capture."
+      }
+    },
+    {
+      "entry_id": "stream:12",
+      "kind": "final",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:33Z",
+      "seq": 12,
+      "data": {
+        "cost_usd": 0.09631575,
+        "duration_ms": 12456,
+        "success": true,
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 559
+        }
+      }
+    },
+    {
+      "entry_id": "stream:13",
+      "kind": "session_start",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:43Z",
+      "seq": 13,
+      "data": {
+        "cwd": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree",
+        "model": "claude-opus-4-6[1m]",
+        "session_id": "8fa6a13b-6950-418e-8a78-097348b4587d"
+      }
+    },
+    {
+      "entry_id": "inv_event:3:agency.followup_prompt",
+      "kind": "followup_prompt",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:19:43Z",
+      "seq": 3,
+      "data": {
+        "client_request_id": "9208d807-8bee-41e9-abc0-a16423ecb235",
+        "event_kind": "agency.followup_prompt",
+        "text": "Read docs/notes.md again, append the line agency-followup: two, and summarize both lines you added in this invocation."
+      }
+    },
+    {
+      "entry_id": "stream:14",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:47Z",
+      "seq": 14,
+      "data": {
+        "content_blocks": [
+          {
+            "id": "toolu_01QN88qWsPHMCWH5vbxLmYoW",
+            "input": {
+              "file_path": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ],
+        "has_tool_use": true,
+        "message_family": "assistant",
+        "role": "assistant",
+        "tool_names": [
+          "Read"
+        ]
+      }
+    },
+    {
+      "entry_id": "stream:15",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:47Z",
+      "seq": 15,
+      "data": {
+        "content_blocks": [
+          {
+            "content": "     1→fixture-notes\n     2→alpha\n     3→beta\n     4→agency-seed: one\n     5→",
+            "tool_use_id": "toolu_01QN88qWsPHMCWH5vbxLmYoW",
+            "type": "tool_result"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "tool_result",
+        "role": "user",
+        "text": "     1→fixture-notes\n     2→alpha\n     3→beta\n     4→agency-seed: one\n     5→"
+      }
+    },
+    {
+      "entry_id": "stream:16",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:51Z",
+      "seq": 16,
+      "data": {
+        "content_blocks": [
+          {
+            "id": "toolu_01X6e2ksNqMtsneFQX5rUbyP",
+            "input": {
+              "file_path": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md",
+              "new_string": "agency-seed: one\nagency-followup: two\n",
+              "old_string": "agency-seed: one\n",
+              "replace_all": false
+            },
+            "name": "Edit",
+            "type": "tool_use"
+          }
+        ],
+        "has_tool_use": true,
+        "message_family": "assistant",
+        "role": "assistant",
+        "tool_names": [
+          "Edit"
+        ]
+      }
+    },
+    {
+      "entry_id": "stream:17",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:51Z",
+      "seq": 17,
+      "data": {
+        "content_blocks": [
+          {
+            "content": "The file /private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md has been updated successfully.",
+            "tool_use_id": "toolu_01X6e2ksNqMtsneFQX5rUbyP",
+            "type": "tool_result"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "tool_result",
+        "role": "user",
+        "text": "The file /private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161919-891e/tree/docs/notes.md has been updated successfully."
+      }
+    },
+    {
+      "entry_id": "inv_event:4:agency.checkpoint_created",
+      "kind": "checkpoint_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:19:51Z",
+      "seq": 4,
+      "data": {
+        "checkpoint_id": 3,
+        "event_kind": "agency.checkpoint_created",
+        "includes_untracked": true,
+        "sandbox_head_sha": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793"
+      }
+    },
+    {
+      "entry_id": "stream:18",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:54Z",
+      "seq": 18,
+      "data": {
+        "content_blocks": [
+          {
+            "text": "two lines added to `docs/notes.md` across this conversation:\n\n1. **`agency-seed: one`** — added in the first turn.\n2. **`agency-followup: two`** — added just now.",
+            "type": "text"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "assistant",
+        "role": "assistant",
+        "text": "two lines added to `docs/notes.md` across this conversation:\n\n1. **`agency-seed: one`** — added in the first turn.\n2. **`agency-followup: two`** — added just now."
+      }
+    },
+    {
+      "entry_id": "stream:19",
+      "kind": "final",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:19:54Z",
+      "seq": 19,
+      "data": {
+        "cost_usd": 0.13367025,
+        "duration_ms": 10952,
+        "success": true,
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 321
+        }
+      }
+    },
+    {
+      "entry_id": "inv_event:5:agency.discard_started",
+      "kind": "invocation_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:20:41Z",
+      "seq": 5,
+      "data": {
+        "event_kind": "agency.discard_started",
+        "invocation_id": "20260318161919-891e"
+      }
+    },
+    {
+      "entry_id": "inv_event:6:agency.discard_succeeded",
+      "kind": "invocation_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:20:41Z",
+      "seq": 6,
+      "data": {
+        "event_kind": "agency.discard_succeeded",
+        "invocation_id": "20260318161919-891e"
+      }
+    }
+  ]
+}

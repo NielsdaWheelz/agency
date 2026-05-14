@@ -3,8 +3,10 @@ package invocationevents
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -159,4 +161,23 @@ func TestWriter_Append_UsesPrivatePermissions(t *testing.T) {
 
 	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+}
+
+func TestWriter_Append_RejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	writer := NewWriter(time.Now)
+
+	_, err := writer.Append(
+		eventsPath,
+		"inv-oversized",
+		"agency.followup_prompt",
+		map[string]any{
+			"text": strings.Repeat("z", maxEventLineBytes+1024),
+		},
+		AppendOptions{},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d", maxEventLineBytes))
 }

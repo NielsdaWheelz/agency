@@ -3,100 +3,43 @@ package commands
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	agencyexec "github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/core"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// mockRunner implements exec.CommandRunner for testing.
-type mockRunner struct {
-	responses     map[string]agencyexec.CmdResult
-	errors        map[string]error
-	lookPathPaths map[string]string // file -> path (if found)
-	lookPathErrs  map[string]error  // file -> error (if not found)
-}
-
-func newMockRunner() *mockRunner {
-	return &mockRunner{
-		responses:     make(map[string]agencyexec.CmdResult),
-		errors:        make(map[string]error),
-		lookPathPaths: make(map[string]string),
-		lookPathErrs:  make(map[string]error),
-	}
-}
-
-func (m *mockRunner) SetResponse(name string, args []string, result agencyexec.CmdResult, err error) {
-	key := m.key(name, args)
-	m.responses[key] = result
-	if err != nil {
-		m.errors[key] = err
-	}
-}
-
-// SetLookPath configures the mock response for LookPath calls.
-// If err is nil, the path is returned; if err is non-nil, it's returned as the error.
-func (m *mockRunner) SetLookPath(file, path string, err error) {
-	if err != nil {
-		m.lookPathErrs[file] = err
-	} else {
-		m.lookPathPaths[file] = path
-	}
-}
-
-// LookPath implements CommandRunner.LookPath for testing.
-func (m *mockRunner) LookPath(file string) (string, error) {
-	if err, ok := m.lookPathErrs[file]; ok {
-		return "", err
-	}
-	if path, ok := m.lookPathPaths[file]; ok {
-		return path, nil
-	}
-	// Default: command found at /usr/bin/<file>
-	return "/usr/bin/" + file, nil
-}
-
-func (m *mockRunner) key(name string, args []string) string {
-	return name + " " + strings.Join(args, " ")
-}
-
-func (m *mockRunner) Run(_ context.Context, name string, args []string, _ agencyexec.RunOpts) (agencyexec.CmdResult, error) {
-	key := m.key(name, args)
-	if err, ok := m.errors[key]; ok {
-		return agencyexec.CmdResult{}, err
-	}
-	if result, ok := m.responses[key]; ok {
-		return result, nil
-	}
-	// Default: command not found
-	return agencyexec.CmdResult{}, fmt.Errorf("mock: command not configured: %s", key)
-}
 
 // setupTestRepo creates a temporary git repo with agency.json and executable scripts.
 // Returns the repo root path. Cleanup is handled automatically by t.TempDir().
 func setupTestRepo(t *testing.T) string {
 	t.Helper()
 
-	// Create temp dir (t.TempDir handles cleanup automatically)
-	tmpDir := t.TempDir()
+	return setupTestRepoAt(t, t.TempDir())
+}
 
-	// Create minimal directory structure
-	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755), "failed to create .git dir")
+func setupTestRepoAt(t *testing.T, root string) string {
+	t.Helper()
 
-	scriptsDir := filepath.Join(tmpDir, "scripts")
-	require.NoError(t, os.MkdirAll(scriptsDir, 0755), "failed to create scripts dir")
+	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create repo root")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755), "failed to create .git dir")
+
+	scriptsDir := filepath.Join(root, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "failed to create scripts dir")
 
 	// Create agency.json
 	agencyJSON := `{
-  "version": 1,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -110,98 +53,196 @@ func setupTestRepo(t *testing.T) string {
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }`
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agency.json"), []byte(agencyJSON), 0644), "failed to write agency.json")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "agency.json"), []byte(agencyJSON), 0o644), "failed to write agency.json")
 
-	// Create executable stub scripts
 	stubScript := "#!/usr/bin/env bash\nexit 0\n"
 	scripts := []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"}
 	for _, script := range scripts {
 		path := filepath.Join(scriptsDir, script)
-		require.NoError(t, os.WriteFile(path, []byte(stubScript), 0755), "failed to write script %s", script)
+		require.NoError(t, os.WriteFile(path, []byte(stubScript), 0o755), "failed to write script %s", script)
 	}
 
-	return tmpDir
+	return root
+}
+
+func shellQuoteForTest(s string) string {
+	return core.ShellEscapePosix(s)
 }
 
 func writeUserConfig(t *testing.T, configDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "failed to create config dir")
 	cfg := `{
-  "version": 1,
+  "version": 4,
   "defaults": {
-    "runner": "claude",
-    "editor": "code"
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "user-opus",
+      "effort": "max"
+    }
   },
   "runners": {
-    "claude": "claude",
+    "claude-code": "claude",
     "codex": "codex"
   },
   "editors": {
     "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
   }
-}`
+	}`
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "failed to write config.json")
 }
 
-// setupMockRunnerAllOK sets up mock runner to respond OK for all tool checks.
-func setupMockRunnerAllOK(m *mockRunner, repoRoot string) {
-	// git rev-parse --show-toplevel
-	m.SetResponse("git", []string{"rev-parse", "--show-toplevel"}, agencyexec.CmdResult{
+func registerDoctorTestRepo(t *testing.T, dataDir, repoRoot, originURL string) {
+	t.Helper()
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originURL)
+	originPresent := strings.TrimSpace(originURL) != ""
+	originHost := ""
+	if originPresent {
+		originHost = "github.com"
+	}
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoIdentity.RepoKey: {
+				RepoID:     repoIdentity.RepoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-01T00:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoIdentity.RepoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    originPresent,
+		OriginURL:        originURL,
+		OriginHost:       originHost,
+		Capabilities: store.Capabilities{
+			GitHubOrigin: originPresent,
+			OriginHost:   originHost,
+			GhAuthed:     originPresent,
+		},
+		CreatedAt: "2026-01-01T00:00:00Z",
+		UpdatedAt: "2026-01-01T00:00:00Z",
+	}))
+}
+
+func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
+	t.Helper()
+
+	root := filepath.Dir(agencyJSONPath)
+	scriptsDir := filepath.Join(root, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "failed to create local scripts dir")
+	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create local config dir")
+
+	agencyJSON := `{
+  "version": 4,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh",
+      "timeout": "10m"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh",
+      "timeout": "30m"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh",
+      "timeout": "5m"
+    }
+  },
+  "runner_defaults": {
+    "claude-code": {
+      "model": "local-opus",
+      "effort": "high"
+    }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
+  }
+}`
+	require.NoError(t, os.WriteFile(agencyJSONPath, []byte(agencyJSON), 0o644), "failed to write local agency.json")
+
+	stubScript := "#!/usr/bin/env bash\nexit 0\n"
+	for _, script := range []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script), []byte(stubScript), 0o755), "failed to write script %s", script)
+	}
+}
+
+func mustCanonicalDoctorPath(t *testing.T, path string) string {
+	t.Helper()
+
+	canonicalPath, err := doctorCanonicalPath(path, "doctor test path")
+	require.NoError(t, err)
+	return canonicalPath
+}
+
+func newDoctorRunner(repoRoot string) *testutil.FakeCommandRunner {
+	runner := testutil.NewFakeCommandRunner()
+	runner.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{
 		Stdout:   repoRoot + "\n",
 		ExitCode: 0,
-	}, nil)
-
-	// git config --get remote.origin.url (GitHub origin)
-	m.SetResponse("git", []string{"config", "--get", "remote.origin.url"}, agencyexec.CmdResult{
+	}
+	runner.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{
 		Stdout:   "git@github.com:testowner/testrepo.git\n",
 		ExitCode: 0,
-	}, nil)
-
-	// git --version
-	m.SetResponse("git", []string{"--version"}, agencyexec.CmdResult{
+	}
+	runner.Responses["git --version"] = testutil.FakeResponse{
 		Stdout:   "git version 2.40.0\n",
 		ExitCode: 0,
-	}, nil)
-
-	// git branch --show-current
-	m.SetResponse("git", []string{"branch", "--show-current"}, agencyexec.CmdResult{
+	}
+	runner.Responses["git branch --show-current"] = testutil.FakeResponse{
 		Stdout:   "main\n",
 		ExitCode: 0,
-	}, nil)
-
-	// tmux -V
-	m.SetResponse("tmux", []string{"-V"}, agencyexec.CmdResult{
+	}
+	runner.Responses["tmux -V"] = testutil.FakeResponse{
 		Stdout:   "tmux 3.3a\n",
 		ExitCode: 0,
-	}, nil)
-
-	// gh --version
-	m.SetResponse("gh", []string{"--version"}, agencyexec.CmdResult{
+	}
+	runner.Responses["gh --version"] = testutil.FakeResponse{
 		Stdout:   "gh version 2.40.0 (2024-01-15)\nhttps://github.com/cli/cli/releases/tag/v2.40.0\n",
 		ExitCode: 0,
-	}, nil)
-
-	// gh auth status
-	m.SetResponse("gh", []string{"auth", "status"}, agencyexec.CmdResult{
+	}
+	runner.Responses["gh auth status"] = testutil.FakeResponse{
 		ExitCode: 0,
-	}, nil)
+	}
+	return runner
 }
 
 func TestDoctor_Success(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
+	canonicalRepoRoot := mustCanonicalDoctorPath(t, repoRoot)
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
 	// Setup mock
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -213,10 +254,12 @@ func TestDoctor_Success(t *testing.T) {
 
 	// Check key output lines
 	expectedLines := []string{
-		"repo_root: " + repoRoot,
+		"repo_root: " + canonicalRepoRoot,
 		"agency_data_dir: " + dataDir,
 		"agency_config_dir: " + configDir,
 		"user_config_path: " + filepath.Join(configDir, "config.json"),
+		"agency_json_path: " + filepath.Join(canonicalRepoRoot, "agency.json"),
+		"agency_json_source: repo",
 		"repo_key: github:testowner/testrepo",
 		"origin_present: true",
 		"origin_url: git@github.com:testowner/testrepo.git",
@@ -226,8 +269,12 @@ func TestDoctor_Success(t *testing.T) {
 		"tmux_version: tmux 3.3a",
 		"gh_version: gh version 2.40.0 (2024-01-15)",
 		"gh_authenticated: true",
-		"defaults_parent_branch: main",
-		"defaults_runner: claude",
+		"defaults_base_branch: main",
+		"defaults_runner: claude-code",
+		"defaults_runner_model: user-opus",
+		"defaults_runner_model_source: user",
+		"defaults_runner_effort: max",
+		"defaults_runner_effort_source: user",
 		"defaults_editor: code",
 		"runner_cmd: /usr/bin/claude",
 		"status: ok",
@@ -237,9 +284,142 @@ func TestDoctor_Success(t *testing.T) {
 		assert.Contains(t, output, line, "output missing expected line")
 	}
 
-	// Check persistence files were created
-	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
-	assert.FileExists(t, repoIndexPath, "repo_index.json was not created")
+	assert.FileExists(t, filepath.Join(dataDir, "repo_index.json"))
+	assert.FileExists(t, filepath.Join(dataDir, "repos", identity.DeriveRepoIdentity(repoRoot, "git@github.com:testowner/testrepo.git").RepoID, "repo.json"))
+}
+
+func TestDoctor_MissingUserConfig(t *testing.T) {
+	t.Parallel()
+	repoRoot := setupTestRepo(t)
+
+	dataDir := t.TempDir()
+	configDir := t.TempDir()
+
+	m := newDoctorRunner(repoRoot)
+	fsys := fs.NewRealFS()
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.ENoUserConfig, errors.GetCode(err))
+	assert.Empty(t, stdout.String())
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(configDir, "config.json"), ae.Details["path"])
+	assert.Equal(t, "run `agency config init`", ae.Details["hint"])
+
+	entries, readErr := os.ReadDir(dataDir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries, "doctor should stay read-only when config is missing")
+}
+
+func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
+	t.Parallel()
+	repoRoot := setupTestRepo(t)
+	require.NoError(t, os.Remove(filepath.Join(repoRoot, "agency.json")))
+
+	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
+	configDir := t.TempDir()
+	writeUserConfig(t, configDir)
+
+	repoID := identity.DeriveRepoIdentity(repoRoot, "git@github.com:testowner/testrepo.git").RepoID
+	agencyJSONPath := config.LocalAgencyConfigPath(configDir, repoID)
+	writeLocalAgencyConfig(t, agencyJSONPath)
+
+	m := newDoctorRunner(repoRoot)
+	fsys := fs.NewRealFS()
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "agency_json_path: "+agencyJSONPath)
+	assert.Contains(t, output, "agency_json_source: local")
+	assert.Contains(t, output, "defaults_runner_model: local-opus")
+	assert.Contains(t, output, "defaults_runner_model_source: local")
+	assert.Contains(t, output, "defaults_runner_effort: high")
+	assert.Contains(t, output, "defaults_runner_effort_source: local")
+	assert.Contains(t, output, "script_setup: "+mustCanonicalDoctorPath(t, filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_setup.sh")))
+	assert.Contains(t, output, "script_verify: "+mustCanonicalDoctorPath(t, filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_verify.sh")))
+	assert.Contains(t, output, "script_archive: "+mustCanonicalDoctorPath(t, filepath.Join(filepath.Dir(agencyJSONPath), "scripts", "agency_archive.sh")))
+}
+
+func TestDoctor_ManagedWorktreeUsesCanonicalRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	canonicalRepoRoot, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "doctor-managed")
+	canonicalRepoRoot = mustCanonicalDoctorPath(t, canonicalRepoRoot)
+	worktreeRoot := filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree")
+	setupTestRepoAt(t, canonicalRepoRoot)
+	writeLocalAgencyConfig(t, filepath.Join(worktreeRoot, "agency.json"))
+
+	configDir := t.TempDir()
+	writeUserConfig(t, configDir)
+
+	m := newDoctorRunner(canonicalRepoRoot)
+	m.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{
+		Stdout:   "git@github.com:test/agent-repo.git\n",
+		ExitCode: 0,
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, worktreeRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "repo_root: "+canonicalRepoRoot)
+	assert.Contains(t, output, "agency_json_path: "+filepath.Join(canonicalRepoRoot, "agency.json"))
+	assert.Contains(t, output, "agency_json_source: repo")
+	assert.Contains(t, output, "defaults_runner_model: user-opus")
+	assert.Contains(t, output, "defaults_runner_model_source: user")
+	assert.Contains(t, output, "script_setup: "+mustCanonicalDoctorPath(t, filepath.Join(canonicalRepoRoot, "scripts", "agency_setup.sh")))
+	assert.Contains(t, output, "script_verify: "+mustCanonicalDoctorPath(t, filepath.Join(canonicalRepoRoot, "scripts", "agency_verify.sh")))
+	assert.Contains(t, output, "script_archive: "+mustCanonicalDoctorPath(t, filepath.Join(canonicalRepoRoot, "scripts", "agency_archive.sh")))
+	assert.NotContains(t, output, filepath.Join(worktreeRoot, "agency.json"))
+	assert.NotContains(t, output, "defaults_runner_model: local-opus")
+}
+
+func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
+	t.Parallel()
+	repoRoot := setupTestRepo(t)
+	canonicalRepoRoot := mustCanonicalDoctorPath(t, repoRoot)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
+  "version": 1,
+  "scripts": {
+    "setup": {
+      "path": "scripts/agency_setup.sh"
+    },
+    "verify": {
+      "path": "scripts/agency_verify.sh"
+    },
+    "archive": {
+      "path": "scripts/agency_archive.sh"
+    }
+  }
+}`), 0o644))
+
+	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
+	configDir := t.TempDir()
+	writeUserConfig(t, configDir)
+
+	m := newDoctorRunner(repoRoot)
+	fsys := fs.NewRealFS()
+	var stdout, stderr bytes.Buffer
+
+	err := Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidAgencyJSON, errors.GetCode(err))
+	assert.Empty(t, stdout.String())
+
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(canonicalRepoRoot, "agency.json"), ae.Details["path"])
+	assert.Equal(t, "repo", ae.Details["source"])
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(canonicalRepoRoot)+" --repo-config --force")
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {
@@ -248,17 +428,16 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
-	// Override gh auth status to fail
-	m.SetResponse("gh", []string{"auth", "status"}, agencyexec.CmdResult{
+	m := newDoctorRunner(repoRoot)
+	m.Responses["gh auth status"] = testutil.FakeResponse{
 		Stderr:   "You are not logged in",
 		ExitCode: 1,
-	}, nil)
+	}
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -271,9 +450,8 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	// stdout should be empty on failure
 	assert.Empty(t, stdout.String(), "stdout should be empty on failure")
 
-	// Persistence files should NOT be created on failure
 	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
-	assert.NoFileExists(t, repoIndexPath, "repo_index.json should not be created on failure")
+	assert.FileExists(t, repoIndexPath)
 }
 
 func TestDoctor_ScriptNotExecutable(t *testing.T) {
@@ -285,12 +463,12 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	require.NoError(t, os.Chmod(setupScript, 0644), "failed to chmod script")
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -311,12 +489,12 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	require.NoError(t, os.Remove(setupScript), "failed to remove script")
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -332,16 +510,15 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
-	// Override origin to be missing
-	m.SetResponse("git", []string{"config", "--get", "remote.origin.url"}, agencyexec.CmdResult{
-		ExitCode: 1, // git config returns 1 for missing key
-	}, nil)
+	m := newDoctorRunner(repoRoot)
+	m.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{
+		ExitCode: 1,
+	}
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -358,17 +535,17 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	assert.Contains(t, output, "status: ok")
 }
 
-func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
+func TestDoctor_IsReadOnly(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 
@@ -381,30 +558,8 @@ func TestDoctor_PersistenceCreatedAtPreserved(t *testing.T) {
 	err = Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout2, &stderr2)
 	require.NoError(t, err, "second doctor run failed")
 
-	// Load repo.json and verify created_at is preserved
-	st := store.NewStore(fsys, dataDir, time.Now)
-	idx, err := st.LoadRepoIndex()
-	require.NoError(t, err, "failed to load repo_index")
-
-	// Should have exactly one entry
-	assert.Len(t, idx.Repos, 1, "expected 1 repo entry")
-
-	// Get the repo_id
-	var repoID string
-	for _, entry := range idx.Repos {
-		repoID = entry.RepoID
-		break
-	}
-
-	rec, exists, err := st.LoadRepoRecord(repoID)
-	require.NoError(t, err, "failed to load repo.json")
-	require.True(t, exists, "repo.json should exist")
-
-	// Verify timestamps
-	assert.NotEmpty(t, rec.CreatedAt, "created_at should not be empty")
-	assert.NotEmpty(t, rec.UpdatedAt, "updated_at should not be empty")
-	// updated_at should be >= created_at (we can't easily test they're different due to timing)
-	assert.GreaterOrEqual(t, rec.UpdatedAt, rec.CreatedAt, "updated_at should be >= created_at")
+	assert.Equal(t, stdout1.String(), stdout2.String())
+	assert.FileExists(t, filepath.Join(dataDir, "repo_index.json"))
 }
 
 func TestDoctor_OutputOrder(t *testing.T) {
@@ -412,12 +567,12 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
-	m := newMockRunner()
-	setupMockRunnerAllOK(m, repoRoot)
+	m := newDoctorRunner(repoRoot)
 
 	fsys := fs.NewRealFS()
 	var stdout, stderr bytes.Buffer
@@ -434,6 +589,8 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"agency_data_dir:",
 		"agency_config_dir:",
 		"user_config_path:",
+		"agency_json_path:",
+		"agency_json_source:",
 		"agency_cache_dir:",
 		"repo_key:",
 		"repo_id:",
@@ -445,9 +602,18 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"tmux_version:",
 		"gh_version:",
 		"gh_authenticated:",
-		"defaults_parent_branch:",
+		"defaults_base_branch:",
 		"defaults_runner:",
+		"defaults_runner_model:",
+		"defaults_runner_model_source:",
+		"defaults_runner_effort:",
+		"defaults_runner_effort_source:",
 		"defaults_editor:",
+		"execution_profile:",
+		"execution_profile_source:",
+		"execution_checkout_root_policy:",
+		"execution_checkout_root:",
+		"execution_profile_env_keys:",
 		"runner_cmd:",
 		"script_setup:",
 		"script_verify:",

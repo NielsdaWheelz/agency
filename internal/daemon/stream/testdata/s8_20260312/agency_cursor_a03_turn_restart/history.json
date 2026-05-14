@@ -1,0 +1,266 @@
+{
+  "entries": [
+    {
+      "entry_id": "prompt_seed",
+      "kind": "prompt_seed",
+      "source": "prompt",
+      "timestamp": "2026-03-18T16:11:11Z",
+      "data": {
+        "text": "Run the shell command sleep 20, then reply with done."
+      }
+    },
+    {
+      "entry_id": "raw:6665",
+      "kind": "raw_log_coverage",
+      "source": "raw_log",
+      "timestamp": "2026-03-18T16:11:11Z",
+      "data": {
+        "bytes": 6665
+      }
+    },
+    {
+      "entry_id": "stream:1",
+      "kind": "session_start",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:12Z",
+      "seq": 1,
+      "data": {
+        "cwd": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161111-bfb7/tree",
+        "model": "Claude 4.6 Sonnet",
+        "session_id": "2061f4e1-7ea1-40b8-8f75-ef60673a23e2"
+      }
+    },
+    {
+      "entry_id": "stream:2",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:12Z",
+      "seq": 2,
+      "data": {
+        "content_blocks": [
+          {
+            "text": "Run the shell command sleep 20, then reply with done.",
+            "type": "text"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "prompt",
+        "role": "user",
+        "text": "Run the shell command sleep 20, then reply with done."
+      }
+    },
+    {
+      "entry_id": "inv_event:1:agency.followup_prompt",
+      "kind": "followup_prompt",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:11:15Z",
+      "seq": 1,
+      "data": {
+        "client_request_id": "86750efd-5309-4f60-a5d6-bf8ffa59cd7d",
+        "event_kind": "agency.followup_prompt",
+        "text": "After that, append the line agency-followup: two to docs/notes.md and summarize."
+      }
+    },
+    {
+      "entry_id": "stream:3",
+      "kind": "tool_use",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:18Z",
+      "seq": 3,
+      "data": {
+        "action_family": "command_execution",
+        "command": "sleep 20",
+        "in_progress": true,
+        "name": "Bash"
+      }
+    },
+    {
+      "entry_id": "stream:4",
+      "kind": "tool_use",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:38Z",
+      "seq": 4,
+      "data": {
+        "action_family": "command_execution",
+        "command": "sleep 20",
+        "exit_code": 0,
+        "name": "Bash"
+      }
+    },
+    {
+      "entry_id": "inv_event:2:agency.checkpoint_created",
+      "kind": "checkpoint_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:11:39Z",
+      "seq": 2,
+      "data": {
+        "checkpoint_id": 1,
+        "event_kind": "agency.checkpoint_created",
+        "includes_untracked": true,
+        "sandbox_head_sha": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793"
+      }
+    },
+    {
+      "entry_id": "stream:5",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:40Z",
+      "seq": 5,
+      "data": {
+        "content_blocks": [
+          {
+            "text": "done.",
+            "type": "text"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "assistant",
+        "role": "assistant",
+        "text": "done."
+      }
+    },
+    {
+      "entry_id": "stream:6",
+      "kind": "final",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:40Z",
+      "seq": 6,
+      "data": {
+        "duration_ms": 27718,
+        "success": true,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "entry_id": "stream:7",
+      "kind": "session_start",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:41Z",
+      "seq": 7,
+      "data": {
+        "cwd": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161111-bfb7/tree",
+        "model": "Claude 4.6 Sonnet",
+        "session_id": "2061f4e1-7ea1-40b8-8f75-ef60673a23e2"
+      }
+    },
+    {
+      "entry_id": "stream:8",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:41Z",
+      "seq": 8,
+      "data": {
+        "content_blocks": [
+          {
+            "text": "After that, append the line agency-followup: two to docs/notes.md and summarize.",
+            "type": "text"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "prompt",
+        "role": "user",
+        "text": "After that, append the line agency-followup: two to docs/notes.md and summarize."
+      }
+    },
+    {
+      "entry_id": "stream:9",
+      "kind": "tool_use",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:44Z",
+      "seq": 9,
+      "data": {
+        "action_family": "file_read",
+        "command": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161111-bfb7/tree/docs/notes.md",
+        "in_progress": true,
+        "name": "Read"
+      }
+    },
+    {
+      "entry_id": "stream:10",
+      "kind": "tool_use",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:44Z",
+      "seq": 10,
+      "data": {
+        "action_family": "file_read",
+        "command": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161111-bfb7/tree/docs/notes.md",
+        "name": "Read"
+      }
+    },
+    {
+      "entry_id": "stream:11",
+      "kind": "tool_use",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:47Z",
+      "seq": 11,
+      "data": {
+        "action_family": "file_change",
+        "command": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161111-bfb7/tree/docs/notes.md",
+        "in_progress": true,
+        "name": "Edit"
+      }
+    },
+    {
+      "entry_id": "stream:12",
+      "kind": "tool_use",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:47Z",
+      "seq": 12,
+      "data": {
+        "action_family": "file_change",
+        "command": "/private/tmp/agency-s8-fixtures-20260318/agency-data/repos/280b49d43d42b76a/sandboxes/20260318161111-bfb7/tree/docs/notes.md",
+        "name": "Edit"
+      }
+    },
+    {
+      "entry_id": "inv_event:3:agency.checkpoint_created",
+      "kind": "checkpoint_event",
+      "source": "invocation_event",
+      "timestamp": "2026-03-18T16:11:47Z",
+      "seq": 3,
+      "data": {
+        "checkpoint_id": 2,
+        "event_kind": "agency.checkpoint_created",
+        "includes_untracked": true,
+        "sandbox_head_sha": "f2e8c1e6b287e31765de6d9ad9f830ddf92b1793"
+      }
+    },
+    {
+      "entry_id": "stream:13",
+      "kind": "message",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:49Z",
+      "seq": 13,
+      "data": {
+        "content_blocks": [
+          {
+            "text": "`docs/notes.md` had 3 lines (`fixture-notes`, `alpha`, `beta`). appended `agency-followup: two` as a 4th line.",
+            "type": "text"
+          }
+        ],
+        "has_tool_use": false,
+        "message_family": "assistant",
+        "role": "assistant",
+        "text": "`docs/notes.md` had 3 lines (`fixture-notes`, `alpha`, `beta`). appended `agency-followup: two` as a 4th line."
+      }
+    },
+    {
+      "entry_id": "stream:14",
+      "kind": "final",
+      "source": "stream",
+      "timestamp": "2026-03-18T16:11:49Z",
+      "seq": 14,
+      "data": {
+        "duration_ms": 7918,
+        "success": true,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    }
+  ]
+}

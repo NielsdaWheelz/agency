@@ -1,540 +1,405 @@
 package cobra
 
 import (
-	"context"
-	"os"
-	"time"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newWorktreeCmd() *cobra.Command {
+	var repoRef string
+	var jsonOut bool
+	var editor string
+	var force bool
+	var yes bool
+	var allowDirty bool
+	var forceWithLease bool
+	var squash bool
+	var mergeStrategy bool
+	var rebaseStrategy bool
+	var noDeleteBranch bool
+	var agencyConfigPath string
+	createCmd := newWorktreeCreateCmd()
+	lsCmd := newWorktreeLSCmd()
+
 	cmd := &cobra.Command{
-		Use:   "worktree",
+		Use:   "worktree [create|ls|<worktree-ref> [action]]",
 		Short: "Manage integration worktrees",
 		Long: `Manage integration worktrees.
 
-Integration worktrees are stable branches you intend to merge, push, or PR.
-They are independent of any agent invocation.
+Integration worktrees are the long-lived branches you intend to merge, push,
+rebase, and open pull requests from. They are separate from agent sandboxes.
 
-Subcommands:
-  create    Create a new integration worktree
-  ls        List integration worktrees
-  show      Show details of a worktree
-  path      Output worktree path for scripting
-  open      Open worktree in editor
-  shell     Open shell in worktree
-  rm        Remove a worktree
-  pr sync   Push branch and sync pull request
-  merge     Verify and merge pull request
-  update    Rebase worktree branch onto parent`,
-		Args: cobra.NoArgs,
+Use:
+  agency worktree create <worktree-name>
+                           to make a new integration worktree
+  agency worktree ls       to list worktrees
+  agency worktree <worktree-ref>
+                           to show one worktree
+  agency worktree <worktree-ref> open
+                           to open one worktree
+  agency worktree <worktree-ref> pr sync
+                           to push and sync one pull request
+  agency worktree <worktree-ref> pr merge
+                           to verify, merge, and archive one pull request
+
+Target action flags:
+  pr sync uses --allow-dirty and --force-with-lease.
+  pr merge uses --squash, --merge, --rebase, --no-delete-branch, --yes, and --agency-config.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency worktree <create|ls|show|path|open|shell|rm|pr|merge|update>")
+			switch {
+			case len(args) == 0:
+				_ = cmd.Help()
+				return errors.New(errors.EUsage, "specify 'create', 'ls', or a worktree ref")
+			default:
+				worktreeRef := args[0]
+				switch {
+				case len(args) == 1:
+					if err := validateWorktreeTargetFlags(cmd, "<worktree-ref>", "json"); err != nil {
+						return err
+					}
+					return runWorktreeShow(cmd, worktreeRef, repoRef, jsonOut)
+				case len(args) == 2:
+					switch args[1] {
+					case "path":
+						if err := validateWorktreeTargetFlags(cmd, "path"); err != nil {
+							return err
+						}
+						return runWorktreePath(cmd, worktreeRef, repoRef)
+					case "open":
+						if err := validateWorktreeTargetFlags(cmd, "open", "editor"); err != nil {
+							return err
+						}
+						return runWorktreeOpen(cmd, worktreeRef, repoRef, editor)
+					case "shell":
+						if err := validateWorktreeTargetFlags(cmd, "shell"); err != nil {
+							return err
+						}
+						return runWorktreeShell(cmd, worktreeRef, repoRef)
+					case "rm":
+						if err := validateWorktreeTargetFlags(cmd, "rm", "force", "yes"); err != nil {
+							return err
+						}
+						return runWorktreeRm(cmd, worktreeRef, repoRef, force, yes)
+					case "rebase":
+						if err := validateWorktreeTargetFlags(cmd, "rebase", "json"); err != nil {
+							return err
+						}
+						return runWorktreeRebase(cmd, worktreeRef, repoRef, jsonOut)
+					case "pr":
+						return errors.New(errors.EUsage, "use 'agency worktree <worktree-ref> pr sync' or 'agency worktree <worktree-ref> pr merge'")
+					default:
+						return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency worktree\"")
+					}
+				case len(args) == 3 && args[1] == "pr":
+					switch args[2] {
+					case "sync":
+						if err := validateWorktreeTargetFlags(cmd, "pr sync", "json", "allow-dirty", "force-with-lease"); err != nil {
+							return err
+						}
+						return runWorktreePRSync(cmd, worktreeRef, repoRef, jsonOut, allowDirty, forceWithLease)
+					case "merge":
+						if err := validateWorktreeTargetFlags(cmd, "pr merge", "json", "squash", "merge", "rebase", "no-delete-branch", "yes", "agency-config"); err != nil {
+							return err
+						}
+						return runWorktreePRMerge(cmd, worktreeRef, repoRef, jsonOut, squash, mergeStrategy, rebaseStrategy, noDeleteBranch, yes, agencyConfigPath)
+					default:
+						return errors.New(errors.EUsage, "unknown command \""+args[2]+"\" for \"agency worktree "+worktreeRef+" pr\"")
+					}
+				default:
+					return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency worktree\"")
+				}
+			}
 		},
 	}
 
-	cmd.AddCommand(
-		newWorktreeCreateCmd(),
-		newWorktreeLSCmd(),
-		newWorktreeShowCmd(),
-		newWorktreePathCmd(),
-		newWorktreeOpenCmd(),
-		newWorktreeShellCmd(),
-		newWorktreeRmCmd(),
-		newWorktreePRCmd(),
-		newWorktreeMergeCmd(),
-		newWorktreeUpdateCmd(),
+	cmd.AddGroup(
+		&cobra.Group{ID: "run", Title: "Run"},
+		&cobra.Group{ID: "inspect", Title: "Inspect"},
 	)
+
+	cmd.AddCommand(createCmd, lsCmd)
+
+	cmd.PersistentFlags().StringVarP(&repoRef, "repo", "r", "", "Repo ref")
+	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
+	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use")
+	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm destructive or non-interactive actions without prompting")
+	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
+	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
+	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
+	cmd.Flags().BoolVar(&mergeStrategy, "merge", false, "Use regular merge strategy")
+	cmd.Flags().BoolVar(&rebaseStrategy, "rebase", false, "Use rebase merge strategy")
+	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
+	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
+	cmd.MarkFlagsMutuallyExclusive("squash", "merge", "rebase")
+	lsCmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
+	registerRepoFlagCompletion(cmd)
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		for i, arg := range args {
+			if arg != "--repo" {
+				continue
+			}
+			if i == len(args)-1 {
+				return completeRepoRefs(cmd, args, toComplete)
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		switch len(args) {
+		case 0:
+			return completeWorktreeRefsForState(cmd, toComplete, "all")
+		case 1:
+			values := []string{"path", "open", "shell", "rm", "rebase", "pr"}
+			candidates := make([]string, 0, len(values))
+			for _, value := range values {
+				if toComplete != "" && !strings.HasPrefix(value, toComplete) {
+					continue
+				}
+				candidates = append(candidates, value)
+			}
+			return candidates, cobra.ShellCompDirectiveNoFileComp
+		case 2:
+			if args[1] != "pr" {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			values := []string{"sync", "merge"}
+			candidates := make([]string, 0, len(values))
+			for _, value := range values {
+				if toComplete != "" && !strings.HasPrefix(value, toComplete) {
+					continue
+				}
+				candidates = append(candidates, value)
+			}
+			return candidates, cobra.ShellCompDirectiveNoFileComp
+		default:
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+	}
 
 	return cmd
 }
 
+func validateWorktreeTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
+	allowedFlags := make(map[string]bool, len(allowed))
+	for _, flag := range allowed {
+		allowedFlags[flag] = true
+	}
+	for _, flag := range []string{"json", "editor", "force", "yes", "allow-dirty", "force-with-lease", "squash", "merge", "rebase", "no-delete-branch", "agency-config"} {
+		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
+			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency worktree "+action)
+		}
+	}
+	return nil
+}
+
 func newWorktreeCreateCmd() *cobra.Command {
-	var name string
-	var parent string
+	var base string
 	var open bool
 	var editor string
 
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new integration worktree",
-		Long: `Create a new integration worktree.
-
-An integration worktree is a stable branch you intend to merge, push, or PR.
-It is independent of any agent invocation.
-
-Example:
-  agency worktree create --name my-feature
-  agency worktree create --name bugfix --parent develop --open`,
-		Args: cobra.NoArgs,
+		Use:     "create <worktree-name>",
+		Short:   "Create a new integration worktree",
+		GroupID: "run",
+		Args: func(cmd *cobra.Command, args []string) error {
+			switch len(args) {
+			case 0:
+				return errors.New(errors.EUsage, "use 'agency worktree create <worktree-name>'")
+			case 1:
+				return nil
+			default:
+				return errors.New(errors.EUsage, "too many arguments for \"agency worktree create\"")
+			}
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return errors.New(errors.EUsage, "--name is required")
-			}
-
-			cwd, err := os.Getwd()
+			repoRef, err := cmd.Flags().GetString("repo")
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
 
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
 
 			return commands.WorktreeCreate(ctx, cr, fsys, cwd, commands.WorktreeCreateOpts{
-				Name:         name,
-				ParentBranch: parent,
-				Open:         open,
-				Editor:       editor,
+				RepoRef:    repoRef,
+				Name:       args[0],
+				BaseBranch: strings.TrimSpace(base),
+				Open:       open,
+				Editor:     editor,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 	}
 
-	cmd.Flags().StringVar(&name, "name", "", "Name for the integration worktree (required)")
-	cmd.Flags().StringVar(&parent, "parent", "", "Parent branch to branch from (default: current branch)")
-	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the worktree in editor after creation")
-	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
+	cmd.Flags().StringVar(&base, "base", "", "Base branch. Omit to use the current branch of the selected checkout.")
+	cmd.Flags().BoolVarP(&open, "open", "o", false, "Open the new worktree in your editor after creation")
+	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use")
 
 	return cmd
 }
 
 func newWorktreeLSCmd() *cobra.Command {
-	var repoFlag string
 	var allRepos bool
 	var all bool
 	var jsonOut bool
-	var watch bool
-	var intervalStr string
 
 	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List integration worktrees",
-		Long: `List integration worktrees for the current repository.
-
-By default, only shows non-archived worktrees for the current repo.
-Use --repo to specify a repo by id/prefix, or --all-repos to list globally.
-
-Use --watch to continuously redraw the list at a configurable interval.
---watch is incompatible with --json.
-
-Example:
-  agency worktree ls
-  agency worktree ls --all
-  agency worktree ls --repo abc123
-  agency worktree ls --all-repos
-  agency worktree ls --json
-  agency worktree ls --watch
-  agency worktree ls --watch --interval 1s`,
-		Args: cobra.NoArgs,
+		Use:     "ls",
+		Short:   "List integration worktrees",
+		GroupID: "inspect",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return errors.New(errors.EUsage, "too many arguments for \"agency worktree ls\"")
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if watch && jsonOut {
-				return errors.New(errors.EUsage, "--watch and --json cannot be used together")
-			}
-
-			var interval time.Duration
-			if watch && intervalStr != "" {
-				d, parseErr := parseWatchInterval(intervalStr)
-				if parseErr != nil {
-					return errors.New(errors.EInvalidArgument, parseErr.Error())
-				}
-				interval = d
-			}
-
-			cwd, err := os.Getwd()
+			repoRef, err := cmd.Flags().GetString("repo")
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
 
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
 
 			return commands.WorktreeLS(ctx, cr, fsys, cwd, commands.WorktreeLSOpts{
-				RepoFlag: repoFlag,
+				RepoRef:  repoRef,
 				AllRepos: allRepos,
 				All:      all,
 				JSON:     jsonOut,
-				Watch:    watch,
-				Interval: interval,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Filter by repo name, key, id, or prefix")
 	cmd.Flags().BoolVar(&allRepos, "all-repos", false, "List across all registered repos")
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived worktrees")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	cmd.Flags().BoolVar(&watch, "watch", false, "Continuously redraw the list")
-	cmd.Flags().StringVar(&intervalStr, "interval", "500ms", "Watch redraw interval (e.g. 500ms, 1s)")
 
 	return cmd
 }
 
-func newWorktreeShowCmd() *cobra.Command {
-	var repoFlag string
-	var jsonOut bool
-
-	cmd := &cobra.Command{
-		Use:   "show <name|id|prefix>",
-		Short: "Show details of a worktree",
-		Long: `Show details of an integration worktree.
-
-The worktree can be specified by name, id, or unique prefix.
-
-Example:
-  agency worktree show my-feature
-  agency worktree show --repo abc123 my-feature
-  agency worktree show --json my-feature`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreeShow(ctx, cr, fsys, cwd, commands.WorktreeShowOpts{
-				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
-				JSON:        jsonOut,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreeShow(cmd *cobra.Command, worktreeRef string, repoRef string, jsonOut bool) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-
-	return cmd
+	return commands.WorktreeShow(ctx, cr, fsys, cwd, commands.WorktreeShowOpts{
+		WorktreeRef: worktreeRef,
+		RepoRef:     repoRef,
+		JSON:        jsonOut,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreePathCmd() *cobra.Command {
-	var repoFlag string
-
-	cmd := &cobra.Command{
-		Use:   "path <name|id|prefix>",
-		Short: "Output worktree path for scripting",
-		Long: `Output the tree path of an integration worktree.
-
-Outputs only the path, suitable for scripting:
-  cd $(agency worktree path my-feature)
-
-Example:
-  agency worktree path my-feature
-  agency worktree path --repo abc123 my-feature`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreePath(ctx, cr, fsys, cwd, commands.WorktreePathOpts{
-				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreePath(cmd *cobra.Command, worktreeRef string, repoRef string) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-
-	return cmd
+	return commands.WorktreePath(ctx, cr, fsys, cwd, commands.WorktreePathOpts{
+		WorktreeRef: worktreeRef,
+		RepoRef:     repoRef,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreeOpenCmd() *cobra.Command {
-	var repoFlag string
-	var editor string
-
-	cmd := &cobra.Command{
-		Use:   "open <name|id|prefix>",
-		Short: "Open worktree in editor",
-		Long: `Open an integration worktree in the configured editor.
-
-Example:
-  agency worktree open my-feature
-  agency worktree open --repo abc123 my-feature
-  agency worktree open my-feature --editor cursor`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreeOpen(ctx, cr, fsys, cwd, commands.WorktreeOpenOpts{
-				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
-				Editor:      editor,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreeOpen(cmd *cobra.Command, worktreeRef string, repoRef string, editor string) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-	cmd.Flags().StringVar(&editor, "editor", "", "Editor to use (overrides config)")
-
-	return cmd
+	return commands.WorktreeOpen(ctx, cr, fsys, cwd, commands.WorktreeOpenOpts{
+		WorktreeRef: worktreeRef,
+		RepoRef:     repoRef,
+		Editor:      editor,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreeShellCmd() *cobra.Command {
-	var repoFlag string
-
-	cmd := &cobra.Command{
-		Use:   "shell <name|id|prefix>",
-		Short: "Open shell in worktree",
-		Long: `Open a shell in an integration worktree.
-
-Spawns $SHELL (or /bin/sh) with the worktree as the working directory.
-Exiting the shell returns control to agency.
-
-Example:
-  agency worktree shell my-feature
-  agency worktree shell --repo abc123 my-feature`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreeShell(ctx, cr, fsys, cwd, commands.WorktreeShellOpts{
-				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreeShell(cmd *cobra.Command, worktreeRef string, repoRef string) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-
-	return cmd
+	return commands.WorktreeShell(ctx, cr, fsys, cwd, commands.WorktreeShellOpts{
+		WorktreeRef: worktreeRef,
+		RepoRef:     repoRef,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreeRmCmd() *cobra.Command {
-	var repoFlag string
-	var force bool
-	var yes bool
-
-	cmd := &cobra.Command{
-		Use:   "rm <name|id|prefix>",
-		Short: "Remove a worktree",
-		Long: `Remove an integration worktree.
-
-By default, fails if the worktree has uncommitted changes.
-Use --force to remove regardless.
-
-The worktree record is retained (archived state) but the tree directory is removed.
-
-Example:
-  agency worktree rm my-feature
-  agency worktree rm --repo abc123 my-feature
-  agency worktree rm my-feature --force`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreeRm(ctx, cr, fsys, cwd, commands.WorktreeRmOpts{
-				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
-				Force:       force,
-				Yes:         yes,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreeRm(cmd *cobra.Command, worktreeRef string, repoRef string, force bool, yes bool) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-	cmd.Flags().BoolVar(&force, "force", false, "Force removal even if worktree has uncommitted changes")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "confirm remove in non-interactive mode")
-
-	return cmd
+	return commands.WorktreeRm(ctx, cr, fsys, cwd, commands.WorktreeRmOpts{
+		WorktreeRef: worktreeRef,
+		RepoRef:     repoRef,
+		Force:       force,
+		Yes:         yes,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreePRCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "pr",
-		Short: "Worktree-scoped pull request operations",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New(errors.EUsage, "specify a subcommand: agency worktree pr <sync>")
-		},
+func runWorktreeRebase(cmd *cobra.Command, worktreeRef string, repoRef string, jsonOut bool) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
-	cmd.AddCommand(newWorktreePRSyncCmd())
-	return cmd
+
+	return commands.WorktreeRebase(ctx, cr, fsys, cwd, commands.WorktreeRebaseOpts{
+		WorktreeRef: worktreeRef,
+		RepoRef:     repoRef,
+		JSON:        jsonOut,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreePRSyncCmd() *cobra.Command {
-	var repoFlag string
-	var jsonOut bool
-	var allowDirty bool
-	var forceWithLease bool
-
-	cmd := &cobra.Command{
-		Use:   "sync <worktree_ref>",
-		Short: "Push branch and create/update pull request",
-		Long: `Perform worktree-scoped PR synchronization.
-
-This command pushes the integration branch, then creates or updates the
-branch-scoped pull request.
-
-Example:
-  agency worktree pr sync my-feature
-  agency worktree pr sync --repo abc123 my-feature
-  agency worktree pr sync --allow-dirty my-feature
-  agency worktree pr sync --force-with-lease my-feature
-  agency worktree pr sync --json my-feature`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreePRSync(ctx, cr, fsys, cwd, commands.WorktreePRSyncOpts{
-				WorktreeRef:    args[0],
-				RepoFlag:       repoFlag,
-				AllowDirty:     allowDirty,
-				ForceWithLease: forceWithLease,
-				JSON:           jsonOut,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreePRSync(cmd *cobra.Command, worktreeRef string, repoRef string, jsonOut bool, allowDirty bool, forceWithLease bool) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
-	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
-
-	return cmd
+	return commands.WorktreePRSync(ctx, cr, fsys, cwd, commands.WorktreePRSyncOpts{
+		WorktreeRef:    worktreeRef,
+		RepoRef:        repoRef,
+		AllowDirty:     allowDirty,
+		ForceWithLease: forceWithLease,
+		JSON:           jsonOut,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func newWorktreeMergeCmd() *cobra.Command {
-	var repoFlag string
-	var jsonOut bool
-	var squash bool
-	var merge bool
-	var rebase bool
-	var noDeleteBranch bool
-	var yes bool
-
-	cmd := &cobra.Command{
-		Use:   "merge <worktree_ref>",
-		Short: "Verify and merge pull request",
-		Long: `Perform worktree-scoped merge.
-
-This command runs verify, merges the branch-scoped pull request, and persists
-merge logs under the worktree record.
-
-Non-interactive executions must pass --yes.
-
-Example:
-  agency worktree merge my-feature
-  agency worktree merge --repo abc123 my-feature
-  agency worktree merge --yes --json my-feature
-  agency worktree merge --merge my-feature
-  agency worktree merge --rebase --no-delete-branch my-feature`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreePRMerge(ctx, cr, fsys, cwd, commands.WorktreePRMergeOpts{
-				WorktreeRef:    args[0],
-				RepoFlag:       repoFlag,
-				Squash:         squash,
-				Merge:          merge,
-				Rebase:         rebase,
-				NoDeleteBranch: noDeleteBranch,
-				Yes:            yes,
-				JSON:           jsonOut,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
+func runWorktreePRMerge(cmd *cobra.Command, worktreeRef string, repoRef string, jsonOut bool, squash bool, mergeStrategy bool, rebaseStrategy bool, noDeleteBranch bool, yes bool, agencyConfigPath string) error {
+	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
-	cmd.Flags().BoolVar(&merge, "merge", false, "Use regular merge strategy")
-	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase merge strategy")
-	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm merge in non-interactive mode")
-
-	return cmd
-}
-
-func newWorktreeUpdateCmd() *cobra.Command {
-	var repoFlag string
-	var jsonOut bool
-
-	cmd := &cobra.Command{
-		Use:   "update <worktree_ref>",
-		Short: "Rebase worktree branch onto parent branch",
-		Long: `Fetch origin and rebase the worktree branch onto origin/<parent_branch>.
-
-This command requires a clean worktree and returns a typed conflict error if
-the rebase cannot be applied cleanly.
-
-Example:
-  agency worktree update my-feature
-  agency worktree update --repo abc123 my-feature
-  agency worktree update --json my-feature`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
-			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			return commands.WorktreeUpdate(ctx, cr, fsys, cwd, commands.WorktreeUpdateOpts{
-				WorktreeRef: args[0],
-				RepoFlag:    repoFlag,
-				JSON:        jsonOut,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
-	}
-
-	cmd.Flags().StringVarP(&repoFlag, "repo", "r", "", "Repo name, key, id, or prefix")
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Output as JSON")
-
-	return cmd
+	return commands.WorktreePRMerge(ctx, cr, fsys, cwd, commands.WorktreePRMergeOpts{
+		WorktreeRef:      worktreeRef,
+		RepoRef:          repoRef,
+		Squash:           squash,
+		Merge:            mergeStrategy,
+		Rebase:           rebaseStrategy,
+		NoDeleteBranch:   noDeleteBranch,
+		Yes:              yes,
+		JSON:             jsonOut,
+		AgencyConfigPath: agencyConfigPath,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

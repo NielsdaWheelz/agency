@@ -3,8 +3,6 @@ package stream
 import (
 	"encoding/json"
 	"strings"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // CursorAdapter parses Cursor agent stream-json output.
@@ -32,10 +30,9 @@ func (a *CursorAdapter) ParseLine(line []byte) (*ParseResult, error) {
 	}
 
 	if raw.Type == "tool_call" {
-		events, status := a.parseToolCall(&raw)
+		events := a.parseToolCall(&raw, line)
 		return &ParseResult{
-			Events:         events,
-			SemanticStatus: status,
+			Events: events,
 		}, nil
 	}
 
@@ -44,11 +41,15 @@ func (a *CursorAdapter) ParseLine(line []byte) (*ParseResult, error) {
 	return claude.ParseLine(line)
 }
 
-func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent) ([]*NormalizedEvent, *runnerstatus.Status) {
+func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) []*NormalizedEvent {
 	switch raw.Subtype {
 	case "started", "completed":
 	default:
-		return []*NormalizedEvent{}, nil
+		unknown := newUnknownRunnerEvent(raw.Type, "unsupported_tool_call_subtype", line)
+		if strings.TrimSpace(raw.Subtype) != "" {
+			unknown.Data["subtype"] = raw.Subtype
+		}
+		return []*NormalizedEvent{unknown}
 	}
 
 	kind := EventKindToolStart
@@ -56,7 +57,12 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent) ([]*NormalizedEvent, 
 		kind = EventKindToolEnd
 	}
 
-	name, command, exitCode := parseCursorToolCall(raw.ToolCall)
+	name, command, exitCode, actionFamily := parseCursorToolCall(raw.ToolCall)
+	if strings.TrimSpace(name) == "" {
+		return []*NormalizedEvent{
+			newUnknownRunnerEvent(raw.Type, "unrecognized_tool_structure", line),
+		}
+	}
 
 	event := &NormalizedEvent{
 		Kind: kind,
@@ -68,31 +74,39 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent) ([]*NormalizedEvent, 
 	if command != "" {
 		event.Data["command"] = command
 	}
+	if actionFamily == "" && name != "" {
+		actionFamily = actionFamilyForToolName(name)
+	}
+	if actionFamily != "" {
+		event.Data["action_family"] = actionFamily
+	}
 	if kind == EventKindToolEnd && exitCode != nil {
 		event.Data["exit_code"] = *exitCode
 	}
-
-	status := runnerstatus.StatusWorking
-	return []*NormalizedEvent{event}, &status
+	return []*NormalizedEvent{event}
 }
 
 var cursorToolCallKeyOrder = []struct {
 	key       string
 	canonical string
+	family    string
 }{
-	{key: "readToolCall", canonical: "Read"},
-	{key: "globToolCall", canonical: "Glob"},
-	{key: "grepToolCall", canonical: "Grep"},
-	{key: "bashToolCall", canonical: "Bash"},
-	{key: "editToolCall", canonical: "Edit"},
-	{key: "writeToolCall", canonical: "Write"},
-	{key: "multiEditToolCall", canonical: "MultiEdit"},
-	{key: "notebookEditToolCall", canonical: "NotebookEdit"},
+	{key: "readToolCall", canonical: "Read", family: ActionFamilyFileRead},
+	{key: "globToolCall", canonical: "Glob", family: ActionFamilySearch},
+	{key: "grepToolCall", canonical: "Grep", family: ActionFamilySearch},
+	{key: "bashToolCall", canonical: "Bash", family: ActionFamilyCommandExecution},
+	{key: "shellToolCall", canonical: "Bash", family: ActionFamilyCommandExecution},
+	{key: "editToolCall", canonical: "Edit", family: ActionFamilyFileChange},
+	{key: "writeToolCall", canonical: "Write", family: ActionFamilyFileChange},
+	{key: "multiEditToolCall", canonical: "MultiEdit", family: ActionFamilyFileChange},
+	{key: "notebookEditToolCall", canonical: "NotebookEdit", family: ActionFamilyFileChange},
+	{key: "webSearchToolCall", canonical: "WebSearch", family: ActionFamilyWebAction},
+	{key: "webFetchToolCall", canonical: "WebFetch", family: ActionFamilyWebAction},
 }
 
-func parseCursorToolCall(toolCall map[string]interface{}) (string, string, *int) {
+func parseCursorToolCall(toolCall map[string]interface{}) (string, string, *int, string) {
 	if toolCall == nil {
-		return "", "", nil
+		return "", "", nil, ""
 	}
 
 	for _, candidate := range cursorToolCallKeyOrder {
@@ -101,21 +115,36 @@ func parseCursorToolCall(toolCall map[string]interface{}) (string, string, *int)
 			continue
 		}
 		nestedMap, _ := nested.(map[string]interface{})
-		command := cursorToolCommand(nestedMap)
+		command := cursorToolCommand(cursorToolArgs(nestedMap))
+		if command == "" {
+			command = cursorToolCommand(nestedMap)
+		}
 		if command == "" {
 			command = cursorToolCommand(toolCall)
 		}
-		exitCode := cursorToolExitCode(nestedMap)
+		exitCode := cursorToolExitCode(cursorToolResult(nestedMap))
+		if exitCode == nil {
+			exitCode = cursorToolExitCode(nestedMap)
+		}
+		if exitCode == nil {
+			exitCode = cursorToolExitCode(cursorToolResult(toolCall))
+		}
 		if exitCode == nil {
 			exitCode = cursorToolExitCode(toolCall)
 		}
-		return candidate.canonical, command, exitCode
+		return candidate.canonical, command, exitCode, candidate.family
 	}
 
 	name := canonicalCursorToolName(cursorString(toolCall, "name"))
-	command := cursorToolCommand(toolCall)
-	exitCode := cursorToolExitCode(toolCall)
-	return name, command, exitCode
+	command := cursorToolCommand(cursorToolArgs(toolCall))
+	if command == "" {
+		command = cursorToolCommand(toolCall)
+	}
+	exitCode := cursorToolExitCode(cursorToolResult(toolCall))
+	if exitCode == nil {
+		exitCode = cursorToolExitCode(toolCall)
+	}
+	return name, command, exitCode, actionFamilyForToolName(name)
 }
 
 func canonicalCursorToolName(name string) string {
@@ -137,9 +166,41 @@ func canonicalCursorToolName(name string) string {
 		return "MultiEdit"
 	case "notebookedit":
 		return "NotebookEdit"
+	case "websearch":
+		return "WebSearch"
+	case "webfetch":
+		return "WebFetch"
 	default:
 		return n
 	}
+}
+
+func cursorToolArgs(data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	if args, ok := data["args"].(map[string]interface{}); ok {
+		return args
+	}
+	return data
+}
+
+func cursorToolResult(data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	result, ok := data["result"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	// Prefer explicit failure payload when present.
+	if failure, ok := result["failure"].(map[string]interface{}); ok {
+		return failure
+	}
+	if success, ok := result["success"].(map[string]interface{}); ok {
+		return success
+	}
+	return result
 }
 
 func cursorToolCommand(data map[string]interface{}) string {

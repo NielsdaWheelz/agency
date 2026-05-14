@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -75,34 +77,78 @@ func TestInvocationMutations_RequestIDOnStopKillSuccessAndFailure(t *testing.T) 
 	})
 }
 
-func TestInvocationMutations_RequestIDOnRestartAndChatErrors(t *testing.T) {
+func TestInvocationMutations_RequestIDOnFollowUpErrors(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
 
-	wRestart := env.doInvocationRequestWithBody(
+	wFollowUp := env.doInvocationRequestWithBody(
 		t,
 		http.MethodPost,
-		"/invocations/inv-1/restart",
-		[]byte(`{"checkpoint_id":1}`),
-	)
-	var restartPayload map[string]any
-	require.NoError(t, json.NewDecoder(wRestart.Body).Decode(&restartPayload))
-	restartRequestID, ok := restartPayload["request_id"].(string)
-	require.True(t, ok, "restart request_id must be present")
-	assert.NotEmpty(t, restartRequestID)
-	assert.Equal(t, restartRequestID, wRestart.Header().Get("X-Request-ID"))
-
-	wChat := env.doInvocationRequestWithBody(
-		t,
-		http.MethodPost,
-		"/invocations/inv-1/chat",
+		"/invocations/inv-1/followup",
 		[]byte(`{"client_request_id":"req-1","prompt":"continue"}`),
 	)
-	var chatPayload map[string]any
-	require.NoError(t, json.NewDecoder(wChat.Body).Decode(&chatPayload))
-	chatRequestID, ok := chatPayload["request_id"].(string)
-	require.True(t, ok, "chat request_id must be present")
-	assert.NotEmpty(t, chatRequestID)
-	assert.Equal(t, chatRequestID, wChat.Header().Get("X-Request-ID"))
+	var followUpPayload map[string]any
+	require.NoError(t, json.NewDecoder(wFollowUp.Body).Decode(&followUpPayload))
+	followUpRequestID, ok := followUpPayload["request_id"].(string)
+	require.True(t, ok, "followup request_id must be present")
+	assert.NotEmpty(t, followUpRequestID)
+	assert.Equal(t, followUpRequestID, wFollowUp.Header().Get("X-Request-ID"))
+}
+
+func TestInvocationNoBodyMutations_StrictOptionalBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+		body []byte
+		want string
+	}{
+		{
+			name: "stop unknown field",
+			path: "/invocations/inv-1/stop?repo_id=repo-1",
+			body: []byte(`{"unknown":true}`),
+			want: `unknown field "unknown"`,
+		},
+		{
+			name: "kill trailing object",
+			path: "/invocations/inv-1/kill?repo_id=repo-1",
+			body: []byte(`{} {}`),
+			want: "expected a single JSON object",
+		},
+		{
+			name: "recreate unknown field",
+			path: "/invocations/inv-1/recreate?repo_id=repo-1",
+			body: []byte(`{"unknown":true}`),
+			want: `unknown field "unknown"`,
+		},
+		{
+			name: "recreate trailing object",
+			path: "/invocations/inv-1/recreate?repo_id=repo-1",
+			body: []byte(`{} {}`),
+			want: "expected a single JSON object",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := setupReadTestEnv(t)
+			req := httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.ContentLength = -1
+			w := httptest.NewRecorder()
+
+			env.apiHandler().ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
+			assert.Equal(t, "E_INVALID_REQUEST", payload["error_code"])
+			assert.Contains(t, payload["message"], tt.want)
+		})
+	}
 }

@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "scripts": {
-    "setup": {
-      "path": "scripts/agency_setup.sh",
-      "timeout": "10m"
-    }
-  }
-}

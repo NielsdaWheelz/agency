@@ -143,6 +143,7 @@ func TestExecClient_NewSession(t *testing.T) {
 		sessionName    string
 		cwd            string
 		argv           []string
+		env            map[string]string
 		responses      []fakeResponse
 		wantErr        bool
 		wantArgsPrefix []string // args before "--"
@@ -201,7 +202,7 @@ func TestExecClient_NewSession(t *testing.T) {
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
-			err := client.NewSession(context.Background(), tt.sessionName, tt.cwd, tt.argv)
+			err := client.NewSession(context.Background(), tt.sessionName, tt.cwd, tt.argv, tt.env)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -237,56 +238,38 @@ func TestExecClient_NewSession(t *testing.T) {
 	}
 }
 
-func TestExecClient_Attach(t *testing.T) {
+func TestExecClient_NewSession_EnvUsesProcessEnvironmentNotArgv(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name      string
-		session   string
-		responses []fakeResponse
-		wantErr   bool
-		wantArgs  []string
-	}{
-		{
-			name:    "attach success",
-			session: "agency_abc",
-			responses: []fakeResponse{
-				{Result: exec.CmdResult{ExitCode: 0}},
-			},
-			wantErr:  false,
-			wantArgs: []string{"attach", "-t", "agency_abc"},
-		},
-		{
-			name:    "attach failure",
-			session: "agency_abc",
-			responses: []fakeResponse{
-				{Result: exec.CmdResult{ExitCode: 1, Stderr: "no session"}},
-			},
-			wantErr:  true,
-			wantArgs: []string{"attach", "-t", "agency_abc"},
-		},
+
+	secretEnv := map[string]string{
+		"ZED": "last-secret",
+		"ABC": "first-secret",
+		"MID": "middle-secret",
 	}
+	runner := newFakeRunner(
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0, Stdout: "DISPLAY SSH_AUTH_SOCK\n"}},
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0}},
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0}},
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0}},
+	)
+	client := NewExecClient(runner)
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			runner := newFakeRunner(tt.responses...)
-			client := NewExecClient(runner)
+	err := client.NewSession(context.Background(), "agency_env", "/tmp/wt", []string{"claude", "--resume"}, secretEnv)
 
-			err := client.Attach(context.Background(), tt.session)
+	require.NoError(t, err)
+	require.Len(t, runner.calls, 4)
+	assert.Equal(t, []string{"show-option", "-gqv", "update-environment"}, runner.calls[0].Args)
+	assert.Equal(t, []string{"set-option", "-gq", "update-environment", "DISPLAY SSH_AUTH_SOCK ABC MID ZED"}, runner.calls[1].Args)
+	assert.Equal(t, []string{"new-session", "-d", "-s", "agency_env", "-c", "/tmp/wt", "--", "claude", "--resume"}, runner.calls[2].Args)
+	assert.Equal(t, secretEnv, runner.calls[2].Opts.Env)
+	assert.Equal(t, []string{"set-option", "-gq", "update-environment", "DISPLAY SSH_AUTH_SOCK"}, runner.calls[3].Args)
 
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-
-			require.Len(t, runner.calls, 1)
-
-			call := runner.calls[0]
-			assert.Equal(t, "tmux", call.Name)
-			assert.Equal(t, tt.wantArgs, call.Args)
-		})
+	for _, call := range runner.calls {
+		for _, arg := range call.Args {
+			assert.NotContains(t, arg, "first-secret")
+			assert.NotContains(t, arg, "middle-secret")
+			assert.NotContains(t, arg, "last-secret")
+		}
 	}
 }
 
@@ -415,6 +398,212 @@ func TestExecClient_SendKeys(t *testing.T) {
 
 			require.Len(t, runner.calls, 1)
 
+			call := runner.calls[0]
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
+		})
+	}
+}
+
+func TestExecClient_CaptureScrollback(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		target    string
+		responses []fakeResponse
+		want      string
+		wantErr   bool
+		wantArgs  []string
+	}{
+		{
+			name:   "capture success",
+			target: "agency_abc123:0.0",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0, Stdout: "line 1\nline 2\n"}},
+			},
+			want:     "line 1\nline 2\n",
+			wantErr:  false,
+			wantArgs: []string{"capture-pane", "-p", "-S", "-", "-t", "agency_abc123:0.0"},
+		},
+		{
+			name:   "capture failure",
+			target: "agency_abc123:0.0",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 1, Stderr: "can't find pane"}},
+			},
+			want:     "",
+			wantErr:  true,
+			wantArgs: []string{"capture-pane", "-p", "-S", "-", "-t", "agency_abc123:0.0"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := newFakeRunner(tt.responses...)
+			client := NewExecClient(runner)
+
+			got, err := client.CaptureScrollback(context.Background(), tt.target)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, got)
+
+			require.Len(t, runner.calls, 1)
+			call := runner.calls[0]
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
+		})
+	}
+}
+
+func TestExecClient_PipePane(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		target    string
+		logPath   string
+		responses []fakeResponse
+		wantErr   bool
+		wantArgs  []string
+	}{
+		{
+			name:    "pipe success",
+			target:  "agency_abc123:0.0",
+			logPath: "/tmp/agent's log.txt",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0}},
+			},
+			wantArgs: []string{"pipe-pane", "-o", "-t", "agency_abc123:0.0", "cat >> '/tmp/agent'\\''s log.txt'"},
+		},
+		{
+			name:    "pipe failure",
+			target:  "agency_abc123:0.0",
+			logPath: "/tmp/agent.log",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 1, Stderr: "can't pipe pane"}},
+			},
+			wantErr:  true,
+			wantArgs: []string{"pipe-pane", "-o", "-t", "agency_abc123:0.0", "cat >> '/tmp/agent.log'"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := newFakeRunner(tt.responses...)
+			client := NewExecClient(runner)
+
+			err := client.PipePane(context.Background(), tt.target, tt.logPath)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.Len(t, runner.calls, 1)
+			call := runner.calls[0]
+			assert.Equal(t, "tmux", call.Name)
+			assert.Equal(t, tt.wantArgs, call.Args)
+		})
+	}
+}
+
+func TestExecClient_ListAttachedClients(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		session   string
+		responses []fakeResponse
+		want      []AttachedClient
+		wantErr   bool
+		wantArgs  []string
+	}{
+		{
+			name:    "list success",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{
+					Result: exec.CmdResult{
+						ExitCode: 0,
+						Stdout: strings.Join([]string{
+							"client-1\t/dev/ttys001\t101\t0",
+							"client-2\t/dev/ttys002\t202\t1",
+						}, "\n"),
+					},
+				},
+			},
+			want: []AttachedClient{
+				{Name: "client-1", TTY: "/dev/ttys001", PID: 101, ReadOnly: false},
+				{Name: "client-2", TTY: "/dev/ttys002", PID: 202, ReadOnly: true},
+			},
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+		{
+			name:    "no attached clients",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0, Stdout: ""}},
+			},
+			want: []AttachedClient{},
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+		{
+			name:    "missing session",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 1, Stderr: "can't find session: agency_abc"}},
+			},
+			wantErr: true,
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+		{
+			name:    "malformed pid",
+			session: "agency_abc",
+			responses: []fakeResponse{
+				{Result: exec.CmdResult{ExitCode: 0, Stdout: "client-1\t/dev/ttys001\tnot-a-pid\t0"}},
+			},
+			wantErr: true,
+			wantArgs: []string{
+				"list-clients",
+				"-t", "agency_abc",
+				"-F", "#{client_name}\t#{client_tty}\t#{client_pid}\t#{client_readonly}",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := newFakeRunner(tt.responses...)
+			client := NewExecClient(runner)
+
+			got, err := client.ListAttachedClients(context.Background(), tt.session)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, got)
+
+			require.Len(t, runner.calls, 1)
 			call := runner.calls[0]
 			assert.Equal(t, "tmux", call.Name)
 			assert.Equal(t, tt.wantArgs, call.Args)

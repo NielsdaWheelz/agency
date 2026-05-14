@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 4,
   "defaults": {
-    "runner": "claude"
+    "runner": "claude-code"
   },
   "scripts": {
     "setup": "scripts/agency_setup.sh",

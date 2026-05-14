@@ -10,11 +10,10 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
-// SchemaVersion is the current schema version for all store files.
-const SchemaVersion = "1.0"
+// SchemaVersion is the current schema version for store files.
+const SchemaVersion = "2.0"
 
 // RepoIndex represents the repo_index.json file.
-// This is the public contract for v1.
 type RepoIndex struct {
 	SchemaVersion string                    `json:"schema_version"`
 	Repos         map[string]RepoIndexEntry `json:"repos"`
@@ -28,7 +27,7 @@ type RepoIndexEntry struct {
 }
 
 // LoadRepoIndex reads repo_index.json from the data directory.
-// If the file is missing, returns an empty index with schema_version "1.0".
+// If the file is missing, returns an empty index with the current schema version.
 // Returns E_STORE_CORRUPT if the JSON is invalid or schema_version is missing/invalid.
 func (s *Store) LoadRepoIndex() (RepoIndex, error) {
 	path := s.RepoIndexPath()
@@ -46,21 +45,11 @@ func (s *Store) LoadRepoIndex() (RepoIndex, error) {
 	}
 
 	var idx RepoIndex
-	if err := json.Unmarshal(data, &idx); err != nil {
+	if err := decodeStrictJSON(data, &idx); err != nil {
 		return RepoIndex{}, errors.Wrap(errors.EStoreCorrupt, "invalid json in repo_index.json", err)
 	}
-
-	// Validate schema_version
-	if idx.SchemaVersion == "" {
-		return RepoIndex{}, errors.New(errors.EStoreCorrupt, "repo_index.json: missing schema_version")
-	}
-	if idx.SchemaVersion != SchemaVersion {
-		return RepoIndex{}, errors.New(errors.EStoreCorrupt, "repo_index.json: unsupported schema_version: "+idx.SchemaVersion)
-	}
-
-	// Initialize map if nil (empty repos object in JSON)
-	if idx.Repos == nil {
-		idx.Repos = make(map[string]RepoIndexEntry)
+	if err := validateRepoIndex(idx); err != nil {
+		return RepoIndex{}, err
 	}
 
 	return idx, nil
@@ -89,7 +78,7 @@ func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath str
 	// Update existing entry
 	entry.LastSeenAt = now
 
-	// PR-A: Deduplicate and keep sorted for stable diffs
+	// Deduplicate and keep sorted for stable diffs.
 	pathSet := make(map[string]bool, len(entry.Paths)+1)
 	pathSet[absPath] = true
 	for _, p := range entry.Paths {
@@ -110,8 +99,11 @@ func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath str
 // Creates the data directory if it doesn't exist.
 func (s *Store) SaveRepoIndex(idx RepoIndex) error {
 	// Ensure data directory exists
-	if err := s.FS.MkdirAll(s.DataDir, 0755); err != nil {
+	if err := s.FS.MkdirAll(s.DataDir, 0o700); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to create data directory", err)
+	}
+	if err := s.FS.Chmod(s.DataDir, 0o700); err != nil {
+		return errors.Wrap(errors.EStoreCorrupt, "failed to enforce data directory permissions", err)
 	}
 
 	// Marshal with indentation for human readability
@@ -124,9 +116,35 @@ func (s *Store) SaveRepoIndex(idx RepoIndex) error {
 	data = append(data, '\n')
 
 	path := s.RepoIndexPath()
-	if err := fs.WriteFileAtomic(s.FS, path, data, 0644); err != nil {
+	if err := fs.WriteFileAtomic(s.FS, path, data, 0o600); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to write repo_index.json", err)
 	}
 
+	return nil
+}
+
+func validateRepoIndex(idx RepoIndex) error {
+	if idx.SchemaVersion == "" {
+		return errors.New(errors.EStoreCorrupt, "repo_index.json: missing schema_version")
+	}
+	if idx.SchemaVersion != SchemaVersion {
+		return errors.New(errors.EStoreCorrupt, "repo_index.json: unsupported schema_version: "+idx.SchemaVersion)
+	}
+	if idx.Repos == nil {
+		return errors.New(errors.EStoreCorrupt, "repo_index.json: missing repos")
+	}
+	for repoKey, entry := range idx.Repos {
+		if repoKey == "" || entry.RepoID == "" || entry.LastSeenAt == "" || len(entry.Paths) == 0 {
+			return errors.New(errors.EStoreCorrupt, "repo_index.json: repo entry missing required fields")
+		}
+		if entry.RepoID != filepath.Base(filepath.Clean(filepath.Join("repos", entry.RepoID))) {
+			return errors.New(errors.EStoreCorrupt, "repo_index.json: repo entry has invalid repo_id")
+		}
+		for _, path := range entry.Paths {
+			if path == "" || !filepath.IsAbs(path) {
+				return errors.New(errors.EStoreCorrupt, "repo_index.json: repo entry paths must be absolute")
+			}
+		}
+	}
 	return nil
 }

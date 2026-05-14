@@ -1,0 +1,42 @@
+package daemon
+
+import (
+	"strings"
+
+	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+)
+
+const daemonWarningEventKind = "agency.daemon_warning"
+
+func (s *Server) recordInvocationWarning(repoID, invocationID, code, warning string, extra map[string]any) {
+	if s == nil || s.Store == nil {
+		return
+	}
+	if strings.TrimSpace(repoID) == "" || strings.TrimSpace(invocationID) == "" || strings.TrimSpace(warning) == "" {
+		return
+	}
+
+	writer := s.InvocationEvents
+	if writer == nil {
+		writer = invocationevents.NewWriter(s.Clock)
+		s.InvocationEvents = writer
+	}
+
+	data := map[string]any{
+		"warning": warning,
+	}
+	if strings.TrimSpace(code) != "" {
+		data["code"] = code
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+
+	_, _ = writer.Append(
+		s.Store.InvocationEventsPath(repoID, invocationID),
+		invocationID,
+		daemonWarningEventKind,
+		data,
+		invocationevents.AppendOptions{},
+	)
+}

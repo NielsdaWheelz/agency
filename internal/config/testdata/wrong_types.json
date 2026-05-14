@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 4,
   "defaults": "not an object",
   "scripts": {
     "setup": "scripts/agency_setup.sh",

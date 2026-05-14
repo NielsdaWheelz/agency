@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,13 +42,19 @@ func startRepoTestDaemon(t *testing.T) *repoTestEnv {
 
 	// Minimal config.json — no runner binary needed for repo operations.
 	cfg := map[string]any{
-		"version": 1,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runners": map[string]string{
-			"claude": "/bin/echo",
+			"claude-code": "/bin/echo",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
@@ -118,17 +125,27 @@ func setupRepoTestGitRepo(t *testing.T) string {
 
 // -------- ResolveRepoViaClient tests --------
 
-func TestResolveRepoViaClient_ExplicitRepoFlag(t *testing.T) {
-	t.Parallel()
-	// No daemon needed — explicit --repo bypasses CWD resolution entirely.
+func TestResolveRepoViaClient_ExplicitRepoRef(t *testing.T) {
+	// Needs a real daemon because explicit --repo now resolves to canonical repo_id here.
+	env := startRepoTestDaemon(t)
+	repoDir := setupRepoTestGitRepo(t)
+	crReal := exec.NewRealRunner()
+
+	ctx := context.Background()
+	remoteAdd, err := crReal.Run(ctx, "git", []string{"remote", "add", "origin", "git@github.com:owner/agency.git"}, exec.RunOpts{Dir: repoDir})
+	require.NoError(t, err)
+	require.Equal(t, 0, remoteAdd.ExitCode, remoteAdd.Stderr)
+
+	reg, err := env.Client.RegisterRepo(ctx, repoDir)
+	require.NoError(t, err)
+
 	cr := testutil.NewFakeCommandRunner()
-	// Client is nil; it must not be called when --repo is set.
-	result, err := ResolveRepoViaClient(context.Background(), cr, nil, "/irrelevant", ResolveRepoContextOpts{
-		RepoFlag: "abc123",
-		CmdName:  "agency worktree show",
+	result, err := ResolveRepoViaClient(ctx, cr, env.Client, "/irrelevant", ResolveRepoContextOpts{
+		RepoRef: "agency",
+		CmdName: "agency worktree <worktree-ref>",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "abc123", result.RepoID)
+	assert.Equal(t, reg.Data.RepoID, result.RepoID)
 	assert.False(t, result.AllRepos)
 }
 
@@ -149,7 +166,7 @@ func TestResolveRepoViaClient_MutualExclusion_ReturnsEUsage(t *testing.T) {
 	t.Parallel()
 	cr := testutil.NewFakeCommandRunner()
 	_, err := ResolveRepoViaClient(context.Background(), cr, nil, "/irrelevant", ResolveRepoContextOpts{
-		RepoFlag:      "abc123",
+		RepoRef:       "abc123",
 		AllRepos:      true,
 		AllowAllRepos: true,
 		CmdName:       "agency worktree ls",
@@ -168,7 +185,7 @@ func TestResolveRepoViaClient_AllReposDisallowed_ReturnsEUsage(t *testing.T) {
 	_, err := ResolveRepoViaClient(context.Background(), cr, nil, "/irrelevant", ResolveRepoContextOpts{
 		AllRepos:      true,
 		AllowAllRepos: false, // single-ref command
-		CmdName:       "agency worktree show",
+		CmdName:       "agency worktree <worktree-ref>",
 	})
 	require.Error(t, err)
 
@@ -191,7 +208,7 @@ func TestResolveRepoViaClient_NotInRepo_ReturnsENoRepoContext(t *testing.T) {
 
 	_, err := ResolveRepoViaClient(context.Background(), cr, nil, nonGitDir, ResolveRepoContextOpts{
 		AllowAllRepos: false,
-		CmdName:       "agency agent show",
+		CmdName:       "agency agent <invocation-ref>",
 	})
 	require.Error(t, err)
 
@@ -281,7 +298,8 @@ func TestRepoLS_FormatOutput_Empty(t *testing.T) {
 	}
 
 	assert.Contains(t, stdout.String(), "No repos registered")
-	assert.Contains(t, stdout.String(), "agency repo add")
+	assert.Contains(t, stdout.String(), "agency repo add /path/to/repo")
+	assert.NotContains(t, stdout.String(), "--path")
 }
 
 func TestRepoShow_FormatOutput_Accessible(t *testing.T) {
@@ -290,6 +308,7 @@ func TestRepoShow_FormatOutput_Accessible(t *testing.T) {
 
 	r := daemon.RepoDTO{
 		RepoID:                  "abc123def456",
+		RepoName:                "repo",
 		RepoKey:                 "github:owner/repo",
 		PreferredRoot:           "/home/user/repo",
 		PreferredRootAccessible: true,
@@ -298,7 +317,7 @@ func TestRepoShow_FormatOutput_Accessible(t *testing.T) {
 	}
 
 	// Exercise the formatting path from RepoShow
-	_, _ = stdout.WriteString("repo_id:        " + r.RepoID + "\n")
+	_, _ = stdout.WriteString("repo:           " + r.RepoName + " (" + r.RepoID + ")\n")
 	_, _ = stdout.WriteString("repo_key:       " + r.RepoKey + "\n")
 	_, _ = stdout.WriteString("preferred_root: " + r.PreferredRoot + "\n")
 	accessible := "yes"
@@ -319,6 +338,7 @@ func TestRepoShow_FormatOutput_Inaccessible(t *testing.T) {
 
 	r := daemon.RepoDTO{
 		RepoID:                  "abc123def456",
+		RepoName:                "repo",
 		PreferredRoot:           "/gone/repo",
 		PreferredRootAccessible: false,
 	}
@@ -331,4 +351,31 @@ func TestRepoShow_FormatOutput_Inaccessible(t *testing.T) {
 
 	assert.Contains(t, stdout.String(), "accessible:     no")
 	_ = r // prevent unused
+}
+
+func TestRepoRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := RepoRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), RepoRmOpts{
+		RepoRef:       "abc123",
+		IsInteractive: func() bool { return false },
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
+}
+
+func TestRepoRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := awaitConfirmationLineBeforeEOF(t, "no\n", func(confirmIn io.Reader) error {
+		return RepoRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), RepoRmOpts{
+			RepoRef:        "abc123",
+			IsInteractive:  func() bool { return true },
+			ConfirmationIn: confirmIn,
+		}, &stdout, &stderr)
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.EAborted, errors.GetCode(err))
 }

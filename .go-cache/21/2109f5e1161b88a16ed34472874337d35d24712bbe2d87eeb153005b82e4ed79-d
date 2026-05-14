@@ -1,6 +1,0 @@
-./integration_helpers_test.go
-./integration_test.go
-./reconcile_test.go
-./repo_handlers_test.go
-./resilience_test.go
-./status_derive_test.go

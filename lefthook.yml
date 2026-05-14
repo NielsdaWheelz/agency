@@ -5,9 +5,19 @@ pre-commit:
       glob: "*.go"
       run: gofmt -w {files}
       stage_fixed: true
+    shfmt:
+      glob: "*.sh"
+      run: shfmt -w -i 2 -ci {files}
+      stage_fixed: true
     golangci-lint:
       glob: "*.go"
       run: golangci-lint run --new-from-rev=HEAD
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {files}
+    actionlint:
+      glob: ".github/workflows/*.yml"
+      run: actionlint {files}
 
 pre-push:
   parallel: false

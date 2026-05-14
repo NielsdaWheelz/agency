@@ -19,8 +19,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/require"
@@ -55,9 +53,35 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dataDir := filepath.Join(tmpDir, "data")
+	configDir := filepath.Join(tmpDir, "config")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
-	t.Setenv("AGENCY_CONFIG_DIR", filepath.Join(tmpDir, "config"))
+	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 	t.Setenv("AGENCY_CACHE_DIR", filepath.Join(tmpDir, "cache"))
+	require.NoError(t, os.MkdirAll(dataDir, 0o700), "mkdir data dir")
+	require.NoError(t, os.MkdirAll(configDir, 0o700), "mkdir config dir")
+	userConfig, err := json.MarshalIndent(map[string]any{
+		"version": 4,
+		"defaults": map[string]any{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]any{
+			"claude-code": "claude",
+		},
+		"editors": map[string]any{
+			"code": "code",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]any{
+					"GH_TOKEN": token,
+				},
+			},
+		},
+	}, "", "  ")
+	require.NoError(t, err, "marshal user config")
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), append(userConfig, '\n'), 0o600), "write user config")
 
 	repoRoot := filepath.Join(tmpDir, "repo")
 	requireGHAuth(t, ctx, cr)
@@ -68,31 +92,9 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 
 	runID, err := core.NewRunID(time.Now())
 	require.NoError(t, err, "runID")
-	branch := fmt.Sprintf("agency/e2e-%s", runID)
 
-	originInfo := git.GetOriginInfo(ctx, cr, repoRoot)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
-	require.NotEmpty(t, repoIdentity.RepoID, "repoID empty")
-
-	worktreePath := filepath.Join(dataDir, "repos", repoIdentity.RepoID, "worktrees", runID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(worktreePath), 0o755), "mkdir worktrees")
-	runCmd(t, ctx, cr, repoRoot, "git", "fetch", "origin", defaultBranch)
-	runCmd(t, ctx, cr, repoRoot, "git", "worktree", "add", "-b", branch, worktreePath, "origin/"+defaultBranch)
-
-	// Infrastructure files (agency.json, scripts/) use FIXED content so concurrent
-	// test runs don't conflict - Git auto-merges identical content.
-	// Only the e2e/<runID>/ directory contains unique-per-run data.
-	scriptsDir := filepath.Join(worktreePath, "scripts")
-	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "mkdir scripts")
-
-	// Fixed script content - same every run
-	writeScript(t, filepath.Join(scriptsDir, "agency_setup.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-	writeScript(t, filepath.Join(scriptsDir, "agency_verify.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-	writeScript(t, filepath.Join(scriptsDir, "agency_archive.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-
-	// Fixed agency.json content - same every run
 	agencyJSON := `{
-  "version": 1,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -106,119 +108,21 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }
 `
-	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "agency.json"), []byte(agencyJSON), 0o644), "write agency.json")
-
-	// Report goes in worktree .agency/ (required location for push command)
-	// Fixed content - same every run
-	reportDir := filepath.Join(worktreePath, ".agency")
-	require.NoError(t, os.MkdirAll(reportDir, 0o755), "mkdir report")
-	report := `# e2e test
-
-## summary
-e2e report: verifying agent pr sync + merge works
-
-## how to test
-This is an automated e2e test - no manual testing required.
-`
-	require.NoError(t, os.WriteFile(filepath.Join(reportDir, "report.md"), []byte(report), 0o644), "write report")
-
-	// Unique test data under e2e/<runID>/ - this is the only unique-per-run content
-	e2eRunDir := filepath.Join(worktreePath, "e2e", runID)
-	require.NoError(t, os.MkdirAll(e2eRunDir, 0o755), "mkdir e2e run dir")
-	logPath := filepath.Join(e2eRunDir, "log.txt")
-	logContent := fmt.Sprintf("%s %s\n", runID, time.Now().UTC().Format(time.RFC3339))
-	require.NoError(t, os.WriteFile(logPath, []byte(logContent), 0o644), "write e2e log")
-
-	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/report.md"}, exec.RunOpts{
-		Dir: worktreePath,
-		Env: nonInteractiveEnv(),
-	})
-	require.NoError(t, err, "git check-ignore .agency/report.md")
-	reportIgnored := false
-	switch result.ExitCode {
-	case 0:
-		reportIgnored = true
-	case 1:
-		reportIgnored = false
-	default:
-		require.Fail(t, "git check-ignore .agency/report.md unexpected exit code", "exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
-	}
-
-	// Add fixed infrastructure files + unique run data
-	addPaths := []string{
-		"agency.json",
-		"scripts/agency_setup.sh",
-		"scripts/agency_verify.sh",
-		"scripts/agency_archive.sh",
-		fmt.Sprintf("e2e/%s/", runID),
-	}
-	if !reportIgnored {
-		addPaths = append(addPaths, ".agency/report.md")
-	}
-	runCmd(t, ctx, cr, worktreePath, "git", append([]string{"add"}, addPaths...)...)
-	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)
+	repoScriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(repoScriptsDir, 0o755), "mkdir repo scripts")
+	writeScript(t, filepath.Join(repoScriptsDir, "agency_setup.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	writeScript(t, filepath.Join(repoScriptsDir, "agency_verify.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	writeScript(t, filepath.Join(repoScriptsDir, "agency_archive.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0o644), "write repo agency.json")
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	repoRecord := store.RepoRecord{
-		SchemaVersion:    store.SchemaVersion,
-		RepoKey:          repoIdentity.RepoKey,
-		RepoID:           repoIdentity.RepoID,
-		RepoRootLastSeen: repoRoot,
-		PreferredRoot:    repoRoot,
-		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
-		OriginPresent:    true,
-		OriginURL:        originInfo.URL,
-		OriginHost:       originInfo.Host,
-		Capabilities: store.Capabilities{
-			GitHubOrigin: repoIdentity.GitHubFlowAvailable,
-			OriginHost:   originInfo.Host,
-			GhAuthed:     true,
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	require.NoError(t, st.SaveRepoRecord(repoRecord), "SaveRepoRecord")
-
-	worktreeID := runID
-	_, err = st.EnsureIntegrationWorktreeDir(repoIdentity.RepoID, worktreeID)
-	require.NoError(t, err, "EnsureIntegrationWorktreeDir")
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoIdentity.RepoID, worktreeID, &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          "e2e-" + runID,
-		RepoID:        repoIdentity.RepoID,
-		Branch:        branch,
-		ParentBranch:  defaultBranch,
-		TreePath:      worktreePath,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		State:         store.WorktreeStatePresent,
-	}), "WriteIntegrationWorktreeMeta")
-
-	invocationID := runID
-	_, err = st.EnsureInvocationDir(repoIdentity.RepoID, invocationID)
-	require.NoError(t, err, "EnsureInvocationDir")
-	require.NoError(t, st.WriteInvocationMeta(repoIdentity.RepoID, invocationID, &store.InvocationMeta{
-		SchemaVersion:         "1.0",
-		InvocationID:          invocationID,
-		InvocationName:        "e2e-" + runID,
-		IntegrationWorktreeID: worktreeID,
-		SandboxPath:           worktreePath,
-		SandboxBranch:         "agency/sandbox-" + runID,
-		BaseCommit:            "",
-		Runner:                "claude-code",
-		Mode:                  store.RunnerModeHeadless,
-		StartedAt:             time.Now().UTC().Format(time.RFC3339),
-		FinishedAt:            time.Now().UTC().Format(time.RFC3339),
-		Status:                store.InvocationStatusFinished,
-		ExitReason:            "exited",
-		LandingStatus:         store.LandingStatusLanded,
-	}), "WriteInvocationMeta")
-
-	configDir := filepath.Join(tmpDir, "config")
 	srv := daemon.NewServer(st, cr, fsys, configDir)
 	listener, err := net.Listen("unix", st.DaemonSocketPath())
 	require.NoError(t, err, "listen daemon socket")
@@ -234,19 +138,90 @@ This is an automated e2e test - no manual testing required.
 	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer waitCancel()
 	require.NoError(t, client.WaitForReady(waitCtx, 5*time.Second), "daemon not ready")
+	registeredRepo, err := client.RegisterRepo(ctx, repoRoot)
+	require.NoError(t, err, "RegisterRepo")
+	repoID := registeredRepo.Data.RepoID
+	require.NotEmpty(t, repoID, "registered repo id")
+	createResp, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+		RepoRoot:   repoRoot,
+		Name:       "e2e-" + runID,
+		BaseBranch: defaultBranch,
+	})
+	require.NoError(t, err, "WorktreeCreate")
+	require.True(t, createResp.OK, "worktree create response")
+	require.Equal(t, repoID, createResp.RepoID, "worktree repo id")
+	require.Equal(t, "personal", createResp.ExecutionProfile, "worktree execution profile")
+	require.Equal(t, filepath.Join(filepath.Dir(registeredRepo.Data.PreferredRoot), ".agency", "checkouts", repoID), createResp.CheckoutRoot, "worktree checkout root")
+	worktreeID := createResp.WorktreeID
+	branch := createResp.Branch
+	worktreePath := createResp.TreePath
+	require.NotEmpty(t, worktreeID, "worktree id")
+	require.NotEmpty(t, branch, "worktree branch")
+	require.Equal(t, filepath.Join(createResp.CheckoutRoot, "worktrees", "e2e-"+runID+"-"+core.ShortID(worktreeID)), worktreePath, "worktree path")
+
+	// Runner status lives under .agency/state/ and is read locally by PR sync.
+	stateDir := filepath.Join(worktreePath, ".agency", "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755), "mkdir runner status")
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(`{
+  "schema_version": "2.0",
+  "state": "succeeded",
+  "updated_at": "2026-04-20T00:00:00Z",
+  "summary": "e2e runner status: verifying agent pr sync + merge works",
+  "questions": [],
+  "how_to_test": "This is an automated e2e test - no manual testing required.",
+  "risks": []
+}`), 0o644), "write runner status")
+
+	// Unique test data under e2e/<runID>/ - this is the only unique-per-run content
+	e2eRunDir := filepath.Join(worktreePath, "e2e", runID)
+	require.NoError(t, os.MkdirAll(e2eRunDir, 0o755), "mkdir e2e run dir")
+	logPath := filepath.Join(e2eRunDir, "log.txt")
+	logContent := fmt.Sprintf("%s %s\n", runID, time.Now().UTC().Format(time.RFC3339))
+	require.NoError(t, os.WriteFile(logPath, []byte(logContent), 0o644), "write e2e log")
+
+	result, err := cr.Run(ctx, "git", []string{"check-ignore", "-q", ".agency/state/runner_status.json"}, exec.RunOpts{
+		Dir: worktreePath,
+		Env: nonInteractiveEnv(),
+	})
+	require.NoError(t, err, "git check-ignore .agency/state/runner_status.json")
+	runnerStatusIgnored := false
+	switch result.ExitCode {
+	case 0:
+		runnerStatusIgnored = true
+	case 1:
+		runnerStatusIgnored = false
+	default:
+		require.Fail(t, "git check-ignore .agency/state/runner_status.json unexpected exit code", "exited %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+
+	// Repo-shared config lives at the registered canonical repo root; the PR
+	// branch only carries unique run data plus runner status when it is tracked.
+	addPaths := []string{
+		fmt.Sprintf("e2e/%s/", runID),
+	}
+	if !runnerStatusIgnored {
+		addPaths = append(addPaths, ".agency/state/runner_status.json")
+	}
+	runCmd(t, ctx, cr, worktreePath, "git", append([]string{"add"}, addPaths...)...)
+	runCmd(t, ctx, cr, worktreePath, "git", "commit", "-m", "e2e: "+runID)
 
 	var prSyncStdout, prSyncStderr bytes.Buffer
 	require.NoError(t, WorktreePRSync(ctx, cr, fsys, repoRoot, WorktreePRSyncOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoIdentity.RepoID,
+		RepoRef:         repoID,
 		JSON:            true,
 		DataDirOverride: dataDir,
 	}, &prSyncStdout, &prSyncStderr), "worktree pr sync failed\nstderr:\n%s", prSyncStderr.String())
 
 	var prSyncPayload struct {
-		PRNumber int `json:"pr_number"`
+		OK        bool   `json:"ok"`
+		ErrorCode string `json:"error_code"`
+		Message   string `json:"message"`
+		Hint      string `json:"hint"`
+		PRNumber  int    `json:"pr_number"`
 	}
 	require.NoError(t, json.Unmarshal(prSyncStdout.Bytes(), &prSyncPayload), "decode pr sync JSON")
+	require.True(t, prSyncPayload.OK, "pr sync failed: code=%s message=%s hint=%s stdout=%s stderr=%s", prSyncPayload.ErrorCode, prSyncPayload.Message, prSyncPayload.Hint, prSyncStdout.String(), prSyncStderr.String())
 	prNumber := prSyncPayload.PRNumber
 	require.NotZero(t, prNumber, "pr_number not recorded")
 
@@ -265,13 +240,21 @@ This is an automated e2e test - no manual testing required.
 	var mergeStdout, mergeStderr bytes.Buffer
 	require.NoError(t, WorktreePRMerge(ctx, cr, fsys, repoRoot, WorktreePRMergeOpts{
 		WorktreeRef:     worktreeID,
-		RepoFlag:        repoIdentity.RepoID,
+		RepoRef:         repoID,
 		Yes:             true,
 		DataDirOverride: dataDir,
-	}, &mergeStdout, &mergeStderr), "worktree merge failed\nstderr:\n%s", mergeStderr.String())
+	}, &mergeStdout, &mergeStderr), "worktree pr merge failed\nstderr:\n%s", mergeStderr.String())
 
 	merged = true
 	runCmdAllowMissingRemoteRef(t, ctx, cr, repoRoot, "git", "push", "origin", "--delete", branch)
+}
+
+func nonInteractiveEnv() map[string]string {
+	return map[string]string{
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PROMPT_DISABLED":  "1",
+		"CI":                  "1",
+	}
 }
 
 func runCmd(t *testing.T, ctx context.Context, cr exec.CommandRunner, dir, name string, args ...string) {

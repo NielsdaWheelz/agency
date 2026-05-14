@@ -1,13 +1,15 @@
 // Package commands implements agency CLI commands.
-// This file implements repo registry commands (PR-A / PR-14).
 package commands
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -16,7 +18,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -30,26 +31,21 @@ type RepoContextResult struct {
 
 // ResolveRepoContextOpts controls how repo context resolution works.
 type ResolveRepoContextOpts struct {
-	// RepoFlag is the value of the --repo flag (repo_id or unique prefix).
-	RepoFlag string
+	// RepoRef is the value of the --repo flag (name, owner/repo, repo key, id, or prefix).
+	RepoRef string
 	// AllRepos is the value of the --all-repos flag (list commands only).
 	AllRepos bool
 	// AllowAllRepos controls whether --all-repos is accepted.
 	// Must be true for list commands, false for single-ref commands.
 	AllowAllRepos bool
-	// CmdName is used in error messages ("agency agent show", etc.).
+	// CmdName is used in error messages ("agency agent <invocation-ref>", etc.).
 	CmdName string
 }
 
-// ResolveRepoViaClient resolves the repo context for a CLI command.
-// It implements the PR-A auto-registration flow:
-//   - If --repo flag is set, use it directly.
-//   - If --all-repos is set (list commands only), return AllRepos=true.
-//   - If CWD is inside a git repo, auto-register via daemon and return repo_id.
-//   - Otherwise, return a helpful error with hints.
+// ResolveRepoViaClient resolves repo context for a CLI command.
 func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *daemonclient.Client, cwd string, opts ResolveRepoContextOpts) (*RepoContextResult, error) {
 	// Mutual exclusion
-	if opts.RepoFlag != "" && opts.AllRepos {
+	if opts.RepoRef != "" && opts.AllRepos {
 		return nil, errors.New(errors.EUsage, "--repo and --all-repos are mutually exclusive")
 	}
 
@@ -58,9 +54,18 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 		return nil, errors.New(errors.EUsage, "--all-repos is not supported for "+opts.CmdName+"; specify --repo instead")
 	}
 
-	// Explicit --repo flag: use directly
-	if opts.RepoFlag != "" {
-		return &RepoContextResult{RepoID: opts.RepoFlag}, nil
+	// Explicit --repo: resolve once here, then pass canonical repo_id below the command boundary.
+	if opts.RepoRef != "" {
+		if client == nil {
+			return nil, errors.New(errors.EInternal, "daemon client is required to resolve --repo")
+		}
+
+		result, err := client.GetRepo(ctx, opts.RepoRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return &RepoContextResult{RepoID: result.Data.RepoID}, nil
 	}
 
 	// --all-repos: return empty repo_id (list globally)
@@ -69,7 +74,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 	}
 
 	// Try CWD-based auto-registration
-	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd)
+	repoRoot, err := git.GetRepoRoot(ctx, cr, cwd, nil)
 	if err != nil {
 		// Not in a repo — error with hints
 		if opts.AllowAllRepos {
@@ -77,7 +82,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 				errors.ENoRepoContext,
 				"no repo context (not in a git repo)",
 				map[string]string{
-					"hint": "run \"agency repo ls\" then re-run with --repo <name>, or pass --all-repos, or register a repo with \"agency repo add /path/to/repo\"",
+					"hint": "run \"agency repo ls\" then re-run with --repo <repo_ref>, or pass --all-repos, or register a repo with \"agency repo add /path/to/repo\"",
 				},
 			)
 		}
@@ -85,7 +90,7 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 			errors.ENoRepoContext,
 			fmt.Sprintf("cannot resolve %s without a repo context", opts.CmdName),
 			map[string]string{
-				"hint": "run \"agency repo ls\" and re-run with \"--repo <name>\", or register a repo: \"agency repo add /path/to/repo\"",
+				"hint": "run \"agency repo ls\" and re-run with \"--repo <repo_ref>\", or register a repo: \"agency repo add /path/to/repo\"",
 			},
 		)
 	}
@@ -96,54 +101,67 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 		return nil, err
 	}
 
-	return &RepoContextResult{RepoID: result.RepoID}, nil
+	return &RepoContextResult{RepoID: result.Data.RepoID}, nil
 }
 
 // RepoAddOpts holds options for the repo add command.
 type RepoAddOpts struct {
+	// Path is the optional repo checkout path from the positional [path] arg.
 	Path string
 	JSON bool
 }
 
 // RepoAdd registers a repository with the daemon.
-func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoAddOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
+func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAddOpts, stdout, stderr io.Writer) error {
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeCommandJSONError(stdout, err)
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
+	client, err := ensureDaemonClient(ctx, fsys, "")
+	if err != nil {
+		return fail(err)
 	}
 
-	result, err := client.RegisterRepo(ctx, opts.Path)
+	path := opts.Path
+	if path == "" {
+		path, err = os.Getwd()
+		if err != nil {
+			return fail(errors.Wrap(errors.EInternal, "failed to get cwd", err))
+		}
+	}
+
+	result, err := client.RegisterRepo(ctx, path)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID        string `json:"repo_id,omitempty"`
+			RepoKey       string `json:"repo_key,omitempty"`
+			PreferredRoot string `json:"preferred_root,omitempty"`
+		}{
+			commandJSONBase: newCommandJSONSuccess(0, "", "", result.RequestID),
+			RepoID:          result.Data.RepoID,
+			RepoKey:         result.Data.RepoKey,
+			PreferredRoot:   result.Data.PreferredRoot,
+		})
 	}
 
+	repoLabel := result.Data.RepoID
+	if strings.TrimSpace(result.Data.RepoName) != "" {
+		repoLabel = result.Data.RepoName + " (" + result.Data.RepoID + ")"
+	}
 	_, _ = fmt.Fprintf(stdout, "Registered repo\n")
-	_, _ = fmt.Fprintf(stdout, "  repo_id:        %s\n", result.RepoID)
-	_, _ = fmt.Fprintf(stdout, "  repo_key:       %s\n", result.RepoKey)
-	_, _ = fmt.Fprintf(stdout, "  preferred_root: %s\n", result.PreferredRoot)
-	if len(result.Paths) > 1 {
-		_, _ = fmt.Fprintf(stdout, "  paths:          %d registered\n", len(result.Paths))
+	_, _ = fmt.Fprintf(stdout, "  repo:           %s\n", repoLabel)
+	_, _ = fmt.Fprintf(stdout, "  repo_key:       %s\n", result.Data.RepoKey)
+	_, _ = fmt.Fprintf(stdout, "  preferred_root: %s\n", result.Data.PreferredRoot)
+	if len(result.Data.Paths) > 1 {
+		_, _ = fmt.Fprintf(stdout, "  paths:          %d registered\n", len(result.Data.Paths))
 	}
 
 	return nil
@@ -156,23 +174,8 @@ type RepoLSOpts struct {
 
 // RepoLS lists registered repositories.
 func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return err
-	}
-
-	if err := client.CheckAPIVersion(ctx); err != nil {
 		return err
 	}
 
@@ -184,180 +187,103 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result.Repos)
+		return enc.Encode(result.Data.Repos)
 	}
 
-	if len(result.Repos) == 0 {
+	if len(result.Data.Repos) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No repos registered.")
 		_, _ = fmt.Fprintln(stdout, "Register one with: agency repo add /path/to/repo")
 		return nil
 	}
 
-	for _, r := range result.Repos {
-		// Show short name as primary column; fall back to truncated ID for path-based repos
-		label := ids.RepoShortName(r.RepoKey)
-		if label == "" {
-			label = r.RepoID
+	for _, r := range result.Data.Repos {
+		repoLabel := r.RepoID
+		if strings.TrimSpace(r.RepoName) != "" {
+			repoLabel = r.RepoName + " (" + r.RepoID + ")"
 		}
-		if len(label) > 20 {
-			label = label[:20]
+		if strings.TrimSpace(r.RepoKey) != "" {
+			_, _ = fmt.Fprintf(stdout, "%s  %s  %s\n", repoLabel, r.RepoKey, r.PreferredRoot)
+			continue
 		}
-		_, _ = fmt.Fprintf(stdout, "%-20s %s  %s\n", label, r.RepoKey, r.PreferredRoot)
+		_, _ = fmt.Fprintf(stdout, "%s  %s\n", repoLabel, r.PreferredRoot)
 	}
 
 	return nil
 }
 
-// ----- PR-05: S1 Release Gate Commands -----
-
-// RepoS1ReadinessOpts holds options for the s1 readiness command.
-type RepoS1ReadinessOpts struct {
-	RepoID string
-	JSON   bool
+type daemonNavSetup struct {
+	dirs   paths.Dirs
+	client *daemonclient.Client
 }
 
-// RepoS1Readiness checks S1 release readiness via the daemon.
-func RepoS1Readiness(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoS1ReadinessOpts, stdout, stderr io.Writer) error {
-	client, err := ensureDaemonClient(ctx, fsys)
+func canonicalCommandDir(pathValue, label string) (string, error) {
+	absPath, err := filepath.Abs(pathValue)
 	if err != nil {
-		return err
+		return "", errors.Wrap(errors.EInternal, "failed to resolve "+label, err)
 	}
+	if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		return resolvedPath, nil
+	}
+	return absPath, nil
+}
 
-	repoID := opts.RepoID
-	if repoID == "" {
-		resolved, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{CmdName: "agency repo s1 readiness"})
+func registeredRepoRootFromStore(st *store.Store, repoID string) (string, error) {
+	rec, exists, err := st.LoadRepoRecord(repoID)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", errors.NewWithDetails(
+			errors.ERepoNotFound,
+			"repo is not registered",
+			map[string]string{"hint": "run `agency repo add <path>` first"},
+		)
+	}
+	for _, root := range []string{rec.PreferredRoot, rec.RepoRootLastSeen} {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		resolved, err := canonicalCommandDir(root, "registered repo root")
 		if err != nil {
-			return err
+			continue
 		}
-		repoID = resolved.RepoID
-	}
-
-	result, err := client.GetS1ReleaseReadiness(ctx, repoID)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == errors.EGateBlocked {
-			if opts.JSON {
-				return writeJSONError(stdout, string(code), err.Error())
-			}
-			return errors.WithExitCode(err, 1)
+		info, err := os.Stat(resolved)
+		if err == nil && info.IsDir() {
+			return resolved, nil
 		}
-		return err
 	}
-
-	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data)
-	}
-
-	_, _ = fmt.Fprintf(stdout, "S1 Release Readiness: %s\n", readyLabel(result.Data.SliceReady))
-	if result.Data.GateA != nil {
-		printGateStatus(stdout, result.Data.GateA)
-	}
-	if result.Data.GateB != nil {
-		printGateStatus(stdout, result.Data.GateB)
-	}
-	return nil
+	return "", errors.NewWithDetails(
+		errors.ERepoRootInaccessible,
+		"registered repo root is not accessible",
+		map[string]string{"hint": "run `agency repo add <path>` from an accessible checkout"},
+	)
 }
 
-// RepoS1ClosureReportOpts holds options for the s1 closure report command.
-type RepoS1ClosureReportOpts struct {
-	RepoID string
-	JSON   bool
-}
-
-// RepoS1ClosureReport generates the S1 closure report via the daemon.
-func RepoS1ClosureReport(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoS1ClosureReportOpts, stdout, stderr io.Writer) error {
-	client, err := ensureDaemonClient(ctx, fsys)
-	if err != nil {
-		return err
-	}
-
-	repoID := opts.RepoID
-	if repoID == "" {
-		resolved, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{CmdName: "agency repo s1 report"})
-		if err != nil {
-			return err
-		}
-		repoID = resolved.RepoID
-	}
-
-	result, err := client.GetS1ClosureReport(ctx, repoID)
-	if err != nil {
-		return err
-	}
-
-	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data)
-	}
-
-	_, _ = fmt.Fprintf(stdout, "S1 Closure Report\n")
-	if result.Data.GateA != nil {
-		printGateClosure(stdout, result.Data.GateA)
-	}
-	if result.Data.GateB != nil {
-		printGateClosure(stdout, result.Data.GateB)
-	}
-	return nil
-}
-
-// RepoS1FreezeReadinessOpts holds options for the s1 freeze readiness command.
-type RepoS1FreezeReadinessOpts struct {
-	RepoID string
-	JSON   bool
-}
-
-// RepoS1FreezeReadiness checks S1 freeze readiness via the daemon.
-func RepoS1FreezeReadiness(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts RepoS1FreezeReadinessOpts, stdout, stderr io.Writer) error {
-	client, err := ensureDaemonClient(ctx, fsys)
-	if err != nil {
-		return err
-	}
-
-	repoID := opts.RepoID
-	if repoID == "" {
-		resolved, err := ResolveRepoViaClient(ctx, cr, client, cwd, ResolveRepoContextOpts{CmdName: "agency repo s1 freeze"})
-		if err != nil {
-			return err
-		}
-		repoID = resolved.RepoID
-	}
-
-	result, err := client.GetS1FreezeReadiness(ctx, repoID)
-	if err != nil {
-		code := errors.GetCode(err)
-		if code == errors.EGateBlocked {
-			if opts.JSON {
-				return writeJSONError(stdout, string(code), err.Error())
-			}
-			return errors.WithExitCode(err, 1)
-		}
-		return err
-	}
-
-	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data)
-	}
-
-	_, _ = fmt.Fprintf(stdout, "S1 Freeze Readiness: %s\n", readyLabel(result.Data.FreezeReady))
-	_, _ = fmt.Fprintf(stdout, "  unresolved_count: %d\n", result.Data.UnresolvedCount)
-	if result.Data.FirstQuestion != "" {
-		_, _ = fmt.Fprintf(stdout, "  first_question:   %s\n", result.Data.FirstQuestion)
-	}
-	return nil
-}
-
-func ensureDaemonClient(ctx context.Context, fsys fs.FS) (*daemonclient.Client, error) {
+func resolveCommandDirs(dataDirOverride, configDirOverride string) (paths.Dirs, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to get home directory", err)
+		return paths.Dirs{}, errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	if dataDirOverride != "" {
+		dirs.DataDir = dataDirOverride
+	}
+	if configDirOverride != "" {
+		dirs.ConfigDir = configDirOverride
+	}
+	return dirs, nil
+}
 
+func ensureDaemonClient(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonclient.Client, error) {
+	dirs, err := resolveCommandDirs(dataDirOverride, "")
+	if err != nil {
+		return nil, err
+	}
+	return ensureDaemonClientFromDirs(ctx, fsys, dirs)
+}
+
+func ensureDaemonClientFromDirs(ctx context.Context, fsys fs.FS, dirs paths.Dirs) (*daemonclient.Client, error) {
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
 	logPath := st.DaemonLogPath()
@@ -366,78 +292,193 @@ func ensureDaemonClient(ctx context.Context, fsys fs.FS) (*daemonclient.Client, 
 	if err != nil {
 		return nil, err
 	}
-
 	if err := client.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
-
 	return client, nil
 }
 
-func readyLabel(ready bool) string {
-	if ready {
-		return "READY"
+func setupDaemonNav(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonNavSetup, error) {
+	dirs, err := resolveCommandDirs(dataDirOverride, "")
+	if err != nil {
+		return nil, err
 	}
-	return "BLOCKED"
+	client, err := ensureDaemonClientFromDirs(ctx, fsys, dirs)
+	if err != nil {
+		return nil, err
+	}
+	return &daemonNavSetup{dirs: dirs, client: client}, nil
 }
 
-func printGateStatus(w io.Writer, gs *daemon.S1GateStatusData) {
-	_, _ = fmt.Fprintf(w, "  Gate %s: %s (%d/%d closed)\n", gs.GateID, gs.Status, gs.ClosedItems, gs.TotalItems)
-	for _, b := range gs.BlockingItems {
-		_, _ = fmt.Fprintf(w, "    - %s\n", b)
-	}
+func runAttachedInDir(ctx context.Context, command string, args []string, dir string) (exec.CmdResult, error) {
+	return exec.RunAttached(ctx, command, args, exec.AttachedRunOpts{
+		Dir:    dir,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
 }
 
-func printGateClosure(w io.Writer, gc *daemon.S1GateClosureData) {
-	_, _ = fmt.Fprintf(w, "  Gate %s: %s (%d/%d closed)\n", gc.GateID, gc.Status, gc.ClosedItems, gc.TotalItems)
-	for _, ev := range gc.ClosedEvidence {
-		_, _ = fmt.Fprintf(w, "    [closed] %s\n", ev.IssuePath)
+func ensureAccessibleRepo(repo daemon.RepoDTO, repoRef string) (daemon.RepoDTO, error) {
+	if repo.PreferredRoot != "" && repo.PreferredRootAccessible {
+		return repo, nil
 	}
-	for _, b := range gc.BlockingItems {
-		_, _ = fmt.Fprintf(w, "    [blocking] %s\n", b)
+	if strings.TrimSpace(repoRef) == "" {
+		repoRef = repo.RepoID
 	}
+	return daemon.RepoDTO{}, errors.NewWithDetails(
+		errors.ERepoRootInaccessible,
+		"repo preferred_root is not accessible",
+		map[string]string{
+			"repo": repoRef,
+			"hint": "re-register this repo from an accessible checkout, then re-run the command",
+		},
+	)
 }
 
-func writeJSONError(w io.Writer, code, message string) error {
-	resp := map[string]interface{}{
-		"ok":         false,
-		"error_code": code,
-		"message":    message,
+func resolveAccessibleRepo(ctx context.Context, client *daemonclient.Client, repoRef string) (daemon.RepoDTO, error) {
+	repo, err := client.GetRepo(ctx, repoRef)
+	if err != nil {
+		return daemon.RepoDTO{}, err
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(resp)
+	return ensureAccessibleRepo(repo.Data, repoRef)
+}
+
+func resolveAccessibleRegisteredRepo(ctx context.Context, client *daemonclient.Client, root string) (daemon.RepoDTO, error) {
+	repo, err := client.RegisterRepo(ctx, root)
+	if err != nil {
+		return daemon.RepoDTO{}, err
+	}
+	return ensureAccessibleRepo(daemon.RepoDTO{
+		RepoID:                  repo.Data.RepoID,
+		RepoName:                repo.Data.RepoName,
+		RepoKey:                 repo.Data.RepoKey,
+		Paths:                   repo.Data.Paths,
+		PreferredRoot:           repo.Data.PreferredRoot,
+		PreferredRootAccessible: repo.Data.PreferredRootAccessible,
+		LastSeenAt:              repo.Data.LastSeenAt,
+	}, repo.Data.RepoID)
+}
+
+func requirePresentWorktree(worktree daemon.WorktreeDTO, message string) (daemon.WorktreeDTO, error) {
+	if worktree.State == "present" {
+		return worktree, nil
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "worktree must be present"
+	}
+	return daemon.WorktreeDTO{}, errors.NewWithDetails(
+		errors.EWorktreeNotFound,
+		message,
+		map[string]string{
+			"hint": "pick a present worktree from `agency worktree ls`",
+		},
+	)
 }
 
 // RepoShowOpts holds options for the repo show command.
 type RepoShowOpts struct {
-	RepoID string
-	JSON   bool
+	RepoRef string
+	JSON    bool
+}
+
+// RepoRmOpts holds options for the repo rm command.
+type RepoRmOpts struct {
+	RepoRef        string
+	Yes            bool
+	JSON           bool
+	IsInteractive  func() bool
+	ConfirmationIn io.Reader
+}
+
+// RepoRm removes a registered repository from the daemon registry.
+func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmOpts, stdout, stderr io.Writer) error {
+	_ = cr
+	fail := func(err error) error {
+		if err == nil || !opts.JSON {
+			return err
+		}
+		return writeCommandJSONError(stdout, err)
+	}
+
+	if strings.TrimSpace(opts.RepoRef) == "" {
+		return fail(errors.New(errors.EUsage, "repo_ref is required"))
+	}
+
+	if !opts.Yes {
+		isInteractive := opts.IsInteractive
+		if isInteractive == nil {
+			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
+		}
+		if !isInteractive() {
+			return fail(errors.NewWithDetails(
+				errors.EConfirmationRequired,
+				"non-interactive repo removal requires explicit confirmation",
+				map[string]string{"hint": "re-run with --yes"},
+			))
+		}
+
+		_, _ = fmt.Fprint(stderr, "confirm: type 'rm' to proceed: ")
+		confirmationIn := opts.ConfirmationIn
+		if confirmationIn == nil {
+			confirmationIn = os.Stdin
+		}
+		line, err := bufio.NewReader(io.LimitReader(confirmationIn, maxConfirmationBytes+1)).ReadString('\n')
+		if err != nil && err != io.EOF {
+			return fail(errors.Wrap(errors.EInternal, "failed to read repo remove confirmation input", err))
+		}
+		if len(line) > maxConfirmationBytes {
+			return fail(errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"confirmation input exceeds maximum length",
+				map[string]string{"hint": "type 'rm' exactly"},
+			))
+		}
+		if strings.TrimSpace(line) != "rm" {
+			return fail(errors.New(errors.EAborted, "repo remove confirmation failed; expected 'rm'"))
+		}
+	}
+
+	client, err := ensureDaemonClient(ctx, fsys, "")
+	if err != nil {
+		return fail(err)
+	}
+
+	result, err := client.RepoRm(ctx, opts.RepoRef)
+	if err != nil {
+		return fail(err)
+	}
+
+	if opts.JSON {
+		return writeCommandJSON(stdout, struct {
+			commandJSONBase
+			RepoID           string `json:"repo_id,omitempty"`
+			RepoKey          string `json:"repo_key,omitempty"`
+			RemovedFromIndex bool   `json:"removed_from_index,omitempty"`
+		}{
+			commandJSONBase:  newCommandJSONSuccess(0, "", "", result.RequestID),
+			RepoID:           result.Data.RepoID,
+			RepoKey:          result.Data.RepoKey,
+			RemovedFromIndex: result.Data.RemovedFromIndex,
+		})
+	}
+
+	repoLabel := result.Data.RepoID
+	if strings.TrimSpace(result.Data.RepoName) != "" {
+		repoLabel = result.Data.RepoName + " (" + result.Data.RepoID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "Removed repository %s\n", repoLabel)
+	return nil
 }
 
 // RepoShow shows details for a registered repository.
 func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoShowOpts, stdout, stderr io.Writer) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
-
-	// Ensure daemon is running
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
 		return err
 	}
 
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	result, err := client.GetRepo(ctx, opts.RepoID)
+	result, err := client.GetRepo(ctx, opts.RepoRef)
 	if err != nil {
 		return err
 	}
@@ -445,11 +486,15 @@ func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoS
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result.Repo)
+		return enc.Encode(result.Data)
 	}
 
-	r := result.Repo
-	_, _ = fmt.Fprintf(stdout, "repo_id:        %s\n", r.RepoID)
+	r := result.Data
+	repoLabel := r.RepoID
+	if strings.TrimSpace(r.RepoName) != "" {
+		repoLabel = r.RepoName + " (" + r.RepoID + ")"
+	}
+	_, _ = fmt.Fprintf(stdout, "repo:           %s\n", repoLabel)
 	_, _ = fmt.Fprintf(stdout, "repo_key:       %s\n", r.RepoKey)
 	_, _ = fmt.Fprintf(stdout, "preferred_root: %s\n", r.PreferredRoot)
 	accessible := "yes"

@@ -1,4 +1,4 @@
-// Package invocation provides invocation operations for Slice 8.
+// Package invocation provides invocation operations.
 // Invocations are agent executions inside isolated sandbox worktrees.
 package invocation
 
@@ -54,7 +54,7 @@ type CreateOpts struct {
 	// RepoID is the repo identifier.
 	RepoID string
 
-	// Runner is the runner id (canonical set: claude-code, codex, amp, opencode, cursor, droid; claude/cursor-cli aliases accepted).
+	// Runner is the canonical runner id (claude-code, codex, amp, opencode, cursor, droid).
 	Runner string
 
 	// Mode is the execution mode (headed, headless).
@@ -63,8 +63,23 @@ type CreateOpts struct {
 	// InvocationName is an optional human-readable label.
 	InvocationName string
 
+	// CheckoutRoot is the repo-scoped root for Agency-managed checkouts.
+	CheckoutRoot string
+
+	// ExecutionProfile is the profile label selected for this invocation.
+	ExecutionProfile string
+
 	// NoIncludeUntracked excludes untracked files from checkpoint snapshots.
 	NoIncludeUntracked bool
+
+	// ClientRequestID records control-plane start idempotency, when provided.
+	ClientRequestID string
+
+	// RequestFingerprint records the durable fingerprint for ClientRequestID.
+	RequestFingerprint string
+
+	// Env overlays daemon-owned git commands for this invocation.
+	Env map[string]string
 }
 
 // CreateResult holds the result of a successful invocation creation.
@@ -92,9 +107,9 @@ type CreateResult struct {
 //  5. Create invocation directory (exclusive)
 //  6. Create sandbox directory
 //  7. Capture base_commit
-//  8. Run git worktree add for sandbox
-//  9. Write SANDBOX_MARKER
-//  10. Write invocation meta.json
+//  8. Write invocation meta.json
+//  9. Run git worktree add for sandbox
+//  10. Write SANDBOX_MARKER
 //
 // On failure after any step, cleanup is performed.
 func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, error) {
@@ -140,7 +155,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}
 
 	// 4. Compute sandbox paths
-	sandboxTreePath := s.Store.SandboxTreePath(opts.RepoID, invocationID)
+	sandboxTreePath := filepath.Join(opts.CheckoutRoot, "sandboxes", invocationID)
 	sandboxBranch := "agency/sandbox-" + invocationID
 
 	// Sandbox path safety check - CRITICAL INVARIANT
@@ -148,7 +163,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		return nil, err
 	}
 
-	// 4. Create invocation directory (exclusive)
+	// 5. Create invocation directory (exclusive)
 	_, err = s.Store.EnsureInvocationDir(opts.RepoID, invocationID)
 	if err != nil {
 		return nil, err
@@ -156,7 +171,6 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 
 	// Track cleanup state
 	invocationDirCreated := true
-	sandboxDirCreated := false
 	gitWorktreeCreated := false
 	branchCreated := false
 
@@ -165,16 +179,12 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		if gitWorktreeCreated {
 			// Remove worktree (best-effort)
 			args := []string{"-C", opts.RepoRoot, "worktree", "remove", "--force", sandboxTreePath}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{})
+			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if branchCreated {
 			// Delete branch (best-effort)
 			args := []string{"-C", opts.RepoRoot, "branch", "-D", sandboxBranch}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{})
-		}
-		if sandboxDirCreated {
-			// Remove sandbox directory (best-effort)
-			_ = s.Store.RemoveSandboxDir(opts.RepoID, invocationID)
+			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if invocationDirCreated {
 			// Remove invocation directory (best-effort)
@@ -182,20 +192,23 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		}
 	}
 
-	// 5. Create sandbox directory
-	_, err = s.Store.EnsureSandboxDir(opts.RepoID, invocationID)
-	if err != nil {
+	// 6. Create sandbox parent directory
+	if err := s.FS.MkdirAll(filepath.Dir(sandboxTreePath), 0o700); err != nil {
 		cleanup()
-		return nil, err
+		return nil, errors.WrapWithDetails(
+			errors.ESandboxCreateFailed,
+			"failed to create checkout sandboxes directory",
+			err,
+			map[string]string{"dir": filepath.Dir(sandboxTreePath)},
+		)
 	}
-	sandboxDirCreated = true
 
-	// 6. Capture base_commit
+	// 7. Capture base_commit
 	integrationBranch := opts.IntegrationWorktreeMeta.Branch
 	baseCommitResult, err := s.CR.Run(ctx, "git", []string{
 		"-C", opts.RepoRoot,
 		"rev-parse", integrationBranch,
-	}, exec.RunOpts{})
+	}, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
@@ -215,7 +228,31 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}
 	baseCommit := strings.TrimSpace(baseCommitResult.Stdout)
 
-	// 7. Create sandbox git worktree + branch
+	// 8. Write invocation meta.json before git side effects so idempotency survives daemon restart.
+	meta := store.NewInvocationMeta(
+		invocationID,
+		opts.InvocationName,
+		opts.IntegrationWorktreeID,
+		sandboxTreePath,
+		opts.CheckoutRoot,
+		opts.ExecutionProfile,
+		sandboxBranch,
+		baseCommit,
+		opts.Runner,
+		opts.Mode,
+		s.Now(),
+	)
+	if opts.NoIncludeUntracked {
+		meta.CheckpointIncludeUntracked = false
+	}
+	meta.ClientRequestID = opts.ClientRequestID
+	meta.RequestFingerprint = opts.RequestFingerprint
+	if err := s.Store.WriteInvocationMeta(opts.RepoID, invocationID, meta); err != nil {
+		cleanup()
+		return nil, err
+	}
+
+	// 9. Create sandbox git worktree + branch
 	args := []string{
 		"-C", opts.RepoRoot,
 		"worktree", "add",
@@ -224,7 +261,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		integrationBranch,
 	}
 
-	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{})
+	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
@@ -254,7 +291,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	gitWorktreeCreated = true
 	branchCreated = true
 
-	// 8. Write SANDBOX_MARKER
+	// 10. Write SANDBOX_MARKER
 	agencyDir := filepath.Join(sandboxTreePath, ".agency")
 	if err := s.FS.MkdirAll(agencyDir, 0o755); err != nil {
 		cleanup()
@@ -291,28 +328,6 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		)
 	}
 
-	// 9. Write invocation meta.json
-	meta := store.NewInvocationMeta(
-		invocationID,
-		opts.InvocationName,
-		opts.IntegrationWorktreeID,
-		sandboxTreePath,
-		sandboxBranch,
-		baseCommit,
-		opts.Runner,
-		opts.Mode,
-		s.Now(),
-	)
-
-	if opts.NoIncludeUntracked {
-		meta.CheckpointIncludeUntracked = false
-	}
-
-	if err := s.Store.WriteInvocationMeta(opts.RepoID, invocationID, meta); err != nil {
-		cleanup()
-		return nil, err
-	}
-
 	return &CreateResult{
 		InvocationID:  invocationID,
 		SandboxPath:   sandboxTreePath,
@@ -324,12 +339,38 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 // validateSandboxPath ensures the sandbox path does not resolve to the integration tree.
 // This is a CRITICAL safety check per the spec.
 func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error {
-	// Clean paths for comparison
 	sandboxClean := filepath.Clean(sandboxPath)
 	integrationClean := filepath.Clean(integrationPath)
 
+	if !filepath.IsAbs(sandboxClean) {
+		return errors.NewWithDetails(
+			errors.ESandboxPathUnsafe,
+			"sandbox path must be absolute",
+			map[string]string{"sandbox_path": sandboxPath},
+		)
+	}
+
+	sandboxCanonical, err := resolveSandboxSafetyPath(sandboxClean)
+	if err != nil {
+		return errors.WrapWithDetails(
+			errors.ESandboxPathUnsafe,
+			"sandbox path could not be resolved safely",
+			err,
+			map[string]string{"sandbox_path": sandboxPath},
+		)
+	}
+	integrationCanonical, err := resolveSandboxSafetyPath(integrationClean)
+	if err != nil {
+		return errors.WrapWithDetails(
+			errors.ESandboxPathUnsafe,
+			"integration path could not be resolved safely",
+			err,
+			map[string]string{"integration_path": integrationPath},
+		)
+	}
+
 	// Check 1: Paths must not be equal
-	if sandboxClean == integrationClean {
+	if sandboxCanonical == integrationCanonical {
 		return errors.NewWithDetails(
 			errors.ESandboxPathUnsafe,
 			"sandbox path equals integration tree path",
@@ -342,7 +383,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	// Check 2: Sandbox must not be a parent of integration
-	if strings.HasPrefix(integrationClean, sandboxClean+string(filepath.Separator)) {
+	if pathContains(sandboxCanonical, integrationCanonical) {
 		return errors.NewWithDetails(
 			errors.ESandboxPathUnsafe,
 			"sandbox path is a parent of integration tree path",
@@ -354,7 +395,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	// Check 3: Sandbox must not be a child of integration
-	if strings.HasPrefix(sandboxClean, integrationClean+string(filepath.Separator)) {
+	if pathContains(integrationCanonical, sandboxCanonical) {
 		return errors.NewWithDetails(
 			errors.ESandboxPathUnsafe,
 			"sandbox path is a child of integration tree path",
@@ -366,7 +407,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	// Check 4: If sandbox path already exists, it must not contain INTEGRATION_MARKER
-	if integrationworktree.HasIntegrationMarker(sandboxPath) {
+	if integrationworktree.HasIntegrationMarker(sandboxCanonical) {
 		return errors.NewWithDetails(
 			errors.ESandboxPathUnsafe,
 			"sandbox path already contains INTEGRATION_MARKER",
@@ -378,6 +419,42 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	return nil
+}
+
+func resolveSandboxSafetyPath(path string) (string, error) {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return filepath.Clean(resolved), nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	current := clean
+	var missing []string
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return clean, nil
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // Resolve resolves an invocation identifier (id or prefix) to a record.
@@ -448,13 +525,6 @@ type ResolveOpts struct {
 
 	// WorktreeFilter limits resolution to a specific worktree ID.
 	WorktreeFilter string
-}
-
-// HasSandboxMarker checks if a directory contains the SANDBOX_MARKER file.
-func HasSandboxMarker(path string) bool {
-	markerPath := filepath.Join(path, ".agency", SandboxMarkerFileName)
-	_, err := os.Stat(markerPath)
-	return err == nil
 }
 
 // checkNameUniqueness checks if an invocation name is already used by an active invocation.

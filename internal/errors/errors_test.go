@@ -201,46 +201,33 @@ func TestAsAgencyError(t *testing.T) {
 	})
 }
 
-// TestSlice3ErrorCodesExist verifies slice 03 error codes are defined and stable.
-func TestSlice3ErrorCodesExist(t *testing.T) {
+func TestPushPRErrorCodesExist(t *testing.T) {
 	t.Parallel()
 
-	// This test ensures slice 03 error codes exist as constants.
-	// If any are missing or renamed, this test will fail to compile.
 	codes := []Code{
 		EUnsupportedOriginHost,
 		ENoOrigin,
-		EParentNotFound,
+		EBaseNotFound,
 		EGitPushFailed,
 		EGHPRCreateFailed,
 		EGHPREditFailed,
 		EGHPRViewFailed,
 		EPRNotOpen,
-		EReportInvalid,
-		EReportMissing,
-		EReportMalformed,
-		EReportOversized,
-		EReportSchemaIncompatible,
 		EEmptyDiff,
 		EDirtyWorktree,
 	}
 
 	expectedStrings := map[Code]string{
-		EUnsupportedOriginHost:    "E_UNSUPPORTED_ORIGIN_HOST",
-		ENoOrigin:                 "E_NO_ORIGIN",
-		EParentNotFound:           "E_PARENT_NOT_FOUND",
-		EGitPushFailed:            "E_GIT_PUSH_FAILED",
-		EGHPRCreateFailed:         "E_GH_PR_CREATE_FAILED",
-		EGHPREditFailed:           "E_GH_PR_EDIT_FAILED",
-		EGHPRViewFailed:           "E_GH_PR_VIEW_FAILED",
-		EPRNotOpen:                "E_PR_NOT_OPEN",
-		EReportInvalid:            "E_REPORT_INVALID",
-		EReportMissing:            "E_REPORT_MISSING",
-		EReportMalformed:          "E_REPORT_MALFORMED",
-		EReportOversized:          "E_REPORT_OVERSIZED",
-		EReportSchemaIncompatible: "E_REPORT_SCHEMA_INCOMPATIBLE",
-		EEmptyDiff:                "E_EMPTY_DIFF",
-		EDirtyWorktree:            "E_DIRTY_WORKTREE",
+		EUnsupportedOriginHost: "E_UNSUPPORTED_ORIGIN_HOST",
+		ENoOrigin:              "E_NO_ORIGIN",
+		EBaseNotFound:          "E_BASE_NOT_FOUND",
+		EGitPushFailed:         "E_GIT_PUSH_FAILED",
+		EGHPRCreateFailed:      "E_GH_PR_CREATE_FAILED",
+		EGHPREditFailed:        "E_GH_PR_EDIT_FAILED",
+		EGHPRViewFailed:        "E_GH_PR_VIEW_FAILED",
+		EPRNotOpen:             "E_PR_NOT_OPEN",
+		EEmptyDiff:             "E_EMPTY_DIFF",
+		EDirtyWorktree:         "E_DIRTY_WORKTREE",
 	}
 
 	for _, code := range codes {
@@ -249,8 +236,7 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 	}
 }
 
-// TestPR09ErrorCodesExist verifies PR-09 landing error codes are defined and stable.
-func TestPR09ErrorCodesExist(t *testing.T) {
+func TestLandingErrorCodesExist(t *testing.T) {
 	t.Parallel()
 
 	codes := []Code{
@@ -283,8 +269,7 @@ func TestPR09ErrorCodesExist(t *testing.T) {
 	}
 }
 
-// TestPR09ErrorFormat verifies PR-09 error codes format correctly.
-func TestPR09ErrorFormat(t *testing.T) {
+func TestLandingErrorFormat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -314,208 +299,7 @@ func TestPR09ErrorFormat(t *testing.T) {
 	}
 }
 
-// TestS1PR01ErrorCodesExist verifies v2.1 S1 PR-01 gate corpus error codes are defined and stable.
-func TestS1PR01ErrorCodesExist(t *testing.T) {
-	t.Parallel()
-
-	codes := []Code{
-		EGateSetInvalid,
-		EGateItemNotFound,
-		EGateItemInvalid,
-		EGateItemAcceptanceIncomplete,
-		EGateItemTestsIncomplete,
-		EGateItemEvidenceMissing,
-		EGateItemClosureBlockMissing,
-	}
-
-	expectedStrings := map[Code]string{
-		EGateSetInvalid:               "E_GATE_SET_INVALID",
-		EGateItemNotFound:             "E_GATE_ITEM_NOT_FOUND",
-		EGateItemInvalid:              "E_GATE_ITEM_INVALID",
-		EGateItemAcceptanceIncomplete: "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE",
-		EGateItemTestsIncomplete:      "E_GATE_ITEM_TESTS_INCOMPLETE",
-		EGateItemEvidenceMissing:      "E_GATE_ITEM_EVIDENCE_MISSING",
-		EGateItemClosureBlockMissing:  "E_GATE_ITEM_CLOSURE_BLOCK_MISSING",
-	}
-
-	for _, code := range codes {
-		expected := expectedStrings[code]
-		assert.Equal(t, expected, string(code))
-	}
-}
-
-// TestS1PR01ErrorFormat verifies S1 PR-01 error codes format correctly.
-func TestS1PR01ErrorFormat(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		code Code
-		msg  string
-		want string
-	}{
-		{EGateSetInvalid, "cannot parse gate source", "E_GATE_SET_INVALID: cannot parse gate source"},
-		{EGateItemNotFound, "issue path missing", "E_GATE_ITEM_NOT_FOUND: issue path missing"},
-		{EGateItemInvalid, "malformed stub", "E_GATE_ITEM_INVALID: malformed stub"},
-		{EGateItemAcceptanceIncomplete, "2 unchecked", "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE: 2 unchecked"},
-		{EGateItemTestsIncomplete, "no suite pass", "E_GATE_ITEM_TESTS_INCOMPLETE: no suite pass"},
-		{EGateItemEvidenceMissing, "no refs", "E_GATE_ITEM_EVIDENCE_MISSING: no refs"},
-		{EGateItemClosureBlockMissing, "no block", "E_GATE_ITEM_CLOSURE_BLOCK_MISSING: no block"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(string(tt.code), func(t *testing.T) {
-			t.Parallel()
-
-			err := New(tt.code, tt.msg)
-			assert.Equal(t, tt.want, err.Error())
-		})
-	}
-}
-
-// TestS1PR02ErrorCodesExist verifies v2.1 S1 PR-02 gate item lifecycle error codes are defined and stable.
-func TestS1PR02ErrorCodesExist(t *testing.T) {
-	t.Parallel()
-
-	codes := []Code{
-		EGateTransitionInvalid,
-		EGateApprovalRequired,
-		EGateReopenReasonRequired,
-		EGateE2ERequired,
-	}
-
-	expectedStrings := map[Code]string{
-		EGateTransitionInvalid:    "E_GATE_TRANSITION_INVALID",
-		EGateApprovalRequired:     "E_GATE_APPROVAL_REQUIRED",
-		EGateReopenReasonRequired: "E_GATE_REOPEN_REASON_REQUIRED",
-		EGateE2ERequired:          "E_GATE_E2E_REQUIRED",
-	}
-
-	for _, code := range codes {
-		expected := expectedStrings[code]
-		assert.Equal(t, expected, string(code))
-	}
-}
-
-// TestS1PR02ErrorFormat verifies S1 PR-02 error codes format correctly.
-func TestS1PR02ErrorFormat(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		code Code
-		msg  string
-		want string
-	}{
-		{EGateTransitionInvalid, "illegal transition", "E_GATE_TRANSITION_INVALID: illegal transition"},
-		{EGateApprovalRequired, "maintainer required", "E_GATE_APPROVAL_REQUIRED: maintainer required"},
-		{EGateReopenReasonRequired, "missing reason", "E_GATE_REOPEN_REASON_REQUIRED: missing reason"},
-		{EGateE2ERequired, "missing e2e evidence", "E_GATE_E2E_REQUIRED: missing e2e evidence"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(string(tt.code), func(t *testing.T) {
-			t.Parallel()
-
-			err := New(tt.code, tt.msg)
-			assert.Equal(t, tt.want, err.Error())
-		})
-	}
-}
-
-// TestS1PR03ErrorCodesExist verifies v2.1 S1 PR-03 gate readiness error codes are defined and stable.
-func TestS1PR03ErrorCodesExist(t *testing.T) {
-	t.Parallel()
-
-	codes := []Code{
-		EGateSetDrift,
-		EGateBlocked,
-	}
-
-	expectedStrings := map[Code]string{
-		EGateSetDrift: "E_GATE_SET_DRIFT",
-		EGateBlocked:  "E_GATE_BLOCKED",
-	}
-
-	for _, code := range codes {
-		expected := expectedStrings[code]
-		assert.Equal(t, expected, string(code))
-	}
-}
-
-// TestS1PR03ErrorFormat verifies S1 PR-03 error codes format correctly.
-func TestS1PR03ErrorFormat(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		code Code
-		msg  string
-		want string
-	}{
-		{EGateSetDrift, "gate source and issue-map diverge", "E_GATE_SET_DRIFT: gate source and issue-map diverge"},
-		{EGateBlocked, "slice not ready", "E_GATE_BLOCKED: slice not ready"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(string(tt.code), func(t *testing.T) {
-			t.Parallel()
-
-			err := New(tt.code, tt.msg)
-			assert.Equal(t, tt.want, err.Error())
-		})
-	}
-}
-
-// TestS1PR04ErrorCodesExist verifies v2.1 S1 PR-04 gate set change validation error codes are defined and stable.
-func TestS1PR04ErrorCodesExist(t *testing.T) {
-	t.Parallel()
-
-	codes := []Code{
-		EGateChangeReasonRequired,
-		EGateChangeTargetRequired,
-		EGateChangeApprovalRequired,
-	}
-
-	expectedStrings := map[Code]string{
-		EGateChangeReasonRequired:   "E_GATE_CHANGE_REASON_REQUIRED",
-		EGateChangeTargetRequired:   "E_GATE_CHANGE_TARGET_REQUIRED",
-		EGateChangeApprovalRequired: "E_GATE_CHANGE_APPROVAL_REQUIRED",
-	}
-
-	for _, code := range codes {
-		expected := expectedStrings[code]
-		assert.Equal(t, expected, string(code))
-	}
-}
-
-// TestS1PR04ErrorFormat verifies S1 PR-04 error codes format correctly.
-func TestS1PR04ErrorFormat(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		code Code
-		msg  string
-		want string
-	}{
-		{EGateChangeReasonRequired, "missing reason", "E_GATE_CHANGE_REASON_REQUIRED: missing reason"},
-		{EGateChangeTargetRequired, "invalid target", "E_GATE_CHANGE_TARGET_REQUIRED: invalid target"},
-		{EGateChangeApprovalRequired, "missing approver", "E_GATE_CHANGE_APPROVAL_REQUIRED: missing approver"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(string(tt.code), func(t *testing.T) {
-			t.Parallel()
-
-			err := New(tt.code, tt.msg)
-			assert.Equal(t, tt.want, err.Error())
-		})
-	}
-}
-
-// TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
-func TestSlice3ErrorFormat(t *testing.T) {
+func TestPushPRErrorFormat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -525,17 +309,12 @@ func TestSlice3ErrorFormat(t *testing.T) {
 	}{
 		{EUnsupportedOriginHost, "origin is not github.com", "E_UNSUPPORTED_ORIGIN_HOST: origin is not github.com"},
 		{ENoOrigin, "no origin remote", "E_NO_ORIGIN: no origin remote"},
-		{EParentNotFound, "branch main not found", "E_PARENT_NOT_FOUND: branch main not found"},
+		{EBaseNotFound, "branch main not found", "E_BASE_NOT_FOUND: branch main not found"},
 		{EGitPushFailed, "push rejected", "E_GIT_PUSH_FAILED: push rejected"},
 		{EGHPRCreateFailed, "gh pr create failed", "E_GH_PR_CREATE_FAILED: gh pr create failed"},
 		{EGHPREditFailed, "gh pr edit failed", "E_GH_PR_EDIT_FAILED: gh pr edit failed"},
 		{EGHPRViewFailed, "gh pr view failed after retries", "E_GH_PR_VIEW_FAILED: gh pr view failed after retries"},
 		{EPRNotOpen, "PR is closed", "E_PR_NOT_OPEN: PR is closed"},
-		{EReportInvalid, "report missing or empty", "E_REPORT_INVALID: report missing or empty"},
-		{EReportMissing, "report missing", "E_REPORT_MISSING: report missing"},
-		{EReportMalformed, "report malformed", "E_REPORT_MALFORMED: report malformed"},
-		{EReportOversized, "report oversized", "E_REPORT_OVERSIZED: report oversized"},
-		{EReportSchemaIncompatible, "report schema mismatch", "E_REPORT_SCHEMA_INCOMPATIBLE: report schema mismatch"},
 		{EEmptyDiff, "no commits ahead", "E_EMPTY_DIFF: no commits ahead"},
 		{EDirtyWorktree, "worktree has uncommitted changes", "E_DIRTY_WORKTREE: worktree has uncommitted changes"},
 	}

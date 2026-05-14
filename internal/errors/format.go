@@ -22,6 +22,8 @@ type PrintOptions struct {
 
 // Context key whitelist (default mode, in order per spec)
 var defaultContextKeys = []string{
+	"path",
+	"source",
 	"op",
 	"run_id",
 	"repo",
@@ -29,7 +31,6 @@ var defaultContextKeys = []string{
 	"script",
 	"command",
 	"branch",
-	"parent",
 	"pr",
 	"exit_code",
 	"duration",
@@ -39,6 +40,8 @@ var defaultContextKeys = []string{
 
 // Additional context keys for verbose mode
 var verboseContextKeys = []string{
+	"path",
+	"source",
 	"op",
 	"run_id",
 	"repo_id",
@@ -48,8 +51,7 @@ var verboseContextKeys = []string{
 	"script",
 	"command",
 	"branch",
-	"parent",
-	"parent_branch",
+	"base_branch",
 	"pr",
 	"pr_number",
 	"pr_url",
@@ -336,9 +338,9 @@ func insertOutputBlock(output string, lines []string, maxLines int) string {
 	// Build the output block
 	var block strings.Builder
 	if len(lines) >= maxLines {
-		block.WriteString(fmt.Sprintf("\noutput (last %d lines):\n", len(lines)))
+		_, _ = fmt.Fprintf(&block, "\noutput (last %d lines):\n", len(lines))
 	} else {
-		block.WriteString(fmt.Sprintf("\noutput (%d lines):\n", len(lines)))
+		_, _ = fmt.Fprintf(&block, "\noutput (%d lines):\n", len(lines))
 	}
 	for _, line := range lines {
 		block.WriteString("  ")
@@ -371,58 +373,11 @@ func deriveTryLines(ae *AgencyError) []string {
 	var lines []string
 
 	switch ae.Code {
-	case ESessionNotFound:
-		if ae.Details != nil {
-			if runID := ae.Details["run_id"]; runID != "" {
-				lines = append(lines, fmt.Sprintf("agency resume %s", runID))
-			}
-		}
 	case EGhNotAuthenticated:
 		lines = append(lines, "gh auth login")
-	case EScriptFailed:
-		// Check if it's a verify failure
-		if isVerifyFailure(ae) {
-			if ae.Details != nil {
-				if runID := ae.Details["run_id"]; runID != "" {
-					lines = append(lines, fmt.Sprintf("agency verify %s", runID))
-				}
-			}
-		}
-	case ERemoteOutOfDate:
-		if ae.Details != nil {
-			if runID := ae.Details["run_id"]; runID != "" {
-				lines = append(lines, fmt.Sprintf("agency push %s", runID))
-			}
-		}
-	case ENoPR:
-		if ae.Details != nil {
-			if runID := ae.Details["run_id"]; runID != "" {
-				lines = append(lines, fmt.Sprintf("agency push %s", runID))
-			}
-		}
+	case ENoUserConfig:
+		lines = append(lines, "agency config init")
 	}
 
 	return lines
-}
-
-// FormatHint formats a hint for output.
-// If hint already starts with "hint:", returns as-is.
-// Otherwise prepends "hint: ".
-func FormatHint(hint string) string {
-	if hint == "" {
-		return ""
-	}
-	if strings.HasPrefix(hint, "hint:") {
-		return hint
-	}
-	return "hint: " + hint
-}
-
-// GetHint extracts the hint from an error's details, if present.
-func GetHint(err error) string {
-	ae, ok := AsAgencyError(err)
-	if !ok || ae.Details == nil {
-		return ""
-	}
-	return ae.Details["hint"]
 }

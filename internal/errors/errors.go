@@ -10,20 +10,24 @@ import (
 // Code is a stable error code string.
 type Code string
 
-// Error codes. Stable public contract per constitution.
+// Error codes. Stable public contract.
 const (
 	EUsage          Code = "E_USAGE"
 	ENotImplemented Code = "E_NOT_IMPLEMENTED"
 
-	// Slice 0 error codes
-	ENoRepo              Code = "E_NO_REPO"
-	ENoAgencyJSON        Code = "E_NO_AGENCY_JSON"
-	EInvalidAgencyJSON   Code = "E_INVALID_AGENCY_JSON"
-	EInvalidUserConfig   Code = "E_INVALID_USER_CONFIG"
-	EAgencyJSONExists    Code = "E_AGENCY_JSON_EXISTS"
-	ERunnerNotConfigured Code = "E_RUNNER_NOT_CONFIGURED"
-	EEditorNotConfigured Code = "E_EDITOR_NOT_CONFIGURED"
-	EStoreCorrupt        Code = "E_STORE_CORRUPT"
+	ENoRepo                   Code = "E_NO_REPO"
+	ENoAgencyJSON             Code = "E_NO_AGENCY_JSON"
+	ENoUserConfig             Code = "E_NO_USER_CONFIG"
+	EInvalidAgencyJSON        Code = "E_INVALID_AGENCY_JSON"
+	EInvalidUserConfig        Code = "E_INVALID_USER_CONFIG"
+	EInvalidExecutionProfile  Code = "E_INVALID_EXECUTION_PROFILE"
+	EExecutionProfileNotFound Code = "E_EXECUTION_PROFILE_NOT_FOUND"
+	EInvalidCheckoutRoot      Code = "E_INVALID_CHECKOUT_ROOT"
+	ECheckoutRootUnsafe       Code = "E_CHECKOUT_ROOT_UNSAFE"
+	EAgencyJSONExists         Code = "E_AGENCY_JSON_EXISTS"
+	ERunnerNotConfigured      Code = "E_RUNNER_NOT_CONFIGURED"
+	EEditorNotConfigured      Code = "E_EDITOR_NOT_CONFIGURED"
+	EStoreCorrupt             Code = "E_STORE_CORRUPT"
 
 	// Tool/prerequisite error codes
 	EGitNotInstalled     Code = "E_GIT_NOT_INSTALLED"
@@ -35,10 +39,9 @@ const (
 	EPersistFailed       Code = "E_PERSIST_FAILED"
 	EInternal            Code = "E_INTERNAL"
 
-	// Slice 1 error codes
 	EEmptyRepo            Code = "E_EMPTY_REPO"
-	EParentDirty          Code = "E_PARENT_DIRTY"
-	EParentBranchNotFound Code = "E_PARENT_BRANCH_NOT_FOUND"
+	EBaseDirty            Code = "E_BASE_DIRTY"
+	EBaseBranchNotFound   Code = "E_BASE_BRANCH_NOT_FOUND"
 	EWorktreeCreateFailed Code = "E_WORKTREE_CREATE_FAILED"
 	ETmuxSessionExists    Code = "E_TMUX_SESSION_EXISTS"
 	ETmuxFailed           Code = "E_TMUX_FAILED"
@@ -48,78 +51,63 @@ const (
 	EScriptTimeout        Code = "E_SCRIPT_TIMEOUT"
 	EScriptFailed         Code = "E_SCRIPT_FAILED"
 
-	// Run persistence error codes (slice 1 PR-06)
 	ERunDirExists       Code = "E_RUN_DIR_EXISTS"
 	ERunDirCreateFailed Code = "E_RUN_DIR_CREATE_FAILED"
 	EMetaWriteFailed    Code = "E_META_WRITE_FAILED"
 
-	// Tmux attach error codes (slice 1 PR-09)
 	ETmuxAttachFailed Code = "E_TMUX_ATTACH_FAILED"
 
-	// Slice 2 observability error codes
 	ERunIDAmbiguous Code = "E_RUN_ID_AMBIGUOUS" // id prefix matches >1 run
 	ERunBroken      Code = "E_RUN_BROKEN"       // run exists but meta.json is unreadable/invalid
 	ERepoLocked     Code = "E_REPO_LOCKED"      // another agency process holds the lock
 
-	// Slice 3 push/PR error codes
-	EUnsupportedOriginHost    Code = "E_UNSUPPORTED_ORIGIN_HOST"    // origin is not github.com
-	ENoOrigin                 Code = "E_NO_ORIGIN"                  // no origin remote configured
-	EParentNotFound           Code = "E_PARENT_NOT_FOUND"           // parent branch ref not found locally or on origin
-	EGitPushFailed            Code = "E_GIT_PUSH_FAILED"            // git push non-zero exit
-	EGHPRCreateFailed         Code = "E_GH_PR_CREATE_FAILED"        // gh pr create non-zero exit
-	EGHPREditFailed           Code = "E_GH_PR_EDIT_FAILED"          // gh pr edit non-zero exit
-	EGHPRViewFailed           Code = "E_GH_PR_VIEW_FAILED"          // gh pr view failed after create retries
-	EPRNotOpen                Code = "E_PR_NOT_OPEN"                // PR exists but is not open (CLOSED or MERGED)
-	EReportInvalid            Code = "E_REPORT_INVALID"             // report missing/empty (legacy; push uses fallback body)
-	EReportMissing            Code = "E_REPORT_MISSING"             // required report artifacts are missing
-	EReportMalformed          Code = "E_REPORT_MALFORMED"           // report artifact is malformed/unreadable
-	EReportOversized          Code = "E_REPORT_OVERSIZED"           // report artifact exceeds bounded contract size
-	EReportSchemaIncompatible Code = "E_REPORT_SCHEMA_INCOMPATIBLE" // report schema_version is unsupported
-	EEmptyDiff                Code = "E_EMPTY_DIFF"                 // no commits ahead of parent branch
-	EWorktreeMissing          Code = "E_WORKTREE_MISSING"           // run worktree path is missing on disk
-	EDirtyWorktree            Code = "E_DIRTY_WORKTREE"             // run worktree has uncommitted changes
+	EUnsupportedOriginHost Code = "E_UNSUPPORTED_ORIGIN_HOST" // origin is not github.com
+	ENoOrigin              Code = "E_NO_ORIGIN"               // no origin remote configured
+	EBaseNotFound          Code = "E_BASE_NOT_FOUND"          // base branch ref not found locally or on origin
+	EGitPushFailed         Code = "E_GIT_PUSH_FAILED"         // git push non-zero exit
+	EGHPRCreateFailed      Code = "E_GH_PR_CREATE_FAILED"     // gh pr create non-zero exit
+	EGHPREditFailed        Code = "E_GH_PR_EDIT_FAILED"       // gh pr edit non-zero exit
+	EGHPRViewFailed        Code = "E_GH_PR_VIEW_FAILED"       // gh pr view failed after create retries
+	EPRNotOpen             Code = "E_PR_NOT_OPEN"             // PR exists but is not open (CLOSED or MERGED)
+	EEmptyDiff             Code = "E_EMPTY_DIFF"              // no commits ahead of base branch
+	EWorktreeMissing       Code = "E_WORKTREE_MISSING"        // run worktree path is missing on disk
+	EDirtyWorktree         Code = "E_DIRTY_WORKTREE"          // run worktree has uncommitted changes
 
-	// Slice 4 lifecycle control error codes
-	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"     // attach when tmux session is missing; suggests resume
+	ESessionNotFound      Code = "E_SESSION_NOT_FOUND"     // tmux session is missing
 	EConfirmationRequired Code = "E_CONFIRMATION_REQUIRED" // restart attempted without confirmation in non-interactive mode
 
-	// Slice 5 verify error codes
 	EWorkspaceArchived Code = "E_WORKSPACE_ARCHIVED" // run exists but worktree missing or archived; cannot verify
 
-	// Slice 6 merge + archive error codes
-	EArchiveFailed         Code = "E_ARCHIVE_FAILED"          // archive step failed (script failure and/or deletion failure)
-	EAborted               Code = "E_ABORTED"                 // user declined confirmation / wrong confirmation token
-	ENotInteractive        Code = "E_NOT_INTERACTIVE"         // command requires an interactive TTY
-	EGitFetchFailed        Code = "E_GIT_FETCH_FAILED"        // git fetch failed
-	ERemoteOutOfDate       Code = "E_REMOTE_OUT_OF_DATE"      // local head sha != origin/<branch> sha
-	EPRDraft               Code = "E_PR_DRAFT"                // PR is a draft
-	EPRMismatch            Code = "E_PR_MISMATCH"             // resolved PR does not match expected branch
-	EGHRepoParseFailed     Code = "E_GH_REPO_PARSE_FAILED"    // failed to parse owner/repo from origin
-	EPRMergeabilityUnknown Code = "E_PR_MERGEABILITY_UNKNOWN" // gh reports mergeable as UNKNOWN after retries
-	EGHPRMergeFailed       Code = "E_GH_PR_MERGE_FAILED"      // gh merge failed or merge state could not be confirmed
-	EPRNotMergeable        Code = "E_PR_NOT_MERGEABLE"        // PR cannot be merged (conflicts or checks failing)
-	ENoPR                  Code = "E_NO_PR"                   // no PR exists for the run
-	ERebaseConflict        Code = "E_REBASE_CONFLICT"         // git rebase encountered conflicts during worktree update
+	EArchiveFailed            Code = "E_ARCHIVE_FAILED"             // archive step failed (script failure and/or deletion failure)
+	EAborted                  Code = "E_ABORTED"                    // user declined confirmation / wrong confirmation token
+	ENotInteractive           Code = "E_NOT_INTERACTIVE"            // command requires an interactive TTY
+	EGitFetchFailed           Code = "E_GIT_FETCH_FAILED"           // git fetch failed
+	ERemoteOutOfDate          Code = "E_REMOTE_OUT_OF_DATE"         // local head sha != origin/<branch> sha
+	EPRDraft                  Code = "E_PR_DRAFT"                   // PR is a draft
+	EPRMismatch               Code = "E_PR_MISMATCH"                // resolved PR does not match expected branch
+	EGHRepoParseFailed        Code = "E_GH_REPO_PARSE_FAILED"       // failed to parse owner/repo from origin
+	EPRMergeabilityUnknown    Code = "E_PR_MERGEABILITY_UNKNOWN"    // gh reports mergeable as UNKNOWN after retries
+	EGHPRMergeFailed          Code = "E_GH_PR_MERGE_FAILED"         // gh merge failed or merge state could not be confirmed
+	EPRNotMergeable           Code = "E_PR_NOT_MERGEABLE"           // PR cannot be merged (conflicts or checks failing)
+	ENoPR                     Code = "E_NO_PR"                      // no PR exists for the branch or worktree
+	ERebaseConflict           Code = "E_REBASE_CONFLICT"            // git rebase encountered conflicts during worktree rebase
+	EWorktreeMergeNotFound    Code = "E_WORKTREE_MERGE_NOT_FOUND"   // worktree exists but no durable merge state exists yet
+	EWorktreeMergeActive      Code = "E_WORKTREE_MERGE_ACTIVE"      // another merge attempt already owns this worktree
+	EWorktreeMergeInterrupted Code = "E_WORKTREE_MERGE_INTERRUPTED" // merge attempt was interrupted before reaching a terminal step
 
 	// Name validation error codes
 	ENameExists  Code = "E_NAME_EXISTS"  // name already used by an active run
 	EInvalidName Code = "E_INVALID_NAME" // name does not match validation rules
 
-	// Report completeness error codes (S7)
-	EReportIncomplete Code = "E_REPORT_INCOMPLETE" // report exists but missing required sections
-	// Slice 7 global resolution error codes
 	EInvalidRepoPath Code = "E_INVALID_REPO_PATH" // --repo path does not exist or is not inside a git repo
-	ERunRefAmbiguous Code = "E_RUN_REF_AMBIGUOUS" // name matches multiple active runs (across repos)
 	ERepoNotFound    Code = "E_REPO_NOT_FOUND"    // run resolved but no valid repo path exists
 
-	// Slice 8 integration worktree error codes
 	EWorktreeNotFound     Code = "E_WORKTREE_NOT_FOUND"     // worktree does not exist
 	EWorktreeIDAmbiguous  Code = "E_WORKTREE_ID_AMBIGUOUS"  // worktree id/prefix matches multiple
 	EWorktreeBroken       Code = "E_WORKTREE_BROKEN"        // worktree exists but meta.json is unreadable
 	EWorktreeDirExists    Code = "E_WORKTREE_DIR_EXISTS"    // worktree directory already exists
 	EWorktreeRemoveFailed Code = "E_WORKTREE_REMOVE_FAILED" // git worktree remove failed
 
-	// Slice 8 invocation/sandbox error codes (PR-02)
 	EInvocationNotFound       Code = "E_INVOCATION_NOT_FOUND"       // invocation does not exist
 	EInvocationIDAmbiguous    Code = "E_INVOCATION_ID_AMBIGUOUS"    // invocation id/prefix matches multiple
 	EInvocationBroken         Code = "E_INVOCATION_BROKEN"          // invocation exists but meta.json is unreadable
@@ -129,13 +117,11 @@ const (
 	EIntegrationMarkerMissing Code = "E_INTEGRATION_MARKER_MISSING" // target is not an integration worktree
 	ESandboxPathUnsafe        Code = "E_SANDBOX_PATH_UNSAFE"        // sandbox path resolves to integration tree
 
-	// Slice 8 agent execution error codes (PR-03)
 	EInvocationInvalidMode  Code = "E_INVOCATION_INVALID_MODE"  // operation not supported for invocation mode (e.g., attach on headless)
 	EInvocationNotRunning   Code = "E_INVOCATION_NOT_RUNNING"   // invocation is not in running state
 	EInvocationStartFailed  Code = "E_INVOCATION_START_FAILED"  // runner failed to start (tmux session creation failed)
 	EInvocationAlreadyEnded Code = "E_INVOCATION_ALREADY_ENDED" // invocation has already finished/failed
 
-	// Slice 8 daemon error codes (PR-04)
 	EDaemonNotRunning        Code = "E_DAEMON_NOT_RUNNING"        // daemon is not running (socket missing, /health fails)
 	EDaemonAlreadyRunning    Code = "E_DAEMON_ALREADY_RUNNING"    // another daemon instance is already running on this socket
 	EDaemonBusy              Code = "E_DAEMON_BUSY"               // active headless invocations exist; use --force to override
@@ -150,6 +136,15 @@ const (
 	ELifecycleOwnerMismatch  Code = "E_LIFECYCLE_OWNER_MISMATCH"  // attempt to modify invocation owned by another entity
 	EPromptRequired          Code = "E_PROMPT_REQUIRED"           // headless invocation requires a prompt
 
+	// Task orchestration error codes
+	ETaskNotFound            Code = "E_TASK_NOT_FOUND"            // task does not exist
+	ETaskIDAmbiguous         Code = "E_TASK_ID_AMBIGUOUS"         // task id/prefix matches multiple
+	ETaskBroken              Code = "E_TASK_BROKEN"               // task exists but meta.json is unreadable
+	ETaskDirExists           Code = "E_TASK_DIR_EXISTS"           // task directory already exists
+	ETaskCreateFailed        Code = "E_TASK_CREATE_FAILED"        // task creation failed
+	ETaskNameExists          Code = "E_TASK_NAME_EXISTS"          // task name already used by a non-archived task
+	ETaskFingerprintConflict Code = "E_TASK_FINGERPRINT_CONFLICT" // idempotency key reused with different task request
+
 	// Daemon service manager error codes
 	EDaemonServiceInstallFailed    Code = "E_DAEMON_SERVICE_INSTALL_FAILED"    // service install operation failed
 	EDaemonServiceUninstallFailed  Code = "E_DAEMON_SERVICE_UNINSTALL_FAILED"  // service uninstall operation failed
@@ -157,24 +152,22 @@ const (
 	EDaemonServiceAlreadyInstalled Code = "E_DAEMON_SERVICE_ALREADY_INSTALLED" // service is already installed
 	EDaemonServiceNotInstalled     Code = "E_DAEMON_SERVICE_NOT_INSTALLED"     // service is not installed
 
-	// Slice 8 daemon control plane error codes (PR-05)
-	EUnsafeRepoRoot     Code = "E_UNSAFE_REPO_ROOT"    // repo_root is inside an agency-managed worktree
-	EPromptTooLarge     Code = "E_PROMPT_TOO_LARGE"    // prompt exceeds 256 KB
-	EDaemonIncompatible Code = "E_DAEMON_INCOMPATIBLE" // CLI api_version does not match daemon api_version
-	ERunnerArgConflict  Code = "E_RUNNER_ARG_CONFLICT" // user-supplied args include reserved flags
+	EUnsafeRepoRoot      Code = "E_UNSAFE_REPO_ROOT"     // repo_root is inside an agency-managed worktree
+	EInvalidRequest      Code = "E_INVALID_REQUEST"      // request body, route, or required field is invalid
+	EPromptTooLarge      Code = "E_PROMPT_TOO_LARGE"     // prompt exceeds 256 KB
+	EDaemonIncompatible  Code = "E_DAEMON_INCOMPATIBLE"  // CLI api_version does not match daemon api_version
+	ERunnerArgConflict   Code = "E_RUNNER_ARG_CONFLICT"  // user-supplied args include reserved flags
+	EIdempotencyConflict Code = "E_IDEMPOTENCY_CONFLICT" // client_request_id reused with a different request
 
-	// Slice 8 daemon worktree error codes (PR-06)
-	EWorktreeHasActiveInvocations Code = "E_WORKTREE_HAS_ACTIVE_INVOCATIONS" // rm blocked by active agents
-	ENotAnIntegrationWorktree     Code = "E_NOT_AN_INTEGRATION_WORKTREE"     // tree missing .agency/INTEGRATION_MARKER on rm
-	EWorktreeNameExists           Code = "E_WORKTREE_NAME_EXISTS"            // name collision with existing worktree
+	EWorktreeHasUnresolvedInvocations Code = "E_WORKTREE_HAS_UNRESOLVED_INVOCATIONS" // rm/merge blocked by unlanded agent work
+	ENotAnIntegrationWorktree         Code = "E_NOT_AN_INTEGRATION_WORKTREE"         // tree missing .agency/INTEGRATION_MARKER on rm
+	EWorktreeNameExists               Code = "E_WORKTREE_NAME_EXISTS"                // name collision with existing worktree
 
-	// Slice 8 checkpoint error codes (PR-08)
 	EInvocationStillRunning Code = "E_INVOCATION_STILL_RUNNING" // checkpoint apply refused — invocation must be stopped/finished first
 	ECheckpointNotFound     Code = "E_CHECKPOINT_NOT_FOUND"     // requested checkpoint_id does not exist in checkpoints.json
 	ERollbackFailed         Code = "E_ROLLBACK_FAILED"          // git reset/clean/checkout failed during checkpoint apply
 	ECheckpointFailed       Code = "E_CHECKPOINT_FAILED"        // checkpoint creation failed (git error, index lock, etc.)
 
-	// Slice 8 landing error codes (PR-09)
 	ELandConflict           Code = "E_LAND_CONFLICT"            // cherry-pick or apply resulted in merge conflicts
 	ELandNothingToLand      Code = "E_LAND_NOTHING_TO_LAND"     // sandbox has no commits and no uncommitted changes
 	ELandApplyRequired      Code = "E_LAND_APPLY_REQUIRED"      // sandbox has no commits but has uncommitted changes; --apply required
@@ -185,44 +178,20 @@ const (
 	EIntegrationTreeMissing Code = "E_INTEGRATION_TREE_MISSING" // integration worktree tree no longer exists
 	ELandDenylistViolation  Code = "E_LAND_DENYLIST_VIOLATION"  // denylisted files found in uncommitted changes
 
-	// Slice 8 headed invocation error codes (PR-10)
 	ESessionEnded Code = "E_SESSION_ENDED" // tmux session ended; use logs or open to view
 
-	// Slice 8 repo registry error codes (PR-14/PR-A)
 	ERepoRootInaccessible  Code = "E_REPO_ROOT_INACCESSIBLE"   // cannot stat / permission denied / path missing
 	ERepoNotAGitRepo       Code = "E_REPO_NOT_A_GIT_REPO"      // git rev-parse --show-toplevel fails
 	ERepoNoAccessibleRoots Code = "E_REPO_NO_ACCESSIBLE_ROOTS" // all registered roots are inaccessible
 	EAmbiguous             Code = "E_AMBIGUOUS"                // name/ref matches multiple entities across repos
 	ENoRepoContext         Code = "E_NO_REPO_CONTEXT"          // command requires repo context but none available
 	ERepoIDAmbiguous       Code = "E_REPO_ID_AMBIGUOUS"        // repo ref matches multiple repos
+	ERepoHasWorktrees      Code = "E_REPO_HAS_WORKTREES"       // repo unregister blocked by present or broken worktrees
+	ERepoHasInvocations    Code = "E_REPO_HAS_INVOCATIONS"     // repo unregister blocked by active invocations
 
-	// Slice 8 logs API error codes (PR-B)
 	ELogNotFound     Code = "E_LOG_NOT_FOUND"    // log file does not exist or kind unavailable
 	EInvalidArgument Code = "E_INVALID_ARGUMENT" // invalid parameter (offset, limit, interval, etc.)
 
-	// v2.1 Slice S1 gate corpus error codes (PR-01)
-	EGateSetInvalid               Code = "E_GATE_SET_INVALID"                // gate set source cannot be parsed or resolved
-	EGateItemNotFound             Code = "E_GATE_ITEM_NOT_FOUND"             // referenced issue path does not exist
-	EGateItemInvalid              Code = "E_GATE_ITEM_INVALID"               // issue stub shape is invalid for gate evaluation
-	EGateItemAcceptanceIncomplete Code = "E_GATE_ITEM_ACCEPTANCE_INCOMPLETE" // issue acceptance checklist is not fully complete
-	EGateItemTestsIncomplete      Code = "E_GATE_ITEM_TESTS_INCOMPLETE"      // required automated test evidence is missing or failing
-	EGateItemEvidenceMissing      Code = "E_GATE_ITEM_EVIDENCE_MISSING"      // closure attempted without non-empty evidence_refs
-	EGateItemClosureBlockMissing  Code = "E_GATE_ITEM_CLOSURE_BLOCK_MISSING" // required closure evidence block is absent
-
-	// v2.1 Slice S1 gate item lifecycle error codes (PR-02)
-	EGateTransitionInvalid    Code = "E_GATE_TRANSITION_INVALID"     // requested gate item state transition is illegal
-	EGateApprovalRequired     Code = "E_GATE_APPROVAL_REQUIRED"      // transition caller role does not satisfy policy
-	EGateReopenReasonRequired Code = "E_GATE_REOPEN_REASON_REQUIRED" // reopen transition is missing reason or evidence
-	EGateE2ERequired          Code = "E_GATE_E2E_REQUIRED"           // closure requires GH e2e evidence for this gate item
-
-	// v2.1 Slice S1 gate readiness error codes (PR-03)
-	EGateSetDrift Code = "E_GATE_SET_DRIFT" // canonical gate membership and issue-map are inconsistent
-	EGateBlocked  Code = "E_GATE_BLOCKED"   // gate or slice attempted to complete while blockers remain
-
-	// v2.1 Slice S1 gate set change validation error codes (PR-04)
-	EGateChangeReasonRequired   Code = "E_GATE_CHANGE_REASON_REQUIRED"   // gate-set change omits non-empty reason
-	EGateChangeTargetRequired   Code = "E_GATE_CHANGE_TARGET_REQUIRED"   // gate-set change has missing or invalid target fields
-	EGateChangeApprovalRequired Code = "E_GATE_CHANGE_APPROVAL_REQUIRED" // remove/replace gate-set change lacks explicit approver
 )
 
 // AgencyError is the standard error type for agency errors.
@@ -337,8 +306,7 @@ func ExitCode(err error) int {
 }
 
 // Print writes the error to w in the stable stderr format.
-// This is the default error printer - uses Format() with default options.
-// Signature preserved for backward compatibility (zero churn).
+// This is the default error printer and uses Format() with default options.
 //
 // Output format:
 //

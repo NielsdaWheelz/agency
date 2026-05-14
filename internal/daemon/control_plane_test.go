@@ -1,8 +1,12 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,44 +20,38 @@ func TestValidateRunnerArgs(t *testing.T) {
 		wantError bool
 	}{
 		{
-			name:      "claude: no args",
-			runner:    "claude",
-			args:      nil,
-			wantError: false,
-		},
-		{
 			name:      "claude: valid args",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--model", "opus"},
 			wantError: false,
 		},
 		{
 			name:      "claude: reserved --output-format",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--output-format", "json"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved --output-format=",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--output-format=json"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved -p",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"-p"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved --print",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--print"},
 			wantError: true,
 		},
 		{
 			name:      "claude: reserved --verbose",
-			runner:    "claude",
+			runner:    "claude-code",
 			args:      []string{"--verbose"},
 			wantError: true,
 		},
@@ -142,12 +140,6 @@ func TestValidateRunnerArgs(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "cursor-cli alias: no args",
-			runner:    "cursor-cli",
-			args:      nil,
-			wantError: false,
-		},
-		{
 			name:      "cursor: reserved -p",
 			runner:    "cursor",
 			args:      []string{"-p"},
@@ -189,7 +181,7 @@ func TestValidateRunnerArgs(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateRunnerArgs(tt.runner, tt.args)
+			_, err := validateControlPlaneStartRunner(tt.runner, tt.args, false)
 			if tt.wantError {
 				assert.Error(t, err)
 			} else {
@@ -200,71 +192,21 @@ func TestValidateRunnerArgs(t *testing.T) {
 }
 
 func TestIsInsideAgencyManagedWorktree(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		path     string
-		dataDir  string
-		expected bool
-	}{
-		{
-			name:     "normal repo path",
-			path:     "/home/user/myrepo",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-		{
-			name:     "inside integration worktree tree",
-			path:     "/home/user/.agency/repos/abc123/integration_worktrees/123-abcd/tree",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside integration worktree tree subdir",
-			path:     "/home/user/.agency/repos/abc123/integration_worktrees/123-abcd/tree/src/main",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside sandbox tree",
-			path:     "/home/user/.agency/repos/abc123/sandboxes/456-efgh/tree",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside sandbox tree subdir",
-			path:     "/home/user/.agency/repos/abc123/sandboxes/456-efgh/tree/src",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside repos but not tree",
-			path:     "/home/user/.agency/repos/abc123",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-		{
-			name:     "inside repos dir but not correct structure",
-			path:     "/home/user/.agency/repos/abc123/runs/123/worktree",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-		{
-			name:     "different data dir",
-			path:     "/home/user/.other/repos/abc123/sandboxes/456-efgh/tree",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-	}
+	tmpDir := t.TempDir()
+	integrationTree := filepath.Join(tmpDir, "outside-data-dir", "worktrees", "feature-123")
+	sandboxTree := filepath.Join(tmpDir, "outside-data-dir", "sandboxes", "inv-1")
+	plainTree := filepath.Join(tmpDir, "plain")
+	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(sandboxTree, ".agency"), 0o755))
+	require.NoError(t, os.MkdirAll(plainTree, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(integrationTree, ".agency", integrationworktree.IntegrationMarkerFileName), []byte("integration\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxTree, ".agency", invocation.SandboxMarkerFileName), []byte("sandbox\n"), 0o644))
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := isInsideAgencyManagedWorktree(tt.path, tt.dataDir)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	assert.True(t, isInsideAgencyManagedWorktree(integrationTree))
+	assert.True(t, isInsideAgencyManagedWorktree(filepath.Join(integrationTree, "src", "main")))
+	assert.True(t, isInsideAgencyManagedWorktree(sandboxTree))
+	assert.True(t, isInsideAgencyManagedWorktree(filepath.Join(sandboxTree, "src")))
+	assert.False(t, isInsideAgencyManagedWorktree(plainTree))
 }
 
 func TestBuildRunnerArgsWithSandbox(t *testing.T) {
@@ -278,28 +220,20 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 		wantArgs    []string
 	}{
 		{
-			name:        "claude basic",
-			runner:      "claude",
-			prompt:      "fix the bug",
-			sandboxPath: "/sandbox/path",
-			extraArgs:   nil,
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions"},
-		},
-		{
 			name:        "claude with extra args",
-			runner:      "claude",
+			runner:      "claude-code",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
-			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"},
+			extraArgs:   []string{"--model", "opus", "--permission-mode", "bypassPermissions"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--model", "opus", "--permission-mode", "bypassPermissions", "fix the bug"},
 		},
 		{
 			name:        "claude-code canonical",
 			runner:      "claude-code",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
-			extraArgs:   []string{"--model", "opus"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus"},
+			extraArgs:   []string{"--model", "opus", "--permission-mode", "bypassPermissions"},
+			wantArgs:    []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", "--model", "opus", "--permission-mode", "bypassPermissions", "fix the bug"},
 		},
 		{
 			name:        "codex basic - includes --cd flag",
@@ -307,7 +241,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   nil,
-			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--full-auto", "fix the bug"},
+			wantArgs:    []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", "/sandbox/path", "--json", "--disable", "unified_exec", "fix the bug"},
 		},
 		{
 			name:        "codex with extra args",
@@ -315,7 +249,7 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--model", "gpt-4"},
-			wantArgs:    []string{"exec", "--cd", "/sandbox/path", "--json", "--full-auto", "--model", "gpt-4", "fix the bug"},
+			wantArgs:    []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", "/sandbox/path", "--json", "--model", "gpt-4", "--disable", "unified_exec", "fix the bug"},
 		},
 		{
 			name:        "amp basic",
@@ -336,14 +270,6 @@ func TestBuildRunnerArgsWithSandbox(t *testing.T) {
 		{
 			name:        "cursor basic",
 			runner:      "cursor",
-			prompt:      "fix the bug",
-			sandboxPath: "/sandbox/path",
-			extraArgs:   []string{"--profile", "default"},
-			wantArgs:    []string{"-p", "--output-format", "stream-json", "--force", "--workspace", "/sandbox/path", "--profile", "default", "fix the bug"},
-		},
-		{
-			name:        "cursor-cli alias basic",
-			runner:      "cursor-cli",
 			prompt:      "fix the bug",
 			sandboxPath: "/sandbox/path",
 			extraArgs:   []string{"--profile", "default"},
@@ -383,7 +309,7 @@ func TestBuildRunnerArgsForHeaded(t *testing.T) {
 	}{
 		{
 			name:      "claude headed",
-			runner:    "claude",
+			runner:    "claude-code",
 			extraArgs: []string{"--model", "opus"},
 			wantArgs:  []string{"--model", "opus"},
 		},
@@ -391,7 +317,7 @@ func TestBuildRunnerArgsForHeaded(t *testing.T) {
 			name:      "codex headed",
 			runner:    "codex",
 			extraArgs: []string{"--model", "gpt-5"},
-			wantArgs:  []string{"--model", "gpt-5"},
+			wantArgs:  []string{"--model", "gpt-5", "--enable", "codex_hooks"},
 		},
 		{
 			name:      "amp headed",

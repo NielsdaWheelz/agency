@@ -19,7 +19,7 @@ type ConflictCardInputs struct {
 	// PRNumber is the PR number. If 0, omitted from error message.
 	PRNumber int
 
-	// Base is the parent branch (e.g., "main"). Required.
+	// Base is the base branch (e.g., "main"). Required.
 	Base string
 
 	// Branch is the run branch (e.g., "agency/feature-x-a3f2"). Required.
@@ -41,13 +41,13 @@ type ConflictCardInputs struct {
 //
 //	next:
 //
-//	1. agency open feature-x
+//	1. agency worktree feature-x open
 //	2. git fetch origin
 //	3. git rebase origin/main
 //	4. resolve conflicts, then:
 //	   git add -A && git rebase --continue
-//	5. agency push feature-x --force-with-lease
-//	6. agency merge feature-x
+//	5. agency worktree feature-x pr sync --force-with-lease
+//	6. agency worktree feature-x pr merge
 //
 //	alt: cd "/path/to/worktree"
 func WriteConflictCard(w io.Writer, inputs ConflictCardInputs) {
@@ -67,13 +67,13 @@ func WriteConflictCard(w io.Writer, inputs ConflictCardInputs) {
 	ref := inputs.Ref
 	base := inputs.Base
 
-	_, _ = fmt.Fprintf(w, "1. agency open %s\n", ref)
+	_, _ = fmt.Fprintf(w, "1. agency worktree %s open\n", ref)
 	_, _ = fmt.Fprintln(w, "2. git fetch origin")
 	_, _ = fmt.Fprintf(w, "3. git rebase origin/%s\n", base)
 	_, _ = fmt.Fprintln(w, "4. resolve conflicts, then:")
 	_, _ = fmt.Fprintln(w, "   git add -A && git rebase --continue")
-	_, _ = fmt.Fprintf(w, "5. agency push %s --force-with-lease\n", ref)
-	_, _ = fmt.Fprintf(w, "6. agency merge %s\n", ref)
+	_, _ = fmt.Fprintf(w, "5. agency worktree %s pr sync --force-with-lease\n", ref)
+	_, _ = fmt.Fprintf(w, "6. agency worktree %s pr merge\n", ref)
 	_, _ = fmt.Fprintln(w)
 
 	// Alt section - cd fallback
@@ -100,43 +100,17 @@ func WritePartialConflictCard(w io.Writer, inputs ConflictCardInputs) {
 	_, _ = fmt.Fprintln(w, "hint: worktree no longer exists; resolve conflicts via GitHub web UI or restore locally")
 }
 
-// FormatConflictErrorMessage formats the one-line error message for merge conflicts.
-// Example: "PR #93 has conflicts with main and cannot be merged."
-func FormatConflictErrorMessage(prNumber int, base string) string {
-	if prNumber > 0 {
-		return fmt.Sprintf("PR #%d has conflicts with %s and cannot be merged.", prNumber, base)
-	}
-	return fmt.Sprintf("PR has conflicts with %s and cannot be merged.", base)
-}
-
 // WriteConflictError writes the full conflict error output to w (stderr).
-// This is the complete error output including error_code, message, and action card.
-//
-// Output format:
-//
-//	error_code: E_PR_NOT_MERGEABLE
-//	PR #93 has conflicts with main and cannot be merged.
-//
-//	pr: https://github.com/owner/repo/pull/93
-//	base: main
-//	branch: agency/feature-x-a3f2
-//	worktree: /path/to/worktree
-//
-//	next:
-//	...
+// Includes error_code, one-line message, and action card.
 func WriteConflictError(w io.Writer, inputs ConflictCardInputs) {
 	_, _ = fmt.Fprintln(w, "error_code: E_PR_NOT_MERGEABLE")
-	_, _ = fmt.Fprintln(w, FormatConflictErrorMessage(inputs.PRNumber, inputs.Base))
+	if inputs.PRNumber > 0 {
+		_, _ = fmt.Fprintf(w, "PR #%d has conflicts with %s and cannot be merged.\n", inputs.PRNumber, inputs.Base)
+	} else {
+		_, _ = fmt.Fprintf(w, "PR has conflicts with %s and cannot be merged.\n", inputs.Base)
+	}
 	_, _ = fmt.Fprintln(w)
 	WriteConflictCard(w, inputs)
-}
-
-// FormatNonFastForwardHint returns the hint message for non-fast-forward push failures.
-func FormatNonFastForwardHint(ref string) string {
-	var sb strings.Builder
-	sb.WriteString("hint: branch was rebased or amended; retry with:\n")
-	_, _ = fmt.Fprintf(&sb, "  agency push %s --force-with-lease\n", ref)
-	return sb.String()
 }
 
 // IsNonFastForwardError checks if git push stderr indicates a non-fast-forward rejection.

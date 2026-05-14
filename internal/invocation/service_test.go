@@ -1,5 +1,4 @@
-// Package invocation provides invocation operations for Slice 8.
-// This file implements tests for invariant enforcement (Slice 8 PR-02).
+// Package invocation provides invocation operations.
 package invocation
 
 import (
@@ -77,10 +76,12 @@ func setupIntegrationWorktree(t *testing.T, dataDir, repoRoot, repoID string) *s
 	svc := integrationworktree.NewService(st, cr, fsys, testNow)
 
 	result, err := svc.Create(ctx, integrationworktree.CreateOpts{
-		Name:         "test-feature",
-		RepoRoot:     repoRoot,
-		RepoID:       repoID,
-		ParentBranch: "main",
+		Name:             "test-feature",
+		RepoRoot:         repoRoot,
+		RepoID:           repoID,
+		BaseBranch:       "main",
+		CheckoutRoot:     filepath.Join(dataDir, "checkouts", repoID),
+		ExecutionProfile: "work",
 	})
 	require.NoError(t, err, "failed to create integration worktree")
 
@@ -92,7 +93,7 @@ func setupIntegrationWorktree(t *testing.T, dataDir, repoRoot, repoID string) *s
 
 // TestSandboxNeverResolvesToIntegrationTree verifies that sandbox path
 // cannot resolve to the integration tree path.
-// This is a CRITICAL invariant test per PR-02.
+// This is a critical invariant test.
 func TestSandboxNeverResolvesToIntegrationTree(t *testing.T) {
 	t.Parallel()
 	repoRoot, _, cleanup := setupTestRepo(t)
@@ -141,16 +142,63 @@ func TestSandboxNeverResolvesToIntegrationTree(t *testing.T) {
 		assert.Equal(t, errors.ESandboxPathUnsafe, errors.GetCode(err))
 	})
 
+	t.Run("sandbox_equals_integration_through_symlink", func(t *testing.T) {
+		integrationAlias := filepath.Join(dataDir, "integration-alias")
+		if err := os.Symlink(wtMeta.TreePath, integrationAlias); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+
+		err := invSvc.validateSandboxPath(integrationAlias, wtMeta.TreePath)
+		require.Error(t, err, "expected error when sandbox aliases integration path")
+		assert.Equal(t, errors.ESandboxPathUnsafe, errors.GetCode(err))
+	})
+
+	t.Run("missing_sandbox_child_of_integration_through_symlink", func(t *testing.T) {
+		integrationAlias := filepath.Join(dataDir, "integration-child-alias")
+		if err := os.Symlink(wtMeta.TreePath, integrationAlias); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+
+		sandboxPath := filepath.Join(integrationAlias, "missing", "sandbox")
+		err := invSvc.validateSandboxPath(sandboxPath, wtMeta.TreePath)
+		require.Error(t, err, "expected error when missing sandbox path resolves inside integration")
+		assert.Equal(t, errors.ESandboxPathUnsafe, errors.GetCode(err))
+	})
+
+	t.Run("sandbox_parent_of_integration_through_symlink", func(t *testing.T) {
+		parentAlias := filepath.Join(dataDir, "integration-parent-alias")
+		if err := os.Symlink(filepath.Dir(wtMeta.TreePath), parentAlias); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+
+		err := invSvc.validateSandboxPath(parentAlias, wtMeta.TreePath)
+		require.Error(t, err, "expected error when sandbox aliases parent of integration")
+		assert.Equal(t, errors.ESandboxPathUnsafe, errors.GetCode(err))
+	})
+
 	t.Run("valid_sandbox_path", func(t *testing.T) {
 		validPath := filepath.Join(dataDir, "sandboxes", "test-inv", "tree")
 		err := invSvc.validateSandboxPath(validPath, wtMeta.TreePath)
 		assert.NoError(t, err, "expected no error for valid sandbox path")
 	})
+
+	t.Run("valid_missing_sandbox_path_through_symlinked_parent", func(t *testing.T) {
+		realSandboxRoot := filepath.Join(dataDir, "real-sandbox-root")
+		require.NoError(t, os.Mkdir(realSandboxRoot, 0o700), "failed to create real sandbox root")
+		sandboxAlias := filepath.Join(dataDir, "sandbox-root-alias")
+		if err := os.Symlink(realSandboxRoot, sandboxAlias); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+
+		validPath := filepath.Join(sandboxAlias, "missing", "tree")
+		err := invSvc.validateSandboxPath(validPath, wtMeta.TreePath)
+		assert.NoError(t, err, "expected no error for valid missing sandbox path through symlink")
+	})
 }
 
 // TestIntegrationMarkerEnforcement verifies that agent start fails
 // if targeting a non-integration worktree.
-// This is a CRITICAL invariant test per PR-02.
+// This is a critical invariant test.
 func TestIntegrationMarkerEnforcement(t *testing.T) {
 	t.Parallel()
 	repoRoot, _, cleanup := setupTestRepo(t)
@@ -186,8 +234,10 @@ func TestIntegrationMarkerEnforcement(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 	})
 
 	require.Error(t, err, "expected error when INTEGRATION_MARKER is missing")
@@ -196,7 +246,7 @@ func TestIntegrationMarkerEnforcement(t *testing.T) {
 
 // TestSandboxMarkerWritten verifies that SANDBOX_MARKER is written
 // after successful sandbox creation.
-// This is a CRITICAL invariant test per PR-02.
+// This is a critical invariant test.
 func TestSandboxMarkerWritten(t *testing.T) {
 	t.Parallel()
 	repoRoot, _, cleanup := setupTestRepo(t)
@@ -228,8 +278,10 @@ func TestSandboxMarkerWritten(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 	})
 	require.NoError(t, err, "failed to create invocation")
 
@@ -251,7 +303,7 @@ func TestSandboxMarkerWritten(t *testing.T) {
 
 // TestCleanupOnPartialFailure verifies that partial state is cleaned up
 // when sandbox creation fails after worktree add.
-// This is a CRITICAL invariant test per PR-02.
+// This is a critical invariant test.
 func TestCleanupOnPartialFailure(t *testing.T) {
 	t.Parallel()
 	repoRoot, _, cleanup := setupTestRepo(t)
@@ -289,8 +341,10 @@ func TestCleanupOnPartialFailure(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 	})
 	require.Error(t, err, "expected error when marker write fails")
 
@@ -305,7 +359,7 @@ func TestCleanupOnPartialFailure(t *testing.T) {
 	assert.Empty(t, strings.TrimSpace(branchResult.Stdout), "sandbox branch should have been cleaned up")
 
 	// 3. Check sandbox directory does not exist
-	sandboxesDir := st.SandboxesDir(repoID)
+	sandboxesDir := filepath.Join(wtMeta.CheckoutRoot, "sandboxes")
 	entries, _ := os.ReadDir(sandboxesDir)
 	assert.Empty(t, entries, "sandbox directory should have been cleaned up")
 
@@ -356,8 +410,10 @@ func TestMultipleSandboxesPerWorktree(t *testing.T) {
 			IntegrationWorktreeMeta: wtMeta,
 			RepoRoot:                repoRoot,
 			RepoID:                  repoID,
-			Runner:                  "claude",
+			Runner:                  "claude-code",
 			Mode:                    store.RunnerModeHeaded,
+			CheckoutRoot:            wtMeta.CheckoutRoot,
+			ExecutionProfile:        wtMeta.ExecutionProfile,
 			InvocationName:          "test-agent-" + string(rune('a'+i)),
 		})
 		require.NoError(t, err, "failed to create invocation %d", i)
@@ -421,8 +477,10 @@ func TestIntegrationTreeUntouched(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 	})
 	require.NoError(t, err, "failed to create invocation")
 
@@ -527,7 +585,7 @@ func TestScanInvocations_IncompleteFields(t *testing.T) {
 
 	// Write valid JSON that is missing required fields (schema_version, started_at, invocation_id)
 	metaPath := filepath.Join(invocationDir, "meta.json")
-	require.NoError(t, os.WriteFile(metaPath, []byte(`{"runner":"claude"}`), 0o644))
+	require.NoError(t, os.WriteFile(metaPath, []byte(`{"runner":"claude-code"}`), 0o644))
 
 	records, err := store.ScanInvocationsForRepo(dataDir, repoID)
 	require.NoError(t, err)
@@ -655,8 +713,10 @@ func TestCreate_DuplicateName(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 		InvocationName:          "my-agent",
 	})
 	require.NoError(t, err, "first invocation creation should succeed")
@@ -667,8 +727,10 @@ func TestCreate_DuplicateName(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 		InvocationName:          "my-agent",
 	})
 	require.Error(t, err, "second invocation with same name should fail")
@@ -719,8 +781,10 @@ func TestCreate_DuplicateNameAllowedAfterTerminal(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 		InvocationName:          "reusable",
 	})
 	require.NoError(t, err, "first invocation creation should succeed")
@@ -737,8 +801,10 @@ func TestCreate_DuplicateNameAllowedAfterTerminal(t *testing.T) {
 		IntegrationWorktreeMeta: wtMeta,
 		RepoRoot:                repoRoot,
 		RepoID:                  repoID,
-		Runner:                  "claude",
+		Runner:                  "claude-code",
 		Mode:                    store.RunnerModeHeaded,
+		CheckoutRoot:            wtMeta.CheckoutRoot,
+		ExecutionProfile:        wtMeta.ExecutionProfile,
 		InvocationName:          "reusable",
 	})
 	require.NoError(t, err, "name reuse after terminal state should succeed")

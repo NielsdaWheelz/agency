@@ -19,7 +19,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 		timedOut  bool
 		cancelled bool
 		exitCode  *int
-		vj        *VerifyJSON
+		vj        *verifyJSON
 		want      bool
 	}{
 		// 1. Timeout/cancel always => ok=false
@@ -28,7 +28,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 			timedOut:  true,
 			cancelled: false,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true},
 			want:      false,
 		},
 		{
@@ -36,7 +36,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 			timedOut:  false,
 			cancelled: true,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true},
 			want:      false,
 		},
 		{
@@ -61,7 +61,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  nil,
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true},
 			want:      false,
 		},
 		// 3. exit_code != 0 => ok=false
@@ -86,7 +86,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(1),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true},
 			want:      false,
 		},
 		// 4. exit_code == 0 and verify.json valid => ok = verify.json.ok
@@ -95,7 +95,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true},
 			want:      true,
 		},
 		{
@@ -103,7 +103,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: false},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: false},
 			want:      false,
 		},
 		// 5. exit_code == 0 and verify.json absent/invalid => ok=true
@@ -122,7 +122,7 @@ func TestDeriveOK_Precedence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := DeriveOK(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
+			got := deriveOK(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -136,7 +136,7 @@ func TestDeriveSummary(t *testing.T) {
 		timedOut  bool
 		cancelled bool
 		exitCode  *int
-		vj        *VerifyJSON
+		vj        *verifyJSON
 		want      string
 	}{
 		// verify.json summary wins when provided
@@ -145,7 +145,7 @@ func TestDeriveSummary(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true, Summary: "all 42 tests passed"},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true, Summary: "all 42 tests passed"},
 			want:      "all 42 tests passed",
 		},
 		{
@@ -153,7 +153,7 @@ func TestDeriveSummary(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(1),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: false, Summary: "3 tests failed"},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: false, Summary: "3 tests failed"},
 			want:      "3 tests failed",
 		},
 		// Generic messages when no verify.json summary
@@ -194,7 +194,7 @@ func TestDeriveSummary(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true},
 			want:      "verify succeeded",
 		},
 		{
@@ -219,7 +219,7 @@ func TestDeriveSummary(t *testing.T) {
 			timedOut:  false,
 			cancelled: false,
 			exitCode:  intPtr(0),
-			vj:        &VerifyJSON{SchemaVersion: "1.0", OK: true, Summary: ""},
+			vj:        &verifyJSON{SchemaVersion: "1.0", OK: true, Summary: ""},
 			want:      "verify succeeded",
 		},
 	}
@@ -229,7 +229,7 @@ func TestDeriveSummary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := DeriveSummary(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
+			got := deriveSummary(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
 			assert.Equal(t, tt.want, got)
 		})
 	}
