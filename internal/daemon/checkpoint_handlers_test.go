@@ -189,6 +189,8 @@ func setupInvocationMeta(t *testing.T, st *store.Store, repoID, invocationID str
 		"",
 		"wt-001",
 		"/sandbox/path",
+		"/checkouts/test-repo",
+		"work",
 		"agency/sandbox-"+invocationID,
 		"basecommit",
 		"claude-code",

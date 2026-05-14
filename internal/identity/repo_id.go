@@ -8,7 +8,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
-// Hash length constants per constitution.
+// Hash length constants.
 const (
 	// RepoIDLen is the number of hex characters for repo_id (truncated sha256).
 	RepoIDLen = 16

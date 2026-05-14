@@ -17,7 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
-	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
 // fakeRunnerPath returns the path to the compiled fake runner binary.
@@ -59,10 +58,11 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	// Must include "defaults" for LoadUserConfig validation to pass.
 	runnerPath := fakeRunnerPath(t)
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runners": map[string]string{
 			"claude-code": runnerPath,
@@ -71,6 +71,9 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 			"opencode":    runnerPath,
 			"cursor":      runnerPath,
 			"droid":       runnerPath,
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
@@ -126,7 +129,7 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 // setupTestGitRepo creates a temporary git repo with one initial commit.
 func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
-	return testutil.SetupGitRepo(t)
+	return setupTestGitRepoParallel(t)
 }
 
 // hermeticGitEnv returns per-command env vars that isolate git from the host
@@ -162,6 +165,7 @@ func setupTestGitRepoParallel(t *testing.T) string {
 
 	testFile := filepath.Join(repoDir, "README.md")
 	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644))
+	writeTestAgencyConfig(t, repoDir)
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir, Env: gitEnv})
 	if err != nil || result.ExitCode != 0 {
@@ -174,6 +178,17 @@ func setupTestGitRepoParallel(t *testing.T) string {
 	}
 
 	return repoDir
+}
+
+func writeTestAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	for _, script := range []string{"setup", "verify", "archive"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script+".sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755))
+	}
+	agencyJSON := `{"version":4,"scripts":{"setup":{"path":"scripts/setup.sh","timeout":"10m"},"verify":{"path":"scripts/verify.sh","timeout":"30m"},"archive":{"path":"scripts/archive.sh","timeout":"5m"}},"execution":{"checkout_root":"repo-sibling"}}`
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(agencyJSON), 0o644))
 }
 
 // createTestWorktree creates an integration worktree via the daemon client.

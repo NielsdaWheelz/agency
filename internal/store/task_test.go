@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,24 @@ func TestTaskMetaReadWriteAndPermissions(t *testing.T) {
 	_, err := st.EnsureTaskDir("repo-1", "task-1")
 	require.NoError(t, err)
 
-	meta := NewTaskMeta("task-1", "feature", "repo-1", "/repo", "main", RunnerModeHeadless, "claude-code", "req-1", "fp-1", st.Now())
+	now := st.Now().UTC().Format(time.RFC3339)
+	meta := &TaskMeta{
+		SchemaVersion:      SchemaVersion,
+		TaskID:             "task-1",
+		Name:               "feature",
+		State:              TaskStateStarting,
+		RepoID:             "repo-1",
+		RepoRoot:           "/repo",
+		BaseBranch:         "main",
+		CheckoutRoot:       "/checkouts/repo-1",
+		ExecutionProfile:   "work",
+		Mode:               RunnerModeHeadless,
+		Runner:             "claude-code",
+		ClientRequestID:    "req-1",
+		RequestFingerprint: "fp-1",
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
 	require.NoError(t, st.WriteTaskMeta("repo-1", "task-1", meta))
 
 	info, err := os.Stat(st.TaskDir("repo-1", "task-1"))
@@ -49,12 +67,62 @@ func TestReadTaskMetaRejectsPathMismatch(t *testing.T) {
 	st := NewStore(fs.NewRealFS(), dataDir, time.Now)
 	_, err := st.EnsureTaskDir("repo-1", "task-1")
 	require.NoError(t, err)
-	meta := NewTaskMeta("other-task", "feature", "repo-1", "/repo", "main", RunnerModeHeadless, "claude-code", "", "", time.Now())
-	require.NoError(t, st.WriteTaskMeta("repo-1", "task-1", meta))
+	now := time.Now().UTC().Format(time.RFC3339)
+	meta := &TaskMeta{
+		SchemaVersion:    SchemaVersion,
+		TaskID:           "other-task",
+		Name:             "feature",
+		State:            TaskStateStarting,
+		RepoID:           "repo-1",
+		RepoRoot:         "/repo",
+		BaseBranch:       "main",
+		CheckoutRoot:     "/checkouts/repo-1",
+		ExecutionProfile: "work",
+		Mode:             RunnerModeHeadless,
+		Runner:           "claude-code",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(st.TaskMetaPath("repo-1", "task-1"), data, 0o600))
 
 	_, err = st.ReadTaskMeta("repo-1", "task-1")
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestReadAndScanTaskMetaRejectUnknownFields(t *testing.T) {
+	dataDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), dataDir, time.Now)
+	_, err := st.EnsureTaskDir("repo-1", "task-1")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(st.TaskMetaPath("repo-1", "task-1"), []byte(`{
+		"schema_version":"2.0",
+		"task_id":"task-1",
+		"name":"feature",
+		"state":"starting",
+		"repo_id":"repo-1",
+		"repo_root":"/repo",
+		"base_branch":"main",
+		"checkout_root":"/checkouts/repo-1",
+		"execution_profile":"work",
+		"mode":"headless",
+		"runner":"claude-code",
+		"created_at":"2026-01-01T00:00:00Z",
+		"updated_at":"2026-01-01T00:00:00Z",
+		"unexpected":true
+	}`), 0o600))
+
+	_, err = st.ReadTaskMeta("repo-1", "task-1")
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+
+	records, err := ScanTasksForRepo(dataDir, "repo-1")
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.True(t, records[0].Broken)
+	assert.Nil(t, records[0].Meta)
 }
 
 func TestScanTasksForRepoSortsNewestFirstAndMarksBroken(t *testing.T) {
@@ -69,7 +137,22 @@ func TestScanTasksForRepoSortsNewestFirstAndMarksBroken(t *testing.T) {
 	} {
 		_, err := st.EnsureTaskDir("repo-1", entry.id)
 		require.NoError(t, err)
-		meta := NewTaskMeta(entry.id, entry.id, "repo-1", "/repo", "main", RunnerModeHeadless, "claude-code", "", "", entry.at)
+		now := entry.at.UTC().Format(time.RFC3339)
+		meta := &TaskMeta{
+			SchemaVersion:    SchemaVersion,
+			TaskID:           entry.id,
+			Name:             entry.id,
+			State:            TaskStateStarting,
+			RepoID:           "repo-1",
+			RepoRoot:         "/repo",
+			BaseBranch:       "main",
+			CheckoutRoot:     "/checkouts/repo-1",
+			ExecutionProfile: "work",
+			Mode:             RunnerModeHeadless,
+			Runner:           "claude-code",
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
 		require.NoError(t, st.WriteTaskMeta("repo-1", entry.id, meta))
 	}
 	brokenDir := filepath.Join(st.TasksDir("repo-1"), "broken")
@@ -83,4 +166,91 @@ func TestScanTasksForRepoSortsNewestFirstAndMarksBroken(t *testing.T) {
 	assert.Equal(t, "task-old", records[1].TaskID)
 	assert.Equal(t, "broken", records[2].TaskID)
 	assert.True(t, records[2].Broken)
+}
+
+func TestScanTasksForRepoRejectsStrictMetaViolations(t *testing.T) {
+	dataDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), dataDir, time.Now)
+
+	cases := []struct {
+		id     string
+		mutate func(*TaskMeta)
+	}{
+		{
+			id: "legacy-schema",
+			mutate: func(meta *TaskMeta) {
+				meta.SchemaVersion = "1.0"
+			},
+		},
+		{
+			id: "missing-execution",
+			mutate: func(meta *TaskMeta) {
+				meta.CheckoutRoot = ""
+			},
+		},
+		{
+			id: "relative-repo-root",
+			mutate: func(meta *TaskMeta) {
+				meta.RepoRoot = "repo"
+			},
+		},
+		{
+			id: "relative-worktree-path",
+			mutate: func(meta *TaskMeta) {
+				meta.WorktreePath = "worktree"
+			},
+		},
+		{
+			id: "task-id-mismatch",
+			mutate: func(meta *TaskMeta) {
+				meta.TaskID = "other-task"
+			},
+		},
+		{
+			id: "repo-id-mismatch",
+			mutate: func(meta *TaskMeta) {
+				meta.RepoID = "other-repo"
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		_, err := st.EnsureTaskDir("repo-1", tc.id)
+		require.NoError(t, err)
+		now := time.Now().UTC().Format(time.RFC3339)
+		meta := &TaskMeta{
+			SchemaVersion:    SchemaVersion,
+			TaskID:           tc.id,
+			Name:             tc.id,
+			State:            TaskStateStarting,
+			RepoID:           "repo-1",
+			RepoRoot:         "/repo",
+			BaseBranch:       "main",
+			CheckoutRoot:     "/checkouts/repo-1",
+			ExecutionProfile: "work",
+			Mode:             RunnerModeHeadless,
+			Runner:           "claude-code",
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		tc.mutate(meta)
+		data, err := json.MarshalIndent(meta, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(st.TaskMetaPath("repo-1", tc.id), data, 0o600))
+	}
+
+	records, err := ScanTasksForRepo(dataDir, "repo-1")
+	require.NoError(t, err)
+	require.Len(t, records, len(cases))
+
+	byID := make(map[string]TaskRecord, len(records))
+	for _, record := range records {
+		byID[record.TaskID] = record
+	}
+	for _, tc := range cases {
+		record, ok := byID[tc.id]
+		require.True(t, ok, "missing record %s", tc.id)
+		assert.True(t, record.Broken, tc.id)
+		assert.Nil(t, record.Meta, tc.id)
+	}
 }

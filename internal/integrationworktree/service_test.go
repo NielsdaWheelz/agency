@@ -66,16 +66,19 @@ func TestCreateAndRemove(t *testing.T) {
 	svc := NewService(st, cr, fsys, func() time.Time { return now })
 
 	repoID := "abc123def456"
+	checkoutRoot := filepath.Join(tmpDir, "checkouts", repoID)
 
 	var createdWorktreeID string
 
 	// Test Create
 	t.Run("Create", func(t *testing.T) {
 		result, err := svc.Create(ctx, CreateOpts{
-			Name:       "test-feature",
-			RepoRoot:   repoDir,
-			RepoID:     repoID,
-			BaseBranch: "main",
+			Name:             "test-feature",
+			RepoRoot:         repoDir,
+			RepoID:           repoID,
+			BaseBranch:       "main",
+			CheckoutRoot:     checkoutRoot,
+			ExecutionProfile: "work",
 		})
 
 		require.NoError(t, err)
@@ -122,10 +125,12 @@ func TestCreateAndRemove(t *testing.T) {
 			t.Skip("Create test failed, skipping")
 		}
 		_, err := svc.Create(ctx, CreateOpts{
-			Name:       "test-feature",
-			RepoRoot:   repoDir,
-			RepoID:     repoID,
-			BaseBranch: "main",
+			Name:             "test-feature",
+			RepoRoot:         repoDir,
+			RepoID:           repoID,
+			BaseBranch:       "main",
+			CheckoutRoot:     checkoutRoot,
+			ExecutionProfile: "work",
 		})
 		require.Error(t, err, "expected error for duplicate name")
 	})
@@ -178,10 +183,12 @@ func TestCreateInvalidName(t *testing.T) {
 			t.Parallel()
 
 			result, err := svc.Create(context.Background(), CreateOpts{
-				Name:       tc.worktree,
-				RepoRoot:   filepath.Join(tmpDir, "repo"),
-				RepoID:     "repo-1",
-				BaseBranch: "main",
+				Name:             tc.worktree,
+				RepoRoot:         filepath.Join(tmpDir, "repo"),
+				RepoID:           "repo-1",
+				BaseBranch:       "main",
+				CheckoutRoot:     filepath.Join(tmpDir, "checkouts", "repo-1"),
+				ExecutionProfile: "work",
 			})
 
 			require.Error(t, err)
@@ -224,11 +231,12 @@ func TestRemove_GitFails(t *testing.T) {
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.NoError(t, err)
 
-	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+	treePath := filepath.Join(checkoutRoot, "worktrees", "rm-fail-test-f1a2")
 	meta := store.NewIntegrationWorktreeMeta(
 		wtID, "rm-fail-test", repoID,
 		"agency/rm-fail-test-f1a2", "main",
-		treePath, now,
+		treePath, checkoutRoot, "work", now,
 	)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
 
@@ -266,11 +274,12 @@ func TestRemove_DirtyWorktree(t *testing.T) {
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.NoError(t, err)
 
-	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+	treePath := filepath.Join(checkoutRoot, "worktrees", "dirty-test-f1a2")
 	meta := store.NewIntegrationWorktreeMeta(
 		wtID, "dirty-test", repoID,
 		"agency/dirty-test-f1a2", "main",
-		treePath, now,
+		treePath, checkoutRoot, "work", now,
 	)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
 
@@ -307,11 +316,12 @@ func TestRemove_GitRunError(t *testing.T) {
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.NoError(t, err)
 
-	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+	treePath := filepath.Join(checkoutRoot, "worktrees", "rm-runerr-test-f1a2")
 	meta := store.NewIntegrationWorktreeMeta(
 		wtID, "rm-runerr-test", repoID,
 		"agency/rm-runerr-test-f1a2", "main",
-		treePath, now,
+		treePath, checkoutRoot, "work", now,
 	)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
 
@@ -351,11 +361,12 @@ func TestRemove_AlreadyArchived(t *testing.T) {
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 	require.NoError(t, err)
 
-	treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+	treePath := filepath.Join(checkoutRoot, "worktrees", "archived-test-arch")
 	meta := store.NewIntegrationWorktreeMeta(
 		wtID, "archived-test", repoID,
 		"agency/archived-test-arch", "main",
-		treePath, now,
+		treePath, checkoutRoot, "work", now,
 	)
 	meta.State = store.WorktreeStateArchived
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
@@ -405,11 +416,12 @@ func TestResolve_AmbiguousWorktreeID(t *testing.T) {
 		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 		require.NoError(t, err)
 
-		treePath := st.IntegrationWorktreeTreePath(repoID, wtID)
+		checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+		treePath := filepath.Join(checkoutRoot, "worktrees", "feature-"+wtID[len(wtID)-4:])
 		meta := store.NewIntegrationWorktreeMeta(
 			wtID, "feature-"+wtID[len(wtID)-4:], repoID,
 			"agency/feature-"+wtID, "main",
-			treePath, now,
+			treePath, checkoutRoot, "work", now,
 		)
 		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
 	}

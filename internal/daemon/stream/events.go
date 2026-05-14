@@ -1,5 +1,5 @@
 // Package stream provides parsing and normalization of headless runner output.
-// This implements PR-07: Stream Parsing and Normalized Events.
+// This file defines normalized stream events.
 package stream
 
 import (

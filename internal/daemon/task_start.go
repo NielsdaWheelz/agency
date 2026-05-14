@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TaskStartRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "invalid request body: "+err.Error(), "", "")
 		return
 	}
@@ -76,6 +77,12 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Runner = strings.TrimSpace(req.Runner)
 	req.InvocationName = strings.TrimSpace(req.InvocationName)
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "agency_config_path must be absolute", "", req.ClientRequestID)
+		return
+	}
 
 	if req.ClientRequestID == "" {
 		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "client_request_id is required", "provide a UUID for idempotency", "")
@@ -164,7 +171,21 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fingerprint := taskStartFingerprint(repoRoot, req)
+	requestEnv := copyStringMap(req.Env)
+	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		writeErr(http.StatusBadRequest, code, apiErrorMessage(err), "", req.ClientRequestID)
+		return
+	}
+	req.ExecutionProfile = execCtx.Profile
+	req.CheckoutRoot = execCtx.CheckoutRoot
+	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
+
+	fingerprint := taskStartFingerprint(repoRoot, execCtx.CheckoutRoot, req, requestEnv)
 	if existing, exists, conflict := s.findTaskByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); exists {
 		if conflict {
 			writeErr(http.StatusConflict, errors.ETaskFingerprintConflict, "client_request_id was already used for a different task start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
@@ -232,7 +253,24 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(http.StatusInternalServerError, errors.GetCode(err), err.Error(), "", req.ClientRequestID)
 		return
 	}
-	taskMeta := store.NewTaskMeta(taskID, req.Name, repoIdentity.RepoID, repoRoot, req.BaseBranch, store.RunnerMode(req.Mode), req.Runner, req.ClientRequestID, fingerprint, s.Clock())
+	now := s.Clock().UTC().Format(time.RFC3339)
+	taskMeta := &store.TaskMeta{
+		SchemaVersion:      store.SchemaVersion,
+		TaskID:             taskID,
+		Name:               req.Name,
+		State:              store.TaskStateStarting,
+		RepoID:             repoIdentity.RepoID,
+		RepoRoot:           repoRoot,
+		BaseBranch:         req.BaseBranch,
+		CheckoutRoot:       execCtx.CheckoutRoot,
+		ExecutionProfile:   execCtx.Profile,
+		Mode:               store.RunnerMode(req.Mode),
+		Runner:             req.Runner,
+		ClientRequestID:    req.ClientRequestID,
+		RequestFingerprint: fingerprint,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
 	if err := s.Store.WriteTaskMeta(repoIdentity.RepoID, taskID, taskMeta); err != nil {
 		_ = s.Store.RemoveTaskDir(repoIdentity.RepoID, taskID)
 		writeErr(http.StatusInternalServerError, errors.GetCode(err), err.Error(), "", req.ClientRequestID)
@@ -242,6 +280,8 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		"client_request_id": req.ClientRequestID,
 		"name":              req.Name,
 		"base_branch":       req.BaseBranch,
+		"checkout_root":     execCtx.CheckoutRoot,
+		"execution_profile": execCtx.Profile,
 		"mode":              req.Mode,
 		"runner":            req.Runner,
 	}); err != nil {
@@ -252,10 +292,12 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 
 	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	wtCreate, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
-		Name:       req.Name,
-		RepoRoot:   repoRoot,
-		RepoID:     repoIdentity.RepoID,
-		BaseBranch: req.BaseBranch,
+		Name:             req.Name,
+		RepoRoot:         repoRoot,
+		RepoID:           repoIdentity.RepoID,
+		BaseBranch:       req.BaseBranch,
+		CheckoutRoot:     execCtx.CheckoutRoot,
+		ExecutionProfile: execCtx.Profile,
 	})
 	if err != nil {
 		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EWorktreeCreateFailed, err, "")
@@ -356,6 +398,8 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 		Runner:                  req.Runner,
 		Mode:                    store.RunnerModeHeadless,
 		InvocationName:          req.InvocationName,
+		CheckoutRoot:            req.CheckoutRoot,
+		ExecutionProfile:        req.ExecutionProfile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
 	})
 	if err != nil {
@@ -399,7 +443,9 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 	promptSHA := hex.EncodeToString(promptHash[:])
 	envKeys := sortedEnvKeys(req.Env)
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys)
+	if err := s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, req.Runner, pid, pgid, promptPath, promptSHA, runnerArgs, envKeys); err != nil {
+		return nil, taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
+	}
 	if err := s.Store.UpdateInvocationMeta(repoID, createResult.InvocationID, func(meta *store.InvocationMeta) {
 		meta.TaskID = taskID
 	}); err != nil {
@@ -428,6 +474,8 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 		Runner:                  req.Runner,
 		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          req.InvocationName,
+		CheckoutRoot:            req.CheckoutRoot,
+		ExecutionProfile:        req.ExecutionProfile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
 	})
 	if err != nil {
@@ -436,7 +484,8 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
-		userCfg = config.UserConfig{}
+		s.failInvocationStart(repoID, createResult.InvocationID, "start_failed", true)
+		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInvalidUserConfig, "failed to load user config: "+err.Error(), "run `agency config init`")
 	}
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
 	if err != nil {
@@ -472,7 +521,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 	_ = terminalFile.Close()
 
 	argv := append([]string{runnerCmd}, headedRunnerArgs...)
-	if err := s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv); err != nil {
+	if err := s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv, req.Env); err != nil {
 		s.failInvocationStart(repoID, createResult.InvocationID, "start_failed", true)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working")
 	}
@@ -495,7 +544,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 	}
 
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs); err != nil {
+	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, sortedEnvKeys(req.Env)); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to update invocation meta: "+err.Error(), "")
 	}
@@ -544,6 +593,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 		Runner:                req.Runner,
 		RepoRoot:              repoRoot,
 		RunnerArgs:            runnerArgs,
+		Env:                   copyStringMap(req.Env),
 		NoIncludeUntracked:    req.NoIncludeUntracked,
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,
@@ -586,30 +636,33 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 	return meta, nil
 }
 
-func taskStartFingerprint(repoRoot string, req TaskStartRequest) string {
-	type fingerprintRequest struct {
-		RepoRoot           string            `json:"repo_root"`
-		Name               string            `json:"name"`
-		BaseBranch         string            `json:"base_branch"`
-		Mode               string            `json:"mode"`
-		Runner             string            `json:"runner"`
-		PromptSHA256       string            `json:"prompt_sha256,omitempty"`
-		InvocationName     string            `json:"invocation_name,omitempty"`
-		RunnerArgs         []string          `json:"runner_args,omitempty"`
-		Env                map[string]string `json:"env,omitempty"`
-		NoIncludeUntracked bool              `json:"no_include_untracked,omitempty"`
-	}
+func taskStartFingerprint(repoRoot, checkoutRoot string, req TaskStartRequest, requestEnv map[string]string) string {
 	promptHash := sha256.Sum256([]byte(req.Prompt))
-	payload, _ := json.Marshal(fingerprintRequest{
+	payload, _ := json.Marshal(struct {
+		RepoRoot           string   `json:"repo_root"`
+		Name               string   `json:"name"`
+		BaseBranch         string   `json:"base_branch"`
+		CheckoutRoot       string   `json:"checkout_root"`
+		ExecutionProfile   string   `json:"execution_profile"`
+		Mode               string   `json:"mode"`
+		Runner             string   `json:"runner"`
+		EnvKeys            []string `json:"env_keys,omitempty"`
+		PromptSHA256       string   `json:"prompt_sha256,omitempty"`
+		InvocationName     string   `json:"invocation_name,omitempty"`
+		RunnerArgs         []string `json:"runner_args,omitempty"`
+		NoIncludeUntracked bool     `json:"no_include_untracked,omitempty"`
+	}{
 		RepoRoot:           repoRoot,
 		Name:               req.Name,
 		BaseBranch:         req.BaseBranch,
+		CheckoutRoot:       checkoutRoot,
+		ExecutionProfile:   req.ExecutionProfile,
 		Mode:               req.Mode,
 		Runner:             req.Runner,
+		EnvKeys:            sortedEnvKeys(requestEnv),
 		PromptSHA256:       hex.EncodeToString(promptHash[:]),
 		InvocationName:     req.InvocationName,
 		RunnerArgs:         append([]string(nil), req.RunnerArgs...),
-		Env:                req.Env,
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	})
 	sum := sha256.Sum256(payload)
@@ -726,6 +779,8 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, status int, requestI
 		resp.WorktreeName = meta.WorktreeName
 		resp.WorktreePath = meta.WorktreePath
 		resp.Branch = meta.Branch
+		resp.ExecutionProfile = meta.ExecutionProfile
+		resp.CheckoutRoot = meta.CheckoutRoot
 		resp.InvocationID = meta.PrimaryInvocationID
 		resp.Mode = meta.Mode
 		resp.Runner = meta.Runner
@@ -737,30 +792,33 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, status int, requestI
 func (s *Server) writeTaskStartSuccess(w http.ResponseWriter, requestID, clientRequestID string, meta *store.TaskMeta, duplicate bool) {
 	setRequestIDHeader(w, requestID)
 	resp := TaskStartResponse{
-		OK:              true,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		ClientRequestID: clientRequestID,
-		Duplicate:       duplicate,
-		TaskID:          meta.TaskID,
-		TaskName:        meta.Name,
-		State:           meta.State,
-		RepoID:          meta.RepoID,
-		RepoName:        s.repoName(meta.RepoID),
-		WorktreeID:      meta.WorktreeID,
-		WorktreeName:    meta.WorktreeName,
-		WorktreePath:    meta.WorktreePath,
-		Branch:          meta.Branch,
-		InvocationID:    meta.PrimaryInvocationID,
-		Mode:            meta.Mode,
-		Runner:          meta.Runner,
+		OK:               true,
+		RequestID:        requestID,
+		APIVersion:       APIVersion,
+		BuildVersion:     daemonBuildVersion(),
+		ClientRequestID:  clientRequestID,
+		Duplicate:        duplicate,
+		TaskID:           meta.TaskID,
+		TaskName:         meta.Name,
+		State:            meta.State,
+		RepoID:           meta.RepoID,
+		RepoName:         s.repoName(meta.RepoID),
+		WorktreeID:       meta.WorktreeID,
+		WorktreeName:     meta.WorktreeName,
+		WorktreePath:     meta.WorktreePath,
+		Branch:           meta.Branch,
+		ExecutionProfile: meta.ExecutionProfile,
+		CheckoutRoot:     meta.CheckoutRoot,
+		InvocationID:     meta.PrimaryInvocationID,
+		Mode:             meta.Mode,
+		Runner:           meta.Runner,
 	}
 	if meta.PrimaryInvocationID != "" {
 		if invMeta, err := s.Store.ReadInvocationMeta(meta.RepoID, meta.PrimaryInvocationID); err == nil {
 			resp.SandboxPath = invMeta.SandboxPath
 			resp.TmuxSession = invMeta.TmuxSession
 			resp.DaemonInstanceID = s.InstanceID
+			resp.CustomEnvKeys = append([]string(nil), invMeta.CustomEnvKeys...)
 			resp.LogPaths = s.invocationLogPaths(meta.RepoID, invMeta.InvocationID)
 			if invMeta.PID != nil {
 				resp.PID = *invMeta.PID

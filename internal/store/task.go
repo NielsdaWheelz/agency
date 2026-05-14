@@ -3,7 +3,6 @@
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,7 +40,9 @@ type TaskMeta struct {
 	RepoID   string `json:"repo_id"`
 	RepoRoot string `json:"repo_root"`
 
-	BaseBranch string `json:"base_branch"`
+	BaseBranch       string `json:"base_branch"`
+	CheckoutRoot     string `json:"checkout_root"`
+	ExecutionProfile string `json:"execution_profile"`
 
 	WorktreeID   string `json:"worktree_id,omitempty"`
 	WorktreeName string `json:"worktree_name,omitempty"`
@@ -83,26 +84,6 @@ type TaskRecord struct {
 	Broken  bool
 	Meta    *TaskMeta
 	TaskDir string
-}
-
-// NewTaskMeta creates a task meta record in starting state.
-func NewTaskMeta(taskID, name, repoID, repoRoot, baseBranch string, mode RunnerMode, runner, clientRequestID, requestFingerprint string, createdAt time.Time) *TaskMeta {
-	now := createdAt.UTC().Format(time.RFC3339)
-	return &TaskMeta{
-		SchemaVersion:      SchemaVersion,
-		TaskID:             taskID,
-		Name:               name,
-		State:              TaskStateStarting,
-		RepoID:             repoID,
-		RepoRoot:           repoRoot,
-		BaseBranch:         baseBranch,
-		Mode:               mode,
-		Runner:             runner,
-		ClientRequestID:    clientRequestID,
-		RequestFingerprint: requestFingerprint,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-	}
 }
 
 // EnsureTaskDir creates the task record directory with exclusive semantics.
@@ -187,7 +168,7 @@ func (s *Store) ReadTaskMeta(repoID, taskID string) (*TaskMeta, error) {
 	}
 
 	var meta TaskMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
+	if err := decodeStrictJSON(data, &meta); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EStoreCorrupt,
 			"failed to parse task meta.json",
@@ -195,46 +176,8 @@ func (s *Store) ReadTaskMeta(repoID, taskID string) (*TaskMeta, error) {
 			map[string]string{"meta_path": metaPath},
 		)
 	}
-	if meta.SchemaVersion == "" || meta.TaskID == "" || meta.Name == "" || meta.RepoID == "" || meta.State == "" || meta.CreatedAt == "" || meta.UpdatedAt == "" {
-		return nil, errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"task meta.json missing required fields",
-			map[string]string{"meta_path": metaPath},
-		)
-	}
-	if meta.SchemaVersion != SchemaVersion {
-		return nil, errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"task meta.json has unsupported schema_version",
-			map[string]string{
-				"meta_path":       metaPath,
-				"schema_version":  meta.SchemaVersion,
-				"expected_schema": SchemaVersion,
-			},
-		)
-	}
-	if meta.TaskID != taskID || meta.RepoID != repoID {
-		return nil, errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"task meta.json id does not match record path",
-			map[string]string{
-				"meta_path":    metaPath,
-				"path_task_id": taskID,
-				"meta_task_id": meta.TaskID,
-				"path_repo_id": repoID,
-				"meta_repo_id": meta.RepoID,
-			},
-		)
-	}
-	if !validTaskState(meta.State) {
-		return nil, errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"task meta.json has unsupported state",
-			map[string]string{
-				"meta_path": metaPath,
-				"state":     string(meta.State),
-			},
-		)
+	if err := validateTaskMeta(meta, repoID, taskID, metaPath); err != nil {
+		return nil, err
 	}
 	return &meta, nil
 }
@@ -276,12 +219,12 @@ func ScanTasksForRepo(dataDir, repoID string) ([]TaskRecord, error) {
 			continue
 		}
 		var meta TaskMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
+		if err := decodeStrictJSON(data, &meta); err != nil {
 			record.Broken = true
 			records = append(records, record)
 			continue
 		}
-		if meta.SchemaVersion == "" || meta.TaskID == "" || meta.RepoID == "" || meta.Name == "" || meta.State == "" || meta.CreatedAt == "" || !validTaskState(meta.State) {
+		if err := validateTaskMeta(meta, repoID, taskID, metaPath); err != nil {
 			record.Broken = true
 			records = append(records, record)
 			continue
@@ -312,9 +255,88 @@ func ScanTasksForRepo(dataDir, repoID string) ([]TaskRecord, error) {
 	return records, nil
 }
 
+func validateTaskMeta(meta TaskMeta, repoID, taskID, metaPath string) error {
+	if meta.SchemaVersion == "" || meta.TaskID == "" || meta.Name == "" || meta.RepoID == "" || meta.RepoRoot == "" ||
+		meta.BaseBranch == "" || meta.State == "" || meta.Mode == "" || meta.Runner == "" || meta.CreatedAt == "" || meta.UpdatedAt == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json missing required fields",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.SchemaVersion != SchemaVersion {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json has unsupported schema_version",
+			map[string]string{
+				"meta_path":       metaPath,
+				"schema_version":  meta.SchemaVersion,
+				"expected_schema": SchemaVersion,
+			},
+		)
+	}
+	if meta.CheckoutRoot == "" || meta.ExecutionProfile == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json missing required execution fields",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if !filepath.IsAbs(meta.RepoRoot) || !filepath.IsAbs(meta.CheckoutRoot) || (meta.WorktreePath != "" && !filepath.IsAbs(meta.WorktreePath)) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json paths must be absolute",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.TaskID != taskID || meta.RepoID != repoID {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json id does not match record path",
+			map[string]string{
+				"meta_path":    metaPath,
+				"path_task_id": taskID,
+				"meta_task_id": meta.TaskID,
+				"path_repo_id": repoID,
+				"meta_repo_id": meta.RepoID,
+			},
+		)
+	}
+	if !validTaskState(meta.State) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json has unsupported state",
+			map[string]string{
+				"meta_path": metaPath,
+				"state":     string(meta.State),
+			},
+		)
+	}
+	if !validRunnerMode(meta.Mode) {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json has unsupported mode",
+			map[string]string{
+				"meta_path": metaPath,
+				"mode":      string(meta.Mode),
+			},
+		)
+	}
+	return nil
+}
+
 func validTaskState(state TaskState) bool {
 	switch state {
 	case TaskStateStarting, TaskStateRunning, TaskStateFailed, TaskStateArchived:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRunnerMode(mode RunnerMode) bool {
+	switch mode {
+	case RunnerModeHeaded, RunnerModeHeadless:
 		return true
 	default:
 		return false

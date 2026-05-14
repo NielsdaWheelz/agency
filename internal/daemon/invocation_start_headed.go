@@ -1,9 +1,9 @@
 package daemon
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,7 +22,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	requestID := prepareRequestID(w, r)
 
 	var req ControlPlaneStartHeadedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "", requestID)
 		return
 	}
@@ -57,6 +57,12 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 	req.Runner = canonicalRunner
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidArgument), "agency_config_path must be absolute", "", req.ClientRequestID, requestID)
+		return
+	}
 
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
 	if err != nil {
@@ -93,13 +99,18 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if entry, isDuplicate := s.checkHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID); isDuplicate {
-		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
-		if err == nil {
-			s.writeHeadedSuccess(w, entry.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
-			return
+	requestEnv := req.Env
+	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
 		}
+		s.writeHeadedError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "", req.ClientRequestID, requestID)
+		return
 	}
+	req.ExecutionProfile = execCtx.Profile
+	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headed", func(status int, code, message, hint string) {
 		s.writeHeadedError(w, status, code, message, hint, req.ClientRequestID, requestID)
@@ -108,6 +119,37 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer func() { _ = prep.unlockRepo() }()
+
+	fingerprint := controlPlaneStartFingerprint(repoRoot, prep.wtRecord.WorktreeID, execCtx.CheckoutRoot, store.RunnerModeHeaded, req, requestEnv)
+	if entry, isDuplicate, conflict := s.checkHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
+		if conflict {
+			s.writeHeadedError(w, http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID, requestID)
+			return
+		}
+		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
+		if err == nil {
+			s.writeHeadedSuccess(w, entry.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+			return
+		}
+		s.writeHeadedError(w, http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID, requestID)
+		return
+	}
+	if record, exists, conflict, err := s.findInvocationByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); err != nil {
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID, requestID)
+		return
+	} else if exists {
+		if conflict {
+			s.writeHeadedError(w, http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID, requestID)
+			return
+		}
+		if record.Meta == nil || record.Broken {
+			s.writeHeadedError(w, http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID, requestID)
+			return
+		}
+		s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint, record.Meta.TmuxSession, record.Meta.SandboxPath)
+		s.writeHeadedSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+		return
+	}
 
 	if req.InvocationName != "" {
 		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
@@ -125,7 +167,11 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		Runner:                  req.Runner,
 		Mode:                    store.RunnerModeHeaded,
 		InvocationName:          req.InvocationName,
+		CheckoutRoot:            execCtx.CheckoutRoot,
+		ExecutionProfile:        execCtx.Profile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
+		ClientRequestID:         req.ClientRequestID,
+		RequestFingerprint:      fingerprint,
 	})
 	if err != nil {
 		code := errors.GetCode(err)
@@ -138,7 +184,9 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
-		userCfg = config.UserConfig{}
+		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvalidUserConfig), "failed to load user config: "+err.Error(), "run `agency config init`", req.ClientRequestID, requestID)
+		return
 	}
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
 	if err != nil {
@@ -179,7 +227,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	_ = terminalFile.Close()
 
 	argv := append([]string{runnerCmd}, headedRunnerArgs...)
-	if err := s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv); err != nil {
+	if err := s.TmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv, req.Env); err != nil {
 		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", req.ClientRequestID, requestID)
 		return
@@ -205,7 +253,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	}
 
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
-	if err := s.claimHeadedInvocation(repoIdentity.RepoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs); err != nil {
+	if err := s.claimHeadedInvocation(repoIdentity.RepoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, sortedEnvKeys(req.Env)); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", req.ClientRequestID, requestID)
 		return
@@ -250,6 +298,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		Runner:                req.Runner,
 		RepoRoot:              repoRoot,
 		RunnerArgs:            runnerArgs,
+		Env:                   copyStringMap(req.Env),
 		NoIncludeUntracked:    req.NoIncludeUntracked,
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,
@@ -289,7 +338,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
-	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, sessionName, createResult.SandboxPath)
+	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint, sessionName, createResult.SandboxPath)
 
 	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)

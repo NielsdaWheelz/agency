@@ -24,10 +24,10 @@ func (s *Server) requestInvocationStop(repoID, invocationID string) {
 	})
 }
 
-func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) {
+func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.Runner = runner
 		meta.PID = &pid
@@ -73,13 +73,14 @@ func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid,
 	})
 }
 
-func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName string, runnerArgs []string) error {
+func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
 	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.Runner = runner
 		meta.RunnerArgs = runnerArgs
+		meta.CustomEnvKeys = envKeys
 		meta.TmuxSession = sessionName
 		meta.PID = nil
 		meta.PGID = nil

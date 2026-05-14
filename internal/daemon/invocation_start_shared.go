@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	"github.com/NielsdaWheelz/agency/internal/invocation"
 	agencylock "github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -64,26 +69,102 @@ func validateControlPlaneStartInvocationName(name string) error {
 	return core.ValidateName(name)
 }
 
-func isInsideAgencyManagedWorktree(path, dataDir string) bool {
+func controlPlaneStartFingerprint(repoRoot, worktreeID, checkoutRoot string, mode store.RunnerMode, req ControlPlaneStartRequest, requestEnv map[string]string) string {
+	promptHash := sha256.Sum256([]byte(req.Prompt))
+	payload, _ := json.Marshal(struct {
+		RepoRoot           string           `json:"repo_root"`
+		WorktreeID         string           `json:"worktree_id"`
+		CheckoutRoot       string           `json:"checkout_root"`
+		ExecutionProfile   string           `json:"execution_profile"`
+		Mode               store.RunnerMode `json:"mode"`
+		Runner             string           `json:"runner"`
+		EnvKeys            []string         `json:"env_keys,omitempty"`
+		PromptSHA256       string           `json:"prompt_sha256,omitempty"`
+		InvocationName     string           `json:"invocation_name,omitempty"`
+		RunnerArgs         []string         `json:"runner_args,omitempty"`
+		NoIncludeUntracked bool             `json:"no_include_untracked,omitempty"`
+	}{
+		RepoRoot:           repoRoot,
+		WorktreeID:         worktreeID,
+		CheckoutRoot:       checkoutRoot,
+		ExecutionProfile:   req.ExecutionProfile,
+		Mode:               mode,
+		Runner:             req.Runner,
+		EnvKeys:            sortedEnvKeys(requestEnv),
+		PromptSHA256:       hex.EncodeToString(promptHash[:]),
+		InvocationName:     req.InvocationName,
+		RunnerArgs:         append([]string(nil), req.RunnerArgs...),
+		NoIncludeUntracked: req.NoIncludeUntracked,
+	})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func isInsideAgencyManagedWorktree(path string) bool {
 	cleanPath := filepath.Clean(path)
-	cleanDataDir := filepath.Clean(dataDir)
-	reposDir := filepath.Join(cleanDataDir, "repos")
-	if !strings.HasPrefix(cleanPath, reposDir) {
-		return false
+	for {
+		if _, err := os.Stat(filepath.Join(cleanPath, ".agency", integrationworktree.IntegrationMarkerFileName)); err == nil {
+			return true
+		}
+		if _, err := os.Stat(filepath.Join(cleanPath, ".agency", invocation.SandboxMarkerFileName)); err == nil {
+			return true
+		}
+		parent := filepath.Dir(cleanPath)
+		if parent == cleanPath {
+			return false
+		}
+		cleanPath = parent
+	}
+}
+
+func (s *Server) isInsideAgencyManagedTree(path string) (bool, error) {
+	if isInsideAgencyManagedWorktree(path) {
+		return true, nil
 	}
 
-	rel, err := filepath.Rel(reposDir, cleanPath)
+	cleanPath := canonicalPathForContainment(path)
+	repoIDs, err := s.discoverDurableRepoIDs()
 	if err != nil {
-		return false
+		return false, err
 	}
-	parts := strings.Split(rel, string(filepath.Separator))
-	if len(parts) < 4 {
-		return false
+	for _, repoID := range repoIDs {
+		worktrees, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+		if err != nil {
+			return false, err
+		}
+		for _, record := range worktrees {
+			if record.Meta != nil && pathContains(canonicalPathForContainment(record.Meta.TreePath), cleanPath) {
+				return true, nil
+			}
+		}
+
+		invocations, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+		if err != nil {
+			return false, err
+		}
+		for _, record := range invocations {
+			if record.Meta != nil && pathContains(canonicalPathForContainment(record.Meta.SandboxPath), cleanPath) {
+				return true, nil
+			}
+		}
 	}
-	if parts[1] == "integration_worktrees" || parts[1] == "sandboxes" {
-		return len(parts) >= 4 && parts[3] == "tree"
+	return false, nil
+}
+
+func canonicalPathForContainment(path string) string {
+	clean := filepath.Clean(path)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
 	}
-	return false
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		clean = resolved
+	}
+	return clean
+}
+
+func pathContains(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)))
 }
 
 func (s *Server) ensureRepoRegistered(repoIdentity identity.RepoIdentity, repoRoot string) error {
@@ -146,7 +227,12 @@ func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot strin
 		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "failed to resolve repo_root symlinks: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
-	if isInsideAgencyManagedWorktree(repoRoot, s.Store.DataDir) {
+	insideManagedTree, err := s.isInsideAgencyManagedTree(repoRoot)
+	if err != nil {
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to inspect managed worktrees: "+err.Error(), "")
+		return "", identity.RepoIdentity{}, false
+	}
+	if insideManagedTree {
 		writeErr(http.StatusBadRequest, string(errors.EUnsafeRepoRoot), "repo_root is inside an agency-managed worktree", "use the original repository, not a sandbox or integration worktree")
 		return "", identity.RepoIdentity{}, false
 	}

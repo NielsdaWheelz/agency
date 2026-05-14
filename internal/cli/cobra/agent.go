@@ -195,6 +195,7 @@ func newAgentStartCmd() *cobra.Command {
 	var prompt string
 	var promptFile string
 	var agencyConfigPath string
+	var executionProfile string
 	var runnerArgs []string
 	var model string
 	var effort string
@@ -232,6 +233,7 @@ func newAgentStartCmd() *cobra.Command {
 				Prompt:             prompt,
 				PromptFile:         promptFile,
 				AgencyConfigPath:   agencyConfigPath,
+				ExecutionProfile:   executionProfile,
 				RunnerArgs:         runnerArgs,
 				Model:              model,
 				Effort:             effort,
@@ -254,6 +256,7 @@ func newAgentStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless prompt text")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read the headless prompt from this file")
 	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
+	cmd.Flags().StringVar(&executionProfile, "execution-profile", "", "Execution profile override")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional runner argument (repeatable)")
 	cmd.Flags().StringVar(&model, "model", "", "Runner model override")
 	cmd.Flags().StringVar(&effort, "effort", "", "Runner effort override")

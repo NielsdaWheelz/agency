@@ -1,5 +1,4 @@
 // Package ids provides identifier resolution for agency commands.
-// This file implements integration worktree resolution (Slice 8 PR-01).
 package ids
 
 import (

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"time"
 
@@ -94,7 +93,7 @@ func NewIntegrationWorktreeMergeMeta(
 // WriteIntegrationWorktreeMerge writes merge.json atomically.
 func (s *Store) WriteIntegrationWorktreeMerge(repoID, worktreeID string, meta *IntegrationWorktreeMergeMeta) error {
 	mergePath := s.IntegrationWorktreeMergePath(repoID, worktreeID)
-	if err := fs.WriteJSONAtomic(mergePath, meta, 0o644); err != nil {
+	if err := fs.WriteJSONAtomic(mergePath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write integration worktree merge.json atomically",
@@ -123,13 +122,42 @@ func (s *Store) ReadIntegrationWorktreeMerge(repoID, worktreeID string) (*Integr
 	}
 
 	var meta IntegrationWorktreeMergeMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
+	if err := decodeStrictJSON(data, &meta); err != nil {
 		return nil, errors.WrapWithDetails(
 			errors.EStoreCorrupt,
 			"failed to parse integration worktree merge.json",
 			err,
 			map[string]string{"merge_path": mergePath},
 		)
+	}
+	fields, err := strictJSONObjectFields(data)
+	if err != nil {
+		return nil, errors.WrapWithDetails(
+			errors.EStoreCorrupt,
+			"failed to parse integration worktree merge.json",
+			err,
+			map[string]string{"merge_path": mergePath},
+		)
+	}
+	for _, field := range []string{
+		"schema_version",
+		"repo_id",
+		"worktree_id",
+		"attempt_id",
+		"status",
+		"stage",
+		"strategy",
+		"delete_branch",
+		"started_at",
+		"updated_at",
+	} {
+		if _, ok := fields[field]; !ok {
+			return nil, errors.NewWithDetails(
+				errors.EStoreCorrupt,
+				"integration worktree merge.json missing required field "+field,
+				map[string]string{"merge_path": mergePath},
+			)
+		}
 	}
 	if meta.SchemaVersion == "" {
 		return nil, errors.NewWithDetails(
@@ -149,11 +177,25 @@ func (s *Store) ReadIntegrationWorktreeMerge(repoID, worktreeID string) (*Integr
 			},
 		)
 	}
-	if meta.WorktreeID == "" || meta.RepoID == "" || meta.AttemptID == "" || meta.StartedAt == "" {
+	if meta.WorktreeID == "" || meta.RepoID == "" || meta.AttemptID == "" || meta.Strategy == "" ||
+		meta.StartedAt == "" || meta.UpdatedAt == "" {
 		return nil, errors.NewWithDetails(
 			errors.EStoreCorrupt,
 			"integration worktree merge.json is missing required fields",
 			map[string]string{"merge_path": mergePath},
+		)
+	}
+	if meta.WorktreeID != worktreeID || meta.RepoID != repoID {
+		return nil, errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"integration worktree merge.json id does not match record path",
+			map[string]string{
+				"merge_path":       mergePath,
+				"path_worktree_id": worktreeID,
+				"meta_worktree_id": meta.WorktreeID,
+				"path_repo_id":     repoID,
+				"meta_repo_id":     meta.RepoID,
+			},
 		)
 	}
 

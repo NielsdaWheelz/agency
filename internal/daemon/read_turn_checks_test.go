@@ -75,7 +75,7 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {
 				RepoID:     repoID,
@@ -88,10 +88,12 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 	_, err := st.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: "wt-1",
 		SandboxPath:           repoDir,
+		CheckoutRoot:          filepath.Dir(repoDir),
+		ExecutionProfile:      "work",
 		SandboxBranch:         "main",
 		BaseCommit:            baseCommit,
 		Runner:                "claude-code",

@@ -17,13 +17,15 @@ type WorktreeCreateRequest struct {
 
 // WorktreeCreateResponse is the response body for POST /worktrees/create.
 type WorktreeCreateResponse struct {
-	OK           bool   `json:"ok"`
-	WorktreeID   string `json:"worktree_id,omitempty"`
-	TreePath     string `json:"tree_path,omitempty"`
-	Branch       string `json:"branch,omitempty"`
-	RepoID       string `json:"repo_id,omitempty"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
+	OK               bool   `json:"ok"`
+	WorktreeID       string `json:"worktree_id,omitempty"`
+	TreePath         string `json:"tree_path,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	RepoID           string `json:"repo_id,omitempty"`
+	ExecutionProfile string `json:"execution_profile,omitempty"`
+	CheckoutRoot     string `json:"checkout_root,omitempty"`
+	APIVersion       int    `json:"api_version"`
+	BuildVersion     string `json:"build_version,omitempty"`
 
 	// Error fields (only set when OK is false)
 	ErrorCode string `json:"error_code,omitempty"`

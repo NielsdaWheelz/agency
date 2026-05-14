@@ -1,5 +1,7 @@
 package daemon
 
+import "encoding/json"
+
 // ControlPlaneStartRequest is the request body for POST /invocations/start_headless.
 type ControlPlaneStartRequest struct {
 	// RepoRoot is the absolute path to the repository root.
@@ -23,12 +25,47 @@ type ControlPlaneStartRequest struct {
 	// Env are optional environment variable overrides.
 	Env map[string]string `json:"env,omitempty"`
 
+	// ExecutionProfile overrides agency.json/defaults profile selection.
+	ExecutionProfile string `json:"execution_profile,omitempty"`
+
+	// AgencyConfigPath is an optional exact agency config file to use.
+	AgencyConfigPath string `json:"agency_config_path,omitempty"`
+
 	// ClientRequestID is required for idempotency (UUID format).
 	ClientRequestID string `json:"client_request_id"`
 
 	// NoIncludeUntracked excludes untracked files from checkpoint snapshots.
 	// Default is false (include untracked files).
 	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
+}
+
+func (r *ControlPlaneStartRequest) UnmarshalJSON(data []byte) error {
+	type request ControlPlaneStartRequest
+	var decoded request
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	env, ok, err := decodeRequestEnv(data, map[string]bool{
+		"repo_root":            true,
+		"worktree_ref":         true,
+		"runner":               true,
+		"prompt":               true,
+		"invocation_name":      true,
+		"runner_args":          true,
+		"env":                  true,
+		"execution_profile":    true,
+		"agency_config_path":   true,
+		"client_request_id":    true,
+		"no_include_untracked": true,
+	})
+	if err != nil {
+		return err
+	}
+	*r = ControlPlaneStartRequest(decoded)
+	if ok {
+		r.Env = env
+	}
+	return nil
 }
 
 // ControlPlaneStartResponse is the response body for POST /invocations/start_headless.
@@ -40,6 +77,9 @@ type ControlPlaneStartResponse struct {
 	RepoName         string    `json:"repo_name,omitempty"`
 	WorktreeID       string    `json:"worktree_id,omitempty"`
 	WorktreeName     string    `json:"worktree_name,omitempty"`
+	ExecutionProfile string    `json:"execution_profile,omitempty"`
+	CheckoutRoot     string    `json:"checkout_root,omitempty"`
+	CustomEnvKeys    []string  `json:"custom_env_keys,omitempty"`
 	PID              int       `json:"pid,omitempty"`
 	PGID             int       `json:"pgid,omitempty"`
 	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
@@ -142,6 +182,9 @@ type ControlPlaneStartHeadedResponse struct {
 	RepoName         string    `json:"repo_name,omitempty"`
 	WorktreeID       string    `json:"worktree_id,omitempty"`
 	WorktreeName     string    `json:"worktree_name,omitempty"`
+	ExecutionProfile string    `json:"execution_profile,omitempty"`
+	CheckoutRoot     string    `json:"checkout_root,omitempty"`
+	CustomEnvKeys    []string  `json:"custom_env_keys,omitempty"`
 	TmuxSession      string    `json:"tmux_session,omitempty"`
 	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
 	AlreadyRunning   bool      `json:"already_running,omitempty"`

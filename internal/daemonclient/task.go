@@ -13,6 +13,9 @@ import (
 
 // TaskStart creates a task, integration worktree, and primary invocation.
 func (c *Client) TaskStart(ctx context.Context, opts TaskStartOpts) (*daemon.TaskStartResponse, error) {
+	if err := c.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
 	if opts.ClientRequestID == "" {
 		opts.ClientRequestID = uuid.New().String()
 	}
@@ -48,6 +51,9 @@ func (c *Client) GetTask(ctx context.Context, taskRef, repoID string) (*daemon.R
 
 // ArchiveTask archives one task record.
 func (c *Client) ArchiveTask(ctx context.Context, taskRef, repoID string) (*daemon.TaskStartResponse, error) {
+	if err := c.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
 	var result daemon.TaskStartResponse
 	u := fmt.Sprintf("%s/tasks/%s/archive?repo_id=%s", daemonBaseURL, url.PathEscape(taskRef), url.QueryEscape(repoID))
 	if err := c.doActionRequest(ctx, http.MethodPost, u, nil, &result); err != nil {
@@ -58,6 +64,9 @@ func (c *Client) ArchiveTask(ctx context.Context, taskRef, repoID string) (*daem
 
 // RetryTask starts a new primary invocation for an existing task worktree.
 func (c *Client) RetryTask(ctx context.Context, taskRef, repoID string, opts TaskRetryOpts) (*daemon.TaskStartResponse, error) {
+	if err := c.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
 	if opts.ClientRequestID == "" {
 		opts.ClientRequestID = uuid.New().String()
 	}

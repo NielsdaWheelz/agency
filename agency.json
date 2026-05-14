@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -13,5 +13,8 @@
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
+  },
+  "execution": {
+    "checkout_root": "repo-sibling"
   }
 }

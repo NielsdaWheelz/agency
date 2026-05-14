@@ -3,9 +3,9 @@ package daemon
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -22,7 +22,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 
 	var req ControlPlaneStartRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		writeErr(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
 		return
 	}
@@ -65,6 +65,12 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 	req.Runner = canonicalRunner
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		writeErr(http.StatusBadRequest, string(errors.EInvalidArgument), "agency_config_path must be absolute", "", req.ClientRequestID)
+		return
+	}
 	if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
 		writeErr(http.StatusBadRequest, string(errors.EInvalidName), "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID)
 		return
@@ -77,13 +83,18 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if existingID, isDuplicate := s.checkIdempotency(repoIdentity.RepoID, req.ClientRequestID); isDuplicate {
-		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, existingID)
-		if err == nil {
-			s.writeControlPlaneSuccess(w, existingID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
-			return
+	requestEnv := req.Env
+	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
 		}
+		writeErr(http.StatusBadRequest, string(code), apiErrorMessage(err), "", req.ClientRequestID)
+		return
 	}
+	req.ExecutionProfile = execCtx.Profile
+	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headless", func(status int, code, message, hint string) {
 		writeErr(status, code, message, hint, req.ClientRequestID)
@@ -92,6 +103,37 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { _ = prep.unlockRepo() }()
+
+	fingerprint := controlPlaneStartFingerprint(repoRoot, prep.wtRecord.WorktreeID, execCtx.CheckoutRoot, store.RunnerModeHeadless, req, requestEnv)
+	if entry, isDuplicate, conflict := s.checkIdempotency(repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
+		if conflict {
+			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
+			return
+		}
+		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
+		if err == nil {
+			s.writeControlPlaneSuccess(w, entry.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+			return
+		}
+		writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID)
+		return
+	}
+	if record, exists, conflict, err := s.findInvocationByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); err != nil {
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID)
+		return
+	} else if exists {
+		if conflict {
+			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
+			return
+		}
+		if record.Meta == nil || record.Broken {
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID)
+			return
+		}
+		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
+		s.writeControlPlaneSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+		return
+	}
 
 	if req.InvocationName != "" {
 		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
@@ -109,7 +151,11 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		Runner:                  req.Runner,
 		Mode:                    store.RunnerModeHeadless,
 		InvocationName:          req.InvocationName,
+		CheckoutRoot:            execCtx.CheckoutRoot,
+		ExecutionProfile:        execCtx.Profile,
 		NoIncludeUntracked:      req.NoIncludeUntracked,
+		ClientRequestID:         req.ClientRequestID,
+		RequestFingerprint:      fingerprint,
 	})
 	if err != nil {
 		code := errors.GetCode(err)
@@ -145,14 +191,14 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID)
+	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
 
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
 	envKeys := sortedEnvKeys(req.Env)
 	runnerArgs := append([]string(nil), req.RunnerArgs...)
 
-	s.claimHeadlessInvocationStart(
+	if err := s.claimHeadlessInvocationStart(
 		repoIdentity.RepoID,
 		createResult.InvocationID,
 		req.Runner,
@@ -162,8 +208,15 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		promptSHA,
 		runnerArgs,
 		envKeys,
-	)
+	); err != nil {
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", req.ClientRequestID)
+		return
+	}
 
-	meta, _ := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
+	meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
+	if err != nil {
+		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", req.ClientRequestID)
+		return
+	}
 	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
 }

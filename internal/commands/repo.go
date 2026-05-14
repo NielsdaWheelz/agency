@@ -227,6 +227,39 @@ func canonicalCommandDir(pathValue, label string) (string, error) {
 	return absPath, nil
 }
 
+func registeredRepoRootFromStore(st *store.Store, repoID string) (string, error) {
+	rec, exists, err := st.LoadRepoRecord(repoID)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", errors.NewWithDetails(
+			errors.ERepoNotFound,
+			"repo is not registered",
+			map[string]string{"hint": "run `agency repo add <path>` first"},
+		)
+	}
+	for _, root := range []string{rec.PreferredRoot, rec.RepoRootLastSeen} {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		resolved, err := canonicalCommandDir(root, "registered repo root")
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err == nil && info.IsDir() {
+			return resolved, nil
+		}
+	}
+	return "", errors.NewWithDetails(
+		errors.ERepoRootInaccessible,
+		"registered repo root is not accessible",
+		map[string]string{"hint": "run `agency repo add <path>` from an accessible checkout"},
+	)
+}
+
 func resolveCommandDirs(dataDirOverride, configDirOverride string) (paths.Dirs, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

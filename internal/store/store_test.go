@@ -82,6 +82,146 @@ func TestReadInvocationMeta_UnsupportedSchemaVersionReturnsStoreCorrupt(t *testi
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 }
 
+func TestReadInvocationMetaRejectsStrictViolations(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+
+	cases := []struct {
+		name         string
+		invocationID string
+		mutate       func(*InvocationMeta)
+	}{
+		{
+			name:         "wrong invocation id",
+			invocationID: "inv-wrong",
+			mutate: func(meta *InvocationMeta) {
+				meta.InvocationID = "other"
+			},
+		},
+		{
+			name:         "relative sandbox path",
+			invocationID: "inv-relative",
+			mutate: func(meta *InvocationMeta) {
+				meta.SandboxPath = "sandbox"
+			},
+		},
+		{
+			name:         "missing required field",
+			invocationID: "inv-missing",
+			mutate: func(meta *InvocationMeta) {
+				meta.IntegrationWorktreeID = ""
+			},
+		},
+		{
+			name:         "invalid status",
+			invocationID: "inv-status",
+			mutate: func(meta *InvocationMeta) {
+				meta.Status = "paused"
+			},
+		},
+		{
+			name:         "invalid mode",
+			invocationID: "inv-mode",
+			mutate: func(meta *InvocationMeta) {
+				meta.Mode = "batch"
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.EnsureInvocationDir(repoID, tc.invocationID)
+			require.NoError(t, err)
+			meta := NewInvocationMeta(tc.invocationID, "", "wt-1", "/sandbox", "/checkouts/repo123", "work", "agency/sandbox-"+tc.invocationID, "abc123", "claude-code", RunnerModeHeadless, time.Now())
+			tc.mutate(meta)
+			data, err := json.MarshalIndent(meta, "", "  ")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(s.InvocationMetaPath(repoID, tc.invocationID), data, 0o600))
+
+			_, err = s.ReadInvocationMeta(repoID, tc.invocationID)
+			require.Error(t, err)
+			assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+		})
+	}
+}
+
+func TestReadAndScanInvocationMetaRejectUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+	const invocationID = "inv-unknown"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(s.InvocationMetaPath(repoID, invocationID), []byte(`{
+		"schema_version":"2.0",
+		"invocation_id":"inv-unknown",
+		"integration_worktree_id":"wt-1",
+		"sandbox_path":"/sandbox",
+		"checkout_root":"/checkouts/repo123",
+		"execution_profile":"work",
+		"sandbox_branch":"agency/sandbox-inv-unknown",
+		"base_commit":"abc123",
+		"runner":"claude-code",
+		"mode":"headless",
+		"started_at":"2026-01-01T00:00:00Z",
+		"status":"starting",
+		"checkpoint_include_untracked":true,
+		"unexpected":true
+	}`), 0o644))
+
+	_, err = s.ReadInvocationMeta(repoID, invocationID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+
+	records, err := ScanInvocationsForRepo(dataDir, repoID)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.True(t, records[0].Broken)
+	assert.Nil(t, records[0].Meta)
+}
+
+func TestReadAndScanInvocationMetaRequireCheckpointIncludeUntracked(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+	const invocationID = "inv-no-checkpoint-flag"
+
+	_, err := s.EnsureInvocationDir(repoID, invocationID)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(s.InvocationMetaPath(repoID, invocationID), []byte(`{
+		"schema_version":"2.0",
+		"invocation_id":"inv-no-checkpoint-flag",
+		"integration_worktree_id":"wt-1",
+		"sandbox_path":"/sandbox",
+		"checkout_root":"/checkouts/repo123",
+		"execution_profile":"work",
+		"sandbox_branch":"agency/sandbox-inv-no-checkpoint-flag",
+		"base_commit":"abc123",
+		"runner":"claude-code",
+		"mode":"headless",
+		"started_at":"2026-01-01T00:00:00Z",
+		"status":"starting"
+	}`), 0o644))
+
+	_, err = s.ReadInvocationMeta(repoID, invocationID)
+	require.Error(t, err)
+	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+
+	records, err := ScanInvocationsForRepo(dataDir, repoID)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.True(t, records[0].Broken)
+	assert.Nil(t, records[0].Meta)
+}
+
 func TestRemoveInvocationDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
 	t.Parallel()
 
@@ -100,32 +240,6 @@ func TestRemoveInvocationDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
 	require.NoError(t, os.WriteFile(marker, []byte("do-not-delete"), 0o600))
 
 	err = s.RemoveInvocationDir(repoID, invocationID)
-	require.Error(t, err)
-	var guardErr *fs.ErrNotUnderPrefix
-	require.ErrorAs(t, err, &guardErr)
-
-	_, statErr := os.Stat(marker)
-	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
-}
-
-func TestRemoveSandboxDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	outsideRoot := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	reposDir := filepath.Join(dataDir, "repos")
-	repoID, err := filepath.Rel(reposDir, outsideRoot)
-	require.NoError(t, err)
-
-	const invocationID = "sandbox-escape"
-	targetDir := filepath.Join(outsideRoot, "sandboxes", invocationID)
-	require.NoError(t, os.MkdirAll(targetDir, 0o700))
-	marker := filepath.Join(targetDir, "keep.txt")
-	require.NoError(t, os.WriteFile(marker, []byte("do-not-delete"), 0o600))
-
-	err = s.RemoveSandboxDir(repoID, invocationID)
 	require.Error(t, err)
 	var guardErr *fs.ErrNotUnderPrefix
 	require.ErrorAs(t, err, &guardErr)
@@ -223,7 +337,7 @@ func TestUpsertRepoIndexEntry_NewPath(t *testing.T) {
 
 	entry := idx.Repos["github:owner/repo"]
 	require.Len(t, entry.Paths, 2)
-	// PR-A: paths are sorted lexicographically for stable diffs
+	// Paths are sorted lexicographically for stable diffs.
 	assert.Equal(t, "/path/one", entry.Paths[0], "sorted alphabetically")
 	assert.Equal(t, "/path/two", entry.Paths[1])
 }
@@ -250,7 +364,7 @@ func TestUpsertRepoIndexEntry_DeduplicatesExistingPath(t *testing.T) {
 
 	entry := idx.Repos["github:owner/repo"]
 	require.Len(t, entry.Paths, 2)
-	// PR-A: paths are sorted lexicographically
+	// Paths are sorted lexicographically for stable diffs.
 	assert.Equal(t, "/path/one", entry.Paths[0])
 	assert.Equal(t, "/path/two", entry.Paths[1])
 }
@@ -285,6 +399,43 @@ func TestLoadRepoIndex_MissingSchemaVersion(t *testing.T) {
 	_, err := s.LoadRepoIndex()
 	require.Error(t, err, "want E_STORE_CORRUPT")
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestLoadRepoIndexRejectsUnknownFieldsAndInvalidPaths(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown top-level field",
+			body: `{"schema_version":"2.0","repos":{},"unexpected":true}`,
+		},
+		{
+			name: "missing repos",
+			body: `{"schema_version":"2.0"}`,
+		},
+		{
+			name: "relative path",
+			body: `{"schema_version":"2.0","repos":{"github:owner/repo":{"repo_id":"abc123","paths":["relative"],"last_seen_at":"2026-01-01T00:00:00Z"}}}`,
+		},
+		{
+			name: "missing entry field",
+			body: `{"schema_version":"2.0","repos":{"github:owner/repo":{"repo_id":"abc123","paths":["/repo"]}}}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(s.RepoIndexPath(), []byte(tc.body), 0o644))
+			_, err := s.LoadRepoIndex()
+			require.Error(t, err)
+			assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+		})
+	}
 }
 
 // TestLoadRepoRecord_MissingFile verifies (zero, false, nil) for missing file.
@@ -370,12 +521,15 @@ func TestUpsertRepoRecord_PreservesCreatedAt(t *testing.T) {
 	// Create initial record
 	s := NewStore(realFS, dataDir, fixedTime(createTime))
 	input := BuildRepoRecordInput{
-		RepoKey:       "github:owner/repo",
-		RepoID:        "abc123",
-		OriginPresent: true,
-		OriginURL:     "git@github.com:owner/repo.git",
-		OriginHost:    "github.com",
-		Capabilities:  Capabilities{GitHubOrigin: true},
+		RepoKey:          "github:owner/repo",
+		RepoID:           "abc123",
+		RepoRootLastSeen: "/path/to/repo",
+		PreferredRoot:    "/path/to/repo",
+		AgencyJSONPath:   "/path/to/repo/agency.json",
+		OriginPresent:    true,
+		OriginURL:        "git@github.com:owner/repo.git",
+		OriginHost:       "github.com",
+		Capabilities:     Capabilities{GitHubOrigin: true},
 	}
 	rec := s.UpsertRepoRecord(nil, input)
 	require.NoError(t, s.SaveRepoRecord(rec))
@@ -428,6 +582,41 @@ func TestLoadRepoRecord_MissingSchemaVersion(t *testing.T) {
 	_, _, err := s.LoadRepoRecord("abc123")
 	require.Error(t, err, "want E_STORE_CORRUPT")
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestLoadRepoRecordRejectsUnknownFieldsWrongIDAndRelativePaths(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	repoDir := s.RepoDir("abc123")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown field",
+			body: `{"schema_version":"2.0","repo_key":"github:owner/repo","repo_id":"abc123","repo_root_last_seen":"/repo","preferred_root":"/repo","agency_json_path":"/repo/agency.json","origin_present":false,"origin_url":"","origin_host":"","capabilities":{"github_origin":false,"origin_host":"","gh_authed":false},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","unexpected":true}`,
+		},
+		{
+			name: "wrong repo id",
+			body: `{"schema_version":"2.0","repo_key":"github:owner/repo","repo_id":"other","repo_root_last_seen":"/repo","preferred_root":"/repo","agency_json_path":"/repo/agency.json","origin_present":false,"origin_url":"","origin_host":"","capabilities":{"github_origin":false,"origin_host":"","gh_authed":false},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name: "relative path",
+			body: `{"schema_version":"2.0","repo_key":"github:owner/repo","repo_id":"abc123","repo_root_last_seen":"repo","preferred_root":"/repo","agency_json_path":"/repo/agency.json","origin_present":false,"origin_url":"","origin_host":"","capabilities":{"github_origin":false,"origin_host":"","gh_authed":false},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(s.RepoRecordPath("abc123"), []byte(tc.body), 0o644))
+			_, _, err := s.LoadRepoRecord("abc123")
+			require.Error(t, err)
+			assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+		})
+	}
 }
 
 // TestSaveRepoRecord_CreatesDirectory verifies repo directory is created.

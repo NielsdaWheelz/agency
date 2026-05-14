@@ -37,15 +37,17 @@ func TestWriteControlPlaneSuccess_IncludesNormalizedRepoAndWorktreeNames(t *test
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
 	require.NoError(t, err)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, worktreeID, &store.IntegrationWorktreeMeta{
-		SchemaVersion: store.SchemaVersion,
-		WorktreeID:    worktreeID,
-		Name:          "command-button",
-		RepoID:        repoID,
-		Branch:        "agency/command-button",
-		BaseBranch:    "main",
-		TreePath:      "/tmp/agency-worktree",
-		CreatedAt:     "2026-04-20T10:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       worktreeID,
+		Name:             "command-button",
+		RepoID:           repoID,
+		Branch:           "agency/command-button",
+		BaseBranch:       "main",
+		TreePath:         "/tmp/agency-worktree",
+		CheckoutRoot:     "/tmp/checkouts/repo-1",
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-04-20T10:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}))
 
 	w := httptest.NewRecorder()
@@ -88,15 +90,17 @@ func TestWriteHeadedSuccess_IncludesNormalizedRepoAndWorktreeNames(t *testing.T)
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
 	require.NoError(t, err)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, worktreeID, &store.IntegrationWorktreeMeta{
-		SchemaVersion: store.SchemaVersion,
-		WorktreeID:    worktreeID,
-		Name:          "command-button",
-		RepoID:        repoID,
-		Branch:        "agency/command-button",
-		BaseBranch:    "main",
-		TreePath:      "/tmp/agency-worktree",
-		CreatedAt:     "2026-04-20T10:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       worktreeID,
+		Name:             "command-button",
+		RepoID:           repoID,
+		Branch:           "agency/command-button",
+		BaseBranch:       "main",
+		TreePath:         "/tmp/agency-worktree",
+		CheckoutRoot:     "/tmp/checkouts/repo-1",
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-04-20T10:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}))
 
 	w := httptest.NewRecorder()

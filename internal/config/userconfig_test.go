@@ -27,7 +27,7 @@ func TestLoadUserConfig_MissingFile(t *testing.T) {
 func TestLoadUserConfig_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
-	stub.files["/cfg/config.json"] = []byte(`{"version": 3, "defaults": {`)
+	stub.files["/cfg/config.json"] = []byte(`{"version": 4, "defaults": {`)
 	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for invalid JSON")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
@@ -37,8 +37,9 @@ func TestLoadUserConfig_UnknownKeys(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 3,
-	  "defaults": { "runner": "claude-code", "editor": "code" },
+  "version": 4,
+  "defaults": { "runner": "claude-code", "editor": "code", "execution_profile": "personal" },
+  "execution_profiles": { "personal": { "env": {} } },
   "extra": "nope"
 }`)
 	_, err := LoadUserConfig(stub, "/cfg")
@@ -50,8 +51,9 @@ func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 3,
-	  "defaults": { "runner": "claude-code", "editor": "code", "unknown": "nope" }
+  "version": 4,
+  "defaults": { "runner": "claude-code", "editor": "code", "execution_profile": "personal", "unknown": "nope" },
+  "execution_profiles": { "personal": { "env": {} } }
 }`)
 	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err, "expected error for unknown defaults keys")
@@ -91,12 +93,14 @@ func TestLoadUserConfig_DefaultsThinkingRejected(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
+    "execution_profile": "personal",
     "thinking": "high"
-  }
+  },
+  "execution_profiles": { "personal": { "env": {} } }
 }`)
 	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err)
@@ -119,7 +123,7 @@ func TestLoadUserConfig_Version1Rejected(t *testing.T) {
 	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version 1 is not supported")
+	assert.Contains(t, err.Error(), "version must be 4")
 }
 
 func TestLoadUserConfig_Version2Rejected(t *testing.T) {
@@ -136,8 +140,30 @@ func TestLoadUserConfig_Version2Rejected(t *testing.T) {
 	_, err := LoadUserConfig(stub, "/cfg")
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version 2 is not supported")
-	assert.Contains(t, err.Error(), "version 3")
+	assert.Contains(t, err.Error(), "version must be 4")
+}
+
+func TestLoadUserConfig_VersionFloatWholeRejected(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 4.0,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "version must be an integer")
 }
 
 func TestLoadUserConfig_ValidRunnerDefaults(t *testing.T) {
@@ -149,25 +175,35 @@ func TestLoadUserConfig_ValidRunnerDefaults(t *testing.T) {
 
 	cfg, err := LoadUserConfig(stub, "/cfg")
 	require.NoError(t, err)
-	assert.Equal(t, 3, cfg.Version)
+	assert.Equal(t, 4, cfg.Version)
 	assert.Equal(t, "claude-code", cfg.Defaults.Runner)
 	assert.Equal(t, "code", cfg.Defaults.Editor)
 	assert.Equal(t, "main", cfg.Defaults.BaseBranch)
+	assert.Equal(t, "personal", cfg.Defaults.ExecutionProfile)
 	assert.Equal(t, "acceptEdits", cfg.RunnerDefaults["claude-code"].PermissionMode)
+	assert.Equal(t, "personal-anthropic", cfg.ExecutionProfiles["personal"].Env["ANTHROPIC_API_KEY"])
+	assert.Equal(t, "personal-openai", cfg.ExecutionProfiles["personal"].Env["OPENAI_API_KEY"])
+	assert.Equal(t, "work-anthropic", cfg.ExecutionProfiles["work"].Env["ANTHROPIC_API_KEY"])
 }
 
 func TestLoadUserConfig_RunnerDefaultsPermissionModeRequiresClaudeCode(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
-    "editor": "code"
+    "editor": "code",
+    "execution_profile": "personal"
   },
   "runner_defaults": {
     "codex": {
       "permission_mode": "default"
+    }
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
     }
   }
 }`)
@@ -235,9 +271,82 @@ func TestLoadUserConfig_RunnerDefaultsValidation(t *testing.T) {
 	}
 }
 
+func TestLoadUserConfig_ExecutionProfilesEnvMustBeStringMap(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {
+        "ANTHROPIC_API_KEY": 42
+      }
+    }
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "execution_profiles.personal.env.ANTHROPIC_API_KEY must be a string")
+}
+
+func TestLoadUserConfig_ExecutionProfileEnvNullRejected(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": null
+    }
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "execution_profiles.personal.env must be an object")
+}
+
+func TestLoadUserConfig_ExecutionProfileEnvValueNullRejected(t *testing.T) {
+	t.Parallel()
+	stub := newStubFS()
+	stub.files["/cfg/config.json"] = []byte(`{
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {
+        "ANTHROPIC_API_KEY": null
+      }
+    }
+  }
+}`)
+
+	_, err := LoadUserConfig(stub, "/cfg")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "execution_profiles.personal.env.ANTHROPIC_API_KEY must be a string")
+}
+
 func TestValidateUserConfig_RequiredFields(t *testing.T) {
 	t.Parallel()
-	cfg := UserConfig{Version: 3}
+	cfg := UserConfig{Version: 4}
 	_, err := ValidateUserConfig(cfg)
 	require.Error(t, err, "expected validation error")
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
@@ -256,7 +365,7 @@ func TestValidateUserConfig_WrongVersion(t *testing.T) {
 	_, err := ValidateUserConfig(cfg)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version 1 is not supported")
+	assert.Contains(t, err.Error(), "version must be 4")
 }
 
 func TestValidateUserConfig_Version2Rejected(t *testing.T) {
@@ -272,21 +381,119 @@ func TestValidateUserConfig_Version2Rejected(t *testing.T) {
 	_, err := ValidateUserConfig(cfg)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version 2 is not supported")
+	assert.Contains(t, err.Error(), "version must be 4")
 }
 
 func TestValidateUserConfig_UnsupportedVersion(t *testing.T) {
 	t.Parallel()
 	cfg := UserConfig{
-		Version: 4,
+		Version: 5,
 		Defaults: UserDefaults{
-			Runner: "claude-code",
-			Editor: "code",
+			Runner:           "claude-code",
+			Editor:           "code",
+			ExecutionProfile: "personal",
+		},
+		ExecutionProfiles: map[string]ExecutionProfile{
+			"personal": {Env: map[string]string{}},
 		},
 	}
 
 	_, err := ValidateUserConfig(cfg)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version must be 3")
+	assert.Contains(t, err.Error(), "version must be 4")
+}
+
+func TestValidateUserConfig_ExecutionProfileRequiredAndMustExist(t *testing.T) {
+	t.Parallel()
+
+	cfg := UserConfig{
+		Version: AgencyConfigVersion,
+		Defaults: UserDefaults{
+			Runner: "claude-code",
+			Editor: "code",
+		},
+		ExecutionProfiles: map[string]ExecutionProfile{
+			"personal": {Env: map[string]string{}},
+		},
+	}
+	_, err := ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidExecutionProfile, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "missing required field defaults.execution_profile")
+
+	cfg.Defaults.ExecutionProfile = "work"
+	_, err = ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EExecutionProfileNotFound, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "defaults.execution_profile has no matching execution_profiles entry")
+
+	cfg.Defaults.ExecutionProfile = "Work"
+	_, err = ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidExecutionProfile, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "defaults.execution_profile must contain only lowercase letters, digits, and hyphens")
+}
+
+func TestValidateUserConfig_ExecutionProfilesEnvValidation(t *testing.T) {
+	t.Parallel()
+
+	cfg := UserConfig{
+		Version: AgencyConfigVersion,
+		Defaults: UserDefaults{
+			Runner:           "claude-code",
+			Editor:           "code",
+			ExecutionProfile: "work",
+		},
+		ExecutionProfiles: map[string]ExecutionProfile{
+			"work": {
+				Env: map[string]string{
+					"ANTHROPIC_API_KEY": "work-key",
+					"OPENAI_API_KEY":    "openai-key",
+				},
+			},
+		},
+	}
+	got, err := ValidateUserConfig(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "work-key", got.ExecutionProfiles["work"].Env["ANTHROPIC_API_KEY"])
+	assert.Equal(t, "openai-key", got.ExecutionProfiles["work"].Env["OPENAI_API_KEY"])
+
+	cfg.ExecutionProfiles = map[string]ExecutionProfile{
+		"Work": {Env: map[string]string{}},
+	}
+	_, err = ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EExecutionProfileNotFound, errors.GetCode(err))
+
+	cfg.Defaults.ExecutionProfile = "work"
+	cfg.ExecutionProfiles = map[string]ExecutionProfile{
+		"work": {Env: map[string]string{"BAD=KEY": "value"}},
+	}
+	_, err = ValidateUserConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidExecutionProfile, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "execution_profiles.work.env keys must be non-empty and must not contain '='")
+}
+
+func TestExecutionProfileEnvCopiesEnvMap(t *testing.T) {
+	t.Parallel()
+
+	cfg := UserConfig{
+		ExecutionProfiles: map[string]ExecutionProfile{
+			"personal": {
+				Env: map[string]string{
+					"ANTHROPIC_API_KEY": "personal-key",
+				},
+			},
+		},
+	}
+	env, err := ExecutionProfileEnv(cfg, "personal")
+	require.NoError(t, err)
+	env["ANTHROPIC_API_KEY"] = "mutated"
+	assert.Equal(t, "personal-key", cfg.ExecutionProfiles["personal"].Env["ANTHROPIC_API_KEY"])
+
+	_, err = ExecutionProfileEnv(cfg, "missing")
+	require.Error(t, err)
+	assert.Equal(t, errors.EExecutionProfileNotFound, errors.GetCode(err))
 }

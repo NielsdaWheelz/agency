@@ -62,17 +62,19 @@ type InvalidQueryArgumentDetails struct {
 
 // WorktreeDTO is the canonical DTO for integration worktree responses.
 type WorktreeDTO struct {
-	WorktreeID   string            `json:"worktree_id"`
-	WorktreeName string            `json:"worktree_name"`
-	RepoID       string            `json:"repo_id"`
-	RepoName     string            `json:"repo_name"`
-	Branch       string            `json:"branch"`
-	BaseBranch   string            `json:"base_branch"`
-	TreePath     string            `json:"tree_path"`
-	State        string            `json:"state"` // "present" or "archived"
-	CreatedAt    string            `json:"created_at"`
-	LastUsedAt   string            `json:"last_used_at,omitempty"`
-	Merge        *WorktreeMergeDTO `json:"merge,omitempty"`
+	WorktreeID       string            `json:"worktree_id"`
+	WorktreeName     string            `json:"worktree_name"`
+	RepoID           string            `json:"repo_id"`
+	RepoName         string            `json:"repo_name"`
+	Branch           string            `json:"branch"`
+	BaseBranch       string            `json:"base_branch"`
+	TreePath         string            `json:"tree_path"`
+	CheckoutRoot     string            `json:"checkout_root"`
+	ExecutionProfile string            `json:"execution_profile"`
+	State            string            `json:"state"` // "present" or "archived"
+	CreatedAt        string            `json:"created_at"`
+	LastUsedAt       string            `json:"last_used_at,omitempty"`
+	Merge            *WorktreeMergeDTO `json:"merge,omitempty"`
 }
 
 // WorktreeMergeDTO is the canonical daemon read shape for durable worktree merge state.
@@ -121,15 +123,17 @@ const (
 // InvocationDTO is the canonical DTO for invocation responses.
 // Used by both list and show endpoints (no separate summary DTO).
 type InvocationDTO struct {
-	InvocationID   string `json:"invocation_id"`
-	InvocationName string `json:"invocation_name,omitempty"`
-	WorktreeID     string `json:"worktree_id"`
-	WorktreeName   string `json:"worktree_name"`
-	RepoID         string `json:"repo_id"`
-	RepoName       string `json:"repo_name"`
-	Runner         string `json:"runner"`
-	Mode           string `json:"mode"` // "headed" or "headless"
-	TmuxSession    string `json:"tmux_session,omitempty"`
+	InvocationID     string `json:"invocation_id"`
+	InvocationName   string `json:"invocation_name,omitempty"`
+	WorktreeID       string `json:"worktree_id"`
+	WorktreeName     string `json:"worktree_name"`
+	RepoID           string `json:"repo_id"`
+	RepoName         string `json:"repo_name"`
+	Runner           string `json:"runner"`
+	Mode             string `json:"mode"` // "headed" or "headless"
+	TmuxSession      string `json:"tmux_session,omitempty"`
+	CheckoutRoot     string `json:"checkout_root"`
+	ExecutionProfile string `json:"execution_profile"`
 
 	// Timestamps
 	StartedAt    string `json:"started_at"`

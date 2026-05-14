@@ -16,6 +16,12 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
 
+	var req struct{}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		return
+	}
+
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
 		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "repo_id query parameter is required", "")
@@ -256,6 +262,12 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	requestID := prepareRequestID(w, r)
 	writeKillError := func(status int, code, message, hint string) {
 		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
+	}
+
+	var req struct{}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		writeKillError(http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		return
 	}
 
 	repoID := r.URL.Query().Get("repo_id")

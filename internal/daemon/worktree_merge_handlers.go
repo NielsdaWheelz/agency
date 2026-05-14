@@ -2,13 +2,12 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	stderrors "errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,33 +48,16 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 	}
 
 	var req WorktreePRMergeRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		if err != io.EOF {
-			s.writeWorktreeMergeError(
-				w,
-				http.StatusBadRequest,
-				requestID,
-				string(errors.EInvalidArgument),
-				"invalid request body: "+err.Error(),
-				"",
-			)
-			return
-		}
-	} else {
-		var trailing json.RawMessage
-		if err := dec.Decode(&trailing); err != io.EOF {
-			s.writeWorktreeMergeError(
-				w,
-				http.StatusBadRequest,
-				requestID,
-				string(errors.EInvalidArgument),
-				"invalid request body: expected a single JSON object",
-				"",
-			)
-			return
-		}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeWorktreeMergeError(
+			w,
+			http.StatusBadRequest,
+			requestID,
+			string(errors.EInvalidArgument),
+			"invalid request body: "+err.Error(),
+			"",
+		)
+		return
 	}
 
 	normalizedReq, err := normalizeMergeRequest(req)
@@ -241,18 +223,22 @@ func (s *Server) repairInterruptedWorktreeMerge(record *store.IntegrationWorktre
 	}
 
 	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.Store.UpdateIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+	if err := s.Store.UpdateIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Status = store.WorktreeMergeStatusFailed
 		m.UpdatedAt = now
 		m.FinishedAt = now
 		m.ErrorCode = string(errors.EWorktreeMergeInterrupted)
 		m.ErrorMessage = "merge attempt lost daemon supervision before reaching a terminal state"
 		m.Hint = "rerun 'agency worktree <worktree-ref> pr merge' to resume from durable state"
-	})
-	_ = s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventFailed, map[string]any{
+	}); err != nil {
+		return err
+	}
+	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventFailed, map[string]any{
 		"error_code": string(errors.EWorktreeMergeInterrupted),
 		"message":    "merge attempt lost daemon supervision before reaching a terminal state",
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -434,17 +420,22 @@ func (s *Server) runWorktreeMerge(
 	if err != nil {
 		return nil, err
 	}
+	profileEnv, err := s.executionProfileEnv(wtMeta.ExecutionProfile)
+	if err != nil {
+		return nil, err
+	}
+	env := prSyncNonInteractiveEnv(profileEnv)
 
-	if err := prSyncCheckGHAuth(ctx, s.Runner, repoRoot); err != nil {
+	if err := prSyncCheckGHAuth(ctx, s.Runner, repoRoot, env); err != nil {
 		return nil, err
 	}
 
-	ghRepo, owner, err := s.resolveMergeGitHubRepo(ctx, record.RepoID, repoRoot)
+	ghRepo, owner, err := s.resolveMergeGitHubRepo(ctx, record.RepoID, repoRoot, env)
 	if err != nil {
 		return nil, err
 	}
 
-	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot)
+	pr, err := s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot, env)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +463,7 @@ func (s *Server) runWorktreeMerge(
 			m.Stage = store.WorktreeMergeStageVerify
 		})
 
-		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
+		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath, env)
 		if err != nil {
 			return nil, err
 		}
@@ -487,7 +478,7 @@ func (s *Server) runWorktreeMerge(
 			)
 		}
 
-		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr, repoRoot, agencyJSON.Config)
+		verifyLogPath, err = s.runWorktreeMergeVerify(ctx, record, pr, repoRoot, agencyJSON.Config, profileEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -519,7 +510,7 @@ func (s *Server) runWorktreeMerge(
 	}
 	defer func() { _ = unlock() }()
 
-	pr, err = s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot)
+	pr, err = s.resolveMergePR(ctx, wtMeta, ghRepo, owner, repoRoot, env)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +551,7 @@ func (s *Server) runWorktreeMerge(
 		}
 		result, runErr := s.Runner.Run(ctx, "gh", args, exec.RunOpts{
 			Dir: wtMeta.TreePath,
-			Env: prSyncNonInteractiveEnv(),
+			Env: env,
 		})
 
 		command := "gh " + strings.Join(args, " ")
@@ -598,7 +589,7 @@ func (s *Server) runWorktreeMerge(
 			)
 		}
 
-		merged, err := mergeConfirmPRMerged(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number)
+		merged, err := mergeConfirmPRMerged(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number, env)
 		if err != nil {
 			return nil, err
 		}
@@ -616,7 +607,7 @@ func (s *Server) runWorktreeMerge(
 	_ = s.updateWorktreeMergeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Stage = store.WorktreeMergeStageArchive
 	})
-	archiveLogPath, err = s.runWorktreeArchive(ctx, record, pr, repoRoot, agencyJSON.Config)
+	archiveLogPath, err = s.runWorktreeArchive(ctx, record, pr, repoRoot, agencyJSON.Config, profileEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -639,6 +630,7 @@ func (s *Server) runWorktreeMergeVerify(
 	pr *mergePRView,
 	repoRoot string,
 	agencyJSON config.AgencyConfig,
+	profileEnv map[string]string,
 ) (string, error) {
 	if record == nil || record.Meta == nil {
 		return "", errors.New(errors.EInternal, "worktree metadata missing")
@@ -651,7 +643,7 @@ func (s *Server) runWorktreeMergeVerify(
 	verifyRecordPath := filepath.Join(worktreeDir, "verify_record.json")
 	verifyJSONPath := filepath.Join(wtMeta.TreePath, ".agency", "out", "verify.json")
 
-	env := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr)
+	env := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
 	runCfg := verify.RunConfig{
 		RepoID:         record.RepoID,
 		RunID:          record.WorktreeID,
@@ -708,6 +700,7 @@ func (s *Server) runWorktreeArchive(
 	pr *mergePRView,
 	repoRoot string,
 	agencyJSON config.AgencyConfig,
+	profileEnv map[string]string,
 ) (string, error) {
 	if record == nil || record.Meta == nil {
 		return "", errors.New(errors.EInternal, "worktree metadata missing")
@@ -746,7 +739,7 @@ func (s *Server) runWorktreeArchive(
 	}
 
 	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
-	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr)
+	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
 	env := make(map[string]string, len(envList))
 	for _, entry := range envList {
 		key, val, ok := strings.Cut(entry, "=")
@@ -804,7 +797,7 @@ func (s *Server) runWorktreeArchive(
 	removeCtx, cancel := context.WithTimeout(ctx, worktreeMergeArchiveRemoveTimeout)
 	defer cancel()
 
-	removeResult, removeRunErr := s.Runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{})
+	removeResult, removeRunErr := s.Runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{Env: prSyncNonInteractiveEnv(profileEnv)})
 	removeCmd := "git " + strings.Join(removeArgs, " ")
 	appendArchiveSection := func(title string, result exec.CmdResult, runErr error) {
 		logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
@@ -894,6 +887,7 @@ func buildWorktreeMergeScriptEnv(
 	repoRoot string,
 	worktreeDir string,
 	pr *mergePRView,
+	profileEnv map[string]string,
 ) []string {
 	name := ""
 	runner := "worktree"
@@ -910,7 +904,30 @@ func buildWorktreeMergeScriptEnv(
 		name = record.WorktreeID
 	}
 
-	return mergeflow.BuildVerifyEnv(os.Environ(), mergeflow.VerifyEnvInput{
+	baseEnv := os.Environ()
+	if len(profileEnv) > 0 {
+		merged := make(map[string]string, len(baseEnv)+len(profileEnv))
+		for _, entry := range baseEnv {
+			key, val, ok := strings.Cut(entry, "=")
+			if ok && key != "" {
+				merged[key] = val
+			}
+		}
+		for key, value := range profileEnv {
+			merged[key] = value
+		}
+		keys := make([]string, 0, len(merged))
+		for key := range merged {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		baseEnv = make([]string, 0, len(keys))
+		for _, key := range keys {
+			baseEnv = append(baseEnv, key+"="+merged[key])
+		}
+	}
+
+	return mergeflow.BuildVerifyEnv(baseEnv, mergeflow.VerifyEnvInput{
 		RunID:         record.WorktreeID,
 		Name:          name,
 		RepoRoot:      repoRoot,

@@ -13,7 +13,7 @@ This directory is the canonical home for repository documentation.
 ## Starting Points
 
 - [tech-stack.md](tech-stack.md): runtime and tooling stack
-- [configuration.md](configuration.md): config setup and version 3 schemas
+- [configuration.md](configuration.md): config setup and schema rules
 - [codebase.md](codebase.md): package layout and ownership boundaries
 - [entrypoints.md](entrypoints.md): CLI, daemon, and TUI entrypoints
 - [process-execution.md](process-execution.md): external command execution, runner, tmux, and env rules
@@ -22,10 +22,10 @@ This directory is the canonical home for repository documentation.
 - [terminal-ui.md](terminal-ui.md): Bubble Tea and terminal-facing workspace UI rules
 - [persistence.md](persistence.md): JSON and JSONL contracts, atomic writes, and file permissions
 - [environment.md](environment.md): config paths, overrides, and precedence
+- [execution-profiles.md](execution-profiles.md): repo-scoped runner identity, launch env, and managed checkout placement
 - [overrides.md](overrides.md): explicit CLI and config override rules
 - [errors.md](errors.md): stable error-code and corruption rules
 - [concurrency.md](concurrency.md): repo locks and mutation ordering
-- [invocation-sessions.md](invocation-sessions.md): headed-invocation session-manager cutover target state
 - [modules/index.md](modules/index.md): subsystem-owned docs
 - [testing.md](testing.md): testing standards, layers, fixtures, and e2e rules
 

@@ -19,8 +19,8 @@ type Env interface {
 	Get(key string) string
 }
 
-// ResolveDirs computes the data, config, and cache directories based on
-// environment variables and platform defaults per the constitution.
+// ResolveDirs computes the data, config, and cache directories from explicit
+// environment overrides and platform defaults.
 //
 // Resolution order for data directory:
 //  1. AGENCY_DATA_DIR env var (if set)

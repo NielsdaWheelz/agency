@@ -115,8 +115,8 @@ func normalizeMergeRequest(req WorktreePRMergeRequest) (normalizedMergeRequest, 
 	}, nil
 }
 
-func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner, workDir string) (*mergePRView, error) {
-	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, workDir, owner, wtMeta.Branch)
+func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner, workDir string, env map[string]string) (*mergePRView, error) {
+	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, workDir, owner, wtMeta.Branch, env)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 		)
 	}
 
-	pr, err := mergeViewPR(ctx, s.Runner, workDir, ghRepo, prs[0].Number)
+	pr, err := mergeViewPR(ctx, s.Runner, workDir, ghRepo, prs[0].Number, env)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 	}
 	switch strings.ToUpper(strings.TrimSpace(pr.State)) {
 	case "OPEN":
-		if err := mergeEnsureMergeable(ctx, s.Runner, workDir, ghRepo, pr.Number); err != nil {
+		if err := mergeEnsureMergeable(ctx, s.Runner, workDir, ghRepo, pr.Number, env); err != nil {
 			return nil, err
 		}
 	case "MERGED":
@@ -183,9 +183,9 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 	return pr, nil
 }
 
-func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string) ([]prSyncPR, error) {
+func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) ([]prSyncPR, error) {
 	headWithOwner := prSyncHeadRef(owner, branch)
-	prs, err := mergeListPRsByHeadWithRetry(ctx, runner, workDir, headWithOwner)
+	prs, err := mergeListPRsByHeadWithRetry(ctx, runner, workDir, headWithOwner, env)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunn
 
 	// GitHub can surface head refs without owner prefix for same-repo branches.
 	if strings.TrimSpace(owner) != "" {
-		prs, err = mergeListPRsByHeadWithRetry(ctx, runner, workDir, branch)
+		prs, err = mergeListPRsByHeadWithRetry(ctx, runner, workDir, branch, env)
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +203,7 @@ func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunn
 	return prs, nil
 }
 
-func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, head string) ([]prSyncPR, error) {
+func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, head string, env map[string]string) ([]prSyncPR, error) {
 	delays := []time.Duration{
 		0,
 		250 * time.Millisecond,
@@ -225,7 +225,7 @@ func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner,
 		}
 
 		var err error
-		prs, err = prSyncListPRsByHead(ctx, runner, workDir, head)
+		prs, err = prSyncListPRsByHead(ctx, runner, workDir, head, env)
 		if err != nil {
 			return nil, err
 		}
@@ -237,14 +237,14 @@ func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner,
 	return prs, nil
 }
 
-func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int) (*mergePRView, error) {
+func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) (*mergePRView, error) {
 	result, err := runner.Run(ctx, "gh", []string{
 		"pr", "view", fmt.Sprintf("%d", prNumber),
 		"-R", ghRepo,
 		"--json", "number,url,state,isDraft,mergeable,headRefName",
 	}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return nil, errors.Wrap(errors.EGHPRViewFailed, "gh pr view failed to start", err)
@@ -270,7 +270,7 @@ func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo
 	return &pr, nil
 }
 
-func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int) error {
+func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) error {
 	delays := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
 
 	for idx, delay := range delays {
@@ -284,7 +284,7 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 			}
 		}
 
-		pr, err := mergeViewPR(ctx, runner, workDir, ghRepo, prNumber)
+		pr, err := mergeViewPR(ctx, runner, workDir, ghRepo, prNumber, env)
 		if err != nil {
 			continue
 		}
@@ -326,7 +326,7 @@ func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot
 	return mergeflow.ResolveRepoRoot(s.Store, repoID, workspaceRoot)
 }
 
-func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string) (string, string, error) {
+func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string, env map[string]string) (string, string, error) {
 	originURL := ""
 	if repoRecord, exists, err := s.Store.LoadRepoRecord(repoID); err == nil && exists {
 		originURL = strings.TrimSpace(repoRecord.OriginURL)
@@ -334,7 +334,7 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 	if originURL == "" {
 		result, err := s.Runner.Run(ctx, "git", []string{"config", "--get", "remote.origin.url"}, exec.RunOpts{
 			Dir: workDir,
-			Env: prSyncNonInteractiveEnv(),
+			Env: env,
 		})
 		if err != nil || result.ExitCode != 0 {
 			return "", "", errors.New(errors.EGHRepoParseFailed, "failed to determine GitHub repository from origin remote")
@@ -353,7 +353,7 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 	return owner + "/" + repo, owner, nil
 }
 
-func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int) (bool, error) {
+func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) (bool, error) {
 	delays := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
 
 	for idx, delay := range delays {
@@ -373,7 +373,7 @@ func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDi
 			"--json", "state",
 		}, exec.RunOpts{
 			Dir: workDir,
-			Env: prSyncNonInteractiveEnv(),
+			Env: env,
 		})
 		if err != nil || result.ExitCode != 0 {
 			continue

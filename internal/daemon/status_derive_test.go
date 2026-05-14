@@ -176,11 +176,13 @@ func TestInvocationMetaToDTO_FieldMapping(t *testing.T) {
 
 	exitCode := 0
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-123",
 		InvocationName:        "my-invocation",
 		IntegrationWorktreeID: "wt-456",
 		SandboxPath:           "/tmp/sandbox/inv-123",
+		CheckoutRoot:          "/tmp/checkouts/repo-abc",
+		ExecutionProfile:      "work",
 		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeadless,
 		StartedAt:             "2026-02-05T11:50:00Z",
@@ -222,16 +224,18 @@ func TestWorktreeMetaToDTO(t *testing.T) {
 	t.Parallel()
 
 	meta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "wt-789",
-		Name:          "my-feature",
-		RepoID:        "repo-xyz",
-		Branch:        "agency/my-feature",
-		BaseBranch:    "main",
-		TreePath:      "/tmp/worktrees/my-feature",
-		CreatedAt:     "2026-02-05T10:00:00Z",
-		LastUsedAt:    "2026-02-05T11:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       "wt-789",
+		Name:             "my-feature",
+		RepoID:           "repo-xyz",
+		Branch:           "agency/my-feature",
+		BaseBranch:       "main",
+		TreePath:         "/tmp/worktrees/my-feature",
+		CheckoutRoot:     "/tmp/checkouts/repo-xyz",
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-02-05T10:00:00Z",
+		LastUsedAt:       "2026-02-05T11:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	mergeMeta := store.NewIntegrationWorktreeMergeMeta(
 		"repo-xyz",
@@ -283,16 +287,18 @@ func TestWorktreeMetaToDTO_WithoutMergeMeta(t *testing.T) {
 	t.Parallel()
 
 	meta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "wt-789",
-		Name:          "my-feature",
-		RepoID:        "repo-xyz",
-		Branch:        "agency/my-feature",
-		BaseBranch:    "main",
-		TreePath:      "/tmp/worktrees/my-feature",
-		CreatedAt:     "2026-02-05T10:00:00Z",
-		LastUsedAt:    "2026-02-05T11:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       "wt-789",
+		Name:             "my-feature",
+		RepoID:           "repo-xyz",
+		Branch:           "agency/my-feature",
+		BaseBranch:       "main",
+		TreePath:         "/tmp/worktrees/my-feature",
+		CheckoutRoot:     "/tmp/checkouts/repo-xyz",
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-02-05T10:00:00Z",
+		LastUsedAt:       "2026-02-05T11:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 
 	dto := daemon.WorktreeMetaToDTO(meta, nil)

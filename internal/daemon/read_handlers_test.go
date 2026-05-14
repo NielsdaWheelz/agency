@@ -61,6 +61,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	repoID := "test-repo-read"
+	writeTestUserConfig(t, configDir)
 
 	// Fixed clock for deterministic time-based tests (stall detection, etc.)
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
@@ -69,14 +70,23 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	st := store.NewStore(fs.NewRealFS(), dataDir, clock)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
 	srv.Clock = clock
+	repoPath := filepath.Join(dataDir, "fixtures", "repo")
+	worktreeAlphaPath := filepath.Join(dataDir, "fixtures", "worktrees", "alpha")
+	worktreeBetaPath := filepath.Join(dataDir, "fixtures", "worktrees", "beta")
+	checkoutRoot := filepath.Join(dataDir, "fixtures", "checkouts", repoID)
+	sandboxRoot := filepath.Join(dataDir, "fixtures", "sandboxes")
+	require.NoError(t, os.MkdirAll(worktreeAlphaPath, 0o755))
+	require.NoError(t, os.MkdirAll(worktreeBetaPath, 0o755))
+	require.NoError(t, os.MkdirAll(checkoutRoot, 0o755))
+	require.NoError(t, os.MkdirAll(sandboxRoot, 0o755))
 
 	// Create repo index
 	idx := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {
 				RepoID:     repoID,
-				Paths:      []string{"/tmp/repo"},
+				Paths:      []string{repoPath},
 				LastSeenAt: "2026-02-05T12:00:00Z",
 			},
 		},
@@ -87,42 +97,48 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, "wt-1")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, "wt-1", &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "wt-1",
-		Name:          "alpha",
-		RepoID:        repoID,
-		Branch:        "agency/alpha",
-		BaseBranch:    "main",
-		TreePath:      "/tmp/worktrees/alpha",
-		CreatedAt:     "2026-02-05T10:00:00Z",
-		LastUsedAt:    "2026-02-05T11:50:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       "wt-1",
+		Name:             "alpha",
+		RepoID:           repoID,
+		Branch:           "agency/alpha",
+		BaseBranch:       "main",
+		TreePath:         worktreeAlphaPath,
+		CheckoutRoot:     checkoutRoot,
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-02-05T10:00:00Z",
+		LastUsedAt:       "2026-02-05T11:50:00Z",
+		State:            store.WorktreeStatePresent,
 	}))
 
 	// Create worktree wt-2 "beta" (archived)
 	_, err = st.EnsureIntegrationWorktreeDir(repoID, "wt-2")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, "wt-2", &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    "wt-2",
-		Name:          "beta",
-		RepoID:        repoID,
-		Branch:        "agency/beta",
-		BaseBranch:    "main",
-		TreePath:      "/tmp/worktrees/beta",
-		CreatedAt:     "2026-02-05T09:00:00Z",
-		LastUsedAt:    "2026-02-05T11:00:00Z",
-		State:         store.WorktreeStateArchived,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       "wt-2",
+		Name:             "beta",
+		RepoID:           repoID,
+		Branch:           "agency/beta",
+		BaseBranch:       "main",
+		TreePath:         worktreeBetaPath,
+		CheckoutRoot:     checkoutRoot,
+		ExecutionProfile: "work",
+		CreatedAt:        "2026-02-05T09:00:00Z",
+		LastUsedAt:       "2026-02-05T11:00:00Z",
+		State:            store.WorktreeStateArchived,
 	}))
 
 	// Create invocation inv-1: running, headless, wt-1, started 10min ago.
 	_, err = st.EnsureInvocationDir(repoID, "inv-1")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-1", &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-1",
 		IntegrationWorktreeID: "wt-1",
-		SandboxPath:           "/tmp/sandbox/inv-1",
+		SandboxPath:           filepath.Join(sandboxRoot, "inv-1"),
+		CheckoutRoot:          checkoutRoot,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-inv-1",
 		BaseCommit:            "abc123",
 		Runner:                "claude-code",
@@ -141,11 +157,13 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	_, err = st.EnsureInvocationDir(repoID, "inv-2")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-2", &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-2",
 		InvocationName:        "feature-work",
 		IntegrationWorktreeID: "wt-1",
-		SandboxPath:           "/tmp/sandbox/inv-2",
+		SandboxPath:           filepath.Join(sandboxRoot, "inv-2"),
+		CheckoutRoot:          checkoutRoot,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-inv-2",
 		BaseCommit:            "def456",
 		Runner:                "claude-code",
@@ -168,10 +186,12 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	_, err = st.EnsureInvocationDir(repoID, "inv-3")
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, "inv-3", &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          "inv-3",
 		IntegrationWorktreeID: "wt-2",
-		SandboxPath:           "/tmp/sandbox/inv-3",
+		SandboxPath:           filepath.Join(sandboxRoot, "inv-3"),
+		CheckoutRoot:          checkoutRoot,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-inv-3",
 		BaseCommit:            "ghi789",
 		Runner:                "claude-code",
@@ -1039,7 +1059,9 @@ func TestHandleGetInvocationCheckpoints_UsesInvocationOwnedAfterSandboxCleanup(t
 	cpData, err := json.Marshal(cpFile)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
-	require.NoError(t, os.RemoveAll(env.Store.SandboxDir(env.RepoID, "inv-1")))
+	meta, err := env.Store.ReadInvocationMeta(env.RepoID, "inv-1")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(meta.SandboxPath))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1771,7 +1793,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{repoDir}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -1781,10 +1803,12 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	_, err = st.EnsureInvocationDir(repoID, invID)
 	require.NoError(t, err)
 	require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invID,
 		IntegrationWorktreeID: "wt-1",
 		SandboxPath:           repoDir,
+		CheckoutRoot:          filepath.Dir(repoDir),
+		ExecutionProfile:      "work",
 		SandboxBranch:         "main",
 		BaseCommit:            baseCommit,
 		Runner:                "claude-code",
@@ -2001,7 +2025,7 @@ func TestHandleListWorktrees_Pagination(t *testing.T) {
 	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -2013,16 +2037,18 @@ func TestHandleListWorktrees_Pagination(t *testing.T) {
 		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, &store.IntegrationWorktreeMeta{
-			SchemaVersion: "1.0",
-			WorktreeID:    wtID,
-			Name:          "name-" + string(rune('a'+i)),
-			RepoID:        repoID,
-			Branch:        "agency/" + wtID,
-			BaseBranch:    "main",
-			TreePath:      "/tmp/wt/" + wtID,
-			CreatedAt:     "2026-02-05T10:00:00Z",
-			LastUsedAt:    time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
-			State:         store.WorktreeStatePresent,
+			SchemaVersion:    store.SchemaVersion,
+			WorktreeID:       wtID,
+			Name:             "name-" + string(rune('a'+i)),
+			RepoID:           repoID,
+			Branch:           "agency/" + wtID,
+			BaseBranch:       "main",
+			TreePath:         "/tmp/wt/" + wtID,
+			CheckoutRoot:     "/tmp/checkouts/" + repoID,
+			ExecutionProfile: "work",
+			CreatedAt:        "2026-02-05T10:00:00Z",
+			LastUsedAt:       time.Date(2026, 2, 5, 11, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			State:            store.WorktreeStatePresent,
 		}))
 	}
 
@@ -2063,7 +2089,7 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -2075,10 +2101,12 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 		_, err := st.EnsureInvocationDir(repoID, invID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
-			SchemaVersion:         "1.0",
+			SchemaVersion:         store.SchemaVersion,
 			InvocationID:          invID,
 			IntegrationWorktreeID: "wt-1",
 			SandboxPath:           "/tmp/sandbox/" + invID,
+			CheckoutRoot:          "/tmp/checkouts/" + repoID,
+			ExecutionProfile:      "work",
 			SandboxBranch:         "agency/sandbox-" + invID,
 			BaseCommit:            "abc",
 			Runner:                "claude-code",
@@ -2155,7 +2183,7 @@ func TestCheckpointsRouting(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// PR-B: Offset-based logs tests
+// Offset-based logs tests.
 // ---------------------------------------------------------------------------
 
 func TestReadLogFileAtOffset(t *testing.T) {
@@ -2449,7 +2477,7 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2 PR-01: Daemon Read API Contract Hardening — Acceptance Tests
+// Daemon read API contract hardening acceptance tests.
 // ---------------------------------------------------------------------------
 
 // decodeDetails extracts and decodes the Details field from an APIResponse.
@@ -2649,7 +2677,7 @@ func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
 	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -2660,15 +2688,17 @@ func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
 		_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, &store.IntegrationWorktreeMeta{
-			SchemaVersion: "1.0",
-			WorktreeID:    wtID,
-			Name:          "alpha",
-			RepoID:        repoID,
-			Branch:        "agency/" + wtID,
-			BaseBranch:    "main",
-			TreePath:      "/tmp/wt/" + wtID,
-			CreatedAt:     "2026-02-05T10:00:00Z",
-			State:         store.WorktreeStatePresent,
+			SchemaVersion:    store.SchemaVersion,
+			WorktreeID:       wtID,
+			Name:             "alpha",
+			RepoID:           repoID,
+			Branch:           "agency/" + wtID,
+			BaseBranch:       "main",
+			TreePath:         "/tmp/wt/" + wtID,
+			CheckoutRoot:     "/tmp/checkouts/" + repoID,
+			ExecutionProfile: "work",
+			CreatedAt:        "2026-02-05T10:00:00Z",
+			State:            store.WorktreeStatePresent,
 		}))
 	}
 
@@ -2704,7 +2734,7 @@ func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
 	srv.Clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {RepoID: repoID, Paths: []string{"/tmp/repo"}, LastSeenAt: "2026-02-05T12:00:00Z"},
 		},
@@ -2715,11 +2745,13 @@ func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
 		_, err := st.EnsureInvocationDir(repoID, invID)
 		require.NoError(t, err)
 		require.NoError(t, st.WriteInvocationMeta(repoID, invID, &store.InvocationMeta{
-			SchemaVersion:         "1.0",
+			SchemaVersion:         store.SchemaVersion,
 			InvocationID:          invID,
 			InvocationName:        "shared-run",
 			IntegrationWorktreeID: "wt-1",
 			SandboxPath:           "/tmp/sandbox/" + invID,
+			CheckoutRoot:          "/tmp/checkouts/" + repoID,
+			ExecutionProfile:      "work",
 			SandboxBranch:         "agency/sandbox-" + invID,
 			BaseCommit:            "abc",
 			Runner:                "claude-code",
@@ -2776,7 +2808,7 @@ func TestWorktreesRouting_MethodNotAllowed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// End S2 PR-01 acceptance tests
+// End daemon read API contract hardening acceptance tests.
 // ---------------------------------------------------------------------------
 
 func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
@@ -3371,6 +3403,9 @@ func TestHandleControlPlaneFollowUp_IdempotentRetryNoDuplicateTimelineWrites(t *
 	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
 		"/invocations/inv-1/followup?repo_id="+env.RepoID, reqBody)
 	assert.Equal(t, http.StatusOK, w2.Code)
+	var retryResp ControlPlaneFollowUpResponse
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&retryResp))
+	assert.True(t, retryResp.AlreadyApplied)
 
 	wTimeline := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=500")
 	assert.Equal(t, http.StatusOK, wTimeline.Code)
@@ -3392,4 +3427,61 @@ func TestHandleControlPlaneFollowUp_IdempotentRetryNoDuplicateTimelineWrites(t *
 		}
 	}
 	assert.Equal(t, 1, count, "duplicate follow-up submissions must not write duplicate timeline entries")
+}
+
+func TestHandleControlPlaneFollowUp_IdempotencyConflictDifferentPrompt(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	firstBody, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-conflict",
+		"prompt":            "original follow-up",
+	})
+	require.NoError(t, err)
+	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, firstBody)
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	secondBody, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-conflict",
+		"prompt":            "different follow-up",
+	})
+	require.NoError(t, err)
+	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, secondBody)
+
+	var resp ControlPlaneFollowUpResponse
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&resp))
+	assert.Equal(t, http.StatusConflict, w2.Code)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EIdempotencyConflict), resp.ErrorCode)
+}
+
+func TestHandleControlPlaneFollowUp_IdempotencyConflictDifferentInvocation(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-3", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.ExitReason = ""
+		meta.FailureReason = ""
+	}))
+
+	body, err := json.Marshal(map[string]any{
+		"client_request_id": "followup-req-target-conflict",
+		"prompt":            "same prompt",
+	})
+	require.NoError(t, err)
+	w1 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-1/followup?repo_id="+env.RepoID, body)
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	w2 := env.doInvocationRequestWithBody(t, http.MethodPost,
+		"/invocations/inv-3/followup?repo_id="+env.RepoID, body)
+
+	var resp ControlPlaneFollowUpResponse
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&resp))
+	assert.Equal(t, http.StatusConflict, w2.Code)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EIdempotencyConflict), resp.ErrorCode)
 }

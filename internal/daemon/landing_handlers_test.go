@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -91,6 +92,34 @@ func TestHandleLandDiscard_ErrorResponseIncludesRequestID(t *testing.T) {
 			require.True(t, ok, "request_id must be present")
 			assert.NotEmpty(t, requestID)
 			assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+		})
+	}
+}
+
+func TestHandleLandDiscard_StrictOptionalBody(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	tests := []string{
+		"/invocations/test-inv/land?repo_id=test-repo",
+		"/invocations/test-inv/discard?repo_id=test-repo",
+	}
+	for _, path := range tests {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"unknown":true}`)))
+			req.ContentLength = -1
+			w := httptest.NewRecorder()
+
+			s.handleInvocations(w, req)
+
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
+			assert.Equal(t, "E_INVALID_REQUEST", payload["error_code"])
+			assert.Contains(t, payload["message"], `unknown field "unknown"`)
 		})
 	}
 }

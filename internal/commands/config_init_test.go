@@ -57,10 +57,12 @@ func TestConfigInit_WritesOperationalConfig(t *testing.T) {
 
 	var cfg config.UserConfig
 	require.NoError(t, json.Unmarshal(data, &cfg), "failed to unmarshal config.json")
-	assert.Equal(t, 3, cfg.Version)
+	assert.Equal(t, 4, cfg.Version)
 	assert.Equal(t, "codex", cfg.Defaults.Runner)
 	assert.Equal(t, "zed", cfg.Defaults.Editor)
 	assert.Equal(t, "main", cfg.Defaults.BaseBranch)
+	assert.Equal(t, "personal", cfg.Defaults.ExecutionProfile)
+	assert.Contains(t, cfg.ExecutionProfiles, "personal")
 	assert.Equal(t, map[string]string{
 		"codex": "codex",
 		"amp":   "amp",
@@ -72,6 +74,7 @@ func TestConfigInit_WritesOperationalConfig(t *testing.T) {
 	assert.Contains(t, output, "defaults_runner: codex")
 	assert.Contains(t, output, "defaults_editor: zed")
 	assert.Contains(t, output, "defaults_base_branch: main")
+	assert.Contains(t, output, "defaults_execution_profile: personal")
 	assert.Contains(t, output, "runners: codex, amp")
 }
 

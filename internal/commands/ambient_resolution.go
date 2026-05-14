@@ -37,7 +37,7 @@ func inspectCWDAmbientSelection(ctx context.Context, cr exec.CommandRunner, ns *
 		}, nil
 	}
 
-	if cwdInsideAgencyManagedTree(cwd, ns.dirs.DataDir) {
+	if cwdInsideAgencyManagedTree(cwd) {
 		return cwdTargetSelection{InsideAgencyManagedTree: true}, nil
 	}
 

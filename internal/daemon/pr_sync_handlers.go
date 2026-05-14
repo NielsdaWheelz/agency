@@ -44,7 +44,13 @@ func (s *Server) runPRSync(
 	wtMeta *store.IntegrationWorktreeMeta,
 	req WorktreePRSyncRequest,
 ) (*prSyncResult, error) {
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
+	profileEnv, err := s.executionProfileEnv(wtMeta.ExecutionProfile)
+	if err != nil {
+		return nil, err
+	}
+	env := prSyncNonInteractiveEnv(profileEnv)
+
+	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -59,18 +65,18 @@ func (s *Server) runPRSync(
 		)
 	}
 
-	if err := prSyncCheckGHAuth(ctx, s.Runner, wtMeta.TreePath); err != nil {
+	if err := prSyncCheckGHAuth(ctx, s.Runner, wtMeta.TreePath, env); err != nil {
 		return nil, err
 	}
-	if err := prSyncGitFetchOrigin(ctx, s.Runner, wtMeta.TreePath); err != nil {
+	if err := prSyncGitFetchOrigin(ctx, s.Runner, wtMeta.TreePath, env); err != nil {
 		return nil, err
 	}
 
-	baseRef, err := prSyncResolveBaseRef(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch)
+	baseRef, err := prSyncResolveBaseRef(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch, env)
 	if err != nil {
 		return nil, err
 	}
-	ahead, err := prSyncComputeAhead(ctx, s.Runner, wtMeta.TreePath, baseRef, wtMeta.Branch)
+	ahead, err := prSyncComputeAhead(ctx, s.Runner, wtMeta.TreePath, baseRef, wtMeta.Branch, env)
 	if err != nil {
 		return nil, err
 	}
@@ -83,11 +89,11 @@ func (s *Server) runPRSync(
 		return nil, err
 	}
 
-	if err := prSyncGitPush(ctx, s.Runner, wtMeta.TreePath, wtMeta.Branch, req.ForceWithLease); err != nil {
+	if err := prSyncGitPush(ctx, s.Runner, wtMeta.TreePath, wtMeta.Branch, req.ForceWithLease, env); err != nil {
 		return nil, err
 	}
 
-	owner, err := prSyncResolveGitHubOwner(ctx, s.Runner, wtMeta.TreePath)
+	owner, err := prSyncResolveGitHubOwner(ctx, s.Runner, wtMeta.TreePath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +103,7 @@ func (s *Server) runPRSync(
 		title = wtMeta.Branch
 	}
 	title = "[agency] " + title
-	prs, err := prSyncListPRsByHead(ctx, s.Runner, wtMeta.TreePath, head)
+	prs, err := prSyncListPRsByHead(ctx, s.Runner, wtMeta.TreePath, head, env)
 	if err != nil {
 		return nil, err
 	}
@@ -111,13 +117,13 @@ func (s *Server) runPRSync(
 	}
 
 	if len(prs) == 0 {
-		createErr := prSyncCreatePR(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath)
+		createErr := prSyncCreatePR(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath, env)
 		createdNow := createErr == nil
 		if createErr != nil && !prSyncIsAlreadyExistsError(createErr) {
 			return nil, createErr
 		}
 
-		pr, lookupErr := prSyncLookupPRAfterCreateWithRetry(ctx, s.Runner, wtMeta.TreePath, owner, wtMeta.Branch)
+		pr, lookupErr := prSyncLookupPRAfterCreateWithRetry(ctx, s.Runner, wtMeta.TreePath, owner, wtMeta.Branch, env)
 		if lookupErr != nil {
 			return nil, lookupErr
 		}
@@ -150,7 +156,7 @@ func (s *Server) runPRSync(
 		}
 
 		// PR already existed (create raced/failed as already exists): update body.
-		if err := prSyncEditPRBody(ctx, s.Runner, wtMeta.TreePath, pr.Number, bodyPath); err != nil {
+		if err := prSyncEditPRBody(ctx, s.Runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
 			return nil, err
 		}
 		return &prSyncResult{
@@ -172,7 +178,7 @@ func (s *Server) runPRSync(
 			},
 		)
 	}
-	if err := prSyncEditPRBody(ctx, s.Runner, wtMeta.TreePath, pr.Number, bodyPath); err != nil {
+	if err := prSyncEditPRBody(ctx, s.Runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
 		return nil, err
 	}
 
@@ -184,14 +190,14 @@ func (s *Server) runPRSync(
 	}, nil
 }
 
-func prSyncLookupPRAfterCreate(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string) (*prSyncPR, error) {
+func prSyncLookupPRAfterCreate(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) (*prSyncPR, error) {
 	head := prSyncHeadRef(owner, branch)
-	prs, err := prSyncListPRsByHead(ctx, runner, workDir, head)
+	prs, err := prSyncListPRsByHead(ctx, runner, workDir, head, env)
 	if err != nil {
 		return nil, err
 	}
 	if len(prs) == 0 && strings.TrimSpace(owner) != "" {
-		prs, err = prSyncListPRsByHead(ctx, runner, workDir, branch)
+		prs, err = prSyncListPRsByHead(ctx, runner, workDir, branch, env)
 		if err != nil {
 			return nil, err
 		}
@@ -209,7 +215,7 @@ func prSyncLookupPRAfterCreate(ctx context.Context, runner exec.CommandRunner, w
 	return &prs[0], nil
 }
 
-func prSyncLookupPRAfterCreateWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string) (*prSyncPR, error) {
+func prSyncLookupPRAfterCreateWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) (*prSyncPR, error) {
 	delays := []time.Duration{
 		0,
 		250 * time.Millisecond,
@@ -230,7 +236,7 @@ func prSyncLookupPRAfterCreateWithRetry(ctx context.Context, runner exec.Command
 			}
 		}
 
-		pr, err := prSyncLookupPRAfterCreate(ctx, runner, workDir, owner, branch)
+		pr, err := prSyncLookupPRAfterCreate(ctx, runner, workDir, owner, branch, env)
 		if err != nil {
 			lastErr = err
 			continue
@@ -251,10 +257,10 @@ func prSyncIsAlreadyExistsError(err error) bool {
 	return strings.Contains(lower, "pull request") && strings.Contains(lower, "already exists")
 }
 
-func prSyncDirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir string) (bool, string, error) {
+func prSyncDirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (bool, string, error) {
 	result, err := runner.Run(ctx, "git", []string{"status", "--porcelain", "--untracked-files=all"}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return false, "", errors.Wrap(errors.EInternal, "git status --porcelain failed to start", err)
@@ -285,10 +291,10 @@ func prSyncDirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir s
 	return strings.TrimSpace(status) == "", status, nil
 }
 
-func prSyncCheckGHAuth(ctx context.Context, runner exec.CommandRunner, workDir string) error {
+func prSyncCheckGHAuth(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) error {
 	result, err := runner.Run(ctx, "gh", []string{"--version"}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil || result.ExitCode != 0 {
 		return errors.New(errors.EGhNotInstalled, "gh CLI not found on PATH; install from https://cli.github.com")
@@ -296,7 +302,7 @@ func prSyncCheckGHAuth(ctx context.Context, runner exec.CommandRunner, workDir s
 
 	result, err = runner.Run(ctx, "gh", []string{"auth", "status"}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil || result.ExitCode != 0 {
 		return errors.New(errors.EGhNotAuthenticated, "gh not authenticated; run `gh auth login` first")
@@ -305,10 +311,10 @@ func prSyncCheckGHAuth(ctx context.Context, runner exec.CommandRunner, workDir s
 	return nil
 }
 
-func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDir string) error {
+func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) error {
 	result, err := runner.Run(ctx, "git", []string{"fetch", "origin"}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "git fetch origin failed to start", err)
@@ -323,8 +329,8 @@ func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDi
 	return nil
 }
 
-func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDir, baseBranch string) (string, error) {
-	localExists, err := prSyncRefExists(ctx, runner, workDir, "refs/heads/"+baseBranch)
+func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDir, baseBranch string, env map[string]string) (string, error) {
+	localExists, err := prSyncRefExists(ctx, runner, workDir, "refs/heads/"+baseBranch, env)
 	if err != nil {
 		return "", err
 	}
@@ -333,7 +339,7 @@ func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDi
 	}
 
 	remoteRef := "refs/remotes/origin/" + baseBranch
-	remoteExists, err := prSyncRefExists(ctx, runner, workDir, remoteRef)
+	remoteExists, err := prSyncRefExists(ctx, runner, workDir, remoteRef, env)
 	if err != nil {
 		return "", err
 	}
@@ -348,10 +354,10 @@ func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDi
 	)
 }
 
-func prSyncRefExists(ctx context.Context, runner exec.CommandRunner, workDir, ref string) (bool, error) {
+func prSyncRefExists(ctx context.Context, runner exec.CommandRunner, workDir, ref string, env map[string]string) (bool, error) {
 	result, err := runner.Run(ctx, "git", []string{"show-ref", "--verify", "--quiet", ref}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return false, errors.Wrap(errors.EInternal, "git show-ref failed to start", err)
@@ -359,11 +365,11 @@ func prSyncRefExists(ctx context.Context, runner exec.CommandRunner, workDir, re
 	return result.ExitCode == 0, nil
 }
 
-func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir, baseRef, branch string) (int, error) {
+func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir, baseRef, branch string, env map[string]string) (int, error) {
 	revRange := baseRef + ".." + branch
 	result, err := runner.Run(ctx, "git", []string{"rev-list", "--count", revRange}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return 0, errors.Wrap(errors.EInternal, "git rev-list --count failed to start", err)
@@ -383,7 +389,7 @@ func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir,
 	return count, nil
 }
 
-func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, branch string, forceWithLease bool) error {
+func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, branch string, forceWithLease bool, env map[string]string) error {
 	args := []string{"push", "-u", "origin", branch}
 	if forceWithLease {
 		args = []string{"push", "--force-with-lease", "-u", "origin", branch}
@@ -391,7 +397,7 @@ func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, bran
 
 	result, err := runner.Run(ctx, "git", args, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return errors.Wrap(errors.EGitPushFailed, "git push failed to start", err)
@@ -423,10 +429,10 @@ func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, bran
 	)
 }
 
-func prSyncResolveGitHubOwner(ctx context.Context, runner exec.CommandRunner, workDir string) (string, error) {
+func prSyncResolveGitHubOwner(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (string, error) {
 	result, err := runner.Run(ctx, "git", []string{"config", "--get", "remote.origin.url"}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil || result.ExitCode != 0 {
 		return "", errors.New(errors.EGHRepoParseFailed, "failed to determine GitHub repository from origin remote")
@@ -446,7 +452,7 @@ func prSyncHeadRef(owner, branch string) string {
 	return owner + ":" + branch
 }
 
-func prSyncListPRsByHead(ctx context.Context, runner exec.CommandRunner, workDir, head string) ([]prSyncPR, error) {
+func prSyncListPRsByHead(ctx context.Context, runner exec.CommandRunner, workDir, head string, env map[string]string) ([]prSyncPR, error) {
 	result, err := runner.Run(ctx, "gh", []string{
 		"pr", "list",
 		"--head", head,
@@ -454,7 +460,7 @@ func prSyncListPRsByHead(ctx context.Context, runner exec.CommandRunner, workDir
 		"--json", "number,url,state",
 	}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return nil, errors.Wrap(errors.EGHPRViewFailed, "gh pr list failed to start", err)
@@ -474,7 +480,7 @@ func prSyncListPRsByHead(ctx context.Context, runner exec.CommandRunner, workDir
 	return prs, nil
 }
 
-func prSyncCreatePR(ctx context.Context, runner exec.CommandRunner, workDir, base, branch, title, bodyPath string) error {
+func prSyncCreatePR(ctx context.Context, runner exec.CommandRunner, workDir, base, branch, title, bodyPath string, env map[string]string) error {
 	result, err := runner.Run(ctx, "gh", []string{
 		"pr", "create",
 		"--base", base,
@@ -483,7 +489,7 @@ func prSyncCreatePR(ctx context.Context, runner exec.CommandRunner, workDir, bas
 		"--body-file", bodyPath,
 	}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return errors.Wrap(errors.EGHPRCreateFailed, "gh pr create failed to start", err)
@@ -498,13 +504,13 @@ func prSyncCreatePR(ctx context.Context, runner exec.CommandRunner, workDir, bas
 	return nil
 }
 
-func prSyncEditPRBody(ctx context.Context, runner exec.CommandRunner, workDir string, number int, bodyPath string) error {
+func prSyncEditPRBody(ctx context.Context, runner exec.CommandRunner, workDir string, number int, bodyPath string, env map[string]string) error {
 	result, err := runner.Run(ctx, "gh", []string{
 		"pr", "edit", fmt.Sprintf("%d", number),
 		"--body-file", bodyPath,
 	}, exec.RunOpts{
 		Dir: workDir,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if err != nil {
 		return errors.Wrap(errors.EGHPREditFailed, "gh pr edit failed to start", err)
@@ -560,12 +566,15 @@ func prSyncPrepareBody(
 	return bodyPath, nil
 }
 
-func prSyncNonInteractiveEnv() map[string]string {
-	return map[string]string{
-		"GIT_TERMINAL_PROMPT": "0",
-		"GH_PROMPT_DISABLED":  "1",
-		"CI":                  "1",
+func prSyncNonInteractiveEnv(profileEnv map[string]string) map[string]string {
+	env := copyStringMap(profileEnv)
+	if env == nil {
+		env = map[string]string{}
 	}
+	env["GIT_TERMINAL_PROMPT"] = "0"
+	env["GH_PROMPT_DISABLED"] = "1"
+	env["CI"] = "1"
+	return env
 }
 
 func prSyncHintFromError(err error) string {
@@ -579,24 +588,18 @@ func prSyncHintFromError(err error) string {
 
 func decodePRSyncRequest(body io.Reader) (WorktreePRSyncRequest, string) {
 	var req WorktreePRSyncRequest
-	dec := json.NewDecoder(body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		if err == io.EOF {
-			return req, ""
-		}
+	if err := decodeOptionalStrictJSON(body, &req); err != nil {
 		return WorktreePRSyncRequest{}, prSyncDecodeErrorMessage(err)
 	}
-
-	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return WorktreePRSyncRequest{}, "invalid request body: expected a single JSON object"
-	}
-
 	return req, ""
 }
 
 func prSyncDecodeErrorMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "expected a JSON object" || msg == "expected a single JSON object" {
+		return "invalid request body: " + msg
+	}
+
 	if unknownField, ok := prSyncUnknownFieldName(err); ok {
 		return fmt.Sprintf("invalid request body: unknown field %q", unknownField)
 	}

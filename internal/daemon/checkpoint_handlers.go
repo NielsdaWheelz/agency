@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
@@ -22,7 +21,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	// Parse request body
 	var req CheckpointApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		s.writeCheckpointError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 		return
 	}

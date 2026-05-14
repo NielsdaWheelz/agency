@@ -1,9 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
-    "base_branch": "main"
+    "base_branch": "main",
+    "execution_profile": "personal"
   },
   "runner_defaults": {
     "claude-code": {
@@ -25,5 +26,18 @@
   },
   "editors": {
     "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {
+        "ANTHROPIC_API_KEY": "personal-anthropic",
+        "OPENAI_API_KEY": "personal-openai"
+      }
+    },
+    "work": {
+      "env": {
+        "ANTHROPIC_API_KEY": "work-anthropic"
+      }
+    }
   }
 }

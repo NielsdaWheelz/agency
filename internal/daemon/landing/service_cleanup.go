@@ -33,8 +33,7 @@ func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, re
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	sandboxDir := s.store.SandboxDir(repoID, invocationID)
-	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
+	if err := fs.SafeRemoveAll(meta.SandboxPath, meta.CheckoutRoot); err != nil {
 		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
 	}
 
@@ -97,8 +96,7 @@ func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repo
 		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
 	}
 
-	sandboxDir := s.store.SandboxDir(repoID, invocationID)
-	if err := fs.SafeRemoveAll(sandboxDir, s.store.SandboxesDir(repoID)); err != nil {
+	if err := fs.SafeRemoveAll(meta.SandboxPath, meta.CheckoutRoot); err != nil {
 		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
 	}
 

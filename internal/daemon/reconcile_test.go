@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -21,7 +22,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// PR-11: Headed Reconciliation Unit Tests
+// Headed reconciliation unit tests.
 // ---------------------------------------------------------------------------
 
 // setupReconcileTestEnv creates a minimal daemon environment for reconciliation tests.
@@ -99,10 +100,12 @@ func createTestHeadedInvocationMetaWithAge(t *testing.T, st *store.Store, repoID
 	startedAt := fixedTime.Add(ageOffset)
 
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: "test-worktree",
 		SandboxPath:           "/tmp/sandbox",
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123",
 		Runner:                "claude-code",
@@ -125,7 +128,7 @@ func ensureRepoDir(t *testing.T, st *store.Store, repoID string) {
 
 	// Create repo_index.json so daemon can find the repo
 	idx := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			repoID: {
 				RepoID:     repoID,
@@ -136,6 +139,22 @@ func ensureRepoDir(t *testing.T, st *store.Store, repoID string) {
 	}
 	err = st.SaveRepoIndex(idx)
 	require.NoError(t, err, "save repo index")
+}
+
+func ensureRepoRecordOnly(t *testing.T, st *store.Store, repoID, repoRoot string) {
+	t.Helper()
+
+	err := st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          "path:" + repoID,
+		RepoID:           repoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		CreatedAt:        "2026-02-05T12:00:00Z",
+		UpdatedAt:        "2026-02-05T12:00:00Z",
+	})
+	require.NoError(t, err, "save repo record")
 }
 
 // waitForStatus polls the store until the invocation reaches the expected status.
@@ -166,6 +185,79 @@ func waitForStableStatus(t *testing.T, st *store.Store, repoID, invocationID str
 	meta, err := st.ReadInvocationMeta(repoID, invocationID)
 	require.NoError(t, err)
 	assert.Equal(t, expected, meta.Status, "status should remain %s", expected)
+}
+
+func TestRecovery_DiscoversRepoRecordWhenRepoIndexMissing(t *testing.T) {
+	t.Parallel()
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "missing-index-repo"
+	invocationID := "20260205120000-miss"
+	sessionName := tmux.SessionName(invocationID)
+
+	ensureRepoRecordOnly(t, st, repoID, t.TempDir())
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName, -60*time.Second)
+
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta.ExitReason)
+}
+
+func TestRecovery_DiscoversRepoRecordWhenRepoIndexCorrupt(t *testing.T) {
+	t.Parallel()
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "corrupt-index-repo"
+	invocationID := "20260205120000-corr"
+	sessionName := tmux.SessionName(invocationID)
+
+	ensureRepoRecordOnly(t, st, repoID, t.TempDir())
+	createTestHeadedInvocationMetaWithAge(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName, -60*time.Second)
+	require.NoError(t, os.WriteFile(st.RepoIndexPath(), []byte(`{"schema_version":"1.0","repos":{}}`), 0o644))
+
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta.ExitReason)
+}
+
+func TestReconcile_DiscoversRepoRecordWhenRepoIndexStale(t *testing.T) {
+	t.Parallel()
+	fakeTmux := testutil.NewFakeTmuxClient()
+	srv, st := setupReconcileTestEnv(t, fakeTmux)
+
+	repoID := "stale-index-repo"
+	invocationID := "20260205120000-stal"
+	sessionName := tmux.SessionName(invocationID)
+
+	ensureRepoRecordOnly(t, st, repoID, t.TempDir())
+	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName)
+	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			"path:other": {
+				RepoID:     "other-repo",
+				Paths:      []string{"/tmp/other"},
+				LastSeenAt: "2026-02-05T12:00:00Z",
+			},
+		},
+	}))
+
+	cleanup := startTestServer(t, srv)
+	defer cleanup()
+
+	fakeTmux.Mu.Lock()
+	delete(fakeTmux.Sessions, sessionName)
+	fakeTmux.Mu.Unlock()
+
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
+	assert.Equal(t, "exited", meta.ExitReason)
 }
 
 func TestReconcile_RunningToFinished(t *testing.T) {
@@ -441,10 +533,8 @@ func TestReconcile_StartingGraceWindowReset(t *testing.T) {
 	assert.Empty(t, meta.LifecycleOwner)
 }
 
-func TestReconcile_HeadlessNoPID_Unaffected(t *testing.T) {
+func TestReconcile_HeadlessNoPID_FailsClosed(t *testing.T) {
 	t.Parallel()
-	// Test: Headless invocations without PIDs are unaffected by reconciliation.
-	// No PID means no liveness check is possible; leave for recovery scan.
 	fakeTmux := testutil.NewFakeTmuxClient()
 	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
@@ -457,10 +547,12 @@ func TestReconcile_HeadlessNoPID_Unaffected(t *testing.T) {
 	require.NoError(t, err)
 
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: "test-worktree",
 		SandboxPath:           "/tmp/sandbox",
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123",
 		Runner:                "claude-code",
@@ -476,8 +568,8 @@ func TestReconcile_HeadlessNoPID_Unaffected(t *testing.T) {
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// Verify headless invocation stays running through multiple ticks
-	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
+	meta = waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, "runner_pid_missing", meta.FailureReason)
 }
 
 func TestReconcile_HeadlessDeadPID(t *testing.T) {
@@ -507,10 +599,12 @@ func TestReconcile_HeadlessDeadPID(t *testing.T) {
 
 	pid := 99999
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: "test-worktree",
 		SandboxPath:           "/tmp/sandbox",
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123",
 		Runner:                "claude-code",
@@ -555,10 +649,12 @@ func TestReconcile_HeadlessAlivePID(t *testing.T) {
 
 	pid := 12345
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: "test-worktree",
 		SandboxPath:           "/tmp/sandbox",
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123",
 		Runner:                "claude-code",
@@ -894,10 +990,12 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 	require.NoError(t, err)
 	inv4PID := 55555
 	err = st.WriteInvocationMeta(repoID, inv4, &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          inv4,
 		IntegrationWorktreeID: "test-worktree",
 		SandboxPath:           "/tmp/sandbox",
+		CheckoutRoot:          "/tmp/checkouts/" + repoID,
+		ExecutionProfile:      "work",
 		SandboxBranch:         "agency/sandbox-" + inv4,
 		BaseCommit:            "abc123",
 		Runner:                "claude-code",

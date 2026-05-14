@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
+	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,7 +39,7 @@ func setupTestRepoAt(t *testing.T, root string) string {
 
 	// Create agency.json
 	agencyJSON := `{
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -51,6 +53,10 @@ func setupTestRepoAt(t *testing.T, root string) string {
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }`
 	require.NoError(t, os.WriteFile(filepath.Join(root, "agency.json"), []byte(agencyJSON), 0o644), "failed to write agency.json")
@@ -73,10 +79,11 @@ func writeUserConfig(t *testing.T, configDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "failed to create config dir")
 	cfg := `{
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
-    "editor": "code"
+    "editor": "code",
+    "execution_profile": "personal"
   },
   "runner_defaults": {
     "claude-code": {
@@ -90,9 +97,53 @@ func writeUserConfig(t *testing.T, configDir string) {
   },
   "editors": {
     "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
   }
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "failed to write config.json")
+}
+
+func registerDoctorTestRepo(t *testing.T, dataDir, repoRoot, originURL string) {
+	t.Helper()
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originURL)
+	originPresent := strings.TrimSpace(originURL) != ""
+	originHost := ""
+	if originPresent {
+		originHost = "github.com"
+	}
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoIdentity.RepoKey: {
+				RepoID:     repoIdentity.RepoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-01T00:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoIdentity.RepoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    originPresent,
+		OriginURL:        originURL,
+		OriginHost:       originHost,
+		Capabilities: store.Capabilities{
+			GitHubOrigin: originPresent,
+			OriginHost:   originHost,
+			GhAuthed:     originPresent,
+		},
+		CreatedAt: "2026-01-01T00:00:00Z",
+		UpdatedAt: "2026-01-01T00:00:00Z",
+	}))
 }
 
 func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
@@ -104,7 +155,7 @@ func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
 	require.NoError(t, os.MkdirAll(root, 0o755), "failed to create local config dir")
 
 	agencyJSON := `{
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -124,6 +175,10 @@ func writeLocalAgencyConfig(t *testing.T, agencyJSONPath string) {
       "model": "local-opus",
       "effort": "high"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }`
 	require.NoError(t, os.WriteFile(agencyJSONPath, []byte(agencyJSON), 0o644), "failed to write local agency.json")
@@ -181,6 +236,7 @@ func TestDoctor_Success(t *testing.T) {
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -228,9 +284,8 @@ func TestDoctor_Success(t *testing.T) {
 		assert.Contains(t, output, line, "output missing expected line")
 	}
 
-	entries, err := os.ReadDir(dataDir)
-	require.NoError(t, err)
-	assert.Empty(t, entries, "doctor should not write files on success")
+	assert.FileExists(t, filepath.Join(dataDir, "repo_index.json"))
+	assert.FileExists(t, filepath.Join(dataDir, "repos", identity.DeriveRepoIdentity(repoRoot, "git@github.com:testowner/testrepo.git").RepoID, "repo.json"))
 }
 
 func TestDoctor_MissingUserConfig(t *testing.T) {
@@ -265,6 +320,7 @@ func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(repoRoot, "agency.json")))
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
@@ -304,6 +360,10 @@ func TestDoctor_ManagedWorktreeUsesCanonicalRepoConfig(t *testing.T) {
 	writeUserConfig(t, configDir)
 
 	m := newDoctorRunner(canonicalRepoRoot)
+	m.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{
+		Stdout:   "git@github.com:test/agent-repo.git\n",
+		ExitCode: 0,
+	}
 	var stdout, stderr bytes.Buffer
 
 	err := Doctor(context.Background(), m, fsys, worktreeRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout, &stderr)
@@ -342,6 +402,7 @@ func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
 }`), 0o644))
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
 
@@ -367,6 +428,7 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 
 	// Create temp data dir (t.TempDir handles cleanup automatically)
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -388,9 +450,8 @@ func TestDoctor_GhNotAuthenticated(t *testing.T) {
 	// stdout should be empty on failure
 	assert.Empty(t, stdout.String(), "stdout should be empty on failure")
 
-	// Persistence files should NOT be created on failure
 	repoIndexPath := filepath.Join(dataDir, "repo_index.json")
-	assert.NoFileExists(t, repoIndexPath, "repo_index.json should not be created on failure")
+	assert.FileExists(t, repoIndexPath)
 }
 
 func TestDoctor_ScriptNotExecutable(t *testing.T) {
@@ -402,6 +463,7 @@ func TestDoctor_ScriptNotExecutable(t *testing.T) {
 	require.NoError(t, os.Chmod(setupScript, 0644), "failed to chmod script")
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -427,6 +489,7 @@ func TestDoctor_ScriptMissing(t *testing.T) {
 	require.NoError(t, os.Remove(setupScript), "failed to remove script")
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -447,6 +510,7 @@ func TestDoctor_NoGitHubOrigin(t *testing.T) {
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -476,6 +540,7 @@ func TestDoctor_IsReadOnly(t *testing.T) {
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -493,9 +558,8 @@ func TestDoctor_IsReadOnly(t *testing.T) {
 	err = Doctor(context.Background(), m, fsys, repoRoot, DoctorOpts{DataDirOverride: dataDir, ConfigDirOverride: configDir}, &stdout2, &stderr2)
 	require.NoError(t, err, "second doctor run failed")
 
-	entries, readErr := os.ReadDir(dataDir)
-	require.NoError(t, readErr)
-	assert.Empty(t, entries, "doctor should not persist repo data")
+	assert.Equal(t, stdout1.String(), stdout2.String())
+	assert.FileExists(t, filepath.Join(dataDir, "repo_index.json"))
 }
 
 func TestDoctor_OutputOrder(t *testing.T) {
@@ -503,6 +567,7 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	repoRoot := setupTestRepo(t)
 
 	dataDir := t.TempDir()
+	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
 
 	configDir := t.TempDir()
 	writeUserConfig(t, configDir)
@@ -544,6 +609,11 @@ func TestDoctor_OutputOrder(t *testing.T) {
 		"defaults_runner_effort:",
 		"defaults_runner_effort_source:",
 		"defaults_editor:",
+		"execution_profile:",
+		"execution_profile_source:",
+		"execution_checkout_root_policy:",
+		"execution_checkout_root:",
+		"execution_profile_env_keys:",
 		"runner_cmd:",
 		"script_setup:",
 		"script_verify:",

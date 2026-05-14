@@ -39,13 +39,13 @@ func setupTestService(t *testing.T, status store.InvocationStatus, landingStatus
 	// Create integration worktree meta (so Land() can read it at line 95).
 	_, err := st.EnsureIntegrationWorktreeDir(repoID, worktreeID)
 	require.NoError(t, err)
-	wtMeta := store.NewIntegrationWorktreeMeta(worktreeID, "test", repoID, "agency/integration-test", "main", "/nonexistent/tree", time.Now())
+	wtMeta := store.NewIntegrationWorktreeMeta(worktreeID, "test", repoID, "agency/integration-test", "main", "/nonexistent/tree", "/nonexistent/checkouts/test-repo", "personal", time.Now())
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, worktreeID, wtMeta))
 
 	// Create invocation meta with the desired status.
 	_, err = st.EnsureInvocationDir(repoID, invocationID)
 	require.NoError(t, err)
-	meta := store.NewInvocationMeta(invocationID, "", worktreeID, "/nonexistent/sandbox", "agency/sandbox-test", "abc123", "claude", store.RunnerModeHeadless, time.Now())
+	meta := store.NewInvocationMeta(invocationID, "", worktreeID, "/nonexistent/sandbox", "/nonexistent/checkouts/test-repo", "personal", "agency/sandbox-test", "abc123", "claude", store.RunnerModeHeadless, time.Now())
 	meta.Status = status
 	meta.LandingStatus = landingStatus
 	if status == store.InvocationStatusFinished || status == store.InvocationStatusFailed {
@@ -88,10 +88,11 @@ func setupHarness(t *testing.T) *testHarness {
 	repoID := "test-repo"
 	invocationID := "test-inv"
 	worktreeID := "test-wt"
+	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
 
 	// Create real directories so os.Stat succeeds in Land().
-	sandboxPath := filepath.Join(t.TempDir(), "sandbox-tree")
-	integrationPath := filepath.Join(t.TempDir(), "integration-tree")
+	sandboxPath := filepath.Join(checkoutRoot, "sandboxes", invocationID)
+	integrationPath := filepath.Join(checkoutRoot, "worktrees", worktreeID)
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o755))
 	require.NoError(t, os.MkdirAll(integrationPath, 0o755))
 
@@ -100,7 +101,7 @@ func setupHarness(t *testing.T) *testHarness {
 	require.NoError(t, err)
 	wtMeta := store.NewIntegrationWorktreeMeta(
 		worktreeID, "test", repoID, "agency/integration-test", "main",
-		integrationPath, time.Now(),
+		integrationPath, checkoutRoot, "personal", time.Now(),
 	)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, worktreeID, wtMeta))
 
@@ -109,7 +110,7 @@ func setupHarness(t *testing.T) *testHarness {
 	require.NoError(t, err)
 	meta := store.NewInvocationMeta(
 		invocationID, "", worktreeID,
-		sandboxPath, "agency/sandbox-test", "abc123",
+		sandboxPath, checkoutRoot, "personal", "agency/sandbox-test", "abc123",
 		"claude", store.RunnerModeHeadless, time.Now(),
 	)
 	meta.Status = store.InvocationStatusFinished
@@ -226,7 +227,7 @@ func TestLand_IntegrationTreeMissing(t *testing.T) {
 	require.NoError(t, err)
 	wtMeta := store.NewIntegrationWorktreeMeta(
 		worktreeID, "test", repoID, "agency/integration-test", "main",
-		missingIntegrationPath, time.Now(),
+		missingIntegrationPath, filepath.Join(dataDir, "checkouts", repoID), "personal", time.Now(),
 	)
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, worktreeID, wtMeta))
 
@@ -234,7 +235,7 @@ func TestLand_IntegrationTreeMissing(t *testing.T) {
 	require.NoError(t, err)
 	meta := store.NewInvocationMeta(
 		invocationID, "", worktreeID,
-		sandboxPath, "agency/sandbox-test", "abc123",
+		sandboxPath, filepath.Join(dataDir, "checkouts", repoID), "personal", "agency/sandbox-test", "abc123",
 		"claude", store.RunnerModeHeadless, time.Now(),
 	)
 	meta.Status = store.InvocationStatusFinished
@@ -648,11 +649,11 @@ func TestLand_Failed_ApplyPatchFails(t *testing.T) {
 	// The patch path is dynamic (contains temp dir), so we need a prefix-based matcher.
 	// Since FakeCommandRunner matches on exact key, we rely on the fact that the
 	// patch is written to a known store path. Let's compute it.
-	sandboxDir := h.store.SandboxDir("test-repo", "test-inv")
-	patchPath := filepath.Join(sandboxDir, "tmp", "land.patch")
+	invocationDir := h.store.InvocationDir("test-repo", "test-inv")
+	patchPath := filepath.Join(invocationDir, "tmp", "land.patch")
 
-	// Ensure the sandbox store dir exists so the patch can be written.
-	require.NoError(t, os.MkdirAll(filepath.Join(sandboxDir, "tmp"), 0o755))
+	// Ensure the invocation store dir exists so the patch can be written.
+	require.NoError(t, os.MkdirAll(filepath.Join(invocationDir, "tmp"), 0o755))
 
 	h.runner.Responses[fmt.Sprintf("git -C %s apply --index %s", h.integrationPath, patchPath)] = testutil.FakeResponse{
 		ExitCode: 1,

@@ -1,5 +1,5 @@
 // Package commands implements agency CLI commands.
-// This file tests worktree command convergence (S2 PR-03).
+// This file tests worktree command behavior.
 // All tests are non-parallel due to AGENCY_DATA_DIR env overrides.
 package commands
 
@@ -137,15 +137,17 @@ func createWorktreeInStore(t *testing.T, dataDir, repoID, wtID, name, branch, ba
 		[]byte("# Integration worktree\n"), 0644))
 
 	meta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    wtID,
-		Name:          name,
-		RepoID:        repoID,
-		Branch:        branch,
-		BaseBranch:    baseBranch,
-		TreePath:      treePath,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       wtID,
+		Name:             name,
+		RepoID:           repoID,
+		Branch:           branch,
+		BaseBranch:       baseBranch,
+		TreePath:         treePath,
+		CheckoutRoot:     filepath.Join(dataDir, "repos", repoID),
+		ExecutionProfile: "personal",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), metaBytes, 0644))
@@ -194,6 +196,69 @@ func createShimScript(t *testing.T) (shimPath, recordFile string) {
 	script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
 	require.NoError(t, os.WriteFile(shimPath, []byte(script), 0755))
 	return shimPath, recordFile
+}
+
+func writeWorktreeUserConfig(t *testing.T, configDir string) {
+	t.Helper()
+
+	cfg := map[string]any{
+		"version": 4,
+		"defaults": map[string]string{
+			"runner":            "claude-code",
+			"editor":            "code",
+			"base_branch":       "main",
+			"execution_profile": "personal",
+		},
+		"runners": map[string]string{
+			"claude-code": "/bin/echo",
+		},
+		"editors": map[string]string{
+			"code": "/bin/echo",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
+		},
+	}
+	payload, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), payload, 0o644))
+}
+
+func writeMinimalAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	for _, script := range []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
+  "version": 4,
+  "scripts": {
+    "setup": { "path": "scripts/agency_setup.sh", "timeout": "10m" },
+    "verify": { "path": "scripts/agency_verify.sh", "timeout": "30m" },
+    "archive": { "path": "scripts/agency_archive.sh", "timeout": "5m" }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
+  }
+}`), 0o644))
+}
+
+func writeCommittedAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	writeMinimalAgencyConfig(t, repoRoot)
+	runner := agencyexec.NewRealRunner()
+	result, err := runner.Run(context.Background(), "git", []string{"add", "agency.json", "scripts"}, agencyexec.RunOpts{Dir: repoRoot})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git add agency config failed: %s", result.Stderr)
+	result, err = runner.Run(context.Background(), "git", []string{"commit", "-m", "Add agency config"}, agencyexec.RunOpts{Dir: repoRoot})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git commit agency config failed: %s", result.Stderr)
 }
 
 func readShimRecord(t *testing.T, recordFile string) (cwd, args string) {
@@ -513,7 +578,7 @@ func TestWorktreeLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 	createWorktreeInStore(t, dataTmp, repo2, "20260131000000-bbbb", "bravo", "agency/bravo", "main")
 
 	repoIndex := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			"key1": {RepoID: repo1, Paths: []string{"/r1"}, LastSeenAt: "2026-01-31T12:00:00Z"},
 			"key2": {RepoID: repo2, Paths: []string{"/r2"}, LastSeenAt: "2026-01-31T12:00:00Z"},
@@ -601,7 +666,7 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 		require.Error(t, err)
 		code := errors.GetCode(err)
 		assert.NotEqual(t, errors.EWorktreeBroken, code,
-			"navigation target resolution must not return E_WORKTREE_BROKEN after PR-03 migration")
+			"navigation target resolution must not return E_WORKTREE_BROKEN after canonical navigation migration")
 		assert.Equal(t, errors.EWorktreeNotFound, code,
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})
@@ -618,7 +683,7 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 		require.Error(t, err)
 		code := errors.GetCode(err)
 		assert.NotEqual(t, errors.EWorktreeBroken, code,
-			"navigation target resolution must not return E_WORKTREE_BROKEN after PR-03 migration")
+			"navigation target resolution must not return E_WORKTREE_BROKEN after canonical navigation migration")
 		assert.Equal(t, errors.EWorktreeNotFound, code,
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})
@@ -655,11 +720,13 @@ func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T
 
 func TestWorktreeCreate_DefaultsRepoAndBaseFromCWD(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -683,11 +750,13 @@ func TestWorktreeCreate_DefaultsRepoAndBaseFromCWD(t *testing.T) {
 
 func TestWorktreeCreate_ExplicitRepoWorksFromUnrelatedCWD(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -714,6 +783,7 @@ func TestWorktreeCreate_UnrelatedCWDRequiresRepo(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -729,6 +799,7 @@ func TestWorktreeCreate_UnrelatedCWDRequiresRepo(t *testing.T) {
 
 func TestWorktreeCreate_DefaultBaseRequiresCurrentBranch(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	detach, err := agencyexec.NewRealRunner().Run(context.Background(), "git", []string{"checkout", "--detach"}, agencyexec.RunOpts{Dir: repoDir})
 	require.NoError(t, err)
 	require.Equal(t, 0, detach.ExitCode, "git checkout --detach failed: %s", detach.Stderr)
@@ -738,6 +809,7 @@ func TestWorktreeCreate_DefaultBaseRequiresCurrentBranch(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -753,11 +825,13 @@ func TestWorktreeCreate_DefaultBaseRequiresCurrentBranch(t *testing.T) {
 
 func TestWorktreeCreate_ExplicitMissingBaseBranchFailsBeforeCreate(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -785,6 +859,7 @@ func TestWorktreeCreate_EmptyRepoFailsBeforeCreate(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -801,11 +876,13 @@ func TestWorktreeCreate_EmptyRepoFailsBeforeCreate(t *testing.T) {
 
 func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
@@ -840,11 +917,13 @@ func TestWorktreeCreate_OpenFailureReportsFailedStatusAndPreservesCreation(t *te
 
 func TestWorktreeCreate_OpenSuccessReportsOpenedStatus(t *testing.T) {
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 	dataDir, err := os.MkdirTemp("", "wd")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	writeWorktreeUserConfig(t, configDir)
 
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)

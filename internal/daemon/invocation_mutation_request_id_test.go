@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -92,4 +94,61 @@ func TestInvocationMutations_RequestIDOnFollowUpErrors(t *testing.T) {
 	require.True(t, ok, "followup request_id must be present")
 	assert.NotEmpty(t, followUpRequestID)
 	assert.Equal(t, followUpRequestID, wFollowUp.Header().Get("X-Request-ID"))
+}
+
+func TestInvocationNoBodyMutations_StrictOptionalBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+		body []byte
+		want string
+	}{
+		{
+			name: "stop unknown field",
+			path: "/invocations/inv-1/stop?repo_id=repo-1",
+			body: []byte(`{"unknown":true}`),
+			want: `unknown field "unknown"`,
+		},
+		{
+			name: "kill trailing object",
+			path: "/invocations/inv-1/kill?repo_id=repo-1",
+			body: []byte(`{} {}`),
+			want: "expected a single JSON object",
+		},
+		{
+			name: "recreate unknown field",
+			path: "/invocations/inv-1/recreate?repo_id=repo-1",
+			body: []byte(`{"unknown":true}`),
+			want: `unknown field "unknown"`,
+		},
+		{
+			name: "recreate trailing object",
+			path: "/invocations/inv-1/recreate?repo_id=repo-1",
+			body: []byte(`{} {}`),
+			want: "expected a single JSON object",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := setupReadTestEnv(t)
+			req := httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.ContentLength = -1
+			w := httptest.NewRecorder()
+
+			env.apiHandler().ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
+			assert.Equal(t, "E_INVALID_REQUEST", payload["error_code"])
+			assert.Contains(t, payload["message"], tt.want)
+		})
+	}
 }

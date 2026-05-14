@@ -1,5 +1,4 @@
 // Package commands implements agency CLI commands.
-// This file tests agent commands for headed execution (Slice 8 PR-03).
 package commands
 
 import (
@@ -44,10 +43,12 @@ func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationI
 	require.NoError(t, os.MkdirAll(sandboxTreeDir, 0755))
 
 	meta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		IntegrationWorktreeID: worktreeID,
 		SandboxPath:           sandboxTreeDir,
+		CheckoutRoot:          filepath.Join(dataDir, "repos", repoID),
+		ExecutionProfile:      "personal",
 		SandboxBranch:         "agency/sandbox-" + invocationID,
 		BaseCommit:            "abc123def456",
 		Runner:                "claude-code",
@@ -87,6 +88,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 
 	require.NoError(t, os.MkdirAll(repoDir, 0755))
 	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".git"), 0755))
+	writeMinimalAgencyConfig(t, repoDir)
 
 	originURL := "git@github.com:test/agent-repo.git"
 	repoIdentity := identity.DeriveRepoIdentity(repoDir, originURL)
@@ -95,6 +97,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
+	cr.Responses["git -C "+repoDir+" rev-parse agency/"+worktreeName+"-abcd"] = testutil.FakeResponse{Stdout: "abc123def456\n"}
 
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, dataDir, time.Now)
@@ -115,15 +118,17 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	require.NoError(t, os.WriteFile(markerPath, []byte("# Integration worktree\n"), 0644))
 
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          worktreeName,
-		RepoID:        repoID,
-		Branch:        "agency/" + worktreeName + "-abcd",
-		BaseBranch:    "main",
-		TreePath:      worktreeTreeDir,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       worktreeID,
+		Name:             worktreeName,
+		RepoID:           repoID,
+		Branch:           "agency/" + worktreeName + "-abcd",
+		BaseBranch:       "main",
+		TreePath:         worktreeTreeDir,
+		CheckoutRoot:     repoStoreDir,
+		ExecutionProfile: "personal",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	metaPath := filepath.Join(worktreeDir, "meta.json")
@@ -156,6 +161,26 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	require.NoError(t, st.SaveRepoIndex(repoIndex))
 	require.NoError(t, st.SaveRepoRecord(repoRecord))
 	configDir := filepath.Join(dataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{
+  "version": 4,
+  "defaults": {
+    "runner": "claude-code",
+    "editor": "code",
+    "execution_profile": "personal"
+  },
+  "runners": {
+    "claude-code": "claude"
+  },
+  "editors": {
+    "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
+  }
+}`), 0o644))
 	srv := daemon.NewServer(st, cr, fsys, configDir)
 	srv.TmuxClient = testutil.NewFakeTmuxClient()
 
@@ -205,13 +230,19 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 	}
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runners": map[string]string{
 			"claude-code": runnerPath,
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
@@ -242,7 +273,7 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04: Agent navigation convergence — setup helper
+// Agent navigation setup helper.
 // ---------------------------------------------------------------------------
 
 type agentNavTestEnv struct {
@@ -280,15 +311,17 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 		[]byte("# Integration worktree\n"), 0644))
 
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    wtID,
-		Name:          name,
-		RepoID:        repoID,
-		Branch:        "agency/" + name + "-abcd",
-		BaseBranch:    "main",
-		TreePath:      treePath,
-		CreatedAt:     "2026-01-31T12:00:00Z",
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       wtID,
+		Name:             name,
+		RepoID:           repoID,
+		Branch:           "agency/" + name + "-abcd",
+		BaseBranch:       "main",
+		TreePath:         treePath,
+		CheckoutRoot:     filepath.Join(dataTmp, "repos", repoID),
+		ExecutionProfile: "personal",
+		CreatedAt:        "2026-01-31T12:00:00Z",
+		State:            store.WorktreeStatePresent,
 	}
 	metaBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), metaBytes, 0644))
@@ -302,10 +335,12 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	require.NoError(t, os.MkdirAll(sandboxTreeDir, 0755))
 
 	invMeta := &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invID,
 		IntegrationWorktreeID: wtID,
 		SandboxPath:           sandboxTreeDir,
+		CheckoutRoot:          filepath.Join(dataTmp, "repos", repoID),
+		ExecutionProfile:      "personal",
 		SandboxBranch:         "agency/sandbox-" + invID,
 		BaseCommit:            "abc123def456",
 		Runner:                "claude-code",
@@ -418,7 +453,7 @@ func seedRepoIndexForNavigationTests(t *testing.T, dataDir, repoID string) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 1: agent ls/show daemon-of-record read behavior
+// Agent ls/show daemon-of-record read behavior.
 // ---------------------------------------------------------------------------
 
 func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
@@ -778,9 +813,10 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
 		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
@@ -793,8 +829,9 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
 			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
@@ -844,7 +881,7 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 2: canonical agent path/open/shell/attach daemon-first navigation
+// Canonical agent path/open/shell/attach daemon-first navigation.
 // ---------------------------------------------------------------------------
 
 func TestAgentPath_UsesDaemonResolution(t *testing.T) {
@@ -895,7 +932,7 @@ func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 2.5: headed start attach cutover
+// Headed start attach cutover.
 // ---------------------------------------------------------------------------
 
 func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
@@ -1055,10 +1092,11 @@ func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-defaults", 1)
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runner_defaults": map[string]map[string]string{
 			"claude-code": {
@@ -1068,6 +1106,9 @@ func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
 		},
 		"runners": map[string]string{
 			"claude-code": "fake-runner",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
@@ -1097,10 +1138,11 @@ func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-agency-runner-defaults", 1)
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runner_defaults": map[string]map[string]string{
 			"claude-code": {
@@ -1111,13 +1153,16 @@ func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
 		"runners": map[string]string{
 			"claude-code": "fake-runner",
 		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
 
 	agencyJSON := `{
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -1137,6 +1182,10 @@ func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
       "model": "agency-opus",
       "effort": "max"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }`
 	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(agencyJSON), 0o644))
@@ -1164,10 +1213,11 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-cli-runner-defaults", 1)
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runner_defaults": map[string]map[string]string{
 			"claude-code": {
@@ -1178,13 +1228,16 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
 		"runners": map[string]string{
 			"claude-code": "fake-runner",
 		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
+		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(env.DataDir, "config", "config.json"), cfgBytes, 0o644))
 
 	agencyJSON := `{
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -1204,6 +1257,10 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
       "model": "agency-opus",
       "effort": "max"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }`
 	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(agencyJSON), 0o644))
@@ -1233,10 +1290,11 @@ func TestAgentStart_UsesUserClaudePermissionModeWhenCLIUnset(t *testing.T) {
 	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-permission-mode", 1)
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runner_defaults": map[string]map[string]string{
 			"claude-code": {
@@ -1245,6 +1303,9 @@ func TestAgentStart_UsesUserClaudePermissionModeWhenCLIUnset(t *testing.T) {
 		},
 		"runners": map[string]string{
 			"claude-code": "fake-runner",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{"env": map[string]string{}},
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)
@@ -1421,6 +1482,39 @@ func TestAgentRecreate_Headed_DetachedPrintsCanonicalAttachCommand(t *testing.T)
 
 	assert.Contains(t, stdout.String(), "Session recreated in detached mode.")
 	assert.Contains(t, stdout.String(), "Use 'agency agent "+env.InvocationID+" attach --repo "+env.RepoID+"' to attach.")
+	assert.Empty(t, stderr.String())
+}
+
+func TestAgentRecreate_JSONIncludesExecutionContext(t *testing.T) {
+	env := setupAgentNavEnv(t, "recreate-json", store.RunnerModeHeaded)
+	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+		meta.CustomEnvKeys = []string{"CODEX_HOME", "GH_CONFIG_DIR"}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentRecreateOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			JSON:            true,
+			DataDirOverride: env.DataDir,
+		}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var got struct {
+		OK               bool     `json:"ok"`
+		ExecutionProfile string   `json:"execution_profile"`
+		CheckoutRoot     string   `json:"checkout_root"`
+		CustomEnvKeys    []string `json:"custom_env_keys"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	assert.True(t, got.OK)
+	assert.Equal(t, "personal", got.ExecutionProfile)
+	assert.Equal(t, filepath.Join(env.DataDir, "repos", env.RepoID), got.CheckoutRoot)
+	assert.Equal(t, []string{"CODEX_HOME", "GH_CONFIG_DIR"}, got.CustomEnvKeys)
 	assert.Empty(t, stderr.String())
 }
 
@@ -1655,9 +1749,10 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
 		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
@@ -1670,8 +1765,9 @@ func TestAgentPath_AmbiguityUsesEAmbiguous(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
 			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
@@ -1736,9 +1832,10 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
 		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
@@ -1751,8 +1848,9 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
 			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
@@ -1816,9 +1914,10 @@ func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		filepath.Join(agencyDir, integrationworktree.IntegrationMarkerFileName),
 		[]byte("# Integration worktree\n"), 0644))
 	wtMeta := &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0", WorktreeID: wtID, Name: "ambig",
+		SchemaVersion: store.SchemaVersion, WorktreeID: wtID, Name: "ambig",
 		RepoID: repoID, Branch: "agency/ambig", BaseBranch: "main",
-		TreePath: treePath, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+		TreePath: treePath, CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
+		CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 	}
 	mBytes, _ := json.MarshalIndent(wtMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), mBytes, 0644))
@@ -1830,8 +1929,9 @@ func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 		sandboxTree := filepath.Join(dataTmp, "repos", repoID, "sandboxes", id, "tree")
 		require.NoError(t, os.MkdirAll(sandboxTree, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: id,
+			SchemaVersion: store.SchemaVersion, InvocationID: id,
 			IntegrationWorktreeID: wtID, SandboxPath: sandboxTree,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + id, BaseCommit: "abc123",
 			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-02-01T00:00:00Z", Status: store.InvocationStatusRunning,
@@ -1885,7 +1985,7 @@ func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 3: command-family policy + deterministic target selection
+// Command-family policy and deterministic target selection.
 // ---------------------------------------------------------------------------
 
 func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
@@ -1908,9 +2008,10 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(ad, integrationworktree.IntegrationMarkerFileName),
 			[]byte("# Integration worktree\n"), 0644))
 		wm := &store.IntegrationWorktreeMeta{
-			SchemaVersion: "1.0", WorktreeID: r.wtID, Name: "wt-" + r.repoID,
+			SchemaVersion: store.SchemaVersion, WorktreeID: r.wtID, Name: "wt-" + r.repoID,
 			RepoID: r.repoID, Branch: "agency/b", BaseBranch: "main",
-			TreePath: tp, CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
+			TreePath: tp, CheckoutRoot: filepath.Join(dataTmp, "repos", r.repoID), ExecutionProfile: "personal",
+			CreatedAt: "2026-01-31T12:00:00Z", State: store.WorktreeStatePresent,
 		}
 		wmb, _ := json.MarshalIndent(wm, "", "  ")
 		require.NoError(t, os.WriteFile(filepath.Join(wtDir, "meta.json"), wmb, 0644))
@@ -1920,8 +2021,9 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 		sp := filepath.Join(dataTmp, "repos", r.repoID, "sandboxes", r.invID, "tree")
 		require.NoError(t, os.MkdirAll(sp, 0755))
 		im := &store.InvocationMeta{
-			SchemaVersion: "1.0", InvocationID: r.invID,
+			SchemaVersion: store.SchemaVersion, InvocationID: r.invID,
 			IntegrationWorktreeID: r.wtID, SandboxPath: sp,
+			CheckoutRoot: filepath.Join(dataTmp, "repos", r.repoID), ExecutionProfile: "personal",
 			SandboxBranch: "agency/sandbox-" + r.invID, BaseCommit: "abc",
 			Runner: "claude-code", Mode: store.RunnerModeHeaded,
 			StartedAt: "2026-01-31T10:00:00Z", Status: store.InvocationStatusRunning,
@@ -1931,7 +2033,7 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 	}
 
 	repoIndex := store.RepoIndex{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.SchemaVersion,
 		Repos: map[string]store.RepoIndexEntry{
 			"k1": {RepoID: repo1, Paths: []string{"/r1"}, LastSeenAt: "2026-01-31T12:00:00Z"},
 			"k2": {RepoID: repo2, Paths: []string{"/r2"}, LastSeenAt: "2026-01-31T12:00:00Z"},
@@ -2023,7 +2125,7 @@ func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04 Acceptance 4: invocation-mode validity + E_INVOCATION_INVALID_MODE
+// Invocation-mode validity and E_INVOCATION_INVALID_MODE.
 // ---------------------------------------------------------------------------
 
 func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
@@ -2075,7 +2177,7 @@ func TestAgentAttach_NotInteractive_ReturnsENotInteractive(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04: D-004 — no E_INVOCATION_BROKEN on canonical navigation surfaces
+// Canonical navigation surfaces do not return E_INVOCATION_BROKEN.
 // ---------------------------------------------------------------------------
 
 func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *testing.T) {
@@ -2114,7 +2216,7 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 			require.Error(t, navErr)
 			code := errors.GetCode(navErr)
 			assert.NotEqual(t, errors.EInvocationBroken, code,
-				"canonical navigation must not return E_INVOCATION_BROKEN after PR-04 migration")
+				"canonical navigation must not return E_INVOCATION_BROKEN after canonical navigation migration")
 			assert.Equal(t, errors.EInvocationNotFound, code,
 				"expected daemon-first E_INVOCATION_NOT_FOUND for missing target")
 		})
@@ -2122,7 +2224,7 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 }
 
 // ---------------------------------------------------------------------------
-// S2-PR04: D-005 — sandbox missing uses daemon-resolved path
+// Sandbox missing uses daemon-resolved path.
 // ---------------------------------------------------------------------------
 
 func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
@@ -2175,7 +2277,7 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// S3 PR-01: AgentHistory integration tests
+// Agent history integration tests.
 // ---------------------------------------------------------------------------
 
 func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
@@ -2348,7 +2450,7 @@ func TestAgentHistory_InteractiveUsesSharedWatchRuntime(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// PR-B: AgentHistoryLogs integration tests
+// Agent history log integration tests.
 // ---------------------------------------------------------------------------
 
 func TestAgentHistoryLogs_PageToEOF(t *testing.T) {

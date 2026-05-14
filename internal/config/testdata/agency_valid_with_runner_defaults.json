@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -19,5 +19,9 @@
       "model": "gpt-5.4",
       "effort": "xhigh"
     }
+  },
+  "execution": {
+    "profile": "work",
+    "checkout_root": "/tmp/agency-checkouts"
   }
 }

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -136,8 +135,13 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		return errors.New(errors.EInternal, "worktree metadata missing")
 	}
 	wtMeta := record.Meta
+	profileEnv, err := s.executionProfileEnv(wtMeta.ExecutionProfile)
+	if err != nil {
+		return err
+	}
+	env := prSyncNonInteractiveEnv(profileEnv)
 
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath)
+	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath, env)
 	if err != nil {
 		return err
 	}
@@ -152,7 +156,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		)
 	}
 
-	if err := prSyncGitFetchOrigin(ctx, s.Runner, wtMeta.TreePath); err != nil {
+	if err := prSyncGitFetchOrigin(ctx, s.Runner, wtMeta.TreePath, env); err != nil {
 		return err
 	}
 
@@ -163,7 +167,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 	rebaseTarget := "origin/" + baseBranch
 	rebaseResult, runErr := s.Runner.Run(ctx, "git", []string{"rebase", rebaseTarget}, exec.RunOpts{
 		Dir: wtMeta.TreePath,
-		Env: prSyncNonInteractiveEnv(),
+		Env: env,
 	})
 	if runErr != nil {
 		return errors.Wrap(errors.EInternal, "git rebase failed to start", runErr)
@@ -171,7 +175,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 	if rebaseResult.ExitCode != 0 {
 		abortResult, abortErr := s.Runner.Run(ctx, "git", []string{"rebase", "--abort"}, exec.RunOpts{
 			Dir: wtMeta.TreePath,
-			Env: prSyncNonInteractiveEnv(),
+			Env: env,
 		})
 		abortFailed := abortErr != nil || abortResult.ExitCode != 0
 		details := map[string]string{
@@ -194,20 +198,9 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 
 func decodeWorktreeRebaseRequest(body io.Reader) string {
 	var req struct{}
-	dec := json.NewDecoder(body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		if err == io.EOF {
-			return ""
-		}
+	if err := decodeOptionalStrictJSON(body, &req); err != nil {
 		return prSyncDecodeErrorMessage(err)
 	}
-
-	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return "invalid request body: expected a single JSON object: " + err.Error()
-	}
-
 	return ""
 }
 

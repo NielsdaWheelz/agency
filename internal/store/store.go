@@ -47,8 +47,6 @@ func (s *Store) RepoEventsPath(repoID string) string {
 	return filepath.Join(s.RepoDir(repoID), "events.jsonl")
 }
 
-// ----- V2 Task paths -----
-
 // TasksDir returns the tasks directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/
 func (s *Store) TasksDir(repoID string) string {
@@ -73,8 +71,6 @@ func (s *Store) TaskEventsPath(repoID, taskID string) string {
 	return filepath.Join(s.TaskDir(repoID, taskID), "events.jsonl")
 }
 
-// ----- V2 Integration Worktree paths (Slice 8) -----
-
 // IntegrationWorktreesDir returns the integration worktrees directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/
 func (s *Store) IntegrationWorktreesDir(repoID string) string {
@@ -91,12 +87,6 @@ func (s *Store) IntegrationWorktreeDir(repoID, worktreeID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/meta.json
 func (s *Store) IntegrationWorktreeMetaPath(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "meta.json")
-}
-
-// IntegrationWorktreeTreePath returns the path to an integration worktree's tree directory.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/tree/
-func (s *Store) IntegrationWorktreeTreePath(repoID, worktreeID string) string {
-	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "tree")
 }
 
 // IntegrationWorktreeEventsPath returns the path to an integration worktree's events.jsonl.
@@ -122,8 +112,6 @@ func (s *Store) IntegrationWorktreeVerifyRecordPath(repoID, worktreeID string) s
 func (s *Store) IntegrationWorktreeLogsDir(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "logs")
 }
-
-// ----- V2 Invocation paths (Slice 8 PR-01/PR-02) -----
 
 // InvocationsDir returns the invocations directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/
@@ -201,26 +189,6 @@ func (s *Store) InvocationHooksLogPath(repoID, invocationID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/logs/terminal.log
 func (s *Store) InvocationTerminalLogPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationLogsDir(repoID, invocationID), "terminal.log")
-}
-
-// ----- V2 Sandbox paths -----
-
-// SandboxesDir returns the sandboxes directory for a repo.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/
-func (s *Store) SandboxesDir(repoID string) string {
-	return filepath.Join(s.RepoDir(repoID), "sandboxes")
-}
-
-// SandboxDir returns the directory for a specific sandbox.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/
-func (s *Store) SandboxDir(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxesDir(repoID), invocationID)
-}
-
-// SandboxTreePath returns the path to a sandbox's tree directory (runner CWD).
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/sandboxes/<invocation_id>/tree/
-func (s *Store) SandboxTreePath(repoID, invocationID string) string {
-	return filepath.Join(s.SandboxDir(repoID, invocationID), "tree")
 }
 
 // ----- Daemon state paths -----

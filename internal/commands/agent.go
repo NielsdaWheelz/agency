@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -44,6 +45,9 @@ type AgentStartOpts struct {
 
 	// AgencyConfigPath, if set, is the exact agency config file to load.
 	AgencyConfigPath string
+
+	// ExecutionProfile overrides repo/default profile selection.
+	ExecutionProfile string
 
 	// RunnerArgs are additional arguments to pass to the runner.
 	RunnerArgs []string
@@ -208,6 +212,10 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fail(err)
 	}
 	opts.WorktreeRef = worktreeRef
+	if opts.AgencyConfigPath != "" && !filepath.IsAbs(opts.AgencyConfigPath) {
+		opts.AgencyConfigPath = filepath.Join(cwd, opts.AgencyConfigPath)
+	}
+	opts.ExecutionProfile = strings.TrimSpace(opts.ExecutionProfile)
 
 	runner, effectiveRunnerArgs, err := resolveStartRunnerAndArgs(ctx, fsys, cwd, ns, repoRoot, repoID, startRunnerConfigOpts{
 		Runner:           opts.Runner,
@@ -242,6 +250,8 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		Runner:             runner,
 		InvocationName:     opts.InvocationName,
 		RunnerArgs:         opts.RunnerArgs,
+		ExecutionProfile:   opts.ExecutionProfile,
+		AgencyConfigPath:   opts.AgencyConfigPath,
 		NoIncludeUntracked: opts.NoIncludeUntracked,
 	})
 	if err != nil {
@@ -257,6 +267,9 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 			WorktreeID       string           `json:"worktree_id,omitempty"`
 			WorktreeName     string           `json:"worktree_name,omitempty"`
 			SandboxPath      string           `json:"sandbox_path,omitempty"`
+			ExecutionProfile string           `json:"execution_profile,omitempty"`
+			CheckoutRoot     string           `json:"checkout_root,omitempty"`
+			CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
 			TmuxSession      string           `json:"tmux_session,omitempty"`
 			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
 			AlreadyRunning   bool             `json:"already_running,omitempty"`
@@ -269,6 +282,9 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 			WorktreeID:       resp.WorktreeID,
 			WorktreeName:     resp.WorktreeName,
 			SandboxPath:      resp.SandboxPath,
+			ExecutionProfile: resp.ExecutionProfile,
+			CheckoutRoot:     resp.CheckoutRoot,
+			CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
 			TmuxSession:      resp.TmuxSession,
 			DaemonInstanceID: resp.DaemonInstanceID,
 			AlreadyRunning:   resp.AlreadyRunning,
@@ -289,6 +305,8 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
 	}
 	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
+	_, _ = fmt.Fprintf(stdout, "  profile:        %s\n", resp.ExecutionProfile)
+	_, _ = fmt.Fprintf(stdout, "  checkout_root:  %s\n", resp.CheckoutRoot)
 	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
 
@@ -330,6 +348,8 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 		Prompt:             prompt,
 		InvocationName:     opts.InvocationName,
 		RunnerArgs:         opts.RunnerArgs,
+		ExecutionProfile:   opts.ExecutionProfile,
+		AgencyConfigPath:   opts.AgencyConfigPath,
 		NoIncludeUntracked: opts.NoIncludeUntracked,
 	})
 	if err != nil {
@@ -345,6 +365,9 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 			WorktreeID       string           `json:"worktree_id,omitempty"`
 			WorktreeName     string           `json:"worktree_name,omitempty"`
 			SandboxPath      string           `json:"sandbox_path,omitempty"`
+			ExecutionProfile string           `json:"execution_profile,omitempty"`
+			CheckoutRoot     string           `json:"checkout_root,omitempty"`
+			CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
 			PID              int              `json:"pid,omitempty"`
 			PGID             int              `json:"pgid,omitempty"`
 			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
@@ -358,6 +381,9 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 			WorktreeID:       resp.WorktreeID,
 			WorktreeName:     resp.WorktreeName,
 			SandboxPath:      resp.SandboxPath,
+			ExecutionProfile: resp.ExecutionProfile,
+			CheckoutRoot:     resp.CheckoutRoot,
+			CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
 			PID:              resp.PID,
 			PGID:             resp.PGID,
 			DaemonInstanceID: resp.DaemonInstanceID,
@@ -379,6 +405,8 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
 	}
 	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
+	_, _ = fmt.Fprintf(stdout, "  profile:        %s\n", resp.ExecutionProfile)
+	_, _ = fmt.Fprintf(stdout, "  checkout_root:  %s\n", resp.CheckoutRoot)
 	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  pid:            %d\n", resp.PID)
 

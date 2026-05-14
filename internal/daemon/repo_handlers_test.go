@@ -303,6 +303,8 @@ func TestRepoRm_BlocksWhenRepoHasChildren(t *testing.T) {
 					"",
 					"wt-rm-001",
 					filepath.Join(t.TempDir(), "sandbox", invID, "tree"),
+					"/checkouts/"+repoID,
+					"work",
 					"agency/sandbox-"+invID,
 					"basecommit",
 					"claude-code",

@@ -1,6 +1,10 @@
 package daemon
 
-import "github.com/NielsdaWheelz/agency/internal/store"
+import (
+	"encoding/json"
+
+	"github.com/NielsdaWheelz/agency/internal/store"
+)
 
 // TaskStartRequest is the request body for POST /tasks/start.
 type TaskStartRequest struct {
@@ -23,9 +27,44 @@ type TaskStartRequest struct {
 	RunnerArgs []string          `json:"runner_args,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 
+	ExecutionProfile string `json:"execution_profile,omitempty"`
+	AgencyConfigPath string `json:"agency_config_path,omitempty"`
+	CheckoutRoot     string `json:"-"`
+
 	ClientRequestID string `json:"client_request_id"`
 
 	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
+}
+
+func (r *TaskStartRequest) UnmarshalJSON(data []byte) error {
+	type request TaskStartRequest
+	var decoded request
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	env, ok, err := decodeRequestEnv(data, map[string]bool{
+		"repo_root":            true,
+		"name":                 true,
+		"base_branch":          true,
+		"mode":                 true,
+		"runner":               true,
+		"prompt":               true,
+		"invocation_name":      true,
+		"runner_args":          true,
+		"env":                  true,
+		"execution_profile":    true,
+		"agency_config_path":   true,
+		"client_request_id":    true,
+		"no_include_untracked": true,
+	})
+	if err != nil {
+		return err
+	}
+	*r = TaskStartRequest(decoded)
+	if ok {
+		r.Env = env
+	}
+	return nil
 }
 
 // TaskRetryRequest is the request body for POST /tasks/{ref}/retry.
@@ -39,9 +78,41 @@ type TaskRetryRequest struct {
 	RunnerArgs     []string          `json:"runner_args,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 
+	ExecutionProfile string `json:"execution_profile,omitempty"`
+	AgencyConfigPath string `json:"agency_config_path,omitempty"`
+	CheckoutRoot     string `json:"-"`
+
 	ClientRequestID string `json:"client_request_id"`
 
 	NoIncludeUntracked bool `json:"no_include_untracked,omitempty"`
+}
+
+func (r *TaskRetryRequest) UnmarshalJSON(data []byte) error {
+	type request TaskRetryRequest
+	var decoded request
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	env, ok, err := decodeRequestEnv(data, map[string]bool{
+		"mode":                 true,
+		"runner":               true,
+		"prompt":               true,
+		"invocation_name":      true,
+		"runner_args":          true,
+		"env":                  true,
+		"execution_profile":    true,
+		"agency_config_path":   true,
+		"client_request_id":    true,
+		"no_include_untracked": true,
+	})
+	if err != nil {
+		return err
+	}
+	*r = TaskRetryRequest(decoded)
+	if ok {
+		r.Env = env
+	}
+	return nil
 }
 
 // TaskStartResponse is the response body for POST /tasks/start.
@@ -65,6 +136,10 @@ type TaskStartResponse struct {
 	WorktreeName string `json:"worktree_name,omitempty"`
 	WorktreePath string `json:"worktree_path,omitempty"`
 	Branch       string `json:"branch,omitempty"`
+
+	ExecutionProfile string   `json:"execution_profile,omitempty"`
+	CheckoutRoot     string   `json:"checkout_root,omitempty"`
+	CustomEnvKeys    []string `json:"custom_env_keys,omitempty"`
 
 	InvocationID     string           `json:"invocation_id,omitempty"`
 	SandboxPath      string           `json:"sandbox_path,omitempty"`
@@ -92,7 +167,9 @@ type TaskDTO struct {
 	RepoID   string          `json:"repo_id"`
 	RepoName string          `json:"repo_name,omitempty"`
 
-	BaseBranch string `json:"base_branch,omitempty"`
+	BaseBranch       string `json:"base_branch,omitempty"`
+	CheckoutRoot     string `json:"checkout_root,omitempty"`
+	ExecutionProfile string `json:"execution_profile,omitempty"`
 
 	WorktreeID   string `json:"worktree_id,omitempty"`
 	WorktreeName string `json:"worktree_name,omitempty"`

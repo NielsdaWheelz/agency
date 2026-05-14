@@ -1,9 +1,8 @@
 // Package store provides persistence for agency data.
-// This file implements filesystem-based invocation discovery (Slice 8 PR-02).
+// This file implements filesystem-based invocation discovery.
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,12 +72,6 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 			InvocationDir: invocationDir,
 		}
 
-		// Check if sandbox tree exists
-		sandboxTreePath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
-		if _, err := os.Stat(sandboxTreePath); err == nil {
-			record.SandboxExists = true
-		}
-
 		// Try to read and parse meta.json
 		data, err := os.ReadFile(metaPath)
 		if err != nil {
@@ -89,15 +82,20 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 		}
 
 		var meta InvocationMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
+		if err := decodeStrictJSON(data, &meta); err != nil {
 			// Invalid JSON - mark as broken
 			record.Broken = true
 			records = append(records, record)
 			continue
 		}
 
-		// Validate minimal required fields for non-broken status
-		if meta.SchemaVersion == "" || meta.StartedAt == "" || meta.InvocationID == "" {
+		fields, err := strictJSONObjectFields(data)
+		if err != nil {
+			record.Broken = true
+			records = append(records, record)
+			continue
+		}
+		if err := validateInvocationMeta(meta, invocationID, metaPath, fields); err != nil {
 			record.Broken = true
 			records = append(records, record)
 			continue
@@ -106,6 +104,9 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 		record.Meta = &meta
 		record.IntegrationWorktreeID = meta.IntegrationWorktreeID
 		record.InvocationName = meta.InvocationName
+		if _, err := os.Stat(meta.SandboxPath); err == nil {
+			record.SandboxExists = true
+		}
 		records = append(records, record)
 	}
 

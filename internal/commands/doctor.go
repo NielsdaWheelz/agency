@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -16,6 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/runners"
+	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // DoctorReport holds all the data for doctor output.
@@ -44,17 +47,22 @@ type DoctorReport struct {
 	GhAuthenticated bool
 
 	// Config resolution
-	DefaultsBaseBranch         string
-	DefaultsRunner             string
-	DefaultsRunnerModel        string
-	DefaultsRunnerModelSource  string
-	DefaultsRunnerEffort       string
-	DefaultsRunnerEffortSource string
-	DefaultsEditor             string
-	RunnerCmd                  string
-	ScriptSetup                string
-	ScriptVerify               string
-	ScriptArchive              string
+	DefaultsBaseBranch          string
+	DefaultsRunner              string
+	DefaultsRunnerModel         string
+	DefaultsRunnerModelSource   string
+	DefaultsRunnerEffort        string
+	DefaultsRunnerEffortSource  string
+	DefaultsEditor              string
+	ExecutionProfile            string
+	ExecutionProfileSource      string
+	ExecutionCheckoutRootPolicy string
+	ExecutionCheckoutRoot       string
+	ExecutionProfileEnvKeys     []string
+	RunnerCmd                   string
+	ScriptSetup                 string
+	ScriptVerify                string
+	ScriptArchive               string
 }
 
 // osEnv implements paths.Env using os.Getenv.
@@ -94,10 +102,21 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	dirs.DataDir = doctorDisplayPath(dirs.DataDir)
 	dirs.ConfigDir = doctorDisplayPath(dirs.ConfigDir)
 	dirs.CacheDir = doctorDisplayPath(dirs.CacheDir)
-	if repoID, ok := agencyManagedTreeRepoID(targetPath, dirs.DataDir); ok {
+	if cwdInsideAgencyManagedTree(targetPath) {
 		ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
 		if err != nil {
 			return err
+		}
+		repoID, ok, err := agencyManagedTreeRepoID(ctx, ns.client, targetPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.NewWithDetails(
+				errors.EUnsafeRepoRoot,
+				"target path is inside an agency-managed tree but no matching metadata was found",
+				map[string]string{"hint": "re-run against the original repo checkout"},
+			)
 		}
 		repo, err := resolveAccessibleRepo(ctx, ns.client, repoID)
 		if err != nil {
@@ -130,6 +149,12 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+	repoRoot.Path, err = registeredRepoRootFromStore(store.NewStore(fsys, dirs.DataDir, time.Now), repoIdentity.RepoID)
+	if err != nil {
+		return err
+	}
+	repoRoot.Path = doctorDisplayPath(repoRoot.Path)
+	originInfo = git.GetOriginInfo(ctx, cr, repoRoot.Path)
 
 	agencyConfigPath := opts.AgencyConfigPath
 	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
@@ -160,11 +185,6 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 
 	ghVersion, err := checkGh(ctx, cr)
 	if err != nil {
-		return err
-	}
-
-	// 8. Check gh auth status
-	if err := checkGhAuth(ctx, cr); err != nil {
 		return err
 	}
 
@@ -205,6 +225,37 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		}
 	}
 
+	executionProfile := strings.TrimSpace(cfg.Execution.Profile)
+	executionProfileSource := resolvedAgencyConfig.Source
+	if executionProfile == "" {
+		executionProfile = userCfg.Defaults.ExecutionProfile
+		executionProfileSource = "user"
+	}
+	profileEnv, err := config.ExecutionProfileEnv(userCfg, executionProfile)
+	if err != nil {
+		return err
+	}
+	ghAuthEnv := make(map[string]string, len(profileEnv)+3)
+	for key, value := range profileEnv {
+		ghAuthEnv[key] = value
+	}
+	ghAuthEnv["GIT_TERMINAL_PROMPT"] = "0"
+	ghAuthEnv["GH_PROMPT_DISABLED"] = "1"
+	ghAuthEnv["CI"] = "1"
+	if err := checkGhAuth(ctx, cr, ghAuthEnv); err != nil {
+		return err
+	}
+	executionProfileEnvKeys := make([]string, 0, len(profileEnv))
+	for key := range profileEnv {
+		executionProfileEnvKeys = append(executionProfileEnvKeys, key)
+	}
+	sort.Strings(executionProfileEnvKeys)
+
+	executionCheckoutRoot, err := config.ResolveCheckoutRoot(repoRoot.Path, repoIdentity.RepoID, cfg.Execution.CheckoutRoot)
+	if err != nil {
+		return err
+	}
+
 	// 10. Check scripts exist and are executable
 	scriptSetup, err := checkScript(fsys, cfg.Scripts.Setup.Path, repoRoot.Path, "setup")
 	if err != nil {
@@ -224,34 +275,39 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 	report := DoctorReport{
-		RepoRoot:                   repoRoot.Path,
-		AgencyDataDir:              dirs.DataDir,
-		AgencyConfigDir:            dirs.ConfigDir,
-		UserConfigPath:             config.UserConfigPath(dirs.ConfigDir),
-		AgencyJSONPath:             resolvedAgencyConfig.Path,
-		AgencyJSONSource:           resolvedAgencyConfig.Source,
-		AgencyCacheDir:             dirs.CacheDir,
-		RepoKey:                    repoIdentity.RepoKey,
-		RepoID:                     repoIdentity.RepoID,
-		OriginPresent:              originInfo.Present,
-		OriginURL:                  originInfo.URL,
-		OriginHost:                 originInfo.Host,
-		GitHubFlowAvailable:        repoIdentity.GitHubFlowAvailable,
-		GitVersion:                 gitVersion,
-		TmuxVersion:                tmuxVersion,
-		GhVersion:                  ghVersion,
-		GhAuthenticated:            true,
-		DefaultsBaseBranch:         currentBranch,
-		DefaultsRunner:             userCfg.Defaults.Runner,
-		DefaultsRunnerModel:        defaultsRunnerModel,
-		DefaultsRunnerModelSource:  defaultsRunnerModelSource,
-		DefaultsRunnerEffort:       defaultsRunnerEffort,
-		DefaultsRunnerEffortSource: defaultsRunnerEffortSource,
-		DefaultsEditor:             userCfg.Defaults.Editor,
-		RunnerCmd:                  resolvedRunnerCmd,
-		ScriptSetup:                scriptSetup,
-		ScriptVerify:               scriptVerify,
-		ScriptArchive:              scriptArchive,
+		RepoRoot:                    repoRoot.Path,
+		AgencyDataDir:               dirs.DataDir,
+		AgencyConfigDir:             dirs.ConfigDir,
+		UserConfigPath:              config.UserConfigPath(dirs.ConfigDir),
+		AgencyJSONPath:              resolvedAgencyConfig.Path,
+		AgencyJSONSource:            resolvedAgencyConfig.Source,
+		AgencyCacheDir:              dirs.CacheDir,
+		RepoKey:                     repoIdentity.RepoKey,
+		RepoID:                      repoIdentity.RepoID,
+		OriginPresent:               originInfo.Present,
+		OriginURL:                   originInfo.URL,
+		OriginHost:                  originInfo.Host,
+		GitHubFlowAvailable:         repoIdentity.GitHubFlowAvailable,
+		GitVersion:                  gitVersion,
+		TmuxVersion:                 tmuxVersion,
+		GhVersion:                   ghVersion,
+		GhAuthenticated:             true,
+		DefaultsBaseBranch:          currentBranch,
+		DefaultsRunner:              userCfg.Defaults.Runner,
+		DefaultsRunnerModel:         defaultsRunnerModel,
+		DefaultsRunnerModelSource:   defaultsRunnerModelSource,
+		DefaultsRunnerEffort:        defaultsRunnerEffort,
+		DefaultsRunnerEffortSource:  defaultsRunnerEffortSource,
+		DefaultsEditor:              userCfg.Defaults.Editor,
+		ExecutionProfile:            executionProfile,
+		ExecutionProfileSource:      executionProfileSource,
+		ExecutionCheckoutRootPolicy: cfg.Execution.CheckoutRoot,
+		ExecutionCheckoutRoot:       executionCheckoutRoot,
+		ExecutionProfileEnvKeys:     executionProfileEnvKeys,
+		RunnerCmd:                   resolvedRunnerCmd,
+		ScriptSetup:                 scriptSetup,
+		ScriptVerify:                scriptVerify,
+		ScriptArchive:               scriptArchive,
 	}
 
 	writeDoctorOutput(stdout, report)
@@ -299,8 +355,8 @@ func checkGh(ctx context.Context, cr agencyexec.CommandRunner) (string, error) {
 }
 
 // checkGhAuth verifies gh is authenticated.
-func checkGhAuth(ctx context.Context, cr agencyexec.CommandRunner) error {
-	result, err := cr.Run(ctx, "gh", []string{"auth", "status"}, agencyexec.RunOpts{})
+func checkGhAuth(ctx context.Context, cr agencyexec.CommandRunner, env map[string]string) error {
+	result, err := cr.Run(ctx, "gh", []string{"auth", "status"}, agencyexec.RunOpts{Env: env})
 	if err != nil {
 		return errors.New(errors.EGhNotAuthenticated, "gh auth check failed; run 'gh auth login'")
 	}
@@ -387,6 +443,11 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	_, _ = fmt.Fprintf(w, "defaults_runner_effort: %s\n", r.DefaultsRunnerEffort)
 	_, _ = fmt.Fprintf(w, "defaults_runner_effort_source: %s\n", r.DefaultsRunnerEffortSource)
 	_, _ = fmt.Fprintf(w, "defaults_editor: %s\n", r.DefaultsEditor)
+	_, _ = fmt.Fprintf(w, "execution_profile: %s\n", r.ExecutionProfile)
+	_, _ = fmt.Fprintf(w, "execution_profile_source: %s\n", r.ExecutionProfileSource)
+	_, _ = fmt.Fprintf(w, "execution_checkout_root_policy: %s\n", r.ExecutionCheckoutRootPolicy)
+	_, _ = fmt.Fprintf(w, "execution_checkout_root: %s\n", r.ExecutionCheckoutRoot)
+	_, _ = fmt.Fprintf(w, "execution_profile_env_keys: %s\n", strings.Join(r.ExecutionProfileEnvKeys, ","))
 	_, _ = fmt.Fprintf(w, "runner_cmd: %s\n", r.RunnerCmd)
 	_, _ = fmt.Fprintf(w, "script_setup: %s\n", r.ScriptSetup)
 	_, _ = fmt.Fprintf(w, "script_verify: %s\n", r.ScriptVerify)

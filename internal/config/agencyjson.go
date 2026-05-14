@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 
 // Default timeouts for scripts.
 const (
+	AgencyConfigVersion   = 4
+	CheckoutRootSibling   = "repo-sibling"
 	DefaultSetupTimeout   = 10 * time.Minute
 	DefaultVerifyTimeout  = 30 * time.Minute
 	DefaultArchiveTimeout = 5 * time.Minute
@@ -25,6 +28,13 @@ type AgencyConfig struct {
 	Version        int                       `json:"version"`
 	Scripts        Scripts                   `json:"scripts"`
 	RunnerDefaults map[string]RunnerDefaults `json:"runner_defaults,omitempty"`
+	Execution      AgencyExecutionConfig     `json:"execution,omitempty"`
+}
+
+// AgencyExecutionConfig contains repo-scoped execution policy.
+type AgencyExecutionConfig struct {
+	Profile      string `json:"profile,omitempty"`
+	CheckoutRoot string `json:"checkout_root,omitempty"`
 }
 
 // Scripts contains configuration for the required agency scripts.
@@ -93,6 +103,7 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 		"version":         true,
 		"scripts":         true,
 		"runner_defaults": true,
+		"execution":       true,
 	}
 	for key := range raw {
 		if !allowedKeys[key] {
@@ -102,19 +113,12 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 
 	// Parse version - required, must be integer
 	if rawVersion, ok := raw["version"]; ok {
+		if isJSONNull(rawVersion) {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "version must be an integer")
+		}
 		var version int
 		if err := json.Unmarshal(rawVersion, &version); err != nil {
-			// Check if it's a different type
-			var floatVal float64
-			if json.Unmarshal(rawVersion, &floatVal) == nil {
-				// It's a float - check if it's a whole number
-				if floatVal != float64(int(floatVal)) {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "version must be an integer")
-				}
-				version = int(floatVal)
-			} else {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "version must be an integer")
-			}
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "version must be an integer")
 		}
 		cfg.Version = version
 	}
@@ -125,6 +129,19 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 		var scriptsMap map[string]json.RawMessage
 		if err := json.Unmarshal(rawScripts, &scriptsMap); err != nil {
 			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts must be an object")
+		}
+		if scriptsMap == nil {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts must be an object")
+		}
+		allowedScriptKeys := map[string]bool{
+			"setup":   true,
+			"verify":  true,
+			"archive": true,
+		}
+		for key := range scriptsMap {
+			if !allowedScriptKeys[key] {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts contains unknown field: "+key)
+			}
 		}
 
 		// Parse scripts.setup
@@ -160,11 +177,17 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 		if err := json.Unmarshal(rawRunnerDefaults, &defaultsMap); err != nil {
 			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults must be an object")
 		}
+		if defaultsMap == nil {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults must be an object")
+		}
 
 		cfg.RunnerDefaults = make(map[string]RunnerDefaults, len(defaultsMap))
 		for runnerName, rawRunnerDefaults := range defaultsMap {
 			var runnerDefaultsMap map[string]json.RawMessage
 			if err := json.Unmarshal(rawRunnerDefaults, &runnerDefaultsMap); err != nil {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" must be an object")
+			}
+			if runnerDefaultsMap == nil {
 				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" must be an object")
 			}
 
@@ -183,6 +206,9 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 
 			var runnerDefaults RunnerDefaults
 			if rawModel, ok := runnerDefaultsMap["model"]; ok {
+				if isJSONNull(rawModel) {
+					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".model must be a string")
+				}
 				var model string
 				if err := json.Unmarshal(rawModel, &model); err != nil {
 					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".model must be a string")
@@ -190,6 +216,9 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 				runnerDefaults.Model = model
 			}
 			if rawEffort, ok := runnerDefaultsMap["effort"]; ok {
+				if isJSONNull(rawEffort) {
+					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".effort must be a string")
+				}
 				var effort string
 				if err := json.Unmarshal(rawEffort, &effort); err != nil {
 					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".effort must be a string")
@@ -201,7 +230,50 @@ func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) 
 		}
 	}
 
+	if rawExecution, ok := raw["execution"]; ok {
+		var executionMap map[string]json.RawMessage
+		if err := json.Unmarshal(rawExecution, &executionMap); err != nil {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution must be an object")
+		}
+		if executionMap == nil {
+			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution must be an object")
+		}
+		allowedExecutionKeys := map[string]bool{
+			"profile":       true,
+			"checkout_root": true,
+		}
+		for key := range executionMap {
+			if !allowedExecutionKeys[key] {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution contains unknown field: "+key)
+			}
+		}
+		if rawProfile, ok := executionMap["profile"]; ok {
+			if isJSONNull(rawProfile) {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.profile must be a string")
+			}
+			var profile string
+			if err := json.Unmarshal(rawProfile, &profile); err != nil {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.profile must be a string")
+			}
+			cfg.Execution.Profile = profile
+		}
+		if rawCheckoutRoot, ok := executionMap["checkout_root"]; ok {
+			if isJSONNull(rawCheckoutRoot) {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.checkout_root must be a string")
+			}
+			var checkoutRoot string
+			if err := json.Unmarshal(rawCheckoutRoot, &checkoutRoot); err != nil {
+				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.checkout_root must be a string")
+			}
+			cfg.Execution.CheckoutRoot = checkoutRoot
+		}
+	}
+
 	return cfg, nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
 // parseScriptConfig parses a script configuration from raw JSON.
@@ -212,6 +284,9 @@ func parseScriptConfig(raw json.RawMessage, fieldName string, defaultTimeout tim
 	// Parse as object
 	var scriptMap map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &scriptMap); err != nil {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+" must be an object with 'path' field")
+	}
+	if scriptMap == nil {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+" must be an object with 'path' field")
 	}
 
@@ -228,6 +303,9 @@ func parseScriptConfig(raw json.RawMessage, fieldName string, defaultTimeout tim
 	if !ok {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+" missing required field 'path'")
 	}
+	if isJSONNull(rawPath) {
+		return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".path must be a string")
+	}
 	var path string
 	if err := json.Unmarshal(rawPath, &path); err != nil {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".path must be a string")
@@ -237,6 +315,9 @@ func parseScriptConfig(raw json.RawMessage, fieldName string, defaultTimeout tim
 	// Parse timeout - optional, defaults to provided default
 	cfg.Timeout = defaultTimeout
 	if rawTimeout, ok := scriptMap["timeout"]; ok {
+		if isJSONNull(rawTimeout) {
+			return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout must be a string (Go duration format, e.g., '30m', '1h')")
+		}
 		var timeoutStr string
 		if err := json.Unmarshal(rawTimeout, &timeoutStr); err != nil {
 			return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout must be a string (Go duration format, e.g., '30m', '1h')")

@@ -13,7 +13,7 @@ import (
 )
 
 // APIVersion is the current API version. Incremented on breaking changes.
-const APIVersion = 2
+const APIVersion = 3
 
 // MaxPromptSize is the maximum allowed prompt size in bytes (256 KB).
 const MaxPromptSize = 256 * 1024
@@ -31,6 +31,7 @@ const HeadedStartingGraceCount = 2
 // IdempotencyEntry tracks a recent request for idempotency.
 type IdempotencyEntry struct {
 	InvocationID string
+	Fingerprint  string
 	CreatedAt    int64 // Unix timestamp
 }
 
@@ -45,15 +46,17 @@ type LogPaths struct {
 
 // WorktreeIdempotencyEntry tracks a recent worktree create request for idempotency.
 type WorktreeIdempotencyEntry struct {
-	WorktreeID string
-	TreePath   string
-	Branch     string
-	CreatedAt  int64 // Unix timestamp
+	WorktreeID  string
+	Fingerprint string
+	TreePath    string
+	Branch      string
+	CreatedAt   int64 // Unix timestamp
 }
 
 // HeadedIdempotencyEntry tracks a recent headed invocation request for idempotency.
 type HeadedIdempotencyEntry struct {
 	InvocationID string
+	Fingerprint  string
 	TmuxSession  string
 	SandboxPath  string
 	CreatedAt    int64 // Unix timestamp

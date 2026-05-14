@@ -351,6 +351,8 @@ func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
 	// Create a path that looks like it's inside an agency-managed worktree.
 	fakeWorktreePath := filepath.Join(tmpDir, "repos", "some-repo", "integration_worktrees", "wt-1", "tree")
 	require.NoError(t, os.MkdirAll(fakeWorktreePath, 0o755), "mkdir")
+	require.NoError(t, os.MkdirAll(filepath.Join(fakeWorktreePath, ".agency"), 0o755), "mkdir marker dir")
+	require.NoError(t, os.WriteFile(filepath.Join(fakeWorktreePath, ".agency", "INTEGRATION_MARKER"), []byte("true\n"), 0o644), "write marker")
 
 	req := ControlPlaneStartRequest{
 		ClientRequestID: "test-uuid",
@@ -419,7 +421,7 @@ func TestControlPlaneStart_RunnerNotFound(t *testing.T) {
 
 	// Write config pointing to nonexistent runner binary.
 	// Must include "defaults" for LoadUserConfig validation to pass.
-	cfg := `{"version":2,"defaults":{"runner":"claude-code","editor":"code"},"runners":{"claude-code":"/nonexistent/path/to/runner"}}`
+	cfg := `{"version":4,"defaults":{"runner":"claude-code","editor":"code","execution_profile":"personal"},"runners":{"claude-code":"/nonexistent/path/to/runner"},"execution_profiles":{"personal":{"env":{}}}}`
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(cfg), 0o644), "write config")
 
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
@@ -469,6 +471,7 @@ func TestControlPlaneStart_RespectsRepoLock(t *testing.T) {
 
 	env := setupGitRepo(t)
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -519,6 +522,7 @@ func TestControlPlaneStartHeaded_RespectsRepoLock(t *testing.T) {
 
 	env := setupGitRepo(t)
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 

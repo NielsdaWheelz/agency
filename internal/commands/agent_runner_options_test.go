@@ -159,10 +159,11 @@ func TestResolveStartRunnerAndArgs_UsesSharedDefaultPrecedence(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 	require.NoError(t, os.MkdirAll(repoRoot, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
-    "editor": "code"
+    "editor": "code",
+    "execution_profile": "personal"
   },
   "runner_defaults": {
     "claude-code": {
@@ -176,10 +177,15 @@ func TestResolveStartRunnerAndArgs_UsesSharedDefaultPrecedence(t *testing.T) {
   },
   "editors": {
     "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
   }
 }`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/setup.sh"
@@ -196,6 +202,10 @@ func TestResolveStartRunnerAndArgs_UsesSharedDefaultPrecedence(t *testing.T) {
       "model": "agency-opus",
       "effort": "max"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }`), 0o644))
 

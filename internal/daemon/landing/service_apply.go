@@ -40,7 +40,7 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 }
 
 func (s *Service) prepareApplyPatch(ctx context.Context, opts LandOpts, meta *store.InvocationMeta) (string, error) {
-	tmpDir := filepath.Join(s.store.SandboxDir(opts.RepoID, opts.InvocationID), "tmp")
+	tmpDir := filepath.Join(s.store.InvocationDir(opts.RepoID, opts.InvocationID), "tmp")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return "", s.emitLandFailure(
 			opts.RepoID,

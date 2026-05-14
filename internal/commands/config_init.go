@@ -100,13 +100,17 @@ func ConfigInit(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts Con
 	}
 
 	cfg := config.UserConfig{
-		Version: 3,
+		Version: config.AgencyConfigVersion,
 		Defaults: config.UserDefaults{
-			Runner:     runnerIDs[0],
-			Editor:     defaultEditor,
-			BaseBranch: "main",
+			Runner:           runnerIDs[0],
+			Editor:           defaultEditor,
+			BaseBranch:       "main",
+			ExecutionProfile: "personal",
 		},
 		Runners: detectedRunners,
+		ExecutionProfiles: map[string]config.ExecutionProfile{
+			"personal": {Env: map[string]string{}},
+		},
 	}
 	cfg, err = config.ValidateUserConfig(cfg)
 	if err != nil {
@@ -136,7 +140,9 @@ func ConfigInit(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts Con
 	_, _ = fmt.Fprintf(stdout, "defaults_runner: %s\n", runnerIDs[0])
 	_, _ = fmt.Fprintf(stdout, "defaults_editor: %s\n", defaultEditor)
 	_, _ = fmt.Fprintf(stdout, "defaults_base_branch: %s\n", cfg.Defaults.BaseBranch)
+	_, _ = fmt.Fprintf(stdout, "defaults_execution_profile: %s\n", cfg.Defaults.ExecutionProfile)
 	_, _ = fmt.Fprintf(stdout, "runners: %s\n", strings.Join(runnerIDs, ", "))
+	_, _ = fmt.Fprintf(stdout, "execution_profiles: personal\n")
 
 	return nil
 }

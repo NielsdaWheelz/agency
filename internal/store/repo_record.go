@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -16,13 +17,12 @@ type Capabilities struct {
 }
 
 // RepoRecord represents the repo.json file for a repository.
-// This is the public contract for v1.
 type RepoRecord struct {
 	SchemaVersion    string       `json:"schema_version"`
 	RepoKey          string       `json:"repo_key"`
 	RepoID           string       `json:"repo_id"`
 	RepoRootLastSeen string       `json:"repo_root_last_seen"`
-	PreferredRoot    string       `json:"preferred_root,omitempty"` // PR-A: canonical root for operations
+	PreferredRoot    string       `json:"preferred_root,omitempty"`
 	AgencyJSONPath   string       `json:"agency_json_path"`
 	OriginPresent    bool         `json:"origin_present"`
 	OriginURL        string       `json:"origin_url"`
@@ -37,7 +37,7 @@ type BuildRepoRecordInput struct {
 	RepoKey          string
 	RepoID           string
 	RepoRootLastSeen string
-	PreferredRoot    string // PR-A: set on register, updated on mutation ops
+	PreferredRoot    string
 	AgencyJSONPath   string
 	OriginPresent    bool
 	OriginURL        string
@@ -61,16 +61,15 @@ func (s *Store) LoadRepoRecord(repoID string) (RepoRecord, bool, error) {
 	}
 
 	var rec RepoRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
+	if err := decodeStrictJSON(data, &rec); err != nil {
 		return RepoRecord{}, false, errors.Wrap(errors.EStoreCorrupt, "invalid json in repo.json", err)
 	}
-
-	// Validate schema_version
-	if rec.SchemaVersion == "" {
-		return RepoRecord{}, false, errors.New(errors.EStoreCorrupt, "repo.json: missing schema_version")
+	fields, err := strictJSONObjectFields(data)
+	if err != nil {
+		return RepoRecord{}, false, errors.Wrap(errors.EStoreCorrupt, "invalid json in repo.json", err)
 	}
-	if rec.SchemaVersion != SchemaVersion {
-		return RepoRecord{}, false, errors.New(errors.EStoreCorrupt, "repo.json: unsupported schema_version: "+rec.SchemaVersion)
+	if err := validateRepoRecord(rec, repoID, fields); err != nil {
+		return RepoRecord{}, false, err
 	}
 
 	return rec, true, nil
@@ -99,7 +98,6 @@ func (s *Store) UpsertRepoRecord(existing *RepoRecord, input BuildRepoRecordInpu
 	if existing != nil {
 		// Preserve original creation time
 		rec.CreatedAt = existing.CreatedAt
-		// PR-A: Preserve PreferredRoot from existing if not explicitly set
 		if rec.PreferredRoot == "" && existing.PreferredRoot != "" {
 			rec.PreferredRoot = existing.PreferredRoot
 		}
@@ -116,8 +114,11 @@ func (s *Store) UpsertRepoRecord(existing *RepoRecord, input BuildRepoRecordInpu
 func (s *Store) SaveRepoRecord(rec RepoRecord) error {
 	// Ensure repo directory exists
 	repoDir := s.RepoDir(rec.RepoID)
-	if err := s.FS.MkdirAll(repoDir, 0755); err != nil {
+	if err := s.FS.MkdirAll(repoDir, 0o700); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to create repo directory", err)
+	}
+	if err := s.FS.Chmod(repoDir, 0o700); err != nil {
+		return errors.Wrap(errors.EStoreCorrupt, "failed to enforce repo directory permissions", err)
 	}
 
 	// Marshal with indentation for human readability
@@ -130,9 +131,58 @@ func (s *Store) SaveRepoRecord(rec RepoRecord) error {
 	data = append(data, '\n')
 
 	path := s.RepoRecordPath(rec.RepoID)
-	if err := fs.WriteFileAtomic(s.FS, path, data, 0644); err != nil {
+	if err := fs.WriteFileAtomic(s.FS, path, data, 0o600); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to write repo.json", err)
 	}
 
+	return nil
+}
+
+func validateRepoRecord(rec RepoRecord, repoID string, fields map[string]json.RawMessage) error {
+	for _, field := range []string{
+		"schema_version",
+		"repo_key",
+		"repo_id",
+		"repo_root_last_seen",
+		"agency_json_path",
+		"origin_present",
+		"origin_url",
+		"origin_host",
+		"capabilities",
+		"created_at",
+		"updated_at",
+	} {
+		if _, ok := fields[field]; !ok {
+			return errors.New(errors.EStoreCorrupt, "repo.json: missing required field "+field)
+		}
+	}
+	capabilityFields, err := strictJSONObjectFields(fields["capabilities"])
+	if err != nil {
+		return errors.Wrap(errors.EStoreCorrupt, "repo.json: invalid capabilities", err)
+	}
+	for _, field := range []string{"github_origin", "origin_host", "gh_authed"} {
+		if _, ok := capabilityFields[field]; !ok {
+			return errors.New(errors.EStoreCorrupt, "repo.json: missing required capabilities."+field)
+		}
+	}
+	if rec.SchemaVersion == "" {
+		return errors.New(errors.EStoreCorrupt, "repo.json: missing schema_version")
+	}
+	if rec.SchemaVersion != SchemaVersion {
+		return errors.New(errors.EStoreCorrupt, "repo.json: unsupported schema_version: "+rec.SchemaVersion)
+	}
+	if rec.RepoKey == "" || rec.RepoID == "" || rec.RepoRootLastSeen == "" || rec.CreatedAt == "" || rec.UpdatedAt == "" {
+		return errors.New(errors.EStoreCorrupt, "repo.json: missing required fields")
+	}
+	if rec.RepoID != repoID {
+		return errors.New(errors.EStoreCorrupt, "repo.json: repo_id does not match record path")
+	}
+	if !filepath.IsAbs(rec.RepoRootLastSeen) || (rec.PreferredRoot != "" && !filepath.IsAbs(rec.PreferredRoot)) ||
+		(rec.AgencyJSONPath != "" && !filepath.IsAbs(rec.AgencyJSONPath)) {
+		return errors.New(errors.EStoreCorrupt, "repo.json: paths must be absolute")
+	}
+	if rec.OriginPresent && (rec.OriginURL == "" || rec.OriginHost == "") {
+		return errors.New(errors.EStoreCorrupt, "repo.json: origin fields missing for present origin")
+	}
 	return nil
 }

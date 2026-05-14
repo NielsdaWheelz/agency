@@ -20,6 +20,7 @@ func newTaskCmd() *cobra.Command {
 	var prompt string
 	var promptFile string
 	var agencyConfigPath string
+	var executionProfile string
 	var runnerArgs []string
 	var model string
 	var effort string
@@ -54,7 +55,24 @@ mutation.`,
 					case "watch":
 						return runTaskWatch(cmd, taskRef, repoRef)
 					case "retry":
-						return runTaskRetry(cmd, taskRef, repoRef, jsonOut, mode, runner, invocationName, detached, prompt, promptFile, agencyConfigPath, runnerArgs, model, effort, permissionMode, noIncludeUntracked)
+						return runTaskRetry(cmd, commands.TaskRetryOpts{
+							TaskRef:            taskRef,
+							RepoRef:            repoRef,
+							Mode:               mode,
+							Runner:             runner,
+							InvocationName:     invocationName,
+							Detached:           detached,
+							Prompt:             prompt,
+							PromptFile:         promptFile,
+							AgencyConfigPath:   agencyConfigPath,
+							ExecutionProfile:   executionProfile,
+							RunnerArgs:         runnerArgs,
+							Model:              model,
+							Effort:             effort,
+							PermissionMode:     permissionMode,
+							JSON:               jsonOut,
+							NoIncludeUntracked: noIncludeUntracked,
+						})
 					default:
 						return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency task\"")
 					}
@@ -80,6 +98,7 @@ mutation.`,
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless retry prompt text")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read headless retry prompt from this file")
 	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file for retry")
+	cmd.Flags().StringVar(&executionProfile, "execution-profile", "", "Execution profile override for retry")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional runner argument for retry (repeatable)")
 	cmd.Flags().StringVar(&model, "model", "", "Runner model override for retry")
 	cmd.Flags().StringVar(&effort, "effort", "", "Runner effort override for retry")
@@ -138,6 +157,7 @@ func newTaskStartCmd() *cobra.Command {
 	var prompt string
 	var promptFile string
 	var agencyConfigPath string
+	var executionProfile string
 	var runnerArgs []string
 	var model string
 	var effort string
@@ -178,6 +198,7 @@ func newTaskStartCmd() *cobra.Command {
 				Prompt:             prompt,
 				PromptFile:         promptFile,
 				AgencyConfigPath:   agencyConfigPath,
+				ExecutionProfile:   executionProfile,
 				RunnerArgs:         runnerArgs,
 				Model:              model,
 				Effort:             effort,
@@ -199,6 +220,7 @@ func newTaskStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Inline headless prompt text")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read headless prompt from this file")
 	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
+	cmd.Flags().StringVar(&executionProfile, "execution-profile", "", "Execution profile override")
 	cmd.Flags().StringArrayVar(&runnerArgs, "runner-arg", nil, "Additional runner argument (repeatable)")
 	cmd.Flags().StringVar(&model, "model", "", "Runner model override")
 	cmd.Flags().StringVar(&effort, "effort", "", "Runner effort override")
@@ -284,28 +306,12 @@ func runTaskArchive(cmd *cobra.Command, taskRef, repoRef string, jsonOut bool) e
 	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-func runTaskRetry(cmd *cobra.Command, taskRef, repoRef string, jsonOut bool, mode, runner, invocationName string, detached bool, prompt, promptFile, agencyConfigPath string, runnerArgs []string, model, effort, permissionMode string, noIncludeUntracked bool) error {
+func runTaskRetry(cmd *cobra.Command, opts commands.TaskRetryOpts) error {
 	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 	if err != nil {
 		return err
 	}
-	return commands.TaskRetry(ctx, cr, fsys, cwd, commands.TaskRetryOpts{
-		TaskRef:            taskRef,
-		RepoRef:            repoRef,
-		Mode:               mode,
-		Runner:             runner,
-		InvocationName:     invocationName,
-		Detached:           detached,
-		Prompt:             prompt,
-		PromptFile:         promptFile,
-		AgencyConfigPath:   agencyConfigPath,
-		RunnerArgs:         runnerArgs,
-		Model:              model,
-		Effort:             effort,
-		PermissionMode:     permissionMode,
-		JSON:               jsonOut,
-		NoIncludeUntracked: noIncludeUntracked,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return commands.TaskRetry(ctx, cr, fsys, cwd, opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 func runTaskWatch(cmd *cobra.Command, taskRef, repoRef string) error {

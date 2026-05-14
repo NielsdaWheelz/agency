@@ -17,15 +17,17 @@ func (s *Server) writeWorktreeError(w http.ResponseWriter, status int, code, mes
 	})
 }
 
-func (s *Server) writeWorktreeSuccess(w http.ResponseWriter, worktreeID, treePath, branch, repoID string) {
+func (s *Server) writeWorktreeSuccess(w http.ResponseWriter, worktreeID, treePath, branch, repoID, executionProfile, checkoutRoot string) {
 	s.writeJSON(w, http.StatusOK, WorktreeCreateResponse{
-		OK:           true,
-		WorktreeID:   worktreeID,
-		TreePath:     treePath,
-		Branch:       branch,
-		RepoID:       repoID,
-		APIVersion:   APIVersion,
-		BuildVersion: daemonBuildVersion(),
+		OK:               true,
+		WorktreeID:       worktreeID,
+		TreePath:         treePath,
+		Branch:           branch,
+		RepoID:           repoID,
+		ExecutionProfile: executionProfile,
+		CheckoutRoot:     checkoutRoot,
+		APIVersion:       APIVersion,
+		BuildVersion:     daemonBuildVersion(),
 	})
 }
 

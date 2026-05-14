@@ -247,6 +247,8 @@ func setupWorktreeRmTimeoutEnv(t *testing.T) *worktreeRmTimeoutEnv {
 		"agency/timeout",
 		"main",
 		treePath,
+		filepath.Join(repoRoot, ".agency", "checkouts", repoID),
+		"work",
 		now,
 	)))
 
@@ -254,6 +256,6 @@ func setupWorktreeRmTimeoutEnv(t *testing.T) *worktreeRmTimeoutEnv {
 		server:     srv,
 		repoID:     repoID,
 		worktreeID: worktreeID,
-		removeCmd:  "git -C " + repoRoot + " worktree remove --force " + treePath,
+		removeCmd:  "git -C " + canonicalTestPath(t, repoRoot) + " worktree remove --force " + treePath,
 	}
 }

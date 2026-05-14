@@ -20,13 +20,16 @@ This document covers configuration and code escape hatches.
 - `agency agent start` requires `--worktree` when cwd is not inside a present integration worktree.
 - `--mode` is the canonical mode selector for `agency task start`, `agency task <task-ref> retry`, and `agency agent start`.
 - `--agency-config` is the explicit override for the selected agency config file.
-- `agency task start`, `agency task <task-ref> retry`, and `agency agent start` accept `--agency-config` and use it before repo-shared and per-repo agency config.
+- `--execution-profile` is the explicit execution-profile override for `agency task start`, `agency task <task-ref> retry`, and `agency agent start`.
+- `agency task start`, `agency task <task-ref> retry`, `agency agent start`, `agency doctor`, and `agency worktree <worktree-ref> pr merge` accept `--agency-config` and use it before repo-shared and per-repo agency config.
+- `agency task start`, `agency task <task-ref> retry`, and `agency agent start` accept `--execution-profile` and use it before `agency.json` `execution.profile` and `config.json` `defaults.execution_profile`.
+- Do not add `--checkout-root`; checkout placement is repo config through `agency.json` `execution.checkout_root`.
 - Daemon APIs that accept an agency config override require an absolute path.
 - Runner and editor command mappings must stay explicit in user config.
 - Runner-specific model and effort defaults belong in `runner_defaults`, not in `defaults`.
 - Claude `model`, `effort`, and `permission_mode` are Agency-owned surfaces.
-- Set Claude `permission_mode` only in `config.json`.
-- Use typed `runner_defaults` or `--model`/`--effort` on `agency task start`, `agency task <task-ref> retry`, or `agency agent start` for Claude settings. Do not pass Claude ownership fields through `--runner-arg`.
+- Set the default Claude `permission_mode` in `config.json`; use explicit `--permission-mode` for one command.
+- Use typed `runner_defaults` or explicit CLI flags on `agency task start`, `agency task <task-ref> retry`, or `agency agent start` for Claude settings. Do not pass Claude ownership fields through `--runner-arg`.
 
 ## Dead Code
 

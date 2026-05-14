@@ -11,6 +11,9 @@ import (
 // RegisterRepo registers a repo root with the daemon and returns the resolved repo_id.
 // This is the canonical way to get repo_id — CLI should not compute it locally.
 func (c *Client) RegisterRepo(ctx context.Context, repoRoot string) (*daemon.Result[daemon.RepoRegisterData], error) {
+	if err := c.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
 	reqBody := daemon.RepoRegisterRequest{
 		RepoRoot: repoRoot,
 	}
@@ -42,6 +45,9 @@ func (c *Client) GetRepo(ctx context.Context, repoRef string) (*daemon.Result[da
 
 // RepoRm removes a registered repository via the daemon.
 func (c *Client) RepoRm(ctx context.Context, repoRef string) (*daemon.Result[daemon.RepoRmData], error) {
+	if err := c.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
 	apiResp, err := c.doAPIRequest(ctx, http.MethodPost, daemonBaseURL+"/repos/rm", daemon.RepoRmRequest{RepoRef: repoRef})
 	if err != nil {
 		return nil, err

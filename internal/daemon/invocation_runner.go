@@ -125,7 +125,7 @@ func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProc
 func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, integrationWorktreeID string, req ControlPlaneStartRequest, args []string, resumeSessionID string) (int, int, error) {
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
-		userCfg = config.UserConfig{}
+		return 0, 0, fmt.Errorf("failed to load user config: %w", err)
 	}
 
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
@@ -144,8 +144,11 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	stderrFile := logFiles.StderrFile
 	streamFile := logFiles.StreamFile
 
-	envOverlay := nonInteractiveRunnerEnv()
-	for k, v := range req.Env {
+	envOverlay := copyStringMap(req.Env)
+	if envOverlay == nil {
+		envOverlay = map[string]string{}
+	}
+	for k, v := range nonInteractiveRunnerEnv() {
 		envOverlay[k] = v
 	}
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/scaffold"
+	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 // InitOpts holds options for the init command.
@@ -29,6 +31,9 @@ type InitOpts struct {
 
 	// ConfigDirOverride, if set, is used instead of resolving from environment.
 	ConfigDirOverride string
+
+	// DataDirOverride, if set, is used instead of resolving from environment.
+	DataDirOverride string
 }
 
 // InitResult holds the result of the init command for output formatting.
@@ -70,7 +75,10 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	if opts.ConfigDirOverride != "" {
 		dirs.ConfigDir = opts.ConfigDirOverride
 	}
-	if opts.RepoConfig && cwdInsideAgencyManagedTree(repoRoot.Path, dirs.DataDir) {
+	if opts.DataDirOverride != "" {
+		dirs.DataDir = opts.DataDirOverride
+	}
+	if opts.RepoConfig && cwdInsideAgencyManagedTree(repoRoot.Path) {
 		return errors.NewWithDetails(
 			errors.EUnsafeRepoRoot,
 			"repo_root is inside an agency-managed worktree",
@@ -82,6 +90,13 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 
 	originInfo := git.GetOriginInfo(ctx, cr, repoRoot.Path)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot.Path, originInfo.URL)
+	if opts.RepoConfig {
+		registeredRoot, err := registeredRepoRootFromStore(store.NewStore(fsys, dirs.DataDir, time.Now), repoIdentity.RepoID)
+		if err != nil {
+			return err
+		}
+		repoRoot.Path = registeredRoot
+	}
 
 	agencyJSONSource := "local"
 	agencyJSONPath := config.LocalAgencyConfigPath(dirs.ConfigDir, repoIdentity.RepoID)

@@ -38,8 +38,9 @@ type Client interface {
 	// name: session name
 	// cwd: working directory for the session
 	// argv: command and arguments to run (must have at least 1 element)
+	// env: optional environment variables to set in the tmux session
 	// Returns error if argv is empty or if tmux fails.
-	NewSession(ctx context.Context, name, cwd string, argv []string) error
+	NewSession(ctx context.Context, name, cwd string, argv []string, env map[string]string) error
 
 	// KillSession kills an existing tmux session.
 	// Returns error if session does not exist or kill fails.

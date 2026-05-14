@@ -16,6 +16,8 @@ func taskDTOFromMeta(s *Server, meta *store.TaskMeta) TaskDTO {
 		RepoID:              meta.RepoID,
 		RepoName:            s.repoName(meta.RepoID),
 		BaseBranch:          meta.BaseBranch,
+		CheckoutRoot:        meta.CheckoutRoot,
+		ExecutionProfile:    meta.ExecutionProfile,
 		WorktreeID:          meta.WorktreeID,
 		WorktreeName:        meta.WorktreeName,
 		WorktreePath:        meta.WorktreePath,

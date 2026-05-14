@@ -45,6 +45,13 @@ func setupGitRepo(t *testing.T) *testGitEnv {
 	// Create initial commit
 	testFile := filepath.Join(repoDir, "README.md")
 	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0o644), "failed to write test file")
+	scriptsDir := filepath.Join(repoDir, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755), "failed to create scripts dir")
+	for _, script := range []string{"setup", "verify", "archive"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script+".sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755), "failed to write script")
+	}
+	agencyJSON := `{"version":4,"scripts":{"setup":{"path":"scripts/setup.sh","timeout":"10m"},"verify":{"path":"scripts/verify.sh","timeout":"30m"},"archive":{"path":"scripts/archive.sh","timeout":"5m"}},"execution":{"checkout_root":"repo-sibling"}}`
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "agency.json"), []byte(agencyJSON), 0o644), "failed to write agency.json")
 
 	result, err = cr.Run(ctx, "git", []string{"add", "."}, exec.RunOpts{Dir: repoDir})
 	if err != nil || result.ExitCode != 0 {
@@ -73,6 +80,8 @@ func writeWorktreeGuardInvocation(t *testing.T, st *store.Store, repoID, worktre
 		"",
 		worktreeID,
 		filepath.Join(t.TempDir(), "sandbox", invocationID, "tree"),
+		"/checkouts/"+repoID,
+		"work",
 		"agency/sandbox-"+invocationID,
 		"basecommit",
 		"claude-code",
@@ -122,6 +131,7 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 			t.Parallel()
 			// Create server with minimal setup
 			tmpDir := t.TempDir()
+			writeTestUserConfig(t, tmpDir)
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -153,6 +163,7 @@ func TestHandleWorktreeCreate_Success(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -198,6 +209,7 @@ func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -235,6 +247,46 @@ func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
 	assert.Equal(t, resp1.WorktreeID, resp2.WorktreeID, "idempotent requests returned different worktree IDs")
 }
 
+func TestHandleWorktreeCreate_IdempotencyConflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupGitRepo(t)
+
+	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	req := WorktreeCreateRequest{
+		RepoRoot:       env.RepoPath,
+		Name:           "idempotent-conflict",
+		BaseBranch:     "main",
+		IdempotencyKey: "conflict-key",
+	}
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleWorktreeCreate(w, httpReq)
+
+	var resp1 WorktreeCreateResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp1))
+	require.True(t, resp1.OK, "first request failed: %s - %s", resp1.ErrorCode, resp1.Message)
+
+	req.Name = "idempotent-conflict-different"
+	body, _ = json.Marshal(req)
+	httpReq = httptest.NewRequest(http.MethodPost, "/worktrees/create", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	s.handleWorktreeCreate(w, httpReq)
+
+	var resp2 WorktreeCreateResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp2))
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.False(t, resp2.OK)
+	assert.Equal(t, string(errors.EIdempotencyConflict), resp2.ErrorCode)
+}
+
 func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -244,6 +296,7 @@ func TestHandleWorktreeCreate_NameUniqueness(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -302,6 +355,7 @@ func TestHandleWorktreeRm_ValidationErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tmpDir := t.TempDir()
+			writeTestUserConfig(t, tmpDir)
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -327,6 +381,27 @@ func TestHandleWorktreeRm_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestHandleWorktreeRm_StrictOptionalBodyWithUnknownLength(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/worktrees/test-id/rm?repo_id=repo-1", bytes.NewReader([]byte(`{"unknown":true}`)))
+	httpReq.ContentLength = -1
+	w := httptest.NewRecorder()
+
+	s.handleWorktreeRm(w, httpReq, "test-id")
+
+	var resp WorktreeRmResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
+	assert.Contains(t, resp.Message, `unknown field "unknown"`)
+}
+
 func TestHandleWorktreeRm_Success(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -336,6 +411,7 @@ func TestHandleWorktreeRm_Success(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -385,6 +461,7 @@ func TestHandleWorktreeRm_Idempotent(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -448,6 +525,7 @@ func TestUnresolvedInvocationsForWorktree(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -470,6 +548,7 @@ func TestUnresolvedInvocationsForWorktree_UnknownLandingStatusIsCorrupt(t *testi
 	t.Parallel()
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-1", store.InvocationStatusFinished, store.LandingStatus("bogus"))
@@ -482,6 +561,7 @@ func TestUnresolvedInvocationsForWorktree_UnknownLandingStatusIsCorrupt(t *testi
 func TestHandleWorktrees_Routing(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -540,7 +620,7 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "base path with GET should list worktrees (PR-12)",
+			name:       "base path with GET should list worktrees",
 			method:     http.MethodGet,
 			path:       "/worktrees/",
 			wantStatus: http.StatusOK,
@@ -580,6 +660,7 @@ func TestWorktreeCreateAndRemove_Integration(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -655,6 +736,7 @@ func TestHandleWorktreeRm_NotAnIntegrationWorktree(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -713,6 +795,7 @@ func TestHandleWorktreeRm_BlocksOnUnresolvedInvocations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupGitRepo(t)
 			tmpDir := t.TempDir()
+			writeTestUserConfig(t, tmpDir)
 			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
@@ -759,6 +842,7 @@ func TestHandleWorktreeRm_BrokenWorktree(t *testing.T) {
 	env := setupGitRepo(t)
 
 	tmpDir := t.TempDir()
+	writeTestUserConfig(t, tmpDir)
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 

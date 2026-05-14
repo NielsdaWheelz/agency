@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
 	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/jsonl"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -27,7 +30,7 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req ControlPlaneFollowUpRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		s.writeFollowUpError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "")
 		return
 	}
@@ -70,6 +73,23 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 	if record.Meta.Status != store.InvocationStatusRunning {
 		s.writeFollowUpError(w, http.StatusConflict, requestID, string(errors.EInvocationNotRunning),
 			"invocation is not running", "start a new invocation before sending follow-up prompts", req.ClientRequestID)
+		return
+	}
+
+	if existing, found, err := s.findFollowUpClientRequest(record.RepoID, req.ClientRequestID); err != nil {
+		s.writeFollowUpError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to check follow-up idempotency: "+err.Error(), "", req.ClientRequestID)
+		return
+	} else if found && (existing.InvocationID != record.InvocationID || existing.Prompt != req.Prompt) {
+		s.writeFollowUpError(w, http.StatusConflict, requestID, string(errors.EIdempotencyConflict),
+			"client_request_id was already used for a different follow-up request",
+			"retry with the original request or choose a new client_request_id", req.ClientRequestID)
+		return
+	}
+
+	if _, _, conflict := s.reserveFollowUpIdempotency(record.RepoID, req.ClientRequestID, record.InvocationID, followUpFingerprint(record.InvocationID, req.Prompt)); conflict {
+		s.writeFollowUpError(w, http.StatusConflict, requestID, string(errors.EIdempotencyConflict),
+			"client_request_id was already used for a different follow-up request",
+			"retry with the original request or choose a new client_request_id", req.ClientRequestID)
 		return
 	}
 
@@ -153,4 +173,64 @@ func (s *Server) appendFollowUpPromptEvent(eventsPath, invocationID, clientReque
 
 func followUpTimelineEntryID(seq uint64) string {
 	return "inv_event:" + strconv.FormatUint(seq, 10) + ":" + followUpPromptEventKind
+}
+
+type followUpClientRequest struct {
+	InvocationID string
+	Prompt       string
+}
+
+func (s *Server) findFollowUpClientRequest(repoID, clientRequestID string) (followUpClientRequest, bool, error) {
+	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	if err != nil {
+		return followUpClientRequest{}, false, err
+	}
+	for _, record := range records {
+		existing, found, err := s.findFollowUpClientRequestInFile(s.Store.InvocationEventsPath(repoID, record.InvocationID), clientRequestID)
+		if err != nil {
+			return followUpClientRequest{}, false, err
+		}
+		if found {
+			return existing, true, nil
+		}
+	}
+	return followUpClientRequest{}, false, nil
+}
+
+func (s *Server) findFollowUpClientRequestInFile(eventsPath, clientRequestID string) (followUpClientRequest, bool, error) {
+	f, err := os.Open(eventsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return followUpClientRequest{}, false, nil
+		}
+		return followUpClientRequest{}, false, err
+	}
+	defer func() { _ = f.Close() }()
+
+	var existing followUpClientRequest
+	found := false
+	err = jsonl.Visit(f, stream.MaxLineSize, jsonl.VisitOptions{OversizedPrefixBytes: 0}, func(scanned jsonl.Line) error {
+		if found || scanned.Oversized {
+			return nil
+		}
+		var event struct {
+			InvocationID string         `json:"invocation_id"`
+			Kind         string         `json:"kind"`
+			Data         map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(scanned.Bytes, &event); err != nil || event.Kind != followUpPromptEventKind {
+			return nil
+		}
+		if event.Data == nil || event.Data["client_request_id"] != clientRequestID {
+			return nil
+		}
+		prompt, _ := event.Data["text"].(string)
+		existing = followUpClientRequest{InvocationID: event.InvocationID, Prompt: prompt}
+		found = true
+		return nil
+	})
+	if err != nil {
+		return followUpClientRequest{}, false, err
+	}
+	return existing, found, nil
 }

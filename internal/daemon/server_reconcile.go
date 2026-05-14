@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -33,16 +32,11 @@ func (s *Server) reconcileHeadedInvocations() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	data, err := s.FS.ReadFile(s.Store.RepoIndexPath())
+	repoIDs, err := s.discoverDurableRepoIDs()
 	if err != nil {
 		return
 	}
-
-	var index store.RepoIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return
-	}
-	for repoID := range index.Repos {
+	for _, repoID := range repoIDs {
 		s.reconcileHeadedInvocationsForRepo(ctx, repoID)
 	}
 }
@@ -87,6 +81,28 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 		return
 	}
 	if exists {
+		s.mu.RLock()
+		_, supervised := s.processes[r.InvocationID]
+		s.mu.RUnlock()
+		restoreSupervision := !supervised && (r.Meta.Status == store.InvocationStatusRunning || r.Meta.Status == store.InvocationStatusStopping)
+		if !restoreSupervision && !supervised && r.Meta.Status == store.InvocationStatusStarting {
+			startedAt, parseErr := time.Parse(time.RFC3339, r.Meta.StartedAt)
+			restoreSupervision = parseErr == nil && s.Clock().Sub(startedAt) > 30*time.Second
+		}
+		if restoreSupervision {
+			if err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_reconciled"); err != nil {
+				s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_headed_supervision_restore_failed", err.Error(), map[string]any{
+					"session_name": sessionName,
+				})
+			}
+		}
+		if r.Meta.Status == store.InvocationStatusStopping && !supervised {
+			if err := s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC}); err != nil {
+				s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_headed_stop_send_keys_failed", err.Error(), map[string]any{
+					"session_name": sessionName,
+				})
+			}
+		}
 		s.cleanupHeadedStartingTracking(r.InvocationID)
 		return
 	}
@@ -109,6 +125,11 @@ func (s *Server) reconcileHeadlessInvocation(repoID string, r store.InvocationRe
 		return
 	}
 	if r.Meta.PID == nil {
+		if r.Meta.Status == store.InvocationStatusStopping {
+			s.failInvocationStopped(repoID, r.InvocationID, "stopped")
+			return
+		}
+		s.failInvocationUnknown(repoID, r.InvocationID, "runner_pid_missing", true)
 		return
 	}
 	pid := *r.Meta.PID

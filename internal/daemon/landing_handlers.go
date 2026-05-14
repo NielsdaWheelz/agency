@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"syscall"
 	"time"
@@ -27,11 +26,9 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 
 	// Parse request body
 	var req LandRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writeLandError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", nil)
-			return
-		}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeLandError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", nil)
+		return
 	}
 
 	mutation, ok := s.prepareLandingMutation(w, r, requestID, invocationID, repoID, "land", func(w http.ResponseWriter, status int, requestID, code, message, hint string) {
@@ -133,19 +130,10 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	}
 
 	// Parse request body (currently empty, but allow for future expansion)
-	if r.ContentLength > 0 {
-		dec := json.NewDecoder(r.Body)
-		dec.DisallowUnknownFields()
-		var req struct{}
-		if err := dec.Decode(&req); err != nil {
-			s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
-			return
-		}
-		var trailing json.RawMessage
-		if err := dec.Decode(&trailing); err != io.EOF {
-			s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: expected a single JSON object", "")
-			return
-		}
+	var req struct{}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeDiscardError(w, http.StatusBadRequest, requestID, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		return
 	}
 
 	mutation, ok := s.prepareLandingMutation(w, r, requestID, invocationID, repoID, "discard", s.writeDiscardError)

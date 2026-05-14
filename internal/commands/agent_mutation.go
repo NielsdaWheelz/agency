@@ -410,6 +410,9 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 			WorktreeID       string           `json:"worktree_id,omitempty"`
 			WorktreeName     string           `json:"worktree_name,omitempty"`
 			SandboxPath      string           `json:"sandbox_path,omitempty"`
+			ExecutionProfile string           `json:"execution_profile,omitempty"`
+			CheckoutRoot     string           `json:"checkout_root,omitempty"`
+			CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
 			TmuxSession      string           `json:"tmux_session,omitempty"`
 			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
 			AlreadyRunning   bool             `json:"already_running,omitempty"`
@@ -422,6 +425,9 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 			WorktreeID:       resp.WorktreeID,
 			WorktreeName:     resp.WorktreeName,
 			SandboxPath:      resp.SandboxPath,
+			ExecutionProfile: resp.ExecutionProfile,
+			CheckoutRoot:     resp.CheckoutRoot,
+			CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
 			TmuxSession:      resp.TmuxSession,
 			DaemonInstanceID: resp.DaemonInstanceID,
 			AlreadyRunning:   resp.AlreadyRunning,
@@ -437,6 +443,8 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
 	}
 	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
+	_, _ = fmt.Fprintf(stdout, "  profile:        %s\n", resp.ExecutionProfile)
+	_, _ = fmt.Fprintf(stdout, "  checkout_root:  %s\n", resp.CheckoutRoot)
 	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
 	if resp.AlreadyRunning {

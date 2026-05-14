@@ -1150,7 +1150,7 @@ func TestDaemonConcurrentStarts(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Checkpoint Integration Tests (Phase 5, PR-08)
+// Checkpoint integration tests.
 // ---------------------------------------------------------------------------
 
 // 5.1 TestDaemonCheckpointApplyWhileRunning
@@ -1446,7 +1446,7 @@ func TestDaemonControlPlaneStart_CursorQueuedPromptResumesNextTurn(t *testing.T)
 }
 
 // ---------------------------------------------------------------------------
-// Landing Integration Tests (PR-09)
+// Landing integration tests.
 // ---------------------------------------------------------------------------
 
 func TestDaemonLandCherryPick(t *testing.T) {
@@ -1818,7 +1818,7 @@ func TestDaemonLandAlreadyDiscarded(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Discard Integration Tests (PR-09)
+// Discard integration tests.
 // ---------------------------------------------------------------------------
 
 func TestDaemonDiscard(t *testing.T) {
@@ -2005,7 +2005,7 @@ func TestDaemonDiscardAlreadyDiscarded(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Landing Routing Tests (PR-09)
+// Landing routing tests.
 // ---------------------------------------------------------------------------
 
 // Routing correctness for POST /land and /discard is proven by all the
@@ -2014,7 +2014,7 @@ func TestDaemonDiscardAlreadyDiscarded(t *testing.T) {
 // TestHandleLandDiscardRouting in landing_handlers_test.go (internal package).
 
 // ---------------------------------------------------------------------------
-// Headed Invocation Tests (PR-10)
+// Headed invocation tests.
 // ---------------------------------------------------------------------------
 
 func TestDaemonHeadedStartHappyPath(t *testing.T) {
@@ -2031,7 +2031,18 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 	repoRoot := setupTestGitRepo(t)
 	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-happy")
 
-	resp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-happy")
+	startEnv := map[string]string{
+		"AGENCY_HEADED_MODE":   "start",
+		"AGENCY_HEADED_SECRET": "secret-value",
+	}
+	resp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: "headed-happy",
+		Runner:      "claude-code",
+		Env:         startEnv,
+	})
+	require.NoError(t, err, "control plane start headed")
+	require.True(t, resp.OK, "control plane start headed failed: %s - %s", resp.ErrorCode, resp.Message)
 
 	// Verify response fields
 	require.True(t, resp.OK)
@@ -2042,6 +2053,7 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 	assert.NotEmpty(t, resp.DaemonInstanceID)
 	assert.NotEmpty(t, resp.RequestID)
 	assert.False(t, resp.AlreadyRunning)
+	assert.Equal(t, []string{"AGENCY_HEADED_MODE", "AGENCY_HEADED_SECRET"}, resp.CustomEnvKeys)
 
 	// Verify invocation meta
 	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
@@ -2050,6 +2062,7 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 	assert.Equal(t, store.RunnerModeHeaded, meta.Mode)
 	assert.NotEmpty(t, meta.TmuxSession)
 	assert.Equal(t, "daemon", meta.LifecycleOwner)
+	assert.Equal(t, []string{"AGENCY_HEADED_MODE", "AGENCY_HEADED_SECRET"}, meta.CustomEnvKeys)
 
 	// Verify tmux calls
 	fakeTmux.Mu.Lock()
@@ -2058,6 +2071,7 @@ func TestDaemonHeadedStartHappyPath(t *testing.T) {
 		call := fakeTmux.NewSessionCalls[0]
 		assert.Equal(t, resp.SandboxPath, call.CWD)
 		assert.Contains(t, call.Argv[0], fakeRunnerPath(t))
+		assert.Equal(t, startEnv, call.Env)
 	}
 	fakeTmux.Mu.Unlock()
 
@@ -2079,9 +2093,21 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 	repoRoot := setupTestGitRepo(t)
 	_, _, _ = createTestWorktree(t, env.Client, repoRoot, "headed-recreate")
 
-	startResp := startTestHeadedInvocation(t, env.Client, repoRoot, "headed-recreate")
+	const recreateEnvKey = "AGENCY_RECREATE_SECRET"
+	startResp, err := env.Client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+		RepoRoot:    repoRoot,
+		WorktreeRef: "headed-recreate",
+		Runner:      "claude-code",
+		Env: map[string]string{
+			recreateEnvKey: "from-start-request",
+		},
+	})
+	require.NoError(t, err, "control plane start headed")
+	require.True(t, startResp.OK, "control plane start headed failed: %s - %s", startResp.ErrorCode, startResp.Message)
 
 	fakeTmux.Mu.Lock()
+	require.Len(t, fakeTmux.NewSessionCalls, 1)
+	assert.Equal(t, map[string]string{recreateEnvKey: "from-start-request"}, fakeTmux.NewSessionCalls[0].Env)
 	delete(fakeTmux.Sessions, startResp.TmuxSession)
 	callsBefore := len(fakeTmux.NewSessionCalls)
 	fakeTmux.Mu.Unlock()
@@ -2109,6 +2135,7 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 	assert.Equal(t, startResp.TmuxSession, call.Name)
 	assert.Equal(t, startResp.SandboxPath, call.CWD)
 	assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
+	assert.Empty(t, call.Env)
 
 	meta, err := env.Store.ReadInvocationMeta(startResp.RepoID, startResp.InvocationID)
 	require.NoError(t, err)
@@ -2118,11 +2145,60 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 	assert.Empty(t, meta.FinishedAt)
 	assert.Equal(t, "daemon", meta.LifecycleOwner)
 	assert.False(t, meta.Flags.NeedsAttention)
+	assert.Equal(t, []string{recreateEnvKey}, meta.CustomEnvKeys)
 
 	events, err := os.ReadFile(env.Store.InvocationEventsPath(startResp.RepoID, startResp.InvocationID))
 	require.NoError(t, err)
 	assert.Contains(t, string(events), `"kind":"agency.headed_recreated"`)
 	assert.Contains(t, string(events), `"tmux_session":"`+startResp.TmuxSession+`"`)
+
+	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
+}
+
+func TestDaemonTaskStartHeadedEnv(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := startTestDaemon(t)
+	ctx := context.Background()
+
+	fakeTmux := testutil.NewFakeTmuxClient()
+	env.Server.TmuxClient = fakeTmux
+
+	repoRoot := setupTestGitRepo(t)
+	taskEnv := map[string]string{
+		"AGENCY_TASK_HEADED_ENV": "task-value",
+	}
+	resp, err := env.Client.TaskStart(ctx, daemonclient.TaskStartOpts{
+		RepoRoot:   repoRoot,
+		Name:       "task-headed-env",
+		BaseBranch: "main",
+		Mode:       "headed",
+		Runner:     "claude-code",
+		Env:        taskEnv,
+		RunnerArgs: []string{"--allowed-extra"},
+	})
+	require.NoError(t, err, "task start headed")
+	require.True(t, resp.OK, "task start headed failed: %s - %s", resp.ErrorCode, resp.Message)
+	assert.Equal(t, store.TaskStateRunning, resp.State)
+	assert.Equal(t, store.RunnerModeHeaded, resp.Mode)
+	assert.Equal(t, []string{"AGENCY_TASK_HEADED_ENV"}, resp.CustomEnvKeys)
+	assert.NotEmpty(t, resp.TmuxSession)
+
+	fakeTmux.Mu.Lock()
+	require.Len(t, fakeTmux.NewSessionCalls, 1)
+	call := fakeTmux.NewSessionCalls[0]
+	fakeTmux.Mu.Unlock()
+	assert.Equal(t, resp.SandboxPath, call.CWD)
+	assert.Equal(t, fakeRunnerPath(t), call.Argv[0])
+	assert.Equal(t, []string{"--allowed-extra"}, call.Argv[1:])
+	assert.Equal(t, taskEnv, call.Env)
+
+	meta, err := env.Store.ReadInvocationMeta(resp.RepoID, resp.InvocationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.InvocationStatusRunning, meta.Status)
+	assert.Equal(t, []string{"AGENCY_TASK_HEADED_ENV"}, meta.CustomEnvKeys)
 
 	_, _ = env.Client.Kill(ctx, resp.RepoID, resp.InvocationID)
 }
@@ -2288,6 +2364,27 @@ func TestDaemonHeadedStartIdempotent(t *testing.T) {
 	require.True(t, resp2.OK, "second request should succeed: %s - %s", resp2.ErrorCode, resp2.Message)
 	assert.True(t, resp2.AlreadyRunning)
 	assert.Equal(t, resp1.InvocationID, resp2.InvocationID)
+
+	conflictReqBody := daemon.ControlPlaneStartHeadedRequest{
+		RepoRoot:        repoRoot,
+		WorktreeRef:     "headed-idem",
+		Runner:          "claude-code",
+		Env:             map[string]string{"AGENCY_IDEMPOTENCY_CONFLICT": "different"},
+		ClientRequestID: clientRequestID,
+	}
+	conflictBodyBytes, err := json.Marshal(conflictReqBody)
+	require.NoError(t, err)
+	httpReq3, err := http.NewRequest(http.MethodPost, "http://daemon/invocations/start_headed", bytes.NewReader(conflictBodyBytes))
+	require.NoError(t, err)
+	httpReq3.Header.Set("Content-Type", "application/json")
+	httpResp3, err := httpClient.Do(httpReq3)
+	require.NoError(t, err)
+	defer func() { _ = httpResp3.Body.Close() }()
+
+	var resp3 daemon.ControlPlaneStartHeadedResponse
+	require.NoError(t, json.NewDecoder(httpResp3.Body).Decode(&resp3))
+	assert.False(t, resp3.OK)
+	assert.Equal(t, "E_IDEMPOTENCY_CONFLICT", resp3.ErrorCode)
 
 	// Tmux should only have been called once
 	fakeTmux.Mu.Lock()

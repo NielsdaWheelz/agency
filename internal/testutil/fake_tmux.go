@@ -13,6 +13,7 @@ type FakeTmuxSession struct {
 	Name    string
 	CWD     string
 	Argv    []string
+	Env     map[string]string
 	Clients []tmux.AttachedClient
 }
 
@@ -21,6 +22,7 @@ type FakeTmuxNewSessionCall struct {
 	Name string
 	CWD  string
 	Argv []string
+	Env  map[string]string
 }
 
 // FakeTmuxSendKeysCall records the arguments of a SendKeys call.
@@ -95,15 +97,27 @@ func (f *FakeTmuxClient) HasSession(_ context.Context, name string) (bool, error
 }
 
 // NewSession implements tmux.Client.
-func (f *FakeTmuxClient) NewSession(_ context.Context, name, cwd string, argv []string) error {
+func (f *FakeTmuxClient) NewSession(_ context.Context, name, cwd string, argv []string, env map[string]string) error {
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
-	f.NewSessionCalls = append(f.NewSessionCalls, FakeTmuxNewSessionCall{Name: name, CWD: cwd, Argv: argv})
+	envMap := copyTmuxEnv(env)
+	f.NewSessionCalls = append(f.NewSessionCalls, FakeTmuxNewSessionCall{Name: name, CWD: cwd, Argv: argv, Env: envMap})
 	if f.NewSessionErr != nil {
 		return f.NewSessionErr
 	}
-	f.Sessions[name] = FakeTmuxSession{Name: name, CWD: cwd, Argv: argv}
+	f.Sessions[name] = FakeTmuxSession{Name: name, CWD: cwd, Argv: argv, Env: envMap}
 	return nil
+}
+
+func copyTmuxEnv(env map[string]string) map[string]string {
+	if env == nil {
+		return nil
+	}
+	copied := make(map[string]string, len(env))
+	for key, value := range env {
+		copied[key] = value
+	}
+	return copied
 }
 
 // KillSession implements tmux.Client.

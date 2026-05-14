@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -13,5 +13,9 @@
       "path": "scripts/agency_archive.sh",
       "timeout": "10m"
     }
+  },
+  "execution": {
+    "profile": "work",
+    "checkout_root": "/tmp/agency-checkouts"
   }
 }

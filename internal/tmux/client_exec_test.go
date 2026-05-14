@@ -143,6 +143,7 @@ func TestExecClient_NewSession(t *testing.T) {
 		sessionName    string
 		cwd            string
 		argv           []string
+		env            map[string]string
 		responses      []fakeResponse
 		wantErr        bool
 		wantArgsPrefix []string // args before "--"
@@ -201,7 +202,7 @@ func TestExecClient_NewSession(t *testing.T) {
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
-			err := client.NewSession(context.Background(), tt.sessionName, tt.cwd, tt.argv)
+			err := client.NewSession(context.Background(), tt.sessionName, tt.cwd, tt.argv, tt.env)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -234,6 +235,41 @@ func TestExecClient_NewSession(t *testing.T) {
 			}
 			assert.True(t, found, "call.Args missing '--' separator")
 		})
+	}
+}
+
+func TestExecClient_NewSession_EnvUsesProcessEnvironmentNotArgv(t *testing.T) {
+	t.Parallel()
+
+	secretEnv := map[string]string{
+		"ZED": "last-secret",
+		"ABC": "first-secret",
+		"MID": "middle-secret",
+	}
+	runner := newFakeRunner(
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0, Stdout: "DISPLAY SSH_AUTH_SOCK\n"}},
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0}},
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0}},
+		fakeResponse{Result: exec.CmdResult{ExitCode: 0}},
+	)
+	client := NewExecClient(runner)
+
+	err := client.NewSession(context.Background(), "agency_env", "/tmp/wt", []string{"claude", "--resume"}, secretEnv)
+
+	require.NoError(t, err)
+	require.Len(t, runner.calls, 4)
+	assert.Equal(t, []string{"show-option", "-gqv", "update-environment"}, runner.calls[0].Args)
+	assert.Equal(t, []string{"set-option", "-gq", "update-environment", "DISPLAY SSH_AUTH_SOCK ABC MID ZED"}, runner.calls[1].Args)
+	assert.Equal(t, []string{"new-session", "-d", "-s", "agency_env", "-c", "/tmp/wt", "--", "claude", "--resume"}, runner.calls[2].Args)
+	assert.Equal(t, secretEnv, runner.calls[2].Opts.Env)
+	assert.Equal(t, []string{"set-option", "-gq", "update-environment", "DISPLAY SSH_AUTH_SOCK"}, runner.calls[3].Args)
+
+	for _, call := range runner.calls {
+		for _, arg := range call.Args {
+			assert.NotContains(t, arg, "first-secret")
+			assert.NotContains(t, arg, "middle-secret")
+			assert.NotContains(t, arg, "last-secret")
+		}
 	}
 }
 

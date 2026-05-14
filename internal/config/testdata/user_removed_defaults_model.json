@@ -1,9 +1,15 @@
 {
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
     "base_branch": "main",
+    "execution_profile": "personal",
     "model": "opus-4.7"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
+    }
   }
 }

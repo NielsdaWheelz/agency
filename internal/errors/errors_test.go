@@ -201,12 +201,9 @@ func TestAsAgencyError(t *testing.T) {
 	})
 }
 
-// TestSlice3ErrorCodesExist verifies slice 03 error codes are defined and stable.
-func TestSlice3ErrorCodesExist(t *testing.T) {
+func TestPushPRErrorCodesExist(t *testing.T) {
 	t.Parallel()
 
-	// This test ensures slice 03 error codes exist as constants.
-	// If any are missing or renamed, this test will fail to compile.
 	codes := []Code{
 		EUnsupportedOriginHost,
 		ENoOrigin,
@@ -239,8 +236,7 @@ func TestSlice3ErrorCodesExist(t *testing.T) {
 	}
 }
 
-// TestPR09ErrorCodesExist verifies PR-09 landing error codes are defined and stable.
-func TestPR09ErrorCodesExist(t *testing.T) {
+func TestLandingErrorCodesExist(t *testing.T) {
 	t.Parallel()
 
 	codes := []Code{
@@ -273,8 +269,7 @@ func TestPR09ErrorCodesExist(t *testing.T) {
 	}
 }
 
-// TestPR09ErrorFormat verifies PR-09 error codes format correctly.
-func TestPR09ErrorFormat(t *testing.T) {
+func TestLandingErrorFormat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -304,8 +299,7 @@ func TestPR09ErrorFormat(t *testing.T) {
 	}
 }
 
-// TestSlice3ErrorFormat verifies slice 03 error codes format correctly.
-func TestSlice3ErrorFormat(t *testing.T) {
+func TestPushPRErrorFormat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

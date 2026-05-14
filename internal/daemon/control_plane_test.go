@@ -1,8 +1,12 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -188,71 +192,21 @@ func TestValidateRunnerArgs(t *testing.T) {
 }
 
 func TestIsInsideAgencyManagedWorktree(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		path     string
-		dataDir  string
-		expected bool
-	}{
-		{
-			name:     "normal repo path",
-			path:     "/home/user/myrepo",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-		{
-			name:     "inside integration worktree tree",
-			path:     "/home/user/.agency/repos/abc123/integration_worktrees/123-abcd/tree",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside integration worktree tree subdir",
-			path:     "/home/user/.agency/repos/abc123/integration_worktrees/123-abcd/tree/src/main",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside sandbox tree",
-			path:     "/home/user/.agency/repos/abc123/sandboxes/456-efgh/tree",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside sandbox tree subdir",
-			path:     "/home/user/.agency/repos/abc123/sandboxes/456-efgh/tree/src",
-			dataDir:  "/home/user/.agency",
-			expected: true,
-		},
-		{
-			name:     "inside repos but not tree",
-			path:     "/home/user/.agency/repos/abc123",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-		{
-			name:     "inside repos dir but not correct structure",
-			path:     "/home/user/.agency/repos/abc123/runs/123/worktree",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-		{
-			name:     "different data dir",
-			path:     "/home/user/.other/repos/abc123/sandboxes/456-efgh/tree",
-			dataDir:  "/home/user/.agency",
-			expected: false,
-		},
-	}
+	tmpDir := t.TempDir()
+	integrationTree := filepath.Join(tmpDir, "outside-data-dir", "worktrees", "feature-123")
+	sandboxTree := filepath.Join(tmpDir, "outside-data-dir", "sandboxes", "inv-1")
+	plainTree := filepath.Join(tmpDir, "plain")
+	require.NoError(t, os.MkdirAll(filepath.Join(integrationTree, ".agency"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(sandboxTree, ".agency"), 0o755))
+	require.NoError(t, os.MkdirAll(plainTree, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(integrationTree, ".agency", integrationworktree.IntegrationMarkerFileName), []byte("integration\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxTree, ".agency", invocation.SandboxMarkerFileName), []byte("sandbox\n"), 0o644))
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := isInsideAgencyManagedWorktree(tt.path, tt.dataDir)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	assert.True(t, isInsideAgencyManagedWorktree(integrationTree))
+	assert.True(t, isInsideAgencyManagedWorktree(filepath.Join(integrationTree, "src", "main")))
+	assert.True(t, isInsideAgencyManagedWorktree(sandboxTree))
+	assert.True(t, isInsideAgencyManagedWorktree(filepath.Join(sandboxTree, "src")))
+	assert.False(t, isInsideAgencyManagedWorktree(plainTree))
 }
 
 func TestBuildRunnerArgsWithSandbox(t *testing.T) {

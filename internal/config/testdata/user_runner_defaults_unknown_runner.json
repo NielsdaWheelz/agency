@@ -1,12 +1,18 @@
 {
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
-    "editor": "code"
+    "editor": "code",
+    "execution_profile": "personal"
   },
   "runner_defaults": {
     "amp": {
       "model": "amp-1"
+    }
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {}
     }
   }
 }

@@ -1,5 +1,4 @@
 // Package ids provides identifier resolution for agency commands.
-// This file implements invocation resolution (Slice 8 PR-02/04).
 package ids
 
 import (
@@ -19,7 +18,7 @@ type InvocationRef struct {
 	IntegrationWorktreeID string
 
 	// InvocationName is the optional human-readable name. Empty if broken or not set.
-	// Used for name-based resolution in PR-04+.
+	// Used for name-based resolution.
 	InvocationName string
 
 	// Status is the invocation status (starting, running, finished, failed).
@@ -75,7 +74,7 @@ type ResolveInvocationRefOpts struct {
 
 // ResolveInvocationRef resolves an input identifier to a single invocation reference.
 //
-// Resolution rules (unified with worktree resolver in PR-04):
+// Resolution rules:
 //  1. Exact name match: among eligible (active, non-terminal) invocations
 //  2. Exact ID match: works for all including terminal (escape hatch)
 //  3. Unique ID prefix match: among eligible invocations

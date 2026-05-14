@@ -6,8 +6,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
@@ -18,7 +21,8 @@ const maxStderrLen = 4096
 // ExecClient is a tmux Client implementation that shells out to tmux
 // via internal/exec.CommandRunner.
 type ExecClient struct {
-	runner exec.CommandRunner
+	runner              exec.CommandRunner
+	updateEnvironmentMu sync.Mutex
 }
 
 // NewExecClient creates a new ExecClient with the given CommandRunner.
@@ -49,16 +53,37 @@ func (c *ExecClient) HasSession(ctx context.Context, name string) (bool, error) 
 
 // NewSession implements Client.NewSession.
 // Uses: tmux new-session -d -s <name> -c <cwd> -- <argv...>
-func (c *ExecClient) NewSession(ctx context.Context, name, cwd string, argv []string) error {
+//
+// Environment values are passed through the tmux client process environment,
+// not as tmux argv flags, so secret values do not appear in process listings.
+func (c *ExecClient) NewSession(ctx context.Context, name, cwd string, argv []string, env map[string]string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("tmux new-session: argv must have at least 1 element")
 	}
 
-	// Build args: new-session -d -s <name> -c <cwd> -- <cmd> <args...>
-	args := []string{"new-session", "-d", "-s", name, "-c", cwd, "--"}
+	args := []string{"new-session", "-d", "-s", name, "-c", cwd}
+	args = append(args, "--")
 	args = append(args, argv...)
 
-	result, err := c.runner.Run(ctx, "tmux", args, exec.RunOpts{})
+	keys := sortedTmuxUpdateEnvironmentKeys(env)
+	if len(keys) > 0 {
+		c.updateEnvironmentMu.Lock()
+		defer c.updateEnvironmentMu.Unlock()
+	}
+
+	restoreUpdateEnvironment, err := c.extendUpdateEnvironment(ctx, keys)
+	if err != nil {
+		return err
+	}
+	if restoreUpdateEnvironment != nil {
+		defer func() {
+			restoreCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			restoreUpdateEnvironment(restoreCtx)
+		}()
+	}
+
+	result, err := c.runner.Run(ctx, "tmux", args, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -67,6 +92,84 @@ func (c *ExecClient) NewSession(ctx context.Context, name, cwd string, argv []st
 		return c.formatError("new-session", result.ExitCode, result.Stderr)
 	}
 	return nil
+}
+
+func (c *ExecClient) extendUpdateEnvironment(ctx context.Context, keys []string) (func(context.Context), error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	showResult, err := c.runner.Run(ctx, "tmux", []string{"show-option", "-gqv", "update-environment"}, exec.RunOpts{})
+	if err != nil {
+		return nil, err
+	}
+	if showResult.ExitCode != 0 {
+		// No tmux server is running yet. The server started by new-session will
+		// inherit the client process environment directly.
+		return nil, nil
+	}
+
+	original := strings.TrimSpace(showResult.Stdout)
+	updated := mergeUpdateEnvironmentKeys(original, keys)
+	if updated == original {
+		return nil, nil
+	}
+
+	setResult, err := c.runner.Run(ctx, "tmux", []string{"set-option", "-gq", "update-environment", updated}, exec.RunOpts{})
+	if err != nil {
+		return nil, err
+	}
+	if setResult.ExitCode != 0 {
+		return nil, c.formatError("set-option", setResult.ExitCode, setResult.Stderr)
+	}
+
+	return func(ctx context.Context) {
+		_, _ = c.runner.Run(ctx, "tmux", []string{"set-option", "-gq", "update-environment", original}, exec.RunOpts{})
+	}, nil
+}
+
+func sortedTmuxUpdateEnvironmentKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		if isTmuxUpdateEnvironmentKey(key) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func isTmuxUpdateEnvironmentKey(key string) bool {
+	if key == "" || strings.ContainsAny(key, " =\t\r\n") || strings.HasPrefix(key, "-") {
+		return false
+	}
+	return true
+}
+
+func mergeUpdateEnvironmentKeys(original string, keys []string) string {
+	requested := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		requested[key] = true
+	}
+	seen := make(map[string]bool, len(keys))
+	fields := strings.Fields(original)
+	merged := make([]string, 0, len(fields)+len(keys))
+	for _, field := range fields {
+		name := strings.TrimPrefix(field, "-")
+		if requested[name] && strings.HasPrefix(field, "-") {
+			continue
+		}
+		merged = append(merged, field)
+		if !strings.HasPrefix(field, "-") {
+			seen[name] = true
+		}
+	}
+	for _, key := range keys {
+		if !seen[key] {
+			merged = append(merged, key)
+		}
+	}
+	return strings.Join(merged, " ")
 }
 
 // KillSession implements Client.KillSession.

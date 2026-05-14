@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -29,6 +30,7 @@ type TaskStartOpts struct {
 	Prompt             string
 	PromptFile         string
 	AgencyConfigPath   string
+	ExecutionProfile   string
 	RunnerArgs         []string
 	Model              string
 	Effort             string
@@ -73,6 +75,7 @@ type TaskRetryOpts struct {
 	Prompt             string
 	PromptFile         string
 	AgencyConfigPath   string
+	ExecutionProfile   string
 	RunnerArgs         []string
 	Model              string
 	Effort             string
@@ -160,6 +163,9 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return fail(err)
 	}
+	if opts.AgencyConfigPath != "" && !filepath.IsAbs(opts.AgencyConfigPath) {
+		opts.AgencyConfigPath = filepath.Join(cwd, opts.AgencyConfigPath)
+	}
 
 	baseBranch := strings.TrimSpace(opts.BaseBranch)
 	if baseBranch == "" {
@@ -219,6 +225,8 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		Prompt:             prompt,
 		InvocationName:     strings.TrimSpace(opts.InvocationName),
 		RunnerArgs:         runnerArgs,
+		ExecutionProfile:   strings.TrimSpace(opts.ExecutionProfile),
+		AgencyConfigPath:   opts.AgencyConfigPath,
 		NoIncludeUntracked: opts.NoIncludeUntracked,
 	})
 	if err != nil {
@@ -236,6 +244,8 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	_, _ = fmt.Fprintf(stdout, "  invocation: %s\n", resp.InvocationID)
 	_, _ = fmt.Fprintf(stdout, "  runner:     %s\n", resp.Runner)
 	_, _ = fmt.Fprintf(stdout, "  mode:       %s\n", resp.Mode)
+	_, _ = fmt.Fprintf(stdout, "  profile:    %s\n", resp.ExecutionProfile)
+	_, _ = fmt.Fprintf(stdout, "  checkout_root: %s\n", resp.CheckoutRoot)
 	if resp.Mode == store.RunnerModeHeaded {
 		_, _ = fmt.Fprintf(stdout, "  tmux:       %s\n", resp.TmuxSession)
 		if !opts.Detached {
@@ -427,6 +437,9 @@ func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return fail(err)
 	}
+	if opts.AgencyConfigPath != "" && !filepath.IsAbs(opts.AgencyConfigPath) {
+		opts.AgencyConfigPath = filepath.Join(cwd, opts.AgencyConfigPath)
+	}
 	runnerInput := strings.TrimSpace(opts.Runner)
 	if runnerInput == "" {
 		runnerInput = task.Data.Runner
@@ -443,12 +456,17 @@ func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return fail(err)
 	}
+	if err := ns.client.CheckAPIVersion(ctx); err != nil {
+		return fail(err)
+	}
 	resp, err := ns.client.RetryTask(ctx, opts.TaskRef, repo.RepoID, daemonclient.TaskRetryOpts{
 		Mode:               mode,
 		Runner:             runner,
 		Prompt:             prompt,
 		InvocationName:     opts.InvocationName,
 		RunnerArgs:         runnerArgs,
+		ExecutionProfile:   strings.TrimSpace(opts.ExecutionProfile),
+		AgencyConfigPath:   opts.AgencyConfigPath,
 		NoIncludeUntracked: opts.NoIncludeUntracked,
 	})
 	if err != nil {
@@ -460,6 +478,8 @@ func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	_, _ = fmt.Fprintf(stdout, "Retried task %s\n", resp.TaskID)
 	_, _ = fmt.Fprintf(stdout, "  invocation: %s\n", resp.InvocationID)
 	_, _ = fmt.Fprintf(stdout, "  mode:       %s\n", resp.Mode)
+	_, _ = fmt.Fprintf(stdout, "  profile:    %s\n", resp.ExecutionProfile)
+	_, _ = fmt.Fprintf(stdout, "  checkout_root: %s\n", resp.CheckoutRoot)
 	if resp.Mode == store.RunnerModeHeaded && !opts.Detached {
 		attachFn := opts.TmuxAttachFn
 		if attachFn == nil {
@@ -526,6 +546,8 @@ func printTaskDTO(w io.Writer, task daemon.TaskDTO) {
 	_, _ = fmt.Fprintf(w, "  task:       %s\n", task.TaskID)
 	_, _ = fmt.Fprintf(w, "  state:      %s\n", task.State)
 	_, _ = fmt.Fprintf(w, "  repo:       %s\n", task.RepoID)
+	_, _ = fmt.Fprintf(w, "  profile:    %s\n", task.ExecutionProfile)
+	_, _ = fmt.Fprintf(w, "  checkout_root: %s\n", task.CheckoutRoot)
 	if task.WorktreeID != "" {
 		_, _ = fmt.Fprintf(w, "  worktree:   %s (%s)\n", task.WorktreeName, task.WorktreeID)
 		_, _ = fmt.Fprintf(w, "  branch:     %s\n", task.Branch)
@@ -554,6 +576,9 @@ func taskStartJSON(resp *daemon.TaskStartResponse) any {
 		WorktreeName     string           `json:"worktree_name,omitempty"`
 		WorktreePath     string           `json:"worktree_path,omitempty"`
 		Branch           string           `json:"branch,omitempty"`
+		ExecutionProfile string           `json:"execution_profile,omitempty"`
+		CheckoutRoot     string           `json:"checkout_root,omitempty"`
+		CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
 		InvocationID     string           `json:"invocation_id,omitempty"`
 		SandboxPath      string           `json:"sandbox_path,omitempty"`
 		Mode             store.RunnerMode `json:"mode,omitempty"`
@@ -575,6 +600,9 @@ func taskStartJSON(resp *daemon.TaskStartResponse) any {
 		WorktreeName:     resp.WorktreeName,
 		WorktreePath:     resp.WorktreePath,
 		Branch:           resp.Branch,
+		ExecutionProfile: resp.ExecutionProfile,
+		CheckoutRoot:     resp.CheckoutRoot,
+		CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
 		InvocationID:     resp.InvocationID,
 		SandboxPath:      resp.SandboxPath,
 		Mode:             resp.Mode,

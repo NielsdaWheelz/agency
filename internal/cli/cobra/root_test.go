@@ -292,13 +292,19 @@ func startCompletionTestDaemon(t *testing.T) (string, string, *daemonclient.Clie
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runners": map[string]string{
 			"claude-code": "/bin/echo",
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
 		},
 	}
 	cfgBytes, err := json.Marshal(cfg)

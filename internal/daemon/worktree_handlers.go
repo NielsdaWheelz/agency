@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net/http"
@@ -29,7 +28,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request body
 	var req WorktreeCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		s.writeWorktreeError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
 		return
 	}
@@ -61,6 +60,18 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 			"failed to resolve repo_root symlinks: "+err.Error(), "")
 		return
 	}
+	insideManagedTree, err := s.isInsideAgencyManagedTree(repoRoot)
+	if err != nil {
+		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to inspect managed worktrees: "+err.Error(), "")
+		return
+	}
+	if insideManagedTree {
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EUnsafeRepoRoot),
+			"repo_root is inside an agency-managed worktree",
+			"use the original repository, not a sandbox or integration worktree")
+		return
+	}
 
 	// Derive git root via git rev-parse --show-toplevel
 	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot)
@@ -74,13 +85,55 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	// Derive repo identity.
 	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
-
-	// Check idempotency before acquiring lock.
-	if entry, isDuplicate := s.checkWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey); isDuplicate {
-		// Return the existing worktree
-		s.writeWorktreeSuccess(w, entry.WorktreeID, entry.TreePath, entry.Branch, repoIdentity.RepoID)
+	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, "", "")
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeWorktreeError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
 		return
 	}
+
+	fingerprint := worktreeCreateFingerprint(repoRoot, req, execCtx)
+	if entry, isDuplicate, conflict := s.checkWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); isDuplicate {
+		if conflict {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
+				"idempotency_key was already used for a different worktree create request",
+				"retry with the original request or choose a new idempotency_key")
+			return
+		}
+		if s.writeIdempotentWorktreeCreate(w, repoIdentity.RepoID, entry) {
+			return
+		}
+		s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
+			"idempotency_key was already accepted but worktree metadata is unreadable",
+			"inspect worktree state before retrying")
+		return
+	}
+	if record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); err != nil {
+		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to scan worktrees for idempotency: "+err.Error(), "")
+		return
+	} else if exists {
+		if conflict {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
+				"idempotency_key was already used for a different worktree create request",
+				"retry with the original request or choose a new idempotency_key")
+			return
+		}
+		if record.Meta == nil || record.Broken {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
+				"idempotency_key record exists but worktree metadata is unreadable",
+				"inspect worktree state before retrying")
+			return
+		}
+		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint, record.Meta.TreePath, record.Meta.Branch)
+		s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoIdentity.RepoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
+		return
+	}
+
+	// Check again under the repo lock below before mutating.
 
 	// Acquire repo lock before mutation.
 	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "worktree create")
@@ -96,6 +149,43 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = unlock() }()
+
+	if entry, isDuplicate, conflict := s.checkWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); isDuplicate {
+		if conflict {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
+				"idempotency_key was already used for a different worktree create request",
+				"retry with the original request or choose a new idempotency_key")
+			return
+		}
+		if s.writeIdempotentWorktreeCreate(w, repoIdentity.RepoID, entry) {
+			return
+		}
+		s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
+			"idempotency_key was already accepted but worktree metadata is unreadable",
+			"inspect worktree state before retrying")
+		return
+	}
+	if record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); err != nil {
+		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+			"failed to scan worktrees for idempotency: "+err.Error(), "")
+		return
+	} else if exists {
+		if conflict {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
+				"idempotency_key was already used for a different worktree create request",
+				"retry with the original request or choose a new idempotency_key")
+			return
+		}
+		if record.Meta == nil || record.Broken {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
+				"idempotency_key record exists but worktree metadata is unreadable",
+				"inspect worktree state before retrying")
+			return
+		}
+		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint, record.Meta.TreePath, record.Meta.Branch)
+		s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoIdentity.RepoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
+		return
+	}
 
 	// Ensure repo is registered.
 	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
@@ -113,10 +203,14 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 
 	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	createResult, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
-		Name:       req.Name,
-		RepoRoot:   repoRoot,
-		RepoID:     repoIdentity.RepoID,
-		BaseBranch: req.BaseBranch,
+		Name:               req.Name,
+		RepoRoot:           repoRoot,
+		RepoID:             repoIdentity.RepoID,
+		BaseBranch:         req.BaseBranch,
+		CheckoutRoot:       execCtx.CheckoutRoot,
+		ExecutionProfile:   execCtx.Profile,
+		IdempotencyKey:     req.IdempotencyKey,
+		RequestFingerprint: fingerprint,
 	})
 	if err != nil {
 		code := errors.GetCode(err)
@@ -128,10 +222,21 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record idempotency entry.
-	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, createResult.WorktreeID, createResult.TreePath, createResult.Branch)
+	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, createResult.WorktreeID, fingerprint, createResult.TreePath, createResult.Branch)
 
 	// Return success.
-	s.writeWorktreeSuccess(w, createResult.WorktreeID, createResult.TreePath, createResult.Branch, repoIdentity.RepoID)
+	s.writeWorktreeSuccess(w, createResult.WorktreeID, createResult.TreePath, createResult.Branch, repoIdentity.RepoID, execCtx.Profile, execCtx.CheckoutRoot)
+}
+
+func (s *Server) writeIdempotentWorktreeCreate(w http.ResponseWriter, repoID string, entry WorktreeIdempotencyEntry) bool {
+	if entry.WorktreeID == "" {
+		return false
+	}
+	if meta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, entry.WorktreeID); err == nil && meta != nil {
+		s.writeWorktreeSuccess(w, entry.WorktreeID, meta.TreePath, meta.Branch, repoID, meta.ExecutionProfile, meta.CheckoutRoot)
+		return true
+	}
+	return false
 }
 
 // handleWorktreeRm handles POST /worktrees/{id}/rm.
@@ -140,11 +245,9 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 
 	// Parse request body
 	var req WorktreeRmRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writeWorktreeRmError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
-			return
-		}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeWorktreeRmError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "")
+		return
 	}
 
 	// Get repo_id from query params (required for resolution)
@@ -168,14 +271,18 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
-	// Get repo_root from index (repo record doesn't store path)
-	repoRoot, err := s.getRepoRootFromIndex(repoID)
-	if err != nil {
+	repoRoot := ""
+	for _, root := range []string{repoRecord.PreferredRoot, repoRecord.RepoRootLastSeen} {
+		if resolved, ok := canonicalAccessibleDir(root); ok {
+			repoRoot = resolved
+			break
+		}
+	}
+	if repoRoot == "" {
 		s.writeWorktreeRmError(w, http.StatusInternalServerError, "E_INTERNAL",
-			"failed to get repo root: "+err.Error(), "")
+			"repo root is not accessible from repo.json", "")
 		return
 	}
-	_ = repoRecord // Used for validation only
 
 	// Acquire repo lock
 	unlock, err := s.repoLock.Lock(repoID, "worktree rm")
@@ -363,23 +470,4 @@ func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot s
 	}
 
 	return s.Store.SaveRepoRecord(rec)
-}
-
-// getRepoRootFromIndex gets the repo root path from the repo index.
-func (s *Server) getRepoRootFromIndex(repoID string) (string, error) {
-	idx, err := s.Store.LoadRepoIndex()
-	if err != nil {
-		return "", err
-	}
-
-	for _, entry := range idx.Repos {
-		if entry.RepoID == repoID {
-			// Return the first path (there may be multiple)
-			if len(entry.Paths) > 0 {
-				return entry.Paths[0], nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("repo %s not found in index", repoID)
 }

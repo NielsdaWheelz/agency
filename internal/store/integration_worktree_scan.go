@@ -1,9 +1,8 @@
 // Package store provides persistence for agency data.
-// This file implements filesystem-based integration worktree discovery (Slice 8 PR-01).
+// This file implements filesystem-based integration worktree discovery.
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,15 +73,14 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 		}
 
 		var meta IntegrationWorktreeMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
+		if err := decodeStrictJSON(data, &meta); err != nil {
 			// Invalid JSON - mark as broken
 			record.Broken = true
 			records = append(records, record)
 			continue
 		}
 
-		// Validate minimal required fields for non-broken status
-		if meta.SchemaVersion == "" || meta.CreatedAt == "" || meta.BaseBranch == "" {
+		if err := validateIntegrationWorktreeMeta(meta, repoID, worktreeID, metaPath); err != nil {
 			record.Broken = true
 			records = append(records, record)
 			continue

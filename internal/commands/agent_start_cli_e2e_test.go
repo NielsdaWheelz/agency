@@ -49,6 +49,36 @@ type launchCapture struct {
 	Mode string   `json:"mode"`
 }
 
+func writeCommittedAgencyConfig(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	for _, script := range []string{"agency_setup.sh", "agency_verify.sh", "agency_archive.sh"} {
+		require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, script), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "agency.json"), []byte(`{
+  "version": 4,
+  "scripts": {
+    "setup": { "path": "scripts/agency_setup.sh", "timeout": "10m" },
+    "verify": { "path": "scripts/agency_verify.sh", "timeout": "30m" },
+    "archive": { "path": "scripts/agency_archive.sh", "timeout": "5m" }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
+  }
+}`), 0o644))
+
+	runner := agencyexec.NewRealRunner()
+	result, err := runner.Run(context.Background(), "git", []string{"add", "agency.json", "scripts"}, agencyexec.RunOpts{Dir: repoRoot})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git add agency config failed: %s", result.Stderr)
+	result, err = runner.Run(context.Background(), "git", []string{"commit", "-m", "Add agency config"}, agencyexec.RunOpts{Dir: repoRoot})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode, "git commit agency config failed: %s", result.Stderr)
+}
+
 func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
@@ -115,6 +145,7 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			repoDir := testutil.SetupGitRepo(t)
+			writeCommittedAgencyConfig(t, repoDir)
 
 			tmpDir := mustMkdirTemp(t, "agency-e2e-*")
 			dataDir := filepath.Join(tmpDir, "data")
@@ -214,6 +245,7 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 	agencyBin, fakeRunnerBin := buildE2EBinaries(t, repoRoot)
 
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 
 	tmpDir := mustMkdirTemp(t, "agency-e2e-*")
 	dataDir := filepath.Join(tmpDir, "data")
@@ -288,6 +320,7 @@ func TestAgentStartCLIE2E_CWDFallbacks(t *testing.T) {
 	repoRoot := repoRootFromCaller(t)
 	agencyBin, fakeRunnerBin := buildE2EBinaries(t, repoRoot)
 	repoDir := testutil.SetupGitRepo(t)
+	writeCommittedAgencyConfig(t, repoDir)
 
 	tmpDir := mustMkdirTemp(t, "agency-e2e-*")
 	dataDir := filepath.Join(tmpDir, "data")
@@ -430,10 +463,11 @@ func writeE2EConfig(t *testing.T, configDir, fakeRunnerBin string) {
 	t.Helper()
 
 	cfg := map[string]any{
-		"version": 3,
+		"version": 4,
 		"defaults": map[string]string{
-			"runner": "claude-code",
-			"editor": "code",
+			"runner":            "claude-code",
+			"editor":            "code",
+			"execution_profile": "personal",
 		},
 		"runners": map[string]string{
 			"claude-code": fakeRunnerBin,
@@ -442,6 +476,11 @@ func writeE2EConfig(t *testing.T, configDir, fakeRunnerBin string) {
 			"opencode":    fakeRunnerBin,
 			"cursor":      fakeRunnerBin,
 			"droid":       fakeRunnerBin,
+		},
+		"execution_profiles": map[string]any{
+			"personal": map[string]any{
+				"env": map[string]string{},
+			},
 		},
 	}
 

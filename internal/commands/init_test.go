@@ -7,13 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
+	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	invocationpkg "github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/scaffold"
+	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,6 +56,34 @@ func setupTempGitRepo(t *testing.T) (string, string) {
 	require.NoError(t, os.MkdirAll(gitDir, 0755), "failed to create .git dir")
 
 	return dir, configDir
+}
+
+func registerInitTestRepo(t *testing.T, dataDir, repoRoot string) {
+	t.Helper()
+	repoIdentity := identity.DeriveRepoIdentity(repoRoot, "")
+	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
+	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
+		SchemaVersion: store.SchemaVersion,
+		Repos: map[string]store.RepoIndexEntry{
+			repoIdentity.RepoKey: {
+				RepoID:     repoIdentity.RepoID,
+				Paths:      []string{repoRoot},
+				LastSeenAt: "2026-01-01T00:00:00Z",
+			},
+		},
+	}))
+	require.NoError(t, st.SaveRepoRecord(store.RepoRecord{
+		SchemaVersion:    store.SchemaVersion,
+		RepoKey:          repoIdentity.RepoKey,
+		RepoID:           repoIdentity.RepoID,
+		RepoRootLastSeen: repoRoot,
+		PreferredRoot:    repoRoot,
+		AgencyJSONPath:   filepath.Join(repoRoot, "agency.json"),
+		OriginPresent:    false,
+		Capabilities:     store.Capabilities{},
+		CreatedAt:        "2026-01-01T00:00:00Z",
+		UpdatedAt:        "2026-01-01T00:00:00Z",
+	}))
 }
 
 func TestInit_CreatesConfigAndStubs(t *testing.T) {
@@ -111,6 +143,8 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 func TestInit_RefusesOverwrite(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	// Create existing agency.json
 	existingContent := `{"version": 999}`
@@ -122,7 +156,7 @@ func TestInit_RefusesOverwrite(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 
 	// Should error
@@ -138,6 +172,8 @@ func TestInit_RefusesOverwrite(t *testing.T) {
 func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	// Create existing agency.json with different content
 	existingContent := `{"version": 999}`
@@ -156,7 +192,7 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: true, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: true, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init with --force failed")
 
@@ -178,6 +214,8 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 func TestInit_GitignoreIdempotent(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	// Create .gitignore with .agency/ already present
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
@@ -189,7 +227,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -205,6 +243,8 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	// Create .gitignore with .agency (no trailing slash) - should be treated as present
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
@@ -216,7 +256,7 @@ func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -230,13 +270,15 @@ func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 func TestInit_NoGitignore(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: true, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: true, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -284,14 +326,19 @@ func TestInit_RepoConfigRejectsAgencyManagedTrees(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot := filepath.Join(dataDir, "repos", "repo-1", tt.kind, tt.id, "tree")
-			require.NoError(t, os.MkdirAll(repoRoot, 0o755), "failed to create managed tree")
+			require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".agency"), 0o755), "failed to create managed tree")
+			markerName := integrationworktree.IntegrationMarkerFileName
+			if tt.kind == "sandboxes" {
+				markerName = invocationpkg.SandboxMarkerFileName
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, ".agency", markerName), []byte("managed\n"), 0o644))
 
 			cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 			fsys := fs.NewRealFS()
 			ctx := context.Background()
 			var stdout, stderr bytes.Buffer
 
-			err := Init(ctx, cr, fsys, repoRoot, InitOpts{RepoConfig: true, ConfigDirOverride: configDir}, &stdout, &stderr)
+			err := Init(ctx, cr, fsys, repoRoot, InitOpts{RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}, &stdout, &stderr)
 			require.Error(t, err)
 			assert.Equal(t, errors.EUnsafeRepoRoot, errors.GetCode(err))
 			assert.Empty(t, stdout.String())
@@ -303,6 +350,8 @@ func TestInit_RepoConfigRejectsAgencyManagedTrees(t *testing.T) {
 func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	// Create .gitignore WITHOUT trailing newline
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
@@ -314,7 +363,7 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -330,13 +379,15 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 func TestInit_VerifyStubContent(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 
@@ -364,6 +415,8 @@ func TestInit_VerifyStubContent(t *testing.T) {
 func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
 	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
+	dataDir := t.TempDir()
+	registerInitTestRepo(t, dataDir, repoRoot)
 
 	// Pre-create scripts with custom content
 	scriptsDir := filepath.Join(repoRoot, "scripts")
@@ -382,7 +435,7 @@ func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir}
+	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init failed")
 

@@ -3,6 +3,7 @@ package daemon
 import (
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,12 @@ import (
 func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
+
+	var req struct{}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeHeadedError(w, http.StatusBadRequest, "E_INVALID_REQUEST", "invalid request body: "+err.Error(), "", "", requestID)
+		return
+	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
@@ -92,8 +99,20 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 	if exists {
-		if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, meta.Runner, sessionName, append([]string(nil), meta.RunnerArgs...)); err != nil {
-			s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
+		s.mu.RLock()
+		_, supervised := s.processes[record.InvocationID]
+		s.mu.RUnlock()
+		if supervised {
+			if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, meta.Runner, sessionName, append([]string(nil), meta.RunnerArgs...), append([]string(nil), meta.CustomEnvKeys...)); err != nil {
+				s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
+				return
+			}
+			meta, _ = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+			s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, true)
+			return
+		}
+		if err := s.restoreExistingHeadedSupervision(ctx, record.RepoID, record.InvocationID, meta, sessionName, "agency.headed_recreated"); err != nil {
+			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available", "", requestID)
 			return
 		}
 		meta, _ = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
@@ -134,7 +153,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		s.writeHeadedError(w, status, string(code), err.Error(), hint, "", requestID)
 		return
 	}
-	repoRoot, err := s.getRepoRootFromIndex(record.RepoID)
+	repoRoot, err := s.resolveHeadedSupervisionRepoRoot(record.RepoID)
 	if err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERepoNotFound), "failed to resolve repo root: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry", "", requestID)
 		return
@@ -151,8 +170,19 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
-		userCfg = config.UserConfig{}
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvalidUserConfig), "failed to load user config: "+err.Error(), "run `agency config init`", "", requestID)
+		return
 	}
+	profileEnv, err := config.ExecutionProfileEnv(userCfg, meta.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EExecutionProfileNotFound
+		}
+		s.writeHeadedError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "", "", requestID)
+		return
+	}
+	launchEnv := copyStringMap(profileEnv)
 	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, canonicalRunner)
 	if err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", "", requestID)
@@ -175,7 +205,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	_ = terminalFile.Close()
 
-	if err := s.TmuxClient.NewSession(ctx, sessionName, meta.SandboxPath, append([]string{runnerCmd}, headedRunnerArgs...)); err != nil {
+	if err := s.TmuxClient.NewSession(ctx, sessionName, meta.SandboxPath, append([]string{runnerCmd}, headedRunnerArgs...), launchEnv); err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", "", requestID)
 		return
 	}
@@ -210,7 +240,19 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 
 	runnerArgs := append([]string(nil), meta.RunnerArgs...)
-	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs); err != nil {
+	envKeys := append([]string(nil), meta.CustomEnvKeys...)
+	seen := make(map[string]bool, len(envKeys)+len(launchEnv))
+	for _, key := range envKeys {
+		seen[key] = true
+	}
+	for _, key := range sortedEnvKeys(launchEnv) {
+		if !seen[key] {
+			envKeys = append(envKeys, key)
+			seen[key] = true
+		}
+	}
+	sort.Strings(envKeys)
+	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs, envKeys); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
 		return
@@ -255,6 +297,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		Runner:                canonicalRunner,
 		RepoRoot:              repoRoot,
 		RunnerArgs:            runnerArgs,
+		Env:                   copyStringMap(launchEnv),
 		NoIncludeUntracked:    !meta.CheckpointIncludeUntracked,
 		Parser:                parser,
 		CheckpointEngine:      cpEngine,

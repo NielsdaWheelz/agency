@@ -53,6 +53,18 @@ type CreateOpts struct {
 
 	// BaseBranch is the branch to branch from.
 	BaseBranch string
+
+	// CheckoutRoot is the repo-scoped root for Agency-managed checkouts.
+	CheckoutRoot string
+
+	// ExecutionProfile is the profile label selected for this worktree.
+	ExecutionProfile string
+
+	// IdempotencyKey records create-request idempotency, when provided.
+	IdempotencyKey string
+
+	// RequestFingerprint records the durable fingerprint for IdempotencyKey.
+	RequestFingerprint string
 }
 
 // CreateResult holds the result of a successful worktree creation.
@@ -74,9 +86,9 @@ type CreateResult struct {
 //  2. Compute branch name
 //  3. Check name uniqueness among non-archived worktrees
 //  4. Create record directory (exclusive)
-//  5. Run git worktree add -b <branch> <tree_path> <base_branch>
-//  6. Write INTEGRATION_MARKER to .agency/
-//  7. Write meta.json
+//  5. Write meta.json
+//  6. Run git worktree add -b <branch> <tree_path> <base_branch>
+//  7. Write INTEGRATION_MARKER to .agency/
 //
 // On failure after git worktree add, cleanup is performed.
 func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, error) {
@@ -120,7 +132,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	branch := core.BranchName(opts.Name, worktreeID)
 
 	// Compute tree path
-	treePath := s.Store.IntegrationWorktreeTreePath(opts.RepoID, worktreeID)
+	treePath := filepath.Join(opts.CheckoutRoot, "worktrees", opts.Name+"-"+core.ShortID(worktreeID))
 
 	// Create record directory with exclusive semantics
 	_, err = s.Store.EnsureIntegrationWorktreeDir(opts.RepoID, worktreeID)
@@ -149,6 +161,35 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 			// Remove record directory (best-effort)
 			_ = s.Store.RemoveIntegrationWorktreeDir(opts.RepoID, worktreeID)
 		}
+	}
+
+	if err := s.FS.MkdirAll(filepath.Dir(treePath), 0o700); err != nil {
+		cleanup()
+		return nil, errors.WrapWithDetails(
+			errors.EWorktreeCreateFailed,
+			"failed to create checkout worktrees directory",
+			err,
+			map[string]string{"dir": filepath.Dir(treePath)},
+		)
+	}
+
+	// Write meta.json before git side effects so idempotency survives daemon restart.
+	meta := store.NewIntegrationWorktreeMeta(
+		worktreeID,
+		opts.Name,
+		opts.RepoID,
+		branch,
+		opts.BaseBranch,
+		treePath,
+		opts.CheckoutRoot,
+		opts.ExecutionProfile,
+		s.Now(),
+	)
+	meta.IdempotencyKey = opts.IdempotencyKey
+	meta.RequestFingerprint = opts.RequestFingerprint
+	if err := s.Store.WriteIntegrationWorktreeMeta(opts.RepoID, worktreeID, meta); err != nil {
+		cleanup()
+		return nil, err
 	}
 
 	// Create git worktree + branch
@@ -202,7 +243,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		)
 	}
 
-	// Write INTEGRATION_MARKER (before meta.json per spec)
+	// Write INTEGRATION_MARKER.
 	markerPath := filepath.Join(agencyDir, IntegrationMarkerFileName)
 	markerContent := "# This directory is an integration worktree.\n# Runners must not execute here.\n"
 	if err := s.FS.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
@@ -213,22 +254,6 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 			err,
 			map[string]string{"path": markerPath},
 		)
-	}
-
-	// Write meta.json
-	meta := store.NewIntegrationWorktreeMeta(
-		worktreeID,
-		opts.Name,
-		opts.RepoID,
-		branch,
-		opts.BaseBranch,
-		treePath,
-		s.Now(),
-	)
-
-	if err := s.Store.WriteIntegrationWorktreeMeta(opts.RepoID, worktreeID, meta); err != nil {
-		cleanup()
-		return nil, err
 	}
 
 	return &CreateResult{

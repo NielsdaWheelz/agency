@@ -92,7 +92,7 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 
 	// Fixed agency.json content - same every run
 	agencyJSON := `{
-  "version": 3,
+  "version": 4,
   "scripts": {
     "setup": {
       "path": "scripts/agency_setup.sh",
@@ -106,6 +106,10 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
       "path": "scripts/agency_archive.sh",
       "timeout": "5m"
     }
+  },
+  "execution": {
+    "profile": "personal",
+    "checkout_root": "repo-sibling"
   }
 }
 `
@@ -186,26 +190,30 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	_, err = st.EnsureIntegrationWorktreeDir(repoIdentity.RepoID, worktreeID)
 	require.NoError(t, err, "EnsureIntegrationWorktreeDir")
 	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoIdentity.RepoID, worktreeID, &store.IntegrationWorktreeMeta{
-		SchemaVersion: "1.0",
-		WorktreeID:    worktreeID,
-		Name:          "e2e-" + runID,
-		RepoID:        repoIdentity.RepoID,
-		Branch:        branch,
-		BaseBranch:    defaultBranch,
-		TreePath:      worktreePath,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		State:         store.WorktreeStatePresent,
+		SchemaVersion:    store.SchemaVersion,
+		WorktreeID:       worktreeID,
+		Name:             "e2e-" + runID,
+		RepoID:           repoIdentity.RepoID,
+		Branch:           branch,
+		BaseBranch:       defaultBranch,
+		TreePath:         worktreePath,
+		CheckoutRoot:     filepath.Join(dataDir, "repos", repoIdentity.RepoID),
+		ExecutionProfile: "personal",
+		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+		State:            store.WorktreeStatePresent,
 	}), "WriteIntegrationWorktreeMeta")
 
 	invocationID := runID
 	_, err = st.EnsureInvocationDir(repoIdentity.RepoID, invocationID)
 	require.NoError(t, err, "EnsureInvocationDir")
 	require.NoError(t, st.WriteInvocationMeta(repoIdentity.RepoID, invocationID, &store.InvocationMeta{
-		SchemaVersion:         "1.0",
+		SchemaVersion:         store.SchemaVersion,
 		InvocationID:          invocationID,
 		InvocationName:        "e2e-" + runID,
 		IntegrationWorktreeID: worktreeID,
 		SandboxPath:           worktreePath,
+		CheckoutRoot:          filepath.Join(dataDir, "repos", repoIdentity.RepoID),
+		ExecutionProfile:      "personal",
 		SandboxBranch:         "agency/sandbox-" + runID,
 		BaseCommit:            "",
 		Runner:                "claude-code",

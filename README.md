@@ -28,7 +28,7 @@ go install github.com/NielsdaWheelz/agency/cmd/agency@latest
 
 `git`, `tmux`, `gh` (authenticated), and at least one supported runner executable on `PATH`.
 
-Run `agency config init` first. It writes a working version `3` `config.json` under your agency config dir.
+Run `agency config init` first. It writes a working version `4` `config.json` under your agency config dir.
 For the full schema and setup rules, see [docs/configuration.md](docs/configuration.md).
 For paths and precedence, see [docs/environment.md](docs/environment.md).
 
@@ -36,11 +36,12 @@ Short working `config.json` example:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "defaults": {
     "runner": "claude-code",
     "editor": "code",
-    "base_branch": "main"
+    "base_branch": "main",
+    "execution_profile": "personal"
   },
   "runner_defaults": {
     "claude-code": {
@@ -54,6 +55,15 @@ Short working `config.json` example:
   },
   "editors": {
     "code": "code"
+  },
+  "execution_profiles": {
+    "personal": {
+      "env": {
+        "CODEX_HOME": "/Users/me/.codex-personal",
+        "CLAUDE_CONFIG_DIR": "/Users/me/.claude",
+        "GH_CONFIG_DIR": "/Users/me/.config/gh"
+      }
+    }
   }
 }
 ```
@@ -82,8 +92,10 @@ agency agent <invocation-ref> land --apply
 If `--worktree` is omitted, `agency agent start` resolves the worktree from the current directory only when cwd is already inside a present integration worktree. Otherwise `--worktree` is required.
 Worktree name and id-prefix lookup only consider present worktrees; archived worktrees must be addressed by exact `worktree_id`.
 `task start`, `task <task-ref> retry`, and `agent start` use agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
+`task start`, `task <task-ref> retry`, and `agent start` resolve an execution profile from explicit `--execution-profile`, then `agency.json` `execution.profile`, then `config.json` `defaults.execution_profile`.
+`agency.json` `execution.checkout_root` controls managed checkout placement. Omit it for the default `repo-sibling` policy, which places worktrees and sandboxes under `<canonical-repo-parent>/.agency/checkouts/<repo-id>/`, outside the repo and outside `AGENCY_DATA_DIR`.
 `agency agent start` defaults to `--mode headed`. Use `--mode headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
-For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set `permission_mode` in user `config.json` only; use `runner_defaults` or `--model`/`--effort` on `agency task start`, `agency task <task-ref> retry`, or `agency agent start` for Claude model and effort.
+For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set default `permission_mode` in user `config.json` or override it explicitly with `--permission-mode`; repo `agency.json` cannot set it.
 
 headed (interactive tmux):
 
@@ -160,9 +172,10 @@ all mutation `--json` responses use a stable envelope with deterministic fields:
 `ok`, `error_code`, `message`, `hint`, `request_id`, `api_version`, `build_version`, `client_request_id`.
 success payloads include additive command-specific fields (for example `timeline_entry_id` for `followup`,
 and `checkpoint_id`/`snapshot_commit`/`restored_at` for `restore`).
+Start, retry, and recreate JSON payloads include `execution_profile`, `checkout_root`, and `custom_env_keys` for explainability without exposing env values.
 
 for daemon-backed mutations, `request_id` is daemon-issued and mirrors the daemon response header `X-Request-ID` for correlation.
-daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed `E_INVALID_ARGUMENT` errors.
+daemon mutation request bodies are strict JSON: unknown fields and trailing/multi-object payloads are rejected with typed bad-request errors.
 
 ## how it works
 
@@ -185,7 +198,8 @@ unknown provider events should degrade to diagnostics in transcript/log inspecti
 ## documentation
 
 - **[docs/index.md](docs/index.md)** — documentation map and ownership rules
-- **[docs/configuration.md](docs/configuration.md)** — config setup and version `3` schemas
+- **[docs/configuration.md](docs/configuration.md)** — config setup and version `4` schemas
+- **[docs/execution-profiles.md](docs/execution-profiles.md)** — execution profiles and managed checkout placement
 - **[docs/codebase.md](docs/codebase.md)** — package layout and architecture boundaries
 - **[docs/daemon.md](docs/daemon.md)** — daemon lifecycle, ownership, and mutation rules
 - **[docs/environment.md](docs/environment.md)** — config paths, overrides, and precedence

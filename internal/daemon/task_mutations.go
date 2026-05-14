@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,7 +60,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		return
 	}
 	var req TaskRetryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "invalid request body: "+err.Error(), "", req.ClientRequestID, nil)
 		return
 	}
@@ -137,7 +138,27 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	}
 	runner = canonicalRunner
 	req.InvocationName = strings.TrimSpace(req.InvocationName)
-	retryFingerprint := taskRetryFingerprint(meta, mode, runner, req)
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "agency_config_path must be absolute", "", req.ClientRequestID, meta)
+		return
+	}
+
+	requestEnv := copyStringMap(req.Env)
+	execCtx, err := s.resolveExecutionContext(meta.RepoRoot, repoID, req.AgencyConfigPath, req.ExecutionProfile)
+	if err != nil {
+		code := errors.GetCode(err)
+		if code == "" {
+			code = errors.EInternal
+		}
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, code, apiErrorMessage(err), "", req.ClientRequestID, meta)
+		return
+	}
+	req.ExecutionProfile = execCtx.Profile
+	req.CheckoutRoot = execCtx.CheckoutRoot
+	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
+	retryFingerprint := taskRetryFingerprint(meta, mode, runner, req, requestEnv)
 	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint) {
 		return
 	}
@@ -188,6 +209,9 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		InvocationName:     req.InvocationName,
 		RunnerArgs:         req.RunnerArgs,
 		Env:                req.Env,
+		ExecutionProfile:   req.ExecutionProfile,
+		AgencyConfigPath:   req.AgencyConfigPath,
+		CheckoutRoot:       req.CheckoutRoot,
 		ClientRequestID:    req.ClientRequestID,
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	}
@@ -211,7 +235,11 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
-	if err := s.appendTaskEvent(repoID, meta.TaskID, "agency.task_retried", map[string]any{"invocation_id": invMeta.InvocationID}); err != nil {
+	if err := s.appendTaskEvent(repoID, meta.TaskID, "agency.task_retried", map[string]any{
+		"invocation_id":     invMeta.InvocationID,
+		"checkout_root":     invMeta.CheckoutRoot,
+		"execution_profile": invMeta.ExecutionProfile,
+	}); err != nil {
 		s.writeTaskStartError(w, http.StatusInternalServerError, requestID, errors.EPersistFailed, "failed to append task event: "+err.Error(), "", req.ClientRequestID, meta)
 		return
 	}
@@ -219,28 +247,31 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, latest, false)
 }
 
-func taskRetryFingerprint(meta *store.TaskMeta, mode, runner string, req TaskRetryRequest) string {
-	type fingerprintRequest struct {
-		TaskID             string            `json:"task_id"`
-		WorktreeID         string            `json:"worktree_id"`
-		Mode               string            `json:"mode"`
-		Runner             string            `json:"runner"`
-		PromptSHA256       string            `json:"prompt_sha256,omitempty"`
-		InvocationName     string            `json:"invocation_name,omitempty"`
-		RunnerArgs         []string          `json:"runner_args,omitempty"`
-		Env                map[string]string `json:"env,omitempty"`
-		NoIncludeUntracked bool              `json:"no_include_untracked,omitempty"`
-	}
+func taskRetryFingerprint(meta *store.TaskMeta, mode, runner string, req TaskRetryRequest, requestEnv map[string]string) string {
 	promptHash := sha256.Sum256([]byte(req.Prompt))
-	payload, _ := json.Marshal(fingerprintRequest{
+	payload, _ := json.Marshal(struct {
+		TaskID             string   `json:"task_id"`
+		WorktreeID         string   `json:"worktree_id"`
+		CheckoutRoot       string   `json:"checkout_root"`
+		ExecutionProfile   string   `json:"execution_profile"`
+		Mode               string   `json:"mode"`
+		Runner             string   `json:"runner"`
+		EnvKeys            []string `json:"env_keys,omitempty"`
+		PromptSHA256       string   `json:"prompt_sha256,omitempty"`
+		InvocationName     string   `json:"invocation_name,omitempty"`
+		RunnerArgs         []string `json:"runner_args,omitempty"`
+		NoIncludeUntracked bool     `json:"no_include_untracked,omitempty"`
+	}{
 		TaskID:             meta.TaskID,
 		WorktreeID:         meta.WorktreeID,
+		CheckoutRoot:       req.CheckoutRoot,
+		ExecutionProfile:   req.ExecutionProfile,
 		Mode:               mode,
 		Runner:             runner,
+		EnvKeys:            sortedEnvKeys(requestEnv),
 		PromptSHA256:       hex.EncodeToString(promptHash[:]),
 		InvocationName:     req.InvocationName,
 		RunnerArgs:         append([]string(nil), req.RunnerArgs...),
-		Env:                req.Env,
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	})
 	sum := sha256.Sum256(payload)
@@ -301,6 +332,8 @@ func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, in
 		meta.PrimaryInvocationID = invMeta.InvocationID
 		meta.Mode = invMeta.Mode
 		meta.Runner = invMeta.Runner
+		meta.CheckoutRoot = invMeta.CheckoutRoot
+		meta.ExecutionProfile = invMeta.ExecutionProfile
 		meta.FailedPhase = ""
 		meta.ErrorCode = ""
 		meta.Error = ""

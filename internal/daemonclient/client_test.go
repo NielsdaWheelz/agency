@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -278,6 +279,180 @@ func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 			var details daemon.InvalidQueryArgumentDetails
 			require.NoError(t, json.Unmarshal(dre.RawDetails, &details))
 			assert.Equal(t, expectedDetails, details)
+		})
+	}
+}
+
+func TestDaemonClient_ControlPlaneStartPreservesClientRequestID(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]string{}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_ = json.NewEncoder(w).Encode(daemon.HealthResponse{OK: true, APIVersion: daemon.APIVersion})
+			return
+		}
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		seen[r.URL.Path] = body["client_request_id"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/invocations/start_headless":
+			_ = json.NewEncoder(w).Encode(daemon.ControlPlaneStartResponse{OK: true, APIVersion: daemon.APIVersion, ClientRequestID: seen[r.URL.Path]})
+		case "/invocations/start_headed":
+			_ = json.NewEncoder(w).Encode(daemon.ControlPlaneStartHeadedResponse{OK: true, APIVersion: daemon.APIVersion, ClientRequestID: seen[r.URL.Path]})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	client := NewClient(startFakeDaemon(t, handler))
+	_, err := client.ControlPlaneStartHeadless(context.Background(), ControlPlaneStartOpts{ClientRequestID: "headless-req"})
+	require.NoError(t, err)
+	_, err = client.ControlPlaneStartHeaded(context.Background(), ControlPlaneStartHeadedOpts{ClientRequestID: "headed-req"})
+	require.NoError(t, err)
+
+	assert.Equal(t, "headless-req", seen["/invocations/start_headless"])
+	assert.Equal(t, "headed-req", seen["/invocations/start_headed"])
+}
+
+func TestDaemonClient_SubmitFollowUpPreservesClientRequestID(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_ = json.NewEncoder(w).Encode(daemon.HealthResponse{OK: true, APIVersion: daemon.APIVersion})
+			return
+		}
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		seen = body["client_request_id"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(daemon.ControlPlaneFollowUpResponse{OK: true, APIVersion: daemon.APIVersion, ClientRequestID: seen})
+	})
+
+	client := NewClient(startFakeDaemon(t, handler))
+	_, err := client.SubmitFollowUp(context.Background(), "inv-1", "repo-1", SubmitFollowUpOpts{ClientRequestID: "followup-req"})
+	require.NoError(t, err)
+
+	assert.Equal(t, "followup-req", seen)
+}
+
+func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		call func(*Client) error
+	}{
+		{name: "ControlPlaneStartHeadless", call: func(c *Client) error {
+			_, err := c.ControlPlaneStartHeadless(context.Background(), ControlPlaneStartOpts{})
+			return err
+		}},
+		{name: "ControlPlaneStartHeaded", call: func(c *Client) error {
+			_, err := c.ControlPlaneStartHeaded(context.Background(), ControlPlaneStartHeadedOpts{})
+			return err
+		}},
+		{name: "IngestHeadedHook", call: func(c *Client) error {
+			_, err := c.IngestHeadedHook(context.Background(), "repo-1", "inv-1", "codex", []byte(`{}`))
+			return err
+		}},
+		{name: "SubmitFollowUp", call: func(c *Client) error {
+			_, err := c.SubmitFollowUp(context.Background(), "inv-1", "repo-1", SubmitFollowUpOpts{})
+			return err
+		}},
+		{name: "Stop", call: func(c *Client) error {
+			_, err := c.Stop(context.Background(), "repo-1", "inv-1")
+			return err
+		}},
+		{name: "Kill", call: func(c *Client) error {
+			_, err := c.Kill(context.Background(), "repo-1", "inv-1")
+			return err
+		}},
+		{name: "Shutdown", call: func(c *Client) error {
+			_, err := c.Shutdown(context.Background(), false)
+			return err
+		}},
+		{name: "TaskStart", call: func(c *Client) error {
+			_, err := c.TaskStart(context.Background(), TaskStartOpts{})
+			return err
+		}},
+		{name: "ArchiveTask", call: func(c *Client) error {
+			_, err := c.ArchiveTask(context.Background(), "task-1", "repo-1")
+			return err
+		}},
+		{name: "RetryTask", call: func(c *Client) error {
+			_, err := c.RetryTask(context.Background(), "task-1", "repo-1", TaskRetryOpts{})
+			return err
+		}},
+		{name: "RegisterRepo", call: func(c *Client) error {
+			_, err := c.RegisterRepo(context.Background(), "/repo")
+			return err
+		}},
+		{name: "RepoRm", call: func(c *Client) error {
+			_, err := c.RepoRm(context.Background(), "repo-1")
+			return err
+		}},
+		{name: "WorktreeCreate", call: func(c *Client) error {
+			_, err := c.WorktreeCreate(context.Background(), WorktreeCreateOpts{})
+			return err
+		}},
+		{name: "WorktreeRm", call: func(c *Client) error {
+			_, err := c.WorktreeRm(context.Background(), "repo-1", "wt-1", false)
+			return err
+		}},
+		{name: "CheckpointApply", call: func(c *Client) error {
+			_, err := c.CheckpointApply(context.Background(), "repo-1", "inv-1", 1)
+			return err
+		}},
+		{name: "RecreateHeaded", call: func(c *Client) error {
+			_, err := c.RecreateHeaded(context.Background(), "inv-1", "repo-1")
+			return err
+		}},
+		{name: "Land", call: func(c *Client) error {
+			_, err := c.Land(context.Background(), LandOpts{RepoID: "repo-1", InvocationID: "inv-1"})
+			return err
+		}},
+		{name: "Discard", call: func(c *Client) error {
+			_, err := c.Discard(context.Background(), "repo-1", "inv-1")
+			return err
+		}},
+		{name: "WorktreePRSync", call: func(c *Client) error {
+			_, err := c.WorktreePRSync(context.Background(), "wt-1", "repo-1", WorktreePRSyncOpts{})
+			return err
+		}},
+		{name: "WorktreePRMerge", call: func(c *Client) error {
+			_, err := c.WorktreePRMerge(context.Background(), "wt-1", "repo-1", WorktreePRMergeOpts{})
+			return err
+		}},
+		{name: "WorktreeRebase", call: func(c *Client) error {
+			_, err := c.WorktreeRebase(context.Background(), "wt-1", "repo-1")
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var mutations atomic.Int32
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/health" {
+					_ = json.NewEncoder(w).Encode(daemon.HealthResponse{OK: true, APIVersion: daemon.APIVersion + 1})
+					return
+				}
+				mutations.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			})
+
+			client := NewClient(startFakeDaemon(t, handler))
+			err := tt.call(client)
+
+			require.Error(t, err)
+			assert.Equal(t, errors.EDaemonIncompatible, errors.GetCode(err))
+			assert.Zero(t, mutations.Load())
 		})
 	}
 }
