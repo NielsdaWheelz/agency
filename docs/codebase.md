@@ -16,8 +16,8 @@ This document covers repository-wide package organization and ownership boundari
 - `internal/ids/` and `internal/identity/` own reference resolution and durable repo identity rules.
 - `internal/store/` owns on-disk layout, schema types, scans, load/save behavior, and persisted merge-state files.
 - `internal/watch/` owns the read-model and Bubble Tea workspace UI.
-- `internal/render/`, `internal/tui/`, and `internal/tty/` own shared rendering and terminal primitives.
-- `internal/events/`, `internal/jsonl/`, and `internal/runnerstatus/` own shared event, log, and runner-status formats.
+- `internal/render/` owns shared output rendering.
+- `internal/jsonl/` and `internal/runnerstatus/` own shared log and runner-status formats.
 - `internal/exec/`, `internal/git/`, `internal/tmux/`, `internal/fs/`, and `internal/lock/` are infrastructure seams.
 - Package-specific docs live in [modules/index.md](modules/index.md).
 

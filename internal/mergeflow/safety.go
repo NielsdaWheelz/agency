@@ -3,7 +3,6 @@ package mergeflow
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -60,38 +59,7 @@ func BuildVerifyEnv(baseEnv []string, input VerifyEnvInput) []string {
 		agencyEnv["AGENCY_PR_NUMBER"] = strconv.Itoa(input.PRNumber)
 	}
 
-	return MergeEnvDeterministic(baseEnv, nonInteractiveRunnerEnv(), agencyEnv)
-}
-
-// MergeEnvDeterministic merges base and overlay env maps with deterministic
-// ordering, no duplicate keys, and "overlay wins" semantics.
-func MergeEnvDeterministic(baseEnv []string, overlays ...map[string]string) []string {
-	merged := make(map[string]string, len(baseEnv))
-
-	for _, entry := range baseEnv {
-		key, val, ok := strings.Cut(entry, "=")
-		if !ok || key == "" {
-			continue
-		}
-		merged[key] = val
-	}
-	for _, overlay := range overlays {
-		for k, v := range overlay {
-			merged[k] = v
-		}
-	}
-
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	result := make([]string, 0, len(keys))
-	for _, k := range keys {
-		result = append(result, k+"="+merged[k])
-	}
-	return result
+	return exec.MergeEnv(baseEnv, exec.NonInteractiveEnv(), agencyEnv)
 }
 
 // ResolveRepoRoot resolves the canonical repo root from the stored repo record.
@@ -102,7 +70,7 @@ func ResolveRepoRoot(st *store.Store, repoID, workspaceRoot string) (string, err
 			"repo root is not available for merge",
 			map[string]string{
 				"repo_id":        strings.TrimSpace(repoID),
-				"workspace_root": canonicalizePath(workspaceRoot),
+				"workspace_root": agencyfs.CanonicalizePath(workspaceRoot),
 				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
 			},
 		)
@@ -118,7 +86,7 @@ func ResolveRepoRoot(st *store.Store, repoID, workspaceRoot string) (string, err
 			"repo root is not available for merge",
 			map[string]string{
 				"repo_id":        repoID,
-				"workspace_root": canonicalizePath(workspaceRoot),
+				"workspace_root": agencyfs.CanonicalizePath(workspaceRoot),
 				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
 			},
 		)
@@ -134,13 +102,13 @@ func ResolveRepoRoot(st *store.Store, repoID, workspaceRoot string) (string, err
 			"repo root is not available for merge",
 			map[string]string{
 				"repo_id":        repoID,
-				"workspace_root": canonicalizePath(workspaceRoot),
+				"workspace_root": agencyfs.CanonicalizePath(workspaceRoot),
 				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
 			},
 		)
 	}
 
-	root = canonicalizePath(root)
+	root = agencyfs.CanonicalizePath(root)
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return "", errors.NewWithDetails(
@@ -149,25 +117,12 @@ func ResolveRepoRoot(st *store.Store, repoID, workspaceRoot string) (string, err
 			map[string]string{
 				"repo_id":        repoID,
 				"repo_root":      root,
-				"workspace_root": canonicalizePath(workspaceRoot),
+				"workspace_root": agencyfs.CanonicalizePath(workspaceRoot),
 				"hint":           "re-register this repo from an accessible checkout, then retry the merge",
 			},
 		)
 	}
 	return root, nil
-}
-
-// canonicalizePath normalizes path comparisons to abs-clean-resolved path.
-func canonicalizePath(path string) string {
-	clean := filepath.Clean(path)
-	abs, err := filepath.Abs(clean)
-	if err == nil {
-		clean = abs
-	}
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		return resolved
-	}
-	return clean
 }
 
 // WriteMergeLog persists merge logs atomically with private permissions.
@@ -214,12 +169,4 @@ func WriteMergeLog(fsys agencyfs.FS, mergeLogPath, command string, result exec.C
 		return err
 	}
 	return nil
-}
-
-func nonInteractiveRunnerEnv() map[string]string {
-	return map[string]string{
-		"CI":                  "1",
-		"GIT_TERMINAL_PROMPT": "0",
-		"GH_PROMPT_DISABLED":  "1",
-	}
 }

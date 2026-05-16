@@ -56,6 +56,17 @@ const (
 	InvocationStatusFailed InvocationStatus = "failed"
 )
 
+// Exit-reason values for InvocationMeta.ExitReason — how a process ended.
+// Empty until the invocation reaches a terminal state.
+const (
+	ExitReasonExited      = "exited"       // runner exited on its own
+	ExitReasonKilled      = "killed"       // process was killed
+	ExitReasonStopped     = "stopped"      // graceful stop escalated to exit
+	ExitReasonStartFailed = "start_failed" // never started successfully
+	ExitReasonUnknown     = "unknown"      // terminal state could not be determined
+	ExitReasonDiscarded   = "discarded"    // sandbox changes were discarded
+)
+
 // RunnerMode represents the execution mode of a runner.
 type RunnerMode string
 
@@ -137,11 +148,13 @@ type InvocationMeta struct {
 	// Status is the lifecycle status (starting, running, stopping, finished, failed).
 	Status InvocationStatus `json:"status"`
 
-	// ExitReason describes how the invocation ended (exited, killed, stopped, start_failed, unknown).
+	// ExitReason is how the invocation ended: one of the ExitReason* values
+	// above, or empty until the invocation reaches a terminal state.
 	ExitReason string `json:"exit_reason,omitempty"`
 
-	// FailureReason provides detailed failure reason when status is "failed".
-	// Values: start_incomplete, sandbox_missing, spawn_failed, runner_exit_nonzero, killed, stopped, daemon_shutdown, stream_write_failed
+	// FailureReason is a detail string for a failed invocation. It is
+	// open-ended: runner-failure reasons plus task/retry-orchestration reasons
+	// (prefixed "task_"/"retry_"); not a fixed enum.
 	FailureReason string `json:"failure_reason,omitempty"`
 
 	// ExitCode is the process exit code (headless only, null for headed or if running).
@@ -152,9 +165,6 @@ type InvocationMeta struct {
 
 	// LandingStatus indicates landing state (pending, landed, discarded).
 	LandingStatus LandingStatus `json:"landing_status,omitempty"`
-
-	// PromptSource indicates how the prompt was provided (file, string, editor, interactive).
-	PromptSource string `json:"prompt_source,omitempty"`
 
 	// PromptPath is the path to the prompt file stored by daemon.
 	PromptPath string `json:"prompt_path,omitempty"`
@@ -309,28 +319,6 @@ func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, er
 		)
 	}
 	return logsDir, nil
-}
-
-// EnsureInvocationRunnerStatusDir creates the invocation-owned runner status directory.
-func (s *Store) EnsureInvocationRunnerStatusDir(repoID, invocationID string) (string, error) {
-	statusDir := filepath.Dir(s.InvocationRunnerStatusPath(repoID, invocationID))
-	if err := s.FS.MkdirAll(statusDir, 0o700); err != nil {
-		return "", errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to create invocation runner status directory",
-			err,
-			map[string]string{"status_dir": statusDir},
-		)
-	}
-	if err := s.FS.Chmod(statusDir, 0o700); err != nil {
-		return "", errors.WrapWithDetails(
-			errors.EInvocationCreateFailed,
-			"failed to enforce invocation runner status directory permissions",
-			err,
-			map[string]string{"status_dir": statusDir},
-		)
-	}
-	return statusDir, nil
 }
 
 // PrepareInvocationLogPath ensures the invocation-owned logs directory exists

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -370,7 +371,7 @@ func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cw
 		}
 
 		if result.Data.DataB64 != "" {
-			decoded, decErr := base64Decode(result.Data.DataB64)
+			decoded, decErr := base64.StdEncoding.DecodeString(result.Data.DataB64)
 			if decErr != nil {
 				return errors.Wrap(errors.EInternal, "failed to decode log data", decErr)
 			}
@@ -417,7 +418,7 @@ func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cw
 		}
 
 		if result.Data.DataB64 != "" {
-			decoded, decErr := base64Decode(result.Data.DataB64)
+			decoded, decErr := base64.StdEncoding.DecodeString(result.Data.DataB64)
 			if decErr != nil {
 				return errors.Wrap(errors.EInternal, "failed to decode log data", decErr)
 			}

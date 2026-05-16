@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -406,7 +407,7 @@ func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, in
 }
 
 func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, failure taskStartFailure) {
-	_ = s.Store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+	if err := s.Store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		record, ok := meta.RetryRequests[clientRequestID]
 		if !ok {
 			return
@@ -416,5 +417,7 @@ func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, fai
 		record.Error = failure.msg
 		record.UpdatedAt = s.Clock().UTC().Format(time.RFC3339)
 		meta.RetryRequests[clientRequestID] = record
-	})
+	}); err != nil {
+		log.Printf("agencyd: persist failed task retry %s/%s: %v", repoID, taskID, err)
+	}
 }

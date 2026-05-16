@@ -403,6 +403,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		proc.SetResumeSessionID(n.SessionID)
 	})
 	s.replaceInvocationProcess(createResult.InvocationID, proc)
+	s.supervisionWg.Add(2)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 

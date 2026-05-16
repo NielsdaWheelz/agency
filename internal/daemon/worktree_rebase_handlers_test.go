@@ -182,7 +182,6 @@ func setupWorktreeMutationReadyState(t *testing.T, env *readTestEnv) string {
 		Summary:       "ready for mutation",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Risks:         []string{},
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), statusBytes, 0o644))

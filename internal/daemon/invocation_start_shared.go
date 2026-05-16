@@ -15,6 +15,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
@@ -122,7 +123,7 @@ func (s *Server) isInsideAgencyManagedTree(path string) (bool, error) {
 		return true, nil
 	}
 
-	cleanPath := canonicalPathForContainment(path)
+	cleanPath := agencyfs.CanonicalizePath(path)
 	repoIDs, err := s.discoverDurableRepoIDs()
 	if err != nil {
 		return false, err
@@ -133,7 +134,7 @@ func (s *Server) isInsideAgencyManagedTree(path string) (bool, error) {
 			return false, err
 		}
 		for _, record := range worktrees {
-			if record.Meta != nil && pathContains(canonicalPathForContainment(record.Meta.TreePath), cleanPath) {
+			if record.Meta != nil && agencyfs.PathContains(agencyfs.CanonicalizePath(record.Meta.TreePath), cleanPath) {
 				return true, nil
 			}
 		}
@@ -143,28 +144,12 @@ func (s *Server) isInsideAgencyManagedTree(path string) (bool, error) {
 			return false, err
 		}
 		for _, record := range invocations {
-			if record.Meta != nil && pathContains(canonicalPathForContainment(record.Meta.SandboxPath), cleanPath) {
+			if record.Meta != nil && agencyfs.PathContains(agencyfs.CanonicalizePath(record.Meta.SandboxPath), cleanPath) {
 				return true, nil
 			}
 		}
 	}
 	return false, nil
-}
-
-func canonicalPathForContainment(path string) string {
-	clean := filepath.Clean(path)
-	if abs, err := filepath.Abs(clean); err == nil {
-		clean = abs
-	}
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		clean = resolved
-	}
-	return clean
-}
-
-func pathContains(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)))
 }
 
 func (s *Server) directStartRequestConflictsWithRecord(repoID, repoRoot string, mode store.RunnerMode, req ControlPlaneStartRequest, requestEnv map[string]string, meta *store.InvocationMeta) bool {
@@ -188,7 +173,7 @@ func (s *Server) directStartRequestConflictsWithRecord(repoID, repoRoot string, 
 }
 
 func directStartFailedBeforeClaim(meta *store.InvocationMeta) bool {
-	return meta.ExitReason == "start_failed" || meta.ClaimedAt == ""
+	return meta.ExitReason == store.ExitReasonStartFailed || meta.ClaimedAt == ""
 }
 
 func (s *Server) ensureRepoRegistered(repoIdentity identity.RepoIdentity, repoRoot string) error {

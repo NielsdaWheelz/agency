@@ -239,9 +239,9 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	for key, value := range profileEnv {
 		ghAuthEnv[key] = value
 	}
-	ghAuthEnv["GIT_TERMINAL_PROMPT"] = "0"
-	ghAuthEnv["GH_PROMPT_DISABLED"] = "1"
-	ghAuthEnv["CI"] = "1"
+	for key, value := range agencyexec.NonInteractiveEnv() {
+		ghAuthEnv[key] = value
+	}
 	if err := checkGhAuth(ctx, cr, ghAuthEnv); err != nil {
 		return err
 	}

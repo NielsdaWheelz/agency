@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
+	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -151,11 +151,12 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	})
 	if _, err := s.InvocationEvents.Append(eventsPath, invocationID, eventKind, map[string]any{
 		"tmux_session": sessionName,
-	}, invocationevents.AppendOptions{}); err != nil {
+	}, eventlog.AppendOptions{}); err != nil {
 		return fmt.Errorf("append supervision event: %w", err)
 	}
 
 	s.replaceInvocationProcess(invocationID, proc)
+	s.supervisionWg.Add(2)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 	return nil
@@ -182,13 +183,7 @@ func canonicalAccessibleDir(path string) (string, bool) {
 	if path == "" {
 		return "", false
 	}
-	clean := filepath.Clean(path)
-	if abs, err := filepath.Abs(clean); err == nil {
-		clean = abs
-	}
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		clean = resolved
-	}
+	clean := agencyfs.CanonicalizePath(path)
 	info, err := os.Stat(clean)
 	if err != nil || !info.IsDir() {
 		return "", false

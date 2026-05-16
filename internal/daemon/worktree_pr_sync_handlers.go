@@ -36,7 +36,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		if code == "" {
 			code = errors.EInternal
 		}
-		status := prSyncHTTPStatusForCode(code)
+		status := httpStatusForCode(code)
 		s.writeWorktreePRSyncError(w, status, requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
@@ -55,7 +55,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeWorktreePRSyncError(w, prSyncHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), prSyncHintFromError(err))
+		s.writeWorktreePRSyncError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), prSyncHintFromError(err))
 		return
 	}
 	s.writeWorktreePRSyncSuccess(w, requestID, record, result)

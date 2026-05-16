@@ -168,8 +168,7 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
   "updated_at": "2026-04-20T00:00:00Z",
   "summary": "e2e runner status: verifying agent pr sync + merge works",
   "questions": [],
-  "how_to_test": "This is an automated e2e test - no manual testing required.",
-  "risks": []
+  "how_to_test": "This is an automated e2e test - no manual testing required."
 }`), 0o644), "write runner status")
 
 	// Unique test data under e2e/<runID>/ - this is the only unique-per-run content

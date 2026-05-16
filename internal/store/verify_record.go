@@ -3,7 +3,7 @@ package store
 // VerifyRecord is the canonical evidence record for a verify run.
 // Written to a store-owned verify_record.json path for the verified execution surface.
 type VerifyRecord struct {
-	// SchemaVersion is always "1.0" for v1.
+	// SchemaVersion is the schema version for this record. Always "1.0".
 	SchemaVersion string `json:"schema_version"`
 
 	// RepoID is the repository identifier (16 hex chars).

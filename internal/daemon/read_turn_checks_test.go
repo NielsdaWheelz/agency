@@ -375,7 +375,6 @@ func TestHandleGetInvocationCheck_BlockedIncludesReasonsAndNavigation(t *testing
 		Reason:        runnerstatus.ReasonAwaitingApproval,
 		Summary:       "waiting on product decision",
 		Questions:     []string{},
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", blockedStatus)
 
@@ -498,7 +497,6 @@ func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
@@ -549,7 +547,6 @@ func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCle
 		Summary:       "invocation-owned runner status",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
@@ -590,7 +587,6 @@ func TestHandleGetInvocationCheck_HeadlessDoesNotRequireWorktreeReport(t *testin
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
@@ -633,7 +629,6 @@ func TestHandleGetInvocationCheck_HeadlessOmitsReportMetadata(t *testing.T) {
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
@@ -694,7 +689,6 @@ func TestHandleGetInvocationCheck_InvalidRunnerSchemaFailsState(t *testing.T) {
 		Summary:       "ready",
 		HowToTest:     "go test ./...",
 		Questions:     []string{},
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", invalidSchema)
 

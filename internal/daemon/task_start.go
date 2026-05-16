@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,8 +18,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
-	"github.com/NielsdaWheelz/agency/internal/daemon/taskevents"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
@@ -609,6 +610,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 		proc.SetResumeSessionID(n.SessionID)
 	})
 	s.replaceInvocationProcess(createResult.InvocationID, proc)
+	s.supervisionWg.Add(2)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
@@ -782,7 +784,7 @@ func (s *Server) findClaimedTaskInvocation(repoID, taskID, clientRequestID, fing
 		case store.InvocationStatusFinished:
 			return meta, true, nil
 		case store.InvocationStatusFailed:
-			if meta.ExitReason != "start_failed" && !strings.HasPrefix(meta.FailureReason, "task_") && !strings.HasPrefix(meta.FailureReason, "retry_") {
+			if meta.ExitReason != store.ExitReasonStartFailed && !strings.HasPrefix(meta.FailureReason, "task_") && !strings.HasPrefix(meta.FailureReason, "retry_") {
 				return meta, true, nil
 			}
 		}
@@ -816,21 +818,21 @@ func normalizeTaskStartFailure(err error) taskStartFailure {
 
 func (s *Server) appendTaskEvent(repoID, taskID, kind string, data map[string]any) error {
 	if s.TaskEvents == nil {
-		s.TaskEvents = taskevents.NewWriter(func() time.Time {
+		s.TaskEvents = eventlog.NewWriter("task_id", func() time.Time {
 			return s.Clock()
 		})
 	}
-	_, err := s.TaskEvents.Append(s.Store.TaskEventsPath(repoID, taskID), taskID, kind, data, taskevents.AppendOptions{})
+	_, err := s.TaskEvents.Append(s.Store.TaskEventsPath(repoID, taskID), taskID, kind, data, eventlog.AppendOptions{})
 	return err
 }
 
 func (s *Server) appendTaskEventOnceByInvocationID(repoID, taskID, kind, invocationID string, data map[string]any) error {
 	if s.TaskEvents == nil {
-		s.TaskEvents = taskevents.NewWriter(func() time.Time {
+		s.TaskEvents = eventlog.NewWriter("task_id", func() time.Time {
 			return s.Clock()
 		})
 	}
-	_, err := s.TaskEvents.Append(s.Store.TaskEventsPath(repoID, taskID), taskID, kind, data, taskevents.AppendOptions{
+	_, err := s.TaskEvents.Append(s.Store.TaskEventsPath(repoID, taskID), taskID, kind, data, eventlog.AppendOptions{
 		IdempotencyDataKey:   "invocation_id",
 		IdempotencyDataValue: invocationID,
 	})
@@ -930,7 +932,7 @@ func (s *Server) abortStartedTaskInvocation(repoID string, invMeta *store.Invoca
 			s.recordInvocationWarning(repoID, invMeta.InvocationID, "task_abort_tmux_kill_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
 			})
-			_ = s.Store.UpdateInvocationMeta(repoID, invMeta.InvocationID, func(meta *store.InvocationMeta) {
+			s.persistInvocationMeta(repoID, invMeta.InvocationID, func(meta *store.InvocationMeta) {
 				meta.Flags.NeedsAttention = true
 				meta.FailureReason = failureReason
 			})
@@ -945,7 +947,7 @@ func (s *Server) abortStartedTaskInvocation(repoID string, invMeta *store.Invoca
 	proc, supervised := s.processes[invMeta.InvocationID]
 	s.mu.RUnlock()
 	if supervised && proc != nil {
-		proc.exitReason.Store("killed")
+		proc.exitReason.Store(store.ExitReasonKilled)
 		proc.failureReason.Store(failureReason)
 	}
 	s.failInvocationStart(repoID, invMeta.InvocationID, failureReason, true)
@@ -959,18 +961,22 @@ func (s *Server) abortStartedTaskInvocation(repoID string, invMeta *store.Invoca
 }
 
 func (s *Server) markTaskFailed(repoID, taskID, phase string, failure taskStartFailure) {
-	_ = s.Store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+	if err := s.Store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		meta.State = store.TaskStateFailed
 		meta.FailedPhase = phase
 		meta.ErrorCode = string(failure.code)
 		meta.Error = failure.msg
 		meta.UpdatedAt = s.Clock().UTC().Format(time.RFC3339)
-	})
-	_ = s.appendTaskEvent(repoID, taskID, "agency.task_failed", map[string]any{
+	}); err != nil {
+		log.Printf("agencyd: persist failed task %s/%s: %v", repoID, taskID, err)
+	}
+	if err := s.appendTaskEvent(repoID, taskID, "agency.task_failed", map[string]any{
 		"failed_phase": phase,
 		"error_code":   string(failure.code),
 		"error":        failure.msg,
-	})
+	}); err != nil {
+		log.Printf("agencyd: append task_failed event for %s/%s: %v", repoID, taskID, err)
+	}
 }
 
 func (s *Server) writeTaskStartError(w http.ResponseWriter, status int, requestID string, code errors.Code, message, hint, clientRequestID string, meta *store.TaskMeta) {

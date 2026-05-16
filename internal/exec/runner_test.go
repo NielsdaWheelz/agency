@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"sort"
-	"strings"
 	"syscall"
 	"testing"
 
@@ -31,40 +29,18 @@ func TestRunAttached_PassthroughAndExitCode(t *testing.T) {
 func TestMergeEnv_DeterministicNoDuplicatesOverrideWins(t *testing.T) {
 	t.Parallel()
 
-	base := []string{
-		"Z=z",
-		"A=one",
+	base := []string{"Z=z", "A=one", "A=two", "INVALID", "B=base"}
+	merged := MergeEnv(base,
+		map[string]string{"B": "first", "C": "three"},
+		map[string]string{"B": "override"},
+	)
+
+	assert.Equal(t, []string{
 		"A=two",
-		"B=base",
-	}
-	overlay := map[string]string{
-		"B": "override",
-		"C": "three",
-	}
-
-	merged := mergeEnv(base, overlay)
-	require.NotEmpty(t, merged)
-
-	// Sorted keys
-	keys := make([]string, 0, len(merged))
-	for _, item := range merged {
-		parts := strings.SplitN(item, "=", 2)
-		require.Len(t, parts, 2)
-		keys = append(keys, parts[0])
-	}
-	sortedKeys := append([]string(nil), keys...)
-	sort.Strings(sortedKeys)
-	assert.Equal(t, sortedKeys, keys)
-
-	// No duplicate keys + override behavior
-	values := map[string]string{}
-	for _, item := range merged {
-		parts := strings.SplitN(item, "=", 2)
-		values[parts[0]] = parts[1]
-	}
-	assert.Equal(t, "override", values["B"])
-	assert.Equal(t, "three", values["C"])
-	assert.Equal(t, "two", values["A"])
+		"B=override",
+		"C=three",
+		"Z=z",
+	}, merged)
 }
 
 func TestStartProcess_WithPipesAndWaitExit(t *testing.T) {

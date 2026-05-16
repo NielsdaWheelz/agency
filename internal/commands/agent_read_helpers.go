@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -300,23 +299,16 @@ func writeAgentHistoryHumanFromTurns(w io.Writer, turns []daemon.Turn, nextCurso
 	return nil
 }
 
-func latestActivityToolCount(activity *daemon.InvocationLatestActivity) int {
-	if activity == nil {
-		return 0
-	}
-	if activity.ToolCallCount > 0 {
-		return activity.ToolCallCount
-	}
-	return len(activity.ToolCalls)
-}
-
 func formatLatestActivityLabel(activity *daemon.InvocationLatestActivity) string {
 	if activity == nil {
 		return ""
 	}
 	kind := strings.TrimSpace(activity.Kind)
 	summary := strings.TrimSpace(activity.Summary)
-	toolCount := latestActivityToolCount(activity)
+	toolCount := activity.ToolCallCount
+	if toolCount <= 0 {
+		toolCount = len(activity.ToolCalls)
+	}
 	if kind == "" && summary == "" && toolCount == 0 && activity.CheckpointID <= 0 {
 		return ""
 	}
@@ -365,9 +357,4 @@ func truncateTimelineText(value string, max int) string {
 		return value[:max]
 	}
 	return value[:max-3] + "..."
-}
-
-// base64Decode decodes a base64-encoded string.
-func base64Decode(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
 }

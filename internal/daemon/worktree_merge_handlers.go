@@ -4,16 +4,16 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/core"
-	"github.com/NielsdaWheelz/agency/internal/daemon/worktreeevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/lock"
@@ -66,7 +66,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		if code == "" {
 			code = errors.EInvalidArgument
 		}
-		s.writeWorktreeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
+		s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), err.Error(), mergeHintFromError(err))
 		return
 	}
 
@@ -76,7 +76,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeWorktreeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
+		s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Broken || record.Meta == nil {
@@ -90,7 +90,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 			if code == "" {
 				code = errors.EStoreCorrupt
 			}
-			s.writeWorktreeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(readErr), "inspect worktree merge state")
+			s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(readErr), "inspect worktree merge state")
 			return
 		}
 		if record.Meta.State != store.WorktreeStateArchived || worktreeRef != record.WorktreeID || mergeMeta == nil || mergeMeta.Status == store.WorktreeMergeStatusSucceeded || mergeMeta.Stage != store.WorktreeMergeStageArchive {
@@ -105,7 +105,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeWorktreeMergeError(w, mergeHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), mergeHintFromError(err))
+		s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), mergeHintFromError(err))
 		return
 	}
 
@@ -413,20 +413,26 @@ func (s *Server) updateWorktreeMergeMeta(repoID, worktreeID string, updateFn fun
 
 func (s *Server) failWorktreeMerge(repoID, worktreeID string, code errors.Code, message, hint string) {
 	now := s.Clock().UTC().Format(time.RFC3339)
-	_ = s.updateWorktreeMergeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+	if err := s.updateWorktreeMergeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Status = store.WorktreeMergeStatusFailed
 		m.ErrorCode = string(code)
 		m.ErrorMessage = message
 		m.Hint = hint
 		m.FinishedAt = now
-	})
-	_ = s.Store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
+	}); err != nil {
+		log.Printf("agencyd: persist failed merge for worktree %s/%s: %v", repoID, worktreeID, err)
+	}
+	if err := s.Store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.LastUsedAt = now
-	})
-	_ = s.appendWorktreeEvent(repoID, worktreeID, mergeEventFailed, map[string]any{
+	}); err != nil {
+		log.Printf("agencyd: update worktree meta after failed merge %s/%s: %v", repoID, worktreeID, err)
+	}
+	if err := s.appendWorktreeEvent(repoID, worktreeID, mergeEventFailed, map[string]any{
 		"error_code": string(code),
 		"message":    message,
-	})
+	}); err != nil {
+		log.Printf("agencyd: append merge-failed event for worktree %s/%s: %v", repoID, worktreeID, err)
+	}
 }
 
 func (s *Server) runWorktreeMerge(
@@ -672,7 +678,7 @@ func (s *Server) runWorktreeMergeVerify(
 	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
 	logsDir := s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
 	verifyLogPath := filepath.Join(logsDir, "verify.log")
-	verifyRecordPath := filepath.Join(worktreeDir, "verify_record.json")
+	verifyRecordPath := s.Store.IntegrationWorktreeVerifyRecordPath(record.RepoID, record.WorktreeID)
 	verifyJSONPath := filepath.Join(wtMeta.TreePath, ".agency", "out", "verify.json")
 
 	env := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
@@ -953,30 +959,7 @@ func buildWorktreeMergeScriptEnv(
 		name = record.WorktreeID
 	}
 
-	baseEnv := os.Environ()
-	if len(profileEnv) > 0 {
-		merged := make(map[string]string, len(baseEnv)+len(profileEnv))
-		for _, entry := range baseEnv {
-			key, val, ok := strings.Cut(entry, "=")
-			if ok && key != "" {
-				merged[key] = val
-			}
-		}
-		for key, value := range profileEnv {
-			merged[key] = value
-		}
-		keys := make([]string, 0, len(merged))
-		for key := range merged {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		baseEnv = make([]string, 0, len(keys))
-		for _, key := range keys {
-			baseEnv = append(baseEnv, key+"="+merged[key])
-		}
-	}
-
-	return mergeflow.BuildVerifyEnv(baseEnv, mergeflow.VerifyEnvInput{
+	return mergeflow.BuildVerifyEnv(exec.MergeEnv(os.Environ(), profileEnv), mergeflow.VerifyEnvInput{
 		RunID:         record.WorktreeID,
 		Name:          name,
 		RepoRoot:      repoRoot,
@@ -993,7 +976,7 @@ func buildWorktreeMergeScriptEnv(
 func (s *Server) appendWorktreeEvent(repoID, worktreeID, kind string, data map[string]any) error {
 	writer := s.WorktreeEvents
 	if writer == nil {
-		writer = worktreeevents.NewWriter(s.Clock)
+		writer = eventlog.NewWriter("worktree_id", s.Clock)
 		s.WorktreeEvents = writer
 	}
 	_, err := writer.Append(
@@ -1001,7 +984,7 @@ func (s *Server) appendWorktreeEvent(repoID, worktreeID, kind string, data map[s
 		worktreeID,
 		kind,
 		data,
-		worktreeevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	if err != nil {
 		return errors.Wrap(errors.EPersistFailed, "failed to append worktree event", err)

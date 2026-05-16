@@ -665,8 +665,6 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 
 		require.Error(t, err)
 		code := errors.GetCode(err)
-		assert.NotEqual(t, errors.EWorktreeBroken, code,
-			"navigation target resolution must not return E_WORKTREE_BROKEN after canonical navigation migration")
 		assert.Equal(t, errors.EWorktreeNotFound, code,
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})
@@ -682,8 +680,6 @@ func TestWorktreeNavigation_DoesNotReturnEWorktreeBrokenForTargetResolution(t *t
 
 		require.Error(t, err)
 		code := errors.GetCode(err)
-		assert.NotEqual(t, errors.EWorktreeBroken, code,
-			"navigation target resolution must not return E_WORKTREE_BROKEN after canonical navigation migration")
 		assert.Equal(t, errors.EWorktreeNotFound, code,
 			"expected daemon-first E_WORKTREE_NOT_FOUND for missing target")
 	})

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
-	"github.com/NielsdaWheelz/agency/internal/render"
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -407,7 +405,7 @@ func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, bran
 	}
 
 	stderrStr := strings.TrimSpace(result.Stderr)
-	if !forceWithLease && render.IsNonFastForwardError(stderrStr) {
+	if !forceWithLease && isNonFastForwardError(stderrStr) {
 		return errors.NewWithDetails(
 			errors.EGitPushFailed,
 			"push rejected (non-fast-forward)",
@@ -427,6 +425,15 @@ func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, bran
 			"stderr":    stderrStr,
 		},
 	)
+}
+
+// isNonFastForwardError reports whether git push stderr indicates a non-fast-forward rejection.
+func isNonFastForwardError(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	if strings.Contains(lower, "non-fast-forward") || strings.Contains(lower, "fetch first") {
+		return true
+	}
+	return strings.Contains(lower, "[rejected]") && strings.Contains(lower, "updates were rejected")
 }
 
 func prSyncResolveGitHubOwner(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (string, error) {
@@ -539,7 +546,7 @@ func prSyncPrepareBody(
 
 	summary := ""
 	howToTest := ""
-	if status != nil && strings.TrimSpace(status.SchemaVersion) == runnerstatus.SchemaVersion {
+	if status != nil && status.SchemaVersion == runnerstatus.SchemaVersion {
 		summary = strings.TrimSpace(status.Summary)
 		howToTest = strings.TrimSpace(status.HowToTest)
 	}
@@ -571,9 +578,9 @@ func prSyncNonInteractiveEnv(profileEnv map[string]string) map[string]string {
 	if env == nil {
 		env = map[string]string{}
 	}
-	env["GIT_TERMINAL_PROMPT"] = "0"
-	env["GH_PROMPT_DISABLED"] = "1"
-	env["CI"] = "1"
+	for k, v := range exec.NonInteractiveEnv() {
+		env[k] = v
+	}
 	return env
 }
 
@@ -629,43 +636,4 @@ func prSyncUnknownFieldName(err error) (string, bool) {
 		return "", false
 	}
 	return field, true
-}
-
-func prSyncHTTPStatusForCode(code errors.Code) int {
-	switch code {
-	case errors.EWorktreeNotFound:
-		return http.StatusNotFound
-	case errors.EWorktreeIDAmbiguous:
-		return http.StatusConflict
-	case errors.EInvocationNotFound:
-		return http.StatusNotFound
-	case errors.EInvocationIDAmbiguous:
-		return http.StatusConflict
-	case errors.ERepoLocked:
-		return http.StatusConflict
-	case errors.EWorktreeMergeActive:
-		return http.StatusConflict
-	case errors.EDirtyWorktree:
-		return http.StatusConflict
-	case errors.EGitPushFailed:
-		return http.StatusConflict
-	case errors.EGitFetchFailed:
-		return http.StatusBadGateway
-	case errors.EBaseNotFound:
-		return http.StatusBadRequest
-	case errors.EEmptyDiff:
-		return http.StatusBadRequest
-	case errors.EPRNotOpen:
-		return http.StatusConflict
-	case errors.EGHRepoParseFailed:
-		return http.StatusBadRequest
-	case errors.EGhNotInstalled, errors.EGhNotAuthenticated:
-		return http.StatusBadRequest
-	case errors.EInvalidArgument:
-		return http.StatusBadRequest
-	case errors.EPersistFailed:
-		return http.StatusInternalServerError
-	default:
-		return http.StatusInternalServerError
-	}
 }

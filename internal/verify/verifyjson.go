@@ -48,7 +48,6 @@ func readVerifyJSON(path string) readVerifyJSONResult {
 		}
 	}
 
-	// "valid enough" rules: require schema_version to exist and be non-empty
 	if vj.SchemaVersion == "" {
 		return readVerifyJSONResult{
 			exists: true,

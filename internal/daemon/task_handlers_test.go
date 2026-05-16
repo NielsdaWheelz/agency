@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -576,6 +577,14 @@ func TestTaskRetryEventAppendFailurePreservesExistingTask(t *testing.T) {
 		return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
 	})
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	// The retry spawns a real runner; synchronously drain the server before
+	// t.TempDir() cleanup so its supervision goroutines and runner child
+	// process stop writing into dataDir before RemoveAll runs.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
 
 	createBody, err := json.Marshal(WorktreeCreateRequest{
 		RepoRoot:   env.RepoPath,

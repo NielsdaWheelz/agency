@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -83,7 +83,7 @@ func (e *Engine) emitCheckpointCreated(checkpointID int, includesUntracked bool,
 		e.invocationID,
 		string(EventKindCheckpointCreated),
 		CheckpointCreatedData(checkpointID, includesUntracked, sandboxHeadSHA),
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	return err
 }
@@ -94,7 +94,7 @@ func (e *Engine) emitCheckpointFailed(reason string) error {
 		e.invocationID,
 		string(EventKindCheckpointFailed),
 		CheckpointFailedData(reason),
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	return err
 }
@@ -105,7 +105,7 @@ func (e *Engine) emitDenylistTriggered(files []string) error {
 		e.invocationID,
 		string(EventKindCheckpointDenylistTriggered),
 		CheckpointDenylistTriggeredData(files),
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	return err
 }

@@ -11,7 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -29,7 +29,7 @@ type Engine struct {
 	runner      exec.CommandRunner
 	fsys        fs.FS
 	clock       func() time.Time
-	eventWriter invocationevents.Appender
+	eventWriter eventlog.Appender
 
 	mu             sync.Mutex
 	lastCheckpoint time.Time
@@ -63,7 +63,7 @@ func NewEngine(
 		runner,
 		fsys,
 		clock,
-		invocationevents.NewWriter(clock),
+		eventlog.NewWriter("invocation_id", clock),
 	)
 }
 
@@ -75,10 +75,10 @@ func NewEngineWithWriter(
 	runner exec.CommandRunner,
 	fsys fs.FS,
 	clock func() time.Time,
-	eventWriter invocationevents.Appender,
+	eventWriter eventlog.Appender,
 ) *Engine {
 	if eventWriter == nil {
-		eventWriter = invocationevents.NewWriter(clock)
+		eventWriter = eventlog.NewWriter("invocation_id", clock)
 	}
 	config.Env = gitEnv(config.Env, nil)
 	return &Engine{

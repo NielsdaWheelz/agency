@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -48,11 +48,11 @@ type failingAppender struct {
 	err error
 }
 
-func (f failingAppender) Append(string, string, string, map[string]any, invocationevents.AppendOptions) (invocationevents.AppendResult, error) {
+func (f failingAppender) Append(string, string, string, map[string]any, eventlog.AppendOptions) (eventlog.AppendResult, error) {
 	if f.err != nil {
-		return invocationevents.AppendResult{}, f.err
+		return eventlog.AppendResult{}, f.err
 	}
-	return invocationevents.AppendResult{Seq: 1}, nil
+	return eventlog.AppendResult{Seq: 1}, nil
 }
 
 func newStubRunner() *stubRunner {

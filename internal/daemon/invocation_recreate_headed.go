@@ -8,7 +8,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -324,7 +324,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	if _, err := s.InvocationEvents.Append(eventsPath, record.InvocationID, "agency.headed_recreated", map[string]any{
 		"tmux_session": sessionName,
-	}, invocationevents.AppendOptions{}); err != nil {
+	}, eventlog.AppendOptions{}); err != nil {
 		_ = s.TmuxClient.KillSession(ctx, sessionName)
 		s.failInvocationStart(record.RepoID, record.InvocationID, "event_append_failed", true)
 		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to append recreate event: "+err.Error(), "", "", requestID)
@@ -332,6 +332,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 
 	s.replaceInvocationProcess(record.InvocationID, proc)
+	s.supervisionWg.Add(2)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 

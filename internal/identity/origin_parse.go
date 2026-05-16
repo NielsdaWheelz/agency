@@ -14,7 +14,7 @@ import (
 // Returns ok=false for:
 //   - Non-github.com hosts
 //   - Invalid owner/repo characters (must match [A-Za-z0-9_.-]+)
-//   - ssh:// URLs (unsupported in v1)
+//   - ssh:// URLs (not supported)
 //   - Empty or malformed URLs
 func ParseGitHubOwnerRepo(raw string) (owner, repo string, ok bool) {
 	raw = strings.TrimSpace(raw)

@@ -279,7 +279,7 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 		s.mu.RUnlock()
 
 		if supervised && proc != nil {
-			proc.exitReason.Store("discarded")
+			proc.exitReason.Store(store.ExitReasonDiscarded)
 			proc.failureReason.Store("discarded")
 		}
 
@@ -319,7 +319,7 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 			now := s.Clock().UTC().Format(time.RFC3339)
 			if err := s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 				m.Status = store.InvocationStatusFailed
-				m.ExitReason = "discarded"
+				m.ExitReason = store.ExitReasonDiscarded
 				m.FailureReason = "discarded"
 				m.FinishedAt = now
 				m.PID = nil

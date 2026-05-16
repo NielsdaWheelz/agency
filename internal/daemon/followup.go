@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/relay"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -149,7 +149,7 @@ func (s *Server) deliverFollowUp(invocationID, prompt string) string {
 func (s *Server) appendFollowUpPromptEvent(eventsPath, invocationID, clientRequestID, prompt string) (string, bool, error) {
 	writer := s.InvocationEvents
 	if writer == nil {
-		writer = invocationevents.NewWriter(s.Clock)
+		writer = eventlog.NewWriter("invocation_id", s.Clock)
 	}
 
 	result, err := writer.Append(
@@ -160,7 +160,7 @@ func (s *Server) appendFollowUpPromptEvent(eventsPath, invocationID, clientReque
 			"text":              prompt,
 			"client_request_id": clientRequestID,
 		},
-		invocationevents.AppendOptions{
+		eventlog.AppendOptions{
 			IdempotencyDataKey:   "client_request_id",
 			IdempotencyDataValue: clientRequestID,
 		},

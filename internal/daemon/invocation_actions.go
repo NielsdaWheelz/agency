@@ -132,7 +132,7 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 		return
 	}
 	if supervised && proc != nil {
-		proc.exitReason.Store("stopped")
+		proc.exitReason.Store(store.ExitReasonStopped)
 		proc.failureReason.Store("stopped")
 	}
 
@@ -335,7 +335,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	proc, supervised := s.processes[record.InvocationID]
 	s.mu.RUnlock()
 	if supervised && proc != nil {
-		proc.exitReason.Store("killed")
+		proc.exitReason.Store(store.ExitReasonKilled)
 		proc.failureReason.Store("killed")
 	}
 	if pgid > 0 {
@@ -349,6 +349,8 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 }
 
 func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
+	defer s.supervisionWg.Done()
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 

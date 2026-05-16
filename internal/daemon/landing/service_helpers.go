@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
@@ -94,7 +94,7 @@ func (s *Service) emitLandFailure(repoID, invocationID, reason string, operation
 func (s *Service) emitEvent(repoID, invocationID, eventType string, data map[string]any) error {
 	writer := s.eventWriter
 	if writer == nil {
-		writer = invocationevents.NewWriter(s.clock)
+		writer = eventlog.NewWriter("invocation_id", s.clock)
 		s.eventWriter = writer
 	}
 
@@ -103,7 +103,7 @@ func (s *Service) emitEvent(repoID, invocationID, eventType string, data map[str
 		invocationID,
 		eventType,
 		data,
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	if err != nil {
 		return errors.Wrap(errors.ELandFailed, "failed to append invocation event", err)

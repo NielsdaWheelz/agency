@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -38,7 +38,7 @@ type Applier struct {
 	runner         exec.CommandRunner
 	fsys           fs.FS
 	clock          func() time.Time
-	eventWriter    invocationevents.Appender
+	eventWriter    eventlog.Appender
 }
 
 // NewApplier creates a new checkpoint applier.
@@ -56,7 +56,7 @@ func NewApplier(
 		runner,
 		fsys,
 		clock,
-		invocationevents.NewWriter(clock),
+		eventlog.NewWriter("invocation_id", clock),
 	)
 }
 
@@ -67,10 +67,10 @@ func NewApplierWithWriter(
 	runner exec.CommandRunner,
 	fsys fs.FS,
 	clock func() time.Time,
-	eventWriter invocationevents.Appender,
+	eventWriter eventlog.Appender,
 ) *Applier {
 	if eventWriter == nil {
-		eventWriter = invocationevents.NewWriter(clock)
+		eventWriter = eventlog.NewWriter("invocation_id", clock)
 	}
 	return &Applier{
 		invocationID:   invocationID,
@@ -322,7 +322,7 @@ func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string)
 		a.invocationID,
 		string(EventKindCheckpointApplied),
 		CheckpointAppliedData(checkpointID, snapshotCommit),
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	return err
 }
@@ -334,7 +334,7 @@ func (a *Applier) emitCheckpointApplyStarted(checkpointID int, snapshotCommit st
 		a.invocationID,
 		string(EventKindCheckpointApplyStarted),
 		CheckpointApplyStartedData(checkpointID, snapshotCommit, rewindHead),
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 	return err
 }

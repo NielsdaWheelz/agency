@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -46,7 +46,7 @@ type Service struct {
 	fsys        fs.FS
 	clock       func() time.Time
 	eventsPath  func(repoID, invocationID string) string
-	eventWriter invocationevents.Appender
+	eventWriter eventlog.Appender
 }
 
 // NewService creates a new landing service.
@@ -56,7 +56,7 @@ func NewService(
 	fsys fs.FS,
 	clock func() time.Time,
 ) *Service {
-	return NewServiceWithWriter(st, runner, fsys, clock, invocationevents.NewWriter(clock))
+	return NewServiceWithWriter(st, runner, fsys, clock, eventlog.NewWriter("invocation_id", clock))
 }
 
 // NewServiceWithWriter creates a landing service with a shared invocation
@@ -66,10 +66,10 @@ func NewServiceWithWriter(
 	runner exec.CommandRunner,
 	fsys fs.FS,
 	clock func() time.Time,
-	eventWriter invocationevents.Appender,
+	eventWriter eventlog.Appender,
 ) *Service {
 	if eventWriter == nil {
-		eventWriter = invocationevents.NewWriter(clock)
+		eventWriter = eventlog.NewWriter("invocation_id", clock)
 	}
 	return &Service{
 		store:       st,
@@ -295,7 +295,7 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 			m.Status == store.InvocationStatusStarting ||
 			m.Status == store.InvocationStatusStopping {
 			m.Status = store.InvocationStatusFailed
-			m.ExitReason = "discarded"
+			m.ExitReason = store.ExitReasonDiscarded
 		}
 	}); err != nil {
 		return errors.Wrap(errors.ELandFailed, "failed to update invocation meta after discard", err)
@@ -319,7 +319,6 @@ func (s *Service) syncWorktreeRunnerStatus(repoID, invocationID, worktreeID stri
 		Summary:       "Landed invocation " + invocationID,
 		Questions:     []string{},
 		HowToTest:     "How to test not provided.",
-		Risks:         []string{},
 	}
 
 	invocationStatus, err := runnerstatus.Load(s.store.InvocationDir(repoID, invocationID))
@@ -330,7 +329,7 @@ func (s *Service) syncWorktreeRunnerStatus(repoID, invocationID, worktreeID stri
 		if strings.TrimSpace(invocationStatus.HowToTest) != "" {
 			worktreeStatus.HowToTest = strings.TrimSpace(invocationStatus.HowToTest)
 		}
-		if strings.TrimSpace(invocationStatus.SchemaVersion) == runnerstatus.SchemaVersion && invocationStatus.Validate() == nil {
+		if invocationStatus.SchemaVersion == runnerstatus.SchemaVersion && invocationStatus.Validate() == nil {
 			worktreeStatus = *invocationStatus
 		}
 	}

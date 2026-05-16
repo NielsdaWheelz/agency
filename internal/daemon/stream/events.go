@@ -2,10 +2,7 @@
 // This file defines normalized stream events.
 package stream
 
-import (
-	"encoding/json"
-	"time"
-)
+import "encoding/json"
 
 // SchemaVersion is the current schema version for normalized events.
 const SchemaVersion = "1.0"
@@ -71,19 +68,6 @@ type NormalizedEvent struct {
 
 	// Data contains runner-specific payload.
 	Data map[string]interface{} `json:"data"`
-}
-
-// NewNormalizedEvent creates a new normalized event with common fields filled in.
-func NewNormalizedEvent(seq uint64, invocationID, runner string, kind EventKind, now time.Time) *NormalizedEvent {
-	return &NormalizedEvent{
-		SchemaVersion: SchemaVersion,
-		Seq:           seq,
-		Timestamp:     now.UTC().Format(time.RFC3339),
-		InvocationID:  invocationID,
-		Runner:        runner,
-		Kind:          kind,
-		Data:          make(map[string]interface{}),
-	}
 }
 
 // Marshal serializes the event to JSON bytes with newline.

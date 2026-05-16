@@ -1,6 +1,11 @@
-package invocationevents
+// Package eventlog owns the daemon mutation event-log mechanism: atomic,
+// locked, private-permission JSONL appends with monotonic sequencing and
+// optional idempotency. Domain packages own their event-kind constants and
+// construct a Writer with the entity-id field name they record.
+package eventlog
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +18,10 @@ import (
 )
 
 const maxEventLineBytes = stream.MaxLineSize
+
+// idFieldPlaceholder is the JSON key carried by eventLine.EntityID before it is
+// rewritten to the writer's configured entity-id field name.
+const idFieldPlaceholder = "entity_id"
 
 // AppendOptions configures optional idempotency behavior for an append.
 type AppendOptions struct {
@@ -30,28 +39,32 @@ type AppendResult struct {
 	AlreadyApplied bool
 }
 
-// Appender appends invocation events.
+// Appender appends entity-scoped events. It is the seam callers depend on so
+// tests can substitute a failing implementation.
 type Appender interface {
-	Append(eventsPath, invocationID, kind string, data map[string]any, opts AppendOptions) (AppendResult, error)
+	Append(eventsPath, entityID, kind string, data map[string]any, opts AppendOptions) (AppendResult, error)
 }
 
-// Writer appends invocation events with process-wide in-memory locking per
-// invocation events path.
+// Writer appends events with process-wide in-memory locking per events path.
+// The entity-id field name is fixed at construction.
 type Writer struct {
-	clock func() time.Time
+	idField string
+	clock   func() time.Time
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
-// NewWriter creates a writer using the provided clock.
-func NewWriter(clock func() time.Time) *Writer {
+// NewWriter creates a writer that records the entity id under idField (for
+// example "task_id") using the provided clock.
+func NewWriter(idField string, clock func() time.Time) *Writer {
 	if clock == nil {
 		clock = time.Now
 	}
 	return &Writer{
-		clock: clock,
-		locks: make(map[string]*sync.Mutex),
+		idField: idField,
+		clock:   clock,
+		locks:   make(map[string]*sync.Mutex),
 	}
 }
 
@@ -59,18 +72,18 @@ type eventLine struct {
 	SchemaVersion string         `json:"schema_version"`
 	Seq           uint64         `json:"seq"`
 	Timestamp     string         `json:"timestamp"`
-	InvocationID  string         `json:"invocation_id"`
+	EntityID      string         `json:"entity_id"`
 	Kind          string         `json:"kind"`
 	Data          map[string]any `json:"data,omitempty"`
 }
 
-// Append appends one invocation event under a single sequencing authority.
-func (w *Writer) Append(eventsPath, invocationID, kind string, data map[string]any, opts AppendOptions) (AppendResult, error) {
+// Append appends one event under a single sequencing authority.
+func (w *Writer) Append(eventsPath, entityID, kind string, data map[string]any, opts AppendOptions) (AppendResult, error) {
 	if eventsPath == "" {
 		return AppendResult{}, fmt.Errorf("events path is required")
 	}
-	if invocationID == "" {
-		return AppendResult{}, fmt.Errorf("invocation id is required")
+	if entityID == "" {
+		return AppendResult{}, fmt.Errorf("entity id is required")
 	}
 	if kind == "" {
 		return AppendResult{}, fmt.Errorf("event kind is required")
@@ -89,26 +102,24 @@ func (w *Writer) Append(eventsPath, invocationID, kind string, data map[string]a
 		return AppendResult{}, err
 	}
 	if duplicateFound {
-		return AppendResult{
-			Seq:            duplicateSeq,
-			AlreadyApplied: true,
-		}, nil
+		return AppendResult{Seq: duplicateSeq, AlreadyApplied: true}, nil
 	}
 
 	seq := maxSeq + 1
-	line := eventLine{
+	payload, err := json.Marshal(eventLine{
 		SchemaVersion: "1.0",
 		Seq:           seq,
 		Timestamp:     w.clock().UTC().Format(time.RFC3339),
-		InvocationID:  invocationID,
+		EntityID:      entityID,
 		Kind:          kind,
 		Data:          data,
-	}
-
-	payload, err := json.Marshal(line)
+	})
 	if err != nil {
 		return AppendResult{}, err
 	}
+	payload = bytes.Replace(payload,
+		[]byte(`"`+idFieldPlaceholder+`":`),
+		[]byte(`"`+w.idField+`":`), 1)
 	if len(payload)+1 > maxEventLineBytes {
 		return AppendResult{}, fmt.Errorf("event payload exceeds max line size of %d bytes", maxEventLineBytes)
 	}

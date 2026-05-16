@@ -4,7 +4,6 @@ package servicemanager
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -44,13 +43,7 @@ type Manager interface {
 	Name() string
 }
 
-// Detect returns the service manager for the current platform.
-func Detect(cr exec.CommandRunner) (Manager, error) {
-	return DetectForOS(cr, runtime.GOOS)
-}
-
 // DetectForOS returns the service manager for the given GOOS value.
-// Exported for testing across platforms.
 func DetectForOS(cr exec.CommandRunner, goos string) (Manager, error) {
 	switch goos {
 	case "darwin":

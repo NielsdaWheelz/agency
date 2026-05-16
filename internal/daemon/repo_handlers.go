@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/repoevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
@@ -396,9 +396,9 @@ func (s *Server) buildRepoRefs(idx store.RepoIndex) []ids.RepoRef {
 func (s *Server) appendRepoEvent(repoID, kind string, data map[string]any) error {
 	writer := s.RepoEvents
 	if writer == nil {
-		writer = repoevents.NewWriter(s.Clock)
+		writer = eventlog.NewWriter("repo_id", s.Clock)
 	}
-	_, err := writer.Append(s.Store.RepoEventsPath(repoID), repoID, kind, data)
+	_, err := writer.Append(s.Store.RepoEventsPath(repoID), repoID, kind, data, eventlog.AppendOptions{})
 	return err
 }
 

@@ -1454,58 +1454,6 @@ func TestDaemonSemanticCheckpoint_CursorMutatingToolCallCreatesCheckpoint(t *tes
 	assert.Contains(t, semanticCP.ChangedPaths, "cursor-mutated.txt")
 }
 
-func TestDaemonControlPlaneStart_CursorQueuedPromptResumesNextTurn(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	env := startTestDaemon(t)
-	ctx := context.Background()
-
-	repoRoot := setupTestGitRepo(t)
-	worktreeID, _, repoID := createTestWorktree(t, env.Client, repoRoot, "cursor-resume")
-
-	capturePath := filepath.Join(t.TempDir(), "launch_capture.json")
-	startResp, err := env.Client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
-		RepoRoot:    repoRoot,
-		WorktreeRef: worktreeID,
-		Runner:      "cursor",
-		Prompt:      "first cursor turn",
-		RunnerArgs:  []string{"--model", "sonnet-4.6-thinking"},
-		Env: map[string]string{
-			"FAKE_RUNNER_MODE":         "cursor-session-sleep-then-exit-ok",
-			"FAKE_RUNNER_SLEEP_MS":     "1200",
-			"FAKE_RUNNER_SESSION_ID":   "sess_cursor_resume_test",
-			"FAKE_RUNNER_CAPTURE_PATH": capturePath,
-		},
-	})
-	require.NoError(t, err)
-	require.True(t, startResp.OK, "start failed: %s - %s", startResp.ErrorCode, startResp.Message)
-
-	followResp, err := env.Client.SubmitFollowUp(ctx, startResp.InvocationID, repoID, daemonclient.SubmitFollowUpOpts{
-		Prompt: "second cursor turn",
-	})
-	require.NoError(t, err, "follow-up transport error")
-	require.True(t, followResp.OK, "follow-up failed: %s - %s", followResp.ErrorCode, followResp.Message)
-	assert.Equal(t, "queued", followResp.DeliveryMode)
-
-	metaAfter := waitForInvocationTerminal(t, env.Store, repoID, startResp.InvocationID, 8*time.Second)
-	assert.Equal(t, store.InvocationStatusFinished, metaAfter.Status)
-	assert.Empty(t, metaAfter.FailureReason)
-
-	rawData, readErr := os.ReadFile(env.Store.InvocationRawLogPath(repoID, startResp.InvocationID))
-	require.NoError(t, readErr, "read raw log")
-	assert.GreaterOrEqual(t, strings.Count(string(rawData), `{"type":"result","subtype":"success"}`), 2, "expected two successful cursor turns")
-
-	capture := readFakeRunnerLaunchCapture(t, capturePath)
-	assert.Equal(t, "cursor-session-sleep-then-exit-ok", capture.Mode)
-	assert.Equal(
-		t,
-		[]string{"-p", "--output-format", "stream-json", "--force", "--resume", "sess_cursor_resume_test", "--model", "sonnet-4.6-thinking", "second cursor turn"},
-		capture.Args,
-	)
-}
-
 // ---------------------------------------------------------------------------
 // Landing integration tests.
 // ---------------------------------------------------------------------------

@@ -21,42 +21,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func nonInteractiveRunnerEnv() map[string]string {
-	return map[string]string{
-		"CI":                  "1",
-		"GIT_TERMINAL_PROMPT": "0",
-		"GH_PROMPT_DISABLED":  "1",
-	}
-}
-
-func mergeEnvDeterministic(baseEnv []string, overlays ...map[string]string) []string {
-	merged := make(map[string]string, len(baseEnv))
-	for _, entry := range baseEnv {
-		key, val, ok := strings.Cut(entry, "=")
-		if !ok || key == "" {
-			continue
-		}
-		merged[key] = val
-	}
-	for _, overlay := range overlays {
-		for k, v := range overlay {
-			merged[k] = v
-		}
-	}
-
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	result := make([]string, 0, len(keys))
-	for _, k := range keys {
-		result = append(result, k+"="+merged[k])
-	}
-	return result
-}
-
 func sortedEnvKeys(env map[string]string) []string {
 	if len(env) == 0 {
 		return nil
@@ -165,7 +129,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	if envOverlay == nil {
 		envOverlay = map[string]string{}
 	}
-	for k, v := range nonInteractiveRunnerEnv() {
+	for k, v := range exec.NonInteractiveEnv() {
 		envOverlay[k] = v
 	}
 
@@ -320,6 +284,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	}
 
 	proc.streamWg.Add(2)
+	s.supervisionWg.Add(3)
 	go s.streamAndParseOutput(proc, startedProc.StdoutPipe, rawFile, streamFile)
 	go s.streamOutput(proc, startedProc.StderrPipe, stderrFile)
 	go s.waitForExitWithFailureReason(proc, startedProc, rawFile, stderrFile, streamFile)
@@ -377,6 +342,7 @@ func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, res
 }
 
 func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedProc *exec.StartedProcess, rawFile, stderrFile, streamFile *os.File) {
+	defer s.supervisionWg.Done()
 	defer func() { _ = rawFile.Close() }()
 	defer func() { _ = stderrFile.Close() }()
 	defer func() {

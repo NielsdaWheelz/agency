@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -201,6 +202,16 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		ExitReason:            "unknown",
 		FailureReason:         "runner_exit_nonzero",
 	}))
+
+	// Synchronously shut the server down before t.TempDir() cleanup runs so
+	// no supervision goroutine, worktree-merge goroutine, or runner child
+	// process keeps writing into dataDir while RemoveAll empties it.
+	// Registered after t.TempDir(): t.Cleanup is LIFO, so this runs first.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
 
 	return &readTestEnv{
 		Server: srv,
@@ -740,7 +751,6 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 		State:         runnerstatus.StateRunning,
 		UpdatedAt:     "2026-02-05T11:59:30Z",
 		Summary:       "waiting on api contract",
-		Risks:         []string{},
 	})
 
 	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
@@ -899,7 +909,6 @@ func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup
 		State:         runnerstatus.StateRunning,
 		UpdatedAt:     "2026-02-05T11:59:30Z",
 		Summary:       "invocation-owned summary survives cleanup",
-		Risks:         []string{},
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)

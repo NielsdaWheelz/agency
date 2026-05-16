@@ -130,7 +130,7 @@ func GetOriginInfo(ctx context.Context, cr exec.CommandRunner, repoRoot string, 
 //   - https: https://github.com/owner/repo.git -> github.com
 //
 // Returns "" for:
-//   - ssh:// URLs (unsupported in v1)
+//   - ssh:// URLs (not supported)
 //   - Other URL schemes (git://, file://, etc.)
 //   - Unparseable URLs
 //   - Empty input
@@ -176,7 +176,7 @@ func ParseOriginHost(raw string) string {
 		return ""
 	}
 
-	// ssh:// URLs are explicitly unsupported in v1
+	// ssh:// URLs are not supported
 	if strings.HasPrefix(raw, "ssh://") {
 		return ""
 	}

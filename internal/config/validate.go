@@ -1,12 +1,12 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
@@ -118,7 +118,7 @@ func ExecutionProfileEnv(cfg UserConfig, profile string) (map[string]string, err
 
 func ResolveCheckoutRoot(repoRoot, repoID, checkoutRoot string) (string, error) {
 	repoRoot = strings.TrimSpace(repoRoot)
-	canonicalRepoRoot, err := resolveSymlinkPath(repoRoot)
+	canonicalRepoRoot, err := fs.ResolveSymlinks(repoRoot)
 	if err != nil {
 		return "", errors.NewWithDetails(errors.ECheckoutRootUnsafe, "repo root could not be resolved safely", map[string]string{"repo_root": filepath.Clean(repoRoot)})
 	}
@@ -137,53 +137,17 @@ func ResolveCheckoutRoot(repoRoot, repoID, checkoutRoot string) (string, error) 
 		return "", errors.New(errors.EInvalidCheckoutRoot, "checkout_root must be repo-sibling or an absolute path")
 	}
 	requested := resolved
-	resolved, err = resolveSymlinkPath(requested)
+	resolved, err = fs.ResolveSymlinks(requested)
 	if err != nil {
 		return "", errors.NewWithDetails(errors.ECheckoutRootUnsafe, "checkout root could not be resolved safely", map[string]string{"checkout_root": filepath.Clean(requested), "repo_root": canonicalRepoRoot})
 	}
-	if pathContains(canonicalRepoRoot, resolved) {
+	if fs.PathContains(canonicalRepoRoot, resolved) {
 		return "", errors.NewWithDetails(errors.ECheckoutRootUnsafe, "checkout root is inside the canonical repo root", map[string]string{"checkout_root": resolved, "repo_root": canonicalRepoRoot})
 	}
-	if pathContains(resolved, canonicalRepoRoot) {
+	if fs.PathContains(resolved, canonicalRepoRoot) {
 		return "", errors.NewWithDetails(errors.ECheckoutRootUnsafe, "checkout root contains the canonical repo root", map[string]string{"checkout_root": resolved, "repo_root": canonicalRepoRoot})
 	}
 	return resolved, nil
-}
-
-func resolveSymlinkPath(path string) (string, error) {
-	clean := filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		return filepath.Clean(resolved), nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-
-	current := clean
-	var missing []string
-	for {
-		parent := filepath.Dir(current)
-		if parent == current {
-			return clean, nil
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-	}
-}
-
-func pathContains(parent, child string) bool {
-	rel, err := filepath.Rel(parent, child)
-	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)))
 }
 
 // containsWhitespace returns true if s contains any whitespace character.

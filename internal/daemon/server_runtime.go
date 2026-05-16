@@ -69,7 +69,7 @@ func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader,
 
 		proc.exitReason.Store("stream_write_failed")
 		proc.failureReason.Store("stream_write_failed")
-		_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+		s.persistInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
 			meta.Flags.NeedsAttention = true
 			meta.FailureReason = "stream_write_failed"
 		})

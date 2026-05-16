@@ -10,8 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // MaxLineSize is the maximum size of a single line (8 MB).
@@ -51,12 +49,6 @@ type Parser struct {
 
 	// seq is the monotonic sequence counter for normalized events.
 	seq uint64
-
-	// semanticStatus remains for daemon wiring; stream parsing no longer infers it.
-	semanticStatus *runnerstatus.State
-
-	// semanticStatusUpdatedAt tracks the last external semantic-status update time.
-	semanticStatusUpdatedAt time.Time
 
 	// lastOutputAt tracks when the last output was received.
 	lastOutputAt atomic.Int64
@@ -105,20 +97,6 @@ func (p *Parser) SetInitialSeq(seq uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.seq = seq
-}
-
-// GetSemanticStatus returns the current semantic status value.
-func (p *Parser) GetSemanticStatus() *runnerstatus.State {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.semanticStatus
-}
-
-// GetSemanticStatusUpdatedAt returns when semantic status was last updated.
-func (p *Parser) GetSemanticStatusUpdatedAt() time.Time {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.semanticStatusUpdatedAt
 }
 
 // GetLastOutputAt returns the last output timestamp as UnixNano.
@@ -537,12 +515,4 @@ func (p *Parser) maybeNotifyFinal(event *NormalizedEvent) {
 		Success: success,
 		Seq:     event.Seq,
 	})
-}
-
-// ClearSemanticStatus clears the semantic status (called when lifecycle becomes failed).
-func (p *Parser) ClearSemanticStatus() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.semanticStatus = nil
-	p.semanticStatusUpdatedAt = p.Clock()
 }

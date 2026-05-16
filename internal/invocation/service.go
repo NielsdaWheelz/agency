@@ -5,7 +5,6 @@ package invocation
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -350,7 +349,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 		)
 	}
 
-	sandboxCanonical, err := resolveSandboxSafetyPath(sandboxClean)
+	sandboxCanonical, err := fs.ResolveSymlinks(sandboxClean)
 	if err != nil {
 		return errors.WrapWithDetails(
 			errors.ESandboxPathUnsafe,
@@ -359,7 +358,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 			map[string]string{"sandbox_path": sandboxPath},
 		)
 	}
-	integrationCanonical, err := resolveSandboxSafetyPath(integrationClean)
+	integrationCanonical, err := fs.ResolveSymlinks(integrationClean)
 	if err != nil {
 		return errors.WrapWithDetails(
 			errors.ESandboxPathUnsafe,
@@ -383,7 +382,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	// Check 2: Sandbox must not be a parent of integration
-	if pathContains(sandboxCanonical, integrationCanonical) {
+	if fs.PathContains(sandboxCanonical, integrationCanonical) {
 		return errors.NewWithDetails(
 			errors.ESandboxPathUnsafe,
 			"sandbox path is a parent of integration tree path",
@@ -395,7 +394,7 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	// Check 3: Sandbox must not be a child of integration
-	if pathContains(integrationCanonical, sandboxCanonical) {
+	if fs.PathContains(integrationCanonical, sandboxCanonical) {
 		return errors.NewWithDetails(
 			errors.ESandboxPathUnsafe,
 			"sandbox path is a child of integration tree path",
@@ -419,42 +418,6 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	}
 
 	return nil
-}
-
-func resolveSandboxSafetyPath(path string) (string, error) {
-	clean := filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		return filepath.Clean(resolved), nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-
-	current := clean
-	var missing []string
-	for {
-		parent := filepath.Dir(current)
-		if parent == current {
-			return clean, nil
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-	}
-}
-
-func pathContains(parent, child string) bool {
-	rel, err := filepath.Rel(parent, child)
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // Resolve resolves an invocation identifier (id or prefix) to a record.

@@ -309,7 +309,6 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 		Summary:       "waiting on API contract decision",
 		Questions:     []string{},
 		HowToTest:     "",
-		Risks:         []string{},
 	}
 	rsBytes, err := json.Marshal(rs)
 	require.NoError(t, err)

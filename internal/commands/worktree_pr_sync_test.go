@@ -29,8 +29,7 @@ func TestWorktreePRSync_JSONCreatedOutcomeIncludesIdentityFields(t *testing.T) {
   "updated_at": "2026-02-05T12:00:00Z",
   "summary": "landed invocation changes",
   "questions": [],
-  "how_to_test": "go test ./...",
-  "risks": []
+  "how_to_test": "go test ./..."
 }`), 0o644))
 	prBodyPath := filepath.Join(integrationTree, ".agency", "tmp", "pr_body.md")
 

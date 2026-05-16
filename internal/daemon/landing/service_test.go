@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/landing"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -71,8 +71,8 @@ type failingEventAppender struct {
 	err error
 }
 
-func (f failingEventAppender) Append(string, string, string, map[string]any, invocationevents.AppendOptions) (invocationevents.AppendResult, error) {
-	return invocationevents.AppendResult{}, f.err
+func (f failingEventAppender) Append(string, string, string, map[string]any, eventlog.AppendOptions) (eventlog.AppendResult, error) {
+	return eventlog.AppendResult{}, f.err
 }
 
 // setupHarness creates a landing.Service backed by a real store and a fake

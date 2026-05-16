@@ -38,7 +38,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		if code == "" {
 			code = errors.EInternal
 		}
-		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
+		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Broken || record.Meta == nil {
@@ -59,7 +59,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
 			hint = strings.TrimSpace(ae.Details["hint"])
 		}
-		s.writeWorktreeRebaseError(w, worktreeRebaseHTTPStatusForCode(code), requestID, string(code), apiErrorMessage(err), hint)
+		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), hint)
 		return
 	}
 	s.writeWorktreeRebaseSuccess(w, requestID, record)
@@ -203,23 +203,4 @@ func decodeWorktreeRebaseRequest(body io.Reader) string {
 		return prSyncDecodeErrorMessage(err)
 	}
 	return ""
-}
-
-func worktreeRebaseHTTPStatusForCode(code errors.Code) int {
-	switch code {
-	case errors.EWorktreeNotFound:
-		return http.StatusNotFound
-	case errors.EWorktreeIDAmbiguous, errors.ERepoLocked, errors.EWorktreeMergeActive:
-		return http.StatusConflict
-	case errors.EDirtyWorktree, errors.ERebaseConflict:
-		return http.StatusConflict
-	case errors.EGitFetchFailed:
-		return http.StatusBadGateway
-	case errors.EInvalidArgument:
-		return http.StatusBadRequest
-	case errors.EPersistFailed:
-		return http.StatusInternalServerError
-	default:
-		return http.StatusInternalServerError
-	}
 }

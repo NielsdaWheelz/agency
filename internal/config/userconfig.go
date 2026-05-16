@@ -42,24 +42,6 @@ type ExecutionProfile struct {
 	Env map[string]string `json:"env"`
 }
 
-// DefaultUserConfig returns scaffold content for creating a new user config.
-func DefaultUserConfig() UserConfig {
-	return UserConfig{
-		Version: AgencyConfigVersion,
-		Defaults: UserDefaults{
-			Runner:           "claude-code",
-			Editor:           "code",
-			BaseBranch:       "main",
-			ExecutionProfile: "personal",
-		},
-		Runners: map[string]string{},
-		Editors: map[string]string{},
-		ExecutionProfiles: map[string]ExecutionProfile{
-			"personal": {Env: map[string]string{}},
-		},
-	}
-}
-
 // UserConfigPath returns the full path to the user config file.
 func UserConfigPath(configDir string) string {
 	return filepath.Join(configDir, "config.json")

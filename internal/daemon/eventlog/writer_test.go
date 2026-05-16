@@ -1,4 +1,4 @@
-package invocationevents
+package eventlog
 
 import (
 	"bufio"
@@ -16,9 +16,10 @@ import (
 )
 
 type persistedEvent struct {
-	Seq  uint64         `json:"seq"`
-	Kind string         `json:"kind"`
-	Data map[string]any `json:"data"`
+	SchemaVersion string         `json:"schema_version"`
+	Seq           uint64         `json:"seq"`
+	Kind          string         `json:"kind"`
+	Data          map[string]any `json:"data"`
 }
 
 func readPersistedEvents(t *testing.T, eventsPath string) []persistedEvent {
@@ -43,7 +44,7 @@ func TestWriter_AppendConcurrentCrossSurfaceMonotonicSeq(t *testing.T) {
 	t.Parallel()
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	writer := NewWriter(func() time.Time {
+	writer := NewWriter("invocation_id", func() time.Time {
 		return time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	})
 
@@ -93,11 +94,52 @@ func TestWriter_AppendConcurrentCrossSurfaceMonotonicSeq(t *testing.T) {
 	}
 }
 
-func TestWriter_Append_IdempotentFollowUpClientRequestID(t *testing.T) {
+func TestWriter_Append_RecordsConfiguredIDField(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		idField  string
+		entityID string
+	}{
+		{"invocation_id", "inv-1"},
+		{"worktree_id", "wt-1"},
+		{"task_id", "task-1"},
+		{"repo_id", "repo-1"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.idField, func(t *testing.T) {
+			t.Parallel()
+
+			eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+			writer := NewWriter(tc.idField, func() time.Time {
+				return time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+			})
+
+			_, err := writer.Append(eventsPath, tc.entityID, "agency.kind", map[string]any{"k": "v"}, AppendOptions{})
+			require.NoError(t, err)
+
+			f, err := os.Open(eventsPath)
+			require.NoError(t, err)
+			defer func() { _ = f.Close() }()
+
+			var line map[string]any
+			scanner := bufio.NewScanner(f)
+			require.True(t, scanner.Scan())
+			require.NoError(t, json.Unmarshal(scanner.Bytes(), &line))
+
+			assert.Equal(t, tc.entityID, line[tc.idField])
+			assert.Equal(t, "1.0", line["schema_version"])
+			assert.Equal(t, "agency.kind", line["kind"])
+		})
+	}
+}
+
+func TestWriter_Append_IdempotentClientRequestID(t *testing.T) {
 	t.Parallel()
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	writer := NewWriter(time.Now)
+	writer := NewWriter("invocation_id", time.Now)
 
 	first, err := writer.Append(
 		eventsPath,
@@ -143,7 +185,7 @@ func TestWriter_Append_UsesPrivatePermissions(t *testing.T) {
 	t.Parallel()
 
 	eventsPath := filepath.Join(t.TempDir(), "nested", "events.jsonl")
-	writer := NewWriter(time.Now)
+	writer := NewWriter("invocation_id", time.Now)
 
 	_, err := writer.Append(
 		eventsPath,
@@ -167,7 +209,7 @@ func TestWriter_Append_RejectsOversizedPayload(t *testing.T) {
 	t.Parallel()
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	writer := NewWriter(time.Now)
+	writer := NewWriter("invocation_id", time.Now)
 
 	_, err := writer.Append(
 		eventsPath,

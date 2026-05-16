@@ -41,7 +41,7 @@ type RepoLock struct {
 	IsPIDAlive func(pid int) bool
 }
 
-// NewRepoLock returns a RepoLock with v1 defaults:
+// NewRepoLock returns a RepoLock with default settings:
 // - StaleAfter: 2h
 // - Now: time.Now
 // - IsPIDAlive: platform impl (best-effort)

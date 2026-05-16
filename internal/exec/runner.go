@@ -113,7 +113,7 @@ func (r *RealRunner) Run(ctx context.Context, name string, args []string, opts R
 	}
 
 	if len(opts.Env) > 0 {
-		cmd.Env = mergeEnv(cmd.Environ(), opts.Env)
+		cmd.Env = MergeEnv(cmd.Environ(), opts.Env)
 	}
 
 	err := cmd.Run()
@@ -161,7 +161,7 @@ func RunAttached(ctx context.Context, name string, args []string, opts AttachedR
 	}
 
 	if len(opts.Env) > 0 {
-		cmd.Env = mergeEnv(os.Environ(), opts.Env)
+		cmd.Env = MergeEnv(os.Environ(), opts.Env)
 	}
 
 	err := cmd.Run()
@@ -214,7 +214,7 @@ func StartProcess(ctx context.Context, name string, args []string, opts StartOpt
 		baseEnv = append([]string(nil), opts.EnvList...)
 	}
 	if len(opts.Env) > 0 {
-		cmd.Env = mergeEnv(baseEnv, opts.Env)
+		cmd.Env = MergeEnv(baseEnv, opts.Env)
 	} else if len(opts.EnvList) > 0 {
 		cmd.Env = baseEnv
 	}
@@ -304,24 +304,23 @@ func (p *StartedProcess) SignalGroup(sig syscall.Signal) error {
 	return errors.New("process has no pid")
 }
 
-// mergeEnv applies overlay vars on top of base env deterministically.
-// Rules:
-// - override wins
-// - no duplicate keys in output
-// - keys sorted for reproducibility
-func mergeEnv(base []string, overlay map[string]string) []string {
-	merged := make(map[string]string, len(base)+len(overlay))
+// MergeEnv applies overlay maps on top of a base environment, deterministically:
+// later overlays win, malformed base entries (no "=") are dropped, no duplicate
+// keys, and keys are sorted for reproducible output.
+func MergeEnv(baseEnv []string, overlays ...map[string]string) []string {
+	merged := make(map[string]string, len(baseEnv))
 
-	for _, item := range base {
-		parts := strings.SplitN(item, "=", 2)
-		if len(parts) == 1 {
-			merged[parts[0]] = ""
+	for _, entry := range baseEnv {
+		key, val, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
 			continue
 		}
-		merged[parts[0]] = parts[1]
+		merged[key] = val
 	}
-	for k, v := range overlay {
-		merged[k] = v
+	for _, overlay := range overlays {
+		for k, v := range overlay {
+			merged[k] = v
+		}
 	}
 
 	keys := make([]string, 0, len(merged))
@@ -335,4 +334,14 @@ func mergeEnv(base []string, overlay map[string]string) []string {
 		out = append(out, k+"="+merged[k])
 	}
 	return out
+}
+
+// NonInteractiveEnv returns the environment overlay that disables interactive
+// prompts in spawned git, gh, and runner processes.
+func NonInteractiveEnv() map[string]string {
+	return map[string]string{
+		"CI":                  "1",
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PROMPT_DISABLED":  "1",
+	}
 }

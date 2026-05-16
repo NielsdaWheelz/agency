@@ -245,15 +245,6 @@ func Resolve(runner string) (Capability, error) {
 	return capability, nil
 }
 
-// ConfigLookupKeys returns config keys to probe in order of precedence.
-func ConfigLookupKeys(runner string) ([]string, error) {
-	capability, err := Resolve(runner)
-	if err != nil {
-		return nil, err
-	}
-	return []string{capability.ID}, nil
-}
-
 // ValidateArgs rejects user-supplied args that conflict with universal reserved flags.
 // Use ValidateHeadlessArgs for headless invocations to also check permission flags.
 func ValidateArgs(runner string, args []string) error {

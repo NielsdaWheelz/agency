@@ -365,8 +365,6 @@ func TestParser_StreamAndParse_ClaudeCodeFixture(t *testing.T) {
 		}
 	}
 	assert.True(t, foundContentBlocks, "stream.jsonl should contain content_blocks in at least one event")
-
-	assert.Nil(t, parser.GetSemanticStatus(), "stream parsing should not infer semantic status")
 }
 
 func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
@@ -404,8 +402,6 @@ func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
 	_, _ = streamFile.Seek(0, 0)
 	streamData, _ := os.ReadFile(streamFile.Name())
 	assert.NotEmpty(t, streamData, "stream.jsonl is empty")
-
-	assert.Nil(t, parser.GetSemanticStatus(), "stream parsing should not infer semantic status")
 }
 
 func TestParser_StreamAndParse_CodexCommandOutputAcrossStartAndEndPreserved(t *testing.T) {
@@ -584,8 +580,6 @@ func TestParser_StreamAndParse_NoTrailingNewline(t *testing.T) {
 	_, _ = streamFile.Seek(0, 0)
 	streamData, _ := os.ReadFile(streamFile.Name())
 	assert.Contains(t, string(streamData), `"kind":"final"`, "stream.jsonl should contain final event from line without trailing newline")
-
-	assert.Nil(t, parser.GetSemanticStatus(), "stream parsing should not infer semantic status")
 }
 
 func TestParser_SeqMonotonic(t *testing.T) {

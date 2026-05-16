@@ -622,7 +622,6 @@ func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(
 		Summary:       "waiting on api contract",
 		Questions:     []string{},
 		HowToTest:     "",
-		Risks:         []string{},
 	}
 	runnerBytes, err := json.Marshal(runner)
 	require.NoError(t, err)
@@ -1445,6 +1444,7 @@ func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.
 }
 
 func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
+	t.Setenv("TMUX", "")
 	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
 
 	var stdout, stderr bytes.Buffer
@@ -2232,8 +2232,6 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 
 			require.Error(t, navErr)
 			code := errors.GetCode(navErr)
-			assert.NotEqual(t, errors.EInvocationBroken, code,
-				"canonical navigation must not return E_INVOCATION_BROKEN after canonical navigation migration")
 			assert.Equal(t, errors.EInvocationNotFound, code,
 				"expected daemon-first E_INVOCATION_NOT_FOUND for missing target")
 		})

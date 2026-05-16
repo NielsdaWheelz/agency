@@ -270,15 +270,22 @@ func (s *Server) cleanupExpiredHeadedIdempotency() {
 }
 
 func (s *Server) runCheckpointLoop(proc *SupervisedProcess) {
+	defer s.supervisionWg.Done()
+
 	if proc.CheckpointEngine == nil {
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stopperDone := make(chan struct{})
 	go func() {
+		defer close(stopperDone)
 		<-proc.done
 		cancel()
 		proc.CheckpointEngine.Stop()
 	}()
 	_ = proc.CheckpointEngine.Run(ctx)
+	<-stopperDone
 }

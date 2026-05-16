@@ -621,7 +621,7 @@ func TestResolveCheckoutRoot(t *testing.T) {
 
 	got, err = ResolveCheckoutRoot("/repo/project", "repo-1", "/tmp/agency-checkouts")
 	require.NoError(t, err)
-	expected, err := resolveSymlinkPath("/tmp/agency-checkouts/repo-1")
+	expected, err := fs.ResolveSymlinks("/tmp/agency-checkouts/repo-1")
 	require.NoError(t, err)
 	assert.Equal(t, expected, got)
 

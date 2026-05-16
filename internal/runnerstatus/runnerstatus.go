@@ -43,7 +43,6 @@ type RunnerStatus struct {
 	Summary       string   `json:"summary"`
 	Questions     []string `json:"questions"`
 	HowToTest     string   `json:"how_to_test"`
-	Risks         []string `json:"risks"`
 }
 
 // StatusPath returns the path to the runner_status.json file in a worktree.
@@ -160,7 +159,6 @@ func NewInitial() *RunnerStatus {
 		Summary:       "Starting work",
 		Questions:     []string{},
 		HowToTest:     "",
-		Risks:         []string{},
 	}
 }
 

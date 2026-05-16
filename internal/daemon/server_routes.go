@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"syscall"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -75,65 +74,14 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if force && len(runningIDs) > 0 {
-		s.terminateAllInvocations()
-	}
-
+	// Active invocations (allowed past the busy check only when force is set)
+	// are terminated and fully drained by Shutdown below: it kills the runner
+	// process groups and joins their supervision goroutines.
 	s.writeJSON(w, http.StatusOK, ShutdownResponse{OK: true})
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = s.Shutdown(ctx)
 	}()
-}
-
-func (s *Server) terminateAllInvocations() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	type runningInvocation struct {
-		id   string
-		proc *SupervisedProcess
-	}
-	s.mu.RLock()
-	running := make([]runningInvocation, 0, len(s.processes))
-	for id, proc := range s.processes {
-		running = append(running, runningInvocation{id: id, proc: proc})
-	}
-	s.mu.RUnlock()
-
-	for _, entry := range running {
-		id := entry.id
-		proc := entry.proc
-		proc.exitReason.Store("killed")
-		proc.failureReason.Store("killed")
-
-		if proc.Mode == "headed" {
-			if proc.TmuxSession != "" {
-				_ = s.TmuxClient.KillSession(ctx, proc.TmuxSession)
-			}
-			s.failInvocationKilled(proc.RepoID, id)
-			s.clearInvocationProcess(id)
-			continue
-		}
-
-		if proc.PGID <= 0 {
-			s.clearInvocationProcess(id)
-			continue
-		}
-
-		_ = syscall.Kill(-proc.PGID, syscall.SIGINT)
-
-		select {
-		case <-proc.done:
-			s.clearInvocationProcess(id)
-			continue
-		case <-time.After(5 * time.Second):
-			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
-		}
-
-		s.failInvocationKilled(proc.RepoID, id)
-		s.clearInvocationProcess(id)
-	}
 }

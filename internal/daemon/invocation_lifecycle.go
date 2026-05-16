@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"log"
 	"os"
 	"time"
 
@@ -13,9 +14,18 @@ func (s *Server) nowRFC3339() string {
 	return s.Clock().UTC().Format(time.RFC3339)
 }
 
+// persistInvocationMeta applies a terminal-state update and logs — rather than
+// silently dropping — a persistence failure. Used by the fire-and-forget
+// lifecycle transitions below, which run with no error channel to a caller.
+func (s *Server) persistInvocationMeta(repoID, invocationID string, mutate func(*store.InvocationMeta)) {
+	if err := s.Store.UpdateInvocationMeta(repoID, invocationID, mutate); err != nil {
+		log.Printf("agencyd: persist invocation %s/%s lifecycle state: %v", repoID, invocationID, err)
+	}
+}
+
 func (s *Server) requestInvocationStop(repoID, invocationID string) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		if meta.StopRequestedAt == "" {
 			meta.StopRequestedAt = now
 		}
@@ -101,9 +111,9 @@ func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName
 
 func (s *Server) finishInvocationExited(repoID, invocationID string) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFinished
-		meta.ExitReason = "exited"
+		meta.ExitReason = store.ExitReasonExited
 		meta.FailureReason = ""
 		meta.FinishedAt = now
 		meta.ExitCode = nil
@@ -115,9 +125,9 @@ func (s *Server) finishInvocationExited(repoID, invocationID string) {
 
 func (s *Server) failInvocationStart(repoID, invocationID, failureReason string, needsAttention bool) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = "start_failed"
+		meta.ExitReason = store.ExitReasonStartFailed
 		meta.FailureReason = failureReason
 		meta.FinishedAt = now
 		meta.ExitCode = nil
@@ -130,7 +140,7 @@ func (s *Server) failInvocationStart(repoID, invocationID, failureReason string,
 
 func (s *Server) failInvocationStopped(repoID, invocationID, exitReason string) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFailed
 		meta.ExitReason = exitReason
 		meta.FailureReason = "stopped"
@@ -144,9 +154,9 @@ func (s *Server) failInvocationStopped(repoID, invocationID, exitReason string) 
 
 func (s *Server) failInvocationStoppedWithKill(repoID, invocationID string) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = "killed"
+		meta.ExitReason = store.ExitReasonKilled
 		meta.FailureReason = "stopped"
 		meta.FinishedAt = now
 		meta.ExitCode = nil
@@ -158,9 +168,9 @@ func (s *Server) failInvocationStoppedWithKill(repoID, invocationID string) {
 
 func (s *Server) failInvocationKilled(repoID, invocationID string) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = "killed"
+		meta.ExitReason = store.ExitReasonKilled
 		meta.FailureReason = "killed"
 		meta.FinishedAt = now
 		meta.ExitCode = nil
@@ -172,9 +182,9 @@ func (s *Server) failInvocationKilled(repoID, invocationID string) {
 
 func (s *Server) failInvocationUnknown(repoID, invocationID, failureReason string, orphaned bool) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = "unknown"
+		meta.ExitReason = store.ExitReasonUnknown
 		meta.FailureReason = failureReason
 		meta.FinishedAt = now
 		meta.ExitCode = nil
@@ -191,7 +201,7 @@ func (s *Server) failInvocationUnknown(repoID, invocationID, failureReason strin
 
 func (s *Server) markInvocationOrphaned(repoID, invocationID string) {
 	now := s.nowRFC3339()
-	_ = s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Flags.NeedsAttention = true
 		meta.Flags.Orphaned = true
 		meta.OrphanedAt = now

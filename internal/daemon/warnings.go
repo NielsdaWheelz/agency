@@ -3,7 +3,7 @@ package daemon
 import (
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/invocationevents"
+	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 )
 
 const daemonWarningEventKind = "agency.daemon_warning"
@@ -18,7 +18,7 @@ func (s *Server) recordInvocationWarning(repoID, invocationID, code, warning str
 
 	writer := s.InvocationEvents
 	if writer == nil {
-		writer = invocationevents.NewWriter(s.Clock)
+		writer = eventlog.NewWriter("invocation_id", s.Clock)
 		s.InvocationEvents = writer
 	}
 
@@ -37,6 +37,6 @@ func (s *Server) recordInvocationWarning(repoID, invocationID, code, warning str
 		invocationID,
 		daemonWarningEventKind,
 		data,
-		invocationevents.AppendOptions{},
+		eventlog.AppendOptions{},
 	)
 }
