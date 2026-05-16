@@ -34,10 +34,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 
 	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
@@ -51,10 +48,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 	}
 
 	if err := s.executeWorktreeRebase(r.Context(), record); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		hint := ""
 		if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
 			hint = strings.TrimSpace(ae.Details["hint"])
@@ -91,24 +85,19 @@ func (s *Server) executeWorktreeRebase(
 		"branch":      record.Meta.Branch,
 		"base_branch": record.Meta.BaseBranch,
 	}); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
+		if errors.GetCode(err) == "" {
 			return errors.New(errors.EPersistFailed, err.Error())
 		}
 		return err
 	}
 
 	if err := s.performWorktreeRebase(ctx, record); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventFailed, map[string]any{
 			"error_code": string(code),
 			"message":    apiErrorMessage(err),
 		}); appendErr != nil {
-			appendCode := errors.GetCode(appendErr)
-			if appendCode == "" {
+			if errors.GetCode(appendErr) == "" {
 				return errors.New(errors.EPersistFailed, appendErr.Error())
 			}
 			return appendErr
@@ -120,8 +109,7 @@ func (s *Server) executeWorktreeRebase(
 		"branch":      record.Meta.Branch,
 		"base_branch": record.Meta.BaseBranch,
 	}); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
+		if errors.GetCode(err) == "" {
 			return errors.New(errors.EPersistFailed, err.Error())
 		}
 		return err

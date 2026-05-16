@@ -30,10 +30,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
+		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
 		status := http.StatusNotFound
 		if code == errors.EInvocationIDAmbiguous {
 			status = http.StatusConflict
@@ -286,10 +283,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
+		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
 		status := http.StatusNotFound
 		if code == errors.EInvocationIDAmbiguous {
 			status = http.StatusConflict

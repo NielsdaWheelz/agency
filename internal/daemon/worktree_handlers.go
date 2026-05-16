@@ -88,10 +88,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, "", "")
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeWorktreeError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
 		return
 	}
@@ -215,10 +212,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		RequestFingerprint: fingerprint,
 	})
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeWorktreeError(w, http.StatusInternalServerError, string(code), err.Error(), "")
 		return
 	}
@@ -263,10 +257,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	record, err := wtSvc.Resolve(repoID, worktreeRef, true)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeWorktreeRmError(w, http.StatusNotFound, string(code),
 			err.Error(), "run 'agency worktree ls' to see available worktrees")
 		return
@@ -326,10 +317,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 
 	latestMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, record.WorktreeID)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EWorktreeBroken
-		}
+		code := errors.CodeOr(err, errors.EWorktreeBroken)
 		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "inspect or recreate the worktree")
 		return
 	}
@@ -356,20 +344,14 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	if err := s.ensureWorktreeMergeInactive(repoID, record.WorktreeID, "remove the worktree"); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EWorktreeMergeActive
-		}
+		code := errors.CodeOr(err, errors.EWorktreeMergeActive)
 		s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
 		return
 	}
 
 	unresolved, err := s.unresolvedInvocationsForWorktree(repoID, record.WorktreeID)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(code), err.Error(), mergeHintFromError(err))
 		return
 	}
@@ -385,10 +367,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		for _, invocation := range unresolved {
 			profileEnv, err := s.executionProfileEnv(invocation.Meta.ExecutionProfile)
 			if err != nil {
-				code := errors.GetCode(err)
-				if code == "" {
-					code = errors.EExecutionProfileNotFound
-				}
+				code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
 				s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
 				return
 			}
@@ -399,10 +378,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 				Env:          prSyncNonInteractiveEnv(profileEnv),
 				StopCallback: s.stopInvocationForDiscard,
 			}); err != nil {
-				code := errors.GetCode(err)
-				if code == "" {
-					code = errors.ELandFailed
-				}
+				code := errors.CodeOr(err, errors.ELandFailed)
 				s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
 				return
 			}
@@ -432,10 +408,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 
 	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EExecutionProfileNotFound
-		}
+		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
 		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "")
 		return
 	}

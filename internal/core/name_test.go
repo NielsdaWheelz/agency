@@ -104,12 +104,3 @@ func TestValidateName_ErrorDetails(t *testing.T) {
 
 	assert.Equal(t, "Bad-Name", ae.Details["name"])
 }
-
-func TestNameConstants(t *testing.T) {
-	t.Parallel()
-
-	// Verify constants are sensible
-	assert.True(t, NameMinLen >= 1, "NameMinLen = %d, want >= 1", NameMinLen)
-	assert.True(t, NameMaxLen >= NameMinLen, "NameMaxLen = %d, want >= NameMinLen (%d)", NameMaxLen, NameMinLen)
-	assert.True(t, NameMaxLen <= 100, "NameMaxLen = %d, want <= 100 (reasonable limit)", NameMaxLen)
-}

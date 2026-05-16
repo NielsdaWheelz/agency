@@ -167,10 +167,7 @@ func writeRepoLookupError(w http.ResponseWriter, s *Server, requestID string, er
 			nil,
 		)
 	default:
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
 	}
 }

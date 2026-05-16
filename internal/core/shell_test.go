@@ -24,6 +24,7 @@ func TestShellEscapePosix_Table(t *testing.T) {
 		{"dollar sign", "a$b", "'a$b'"},
 		{"backticks", "a`b", "'a`b'"},
 		{"multiple single quotes", "a''b", "'a'\"'\"''\"'\"'b'"},
+		{"newline", "a\nb", "'a\nb'"},
 	}
 
 	for _, tt := range tests {
@@ -35,19 +36,4 @@ func TestShellEscapePosix_Table(t *testing.T) {
 			assert.Equal(t, tt.expect, got)
 		})
 	}
-}
-
-func TestShellEscapePosix_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	got := ShellEscapePosix("")
-	assert.Equal(t, "''", got)
-}
-
-func TestShellEscapePosix_Newline(t *testing.T) {
-	t.Parallel()
-
-	got := ShellEscapePosix("a\nb")
-	expect := "'a\nb'"
-	assert.Equal(t, expect, got)
 }

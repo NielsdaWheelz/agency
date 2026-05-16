@@ -109,10 +109,7 @@ func (s *Server) handleGetWorktreeMerge(w http.ResponseWriter, r *http.Request, 
 
 	mergeMeta, err := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EStoreCorrupt
-		}
+		code := errors.CodeOr(err, errors.EStoreCorrupt)
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
 		return
 	}

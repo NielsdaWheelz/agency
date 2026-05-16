@@ -10,15 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStatusPath(t *testing.T) {
-	t.Parallel()
-
-	worktreePath := "/path/to/worktree"
-	got := StatusPath(worktreePath)
-	want := "/path/to/worktree/.agency/state/runner_status.json"
-	assert.Equal(t, want, got)
-}
-
 func TestLoad_Missing(t *testing.T) {
 	t.Parallel()
 

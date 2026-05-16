@@ -33,10 +33,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
+		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
 		status := http.StatusNotFound
 		if code == errors.EInvocationIDAmbiguous {
 			status = http.StatusConflict
@@ -95,10 +92,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
 	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EExecutionProfileNotFound
-		}
+		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
 		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
 		return
 	}

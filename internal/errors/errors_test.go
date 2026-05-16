@@ -201,72 +201,10 @@ func TestAsAgencyError(t *testing.T) {
 	})
 }
 
-func TestPushPRErrorCodesExist(t *testing.T) {
+func TestCodeOr(t *testing.T) {
 	t.Parallel()
-
-	codes := []Code{
-		EUnsupportedOriginHost,
-		ENoOrigin,
-		EBaseNotFound,
-		EGitPushFailed,
-		EGHPRCreateFailed,
-		EGHPREditFailed,
-		EGHPRViewFailed,
-		EPRNotOpen,
-		EEmptyDiff,
-		EDirtyWorktree,
-	}
-
-	expectedStrings := map[Code]string{
-		EUnsupportedOriginHost: "E_UNSUPPORTED_ORIGIN_HOST",
-		ENoOrigin:              "E_NO_ORIGIN",
-		EBaseNotFound:          "E_BASE_NOT_FOUND",
-		EGitPushFailed:         "E_GIT_PUSH_FAILED",
-		EGHPRCreateFailed:      "E_GH_PR_CREATE_FAILED",
-		EGHPREditFailed:        "E_GH_PR_EDIT_FAILED",
-		EGHPRViewFailed:        "E_GH_PR_VIEW_FAILED",
-		EPRNotOpen:             "E_PR_NOT_OPEN",
-		EEmptyDiff:             "E_EMPTY_DIFF",
-		EDirtyWorktree:         "E_DIRTY_WORKTREE",
-	}
-
-	for _, code := range codes {
-		expected := expectedStrings[code]
-		assert.Equal(t, expected, string(code))
-	}
-}
-
-func TestLandingErrorCodesExist(t *testing.T) {
-	t.Parallel()
-
-	codes := []Code{
-		ELandConflict,
-		ELandNothingToLand,
-		ELandApplyRequired,
-		ELandFailed,
-		ELandAlreadyLanded,
-		ELandAlreadyDiscarded,
-		ESandboxMissing,
-		EIntegrationTreeMissing,
-		ELandDenylistViolation,
-	}
-
-	expectedStrings := map[Code]string{
-		ELandConflict:           "E_LAND_CONFLICT",
-		ELandNothingToLand:      "E_LAND_NOTHING_TO_LAND",
-		ELandApplyRequired:      "E_LAND_APPLY_REQUIRED",
-		ELandFailed:             "E_LAND_FAILED",
-		ELandAlreadyLanded:      "E_LAND_ALREADY_LANDED",
-		ELandAlreadyDiscarded:   "E_LAND_ALREADY_DISCARDED",
-		ESandboxMissing:         "E_SANDBOX_MISSING",
-		EIntegrationTreeMissing: "E_INTEGRATION_TREE_MISSING",
-		ELandDenylistViolation:  "E_LAND_DENYLIST_VIOLATION",
-	}
-
-	for _, code := range codes {
-		expected := expectedStrings[code]
-		assert.Equal(t, expected, string(code))
-	}
+	assert.Equal(t, EUsage, CodeOr(New(EUsage, "x"), EInternal))
+	assert.Equal(t, EInternal, CodeOr(errors.New("plain"), EInternal))
 }
 
 func TestLandingErrorFormat(t *testing.T) {

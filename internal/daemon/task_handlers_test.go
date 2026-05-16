@@ -441,7 +441,7 @@ func TestTaskRetryEmptyStartingReservationFailsClosed(t *testing.T) {
 	meta, err := st.ReadTaskMeta("repo-1", "task-1")
 	require.NoError(t, err)
 	record := meta.RetryRequests["retry-1"]
-	assert.Equal(t, "failed", record.State)
+	assert.Equal(t, store.TaskRetryStateFailed, record.State)
 	assert.Equal(t, string(errors.ETaskCreateFailed), record.ErrorCode)
 	assert.Empty(t, record.InvocationID)
 }
@@ -470,7 +470,7 @@ func TestTaskRetryStartingReservationRepairsClaimedInvocation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store.TaskStateRunning, metaBeforeLock.State)
 	assert.Empty(t, metaBeforeLock.PrimaryInvocationID)
-	assert.Equal(t, "starting", metaBeforeLock.RetryRequests["retry-1"].State)
+	assert.Equal(t, store.TaskRetryStateStarting, metaBeforeLock.RetryRequests["retry-1"].State)
 
 	body := []byte(`{"client_request_id":"retry-1","prompt":"same prompt"}`)
 	req := httptest.NewRequest(http.MethodPost, "/tasks/task-1/retry?repo_id=repo-1", bytes.NewReader(body))
@@ -488,7 +488,7 @@ func TestTaskRetryStartingReservationRepairsClaimedInvocation(t *testing.T) {
 	meta, err = st.ReadTaskMeta("repo-1", "task-1")
 	require.NoError(t, err)
 	assert.Equal(t, "inv-retry", meta.PrimaryInvocationID)
-	assert.Equal(t, "running", meta.RetryRequests["retry-1"].State)
+	assert.Equal(t, store.TaskRetryStateRunning, meta.RetryRequests["retry-1"].State)
 	assert.Equal(t, "inv-retry", meta.RetryRequests["retry-1"].InvocationID)
 }
 
@@ -559,7 +559,7 @@ func TestTaskRetryRepairDoesNotDuplicatePrewrittenRetriedEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, repaired)
 	assert.Equal(t, "inv-retry", repaired.PrimaryInvocationID)
-	assert.Equal(t, "running", repaired.RetryRequests["retry-1"].State)
+	assert.Equal(t, store.TaskRetryStateRunning, repaired.RetryRequests["retry-1"].State)
 	assert.Equal(t, 1, countTaskEventsByInvocationID(t, st.TaskEventsPath("repo-1", "task-1"), "agency.task_retried", "inv-retry"))
 }
 
@@ -647,7 +647,7 @@ func TestTaskRetryEventAppendFailurePreservesExistingTask(t *testing.T) {
 	assert.Equal(t, store.TaskStateRunning, meta.State)
 	assert.Equal(t, "inv-original", meta.PrimaryInvocationID)
 	retryRecord := meta.RetryRequests["retry-event-fail"]
-	assert.Equal(t, "failed", retryRecord.State)
+	assert.Equal(t, store.TaskRetryStateFailed, retryRecord.State)
 	assert.Equal(t, string(errors.EPersistFailed), retryRecord.ErrorCode)
 	assert.Empty(t, retryRecord.InvocationID)
 
@@ -965,7 +965,7 @@ func seedTaskRetryRecord(st *store.Store, repoID, repoRoot, taskID, invocationID
 		clientRequestID: {
 			RequestFingerprint: taskRetryFingerprint(meta, req.Mode, req.Runner, req, req.Env),
 			InvocationID:       invocationID,
-			State:              "running",
+			State:              store.TaskRetryStateRunning,
 			CreatedAt:          meta.CreatedAt,
 			UpdatedAt:          meta.UpdatedAt,
 		},
@@ -1020,7 +1020,7 @@ func seedStartingTaskRetryReservation(st *store.Store, repoID, repoRoot, taskID,
 	meta.RetryRequests = map[string]store.TaskRetryRecord{
 		clientRequestID: {
 			RequestFingerprint: taskRetryFingerprint(meta, req.Mode, req.Runner, req, req.Env),
-			State:              "starting",
+			State:              store.TaskRetryStateStarting,
 			CreatedAt:          meta.CreatedAt,
 			UpdatedAt:          meta.UpdatedAt,
 		},

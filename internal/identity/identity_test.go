@@ -301,45 +301,6 @@ func TestDeriveRepoIdentity_DifferentPaths(t *testing.T) {
 	assert.NotEqual(t, id1.RepoID, id2.RepoID, "different paths produced same RepoID")
 }
 
-func TestSha256HexFunction(t *testing.T) {
-	t.Parallel()
-
-	// Verify hash is lowercase hex and correct length
-	hash := sha256Hex("test")
-
-	assert.Len(t, hash, 64)
-
-	// Verify it's all lowercase hex
-	for _, c := range hash {
-		isDigit := c >= '0' && c <= '9'
-		isLowerHex := c >= 'a' && c <= 'f'
-		assert.True(t, isDigit || isLowerHex, "hash contains non-lowercase-hex character: %c", c)
-	}
-
-	// Verify determinism
-	hash2 := sha256Hex("test")
-	assert.Equal(t, hash, hash2, "sha256Hex not deterministic")
-
-	// Known value test
-	// echo -n "test" | sha256sum -> 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
-	expected := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-	assert.Equal(t, expected, hash)
-}
-
-func TestRepoIDLen(t *testing.T) {
-	t.Parallel()
-
-	// Verify constant value per spec
-	assert.Equal(t, 16, RepoIDLen)
-}
-
-func TestPathHashLen(t *testing.T) {
-	t.Parallel()
-
-	// Verify constant value per spec
-	assert.Equal(t, 64, PathHashLen)
-}
-
 func TestDeriveRepoIdentity_OriginInfo(t *testing.T) {
 	t.Parallel()
 

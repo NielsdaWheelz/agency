@@ -84,27 +84,7 @@ func (a *CodexAdapter) ParseLine(line []byte) (*ParseResult, error) {
 		// Ignore turn.started - no useful info
 		return &ParseResult{}, nil
 
-	case "item.started":
-		if raw.Item != nil {
-			switch raw.Item.Type {
-			case "command_execution":
-				result.Events = a.parseCommandStart(&raw)
-			case "reasoning":
-				return &ParseResult{}, nil
-			default:
-				unknown := newUnknownRunnerEvent(raw.Type, "unsupported_item_type", line)
-				if raw.Item.Type != "" {
-					unknown.Data["runner_item_type"] = raw.Item.Type
-				}
-				result.Events = []*NormalizedEvent{unknown}
-			}
-		} else {
-			result.Events = []*NormalizedEvent{
-				newUnknownRunnerEvent(raw.Type, "missing_item", line),
-			}
-		}
-
-	case "item.updated":
+	case "item.started", "item.updated":
 		if raw.Item != nil {
 			switch raw.Item.Type {
 			case "command_execution":

@@ -32,10 +32,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	}
 	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		status := httpStatusForCode(code)
 		s.writeWorktreePRSyncError(w, status, requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
@@ -51,10 +48,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 
 	result, err := s.executeWorktreePRSync(r.Context(), record, req)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeWorktreePRSyncError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), prSyncHintFromError(err))
 		return
 	}
@@ -89,8 +83,7 @@ func (s *Server) executeWorktreePRSync(
 		"force_with_lease": req.ForceWithLease,
 		"branch":           record.Meta.Branch,
 	}); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
+		if errors.GetCode(err) == "" {
 			return nil, errors.New(errors.EPersistFailed, err.Error())
 		}
 		return nil, err
@@ -98,16 +91,12 @@ func (s *Server) executeWorktreePRSync(
 
 	result, err := s.performWorktreePRSync(ctx, record, req)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventFailed, map[string]any{
 			"error_code": string(code),
 			"message":    apiErrorMessage(err),
 		}); appendErr != nil {
-			appendCode := errors.GetCode(appendErr)
-			if appendCode == "" {
+			if errors.GetCode(appendErr) == "" {
 				return nil, errors.New(errors.EPersistFailed, appendErr.Error())
 			}
 			return nil, appendErr
@@ -121,8 +110,7 @@ func (s *Server) executeWorktreePRSync(
 		"pr_url":    result.PRURL,
 		"pr_action": result.PRAction,
 	}); err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
+		if errors.GetCode(err) == "" {
 			return nil, errors.New(errors.EPersistFailed, err.Error())
 		}
 		return nil, err

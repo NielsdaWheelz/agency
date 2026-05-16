@@ -52,10 +52,7 @@ func newTaskStartFailure(status int, code errors.Code, msg, hint string) taskSta
 }
 
 func taskStartFailureFromError(status int, fallback errors.Code, err error, hint string) taskStartFailure {
-	code := errors.GetCode(err)
-	if code == "" {
-		code = fallback
-	}
+	code := errors.CodeOr(err, fallback)
 	return newTaskStartFailure(status, code, apiErrorMessage(err), hint)
 }
 
@@ -134,10 +131,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 
 	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, headless)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerArgConflict
-		}
+		code := errors.CodeOr(err, errors.ERunnerArgConflict)
 		hint := "remove reserved flags from runner_args"
 		if code == errors.ERunnerNotFound {
 			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
@@ -148,10 +142,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	req.Runner = canonicalRunner
 	if !headless {
 		if _, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs); err != nil {
-			code := errors.GetCode(err)
-			if code == "" {
-				code = errors.EInternal
-			}
+			code := errors.CodeOr(err, errors.EInternal)
 			hint := ""
 			status := http.StatusInternalServerError
 			if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
@@ -176,10 +167,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	requestEnv := copyStringMap(req.Env)
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		writeErr(http.StatusBadRequest, code, apiErrorMessage(err), "", req.ClientRequestID)
 		return
 	}
@@ -430,10 +418,7 @@ func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repo
 	_, _, err = s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq, gitEnv, claim)
 	if err != nil {
 		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, "spawn_failed", gitEnv)
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerStartFailed
-		}
+		code := errors.CodeOr(err, errors.ERunnerStartFailed)
 		return nil, newTaskStartFailure(http.StatusInternalServerError, code, err.Error(), "")
 	}
 
@@ -694,10 +679,7 @@ func (s *Server) writeTaskStartIdempotencyResult(w http.ResponseWriter, requestI
 		}
 		repaired, repairErr := s.repairTaskStartFromClaimedInvocation(repoID, meta, clientRequestID, fingerprint)
 		if repairErr != nil {
-			code := errors.GetCode(repairErr)
-			if code == "" {
-				code = errors.EPersistFailed
-			}
+			code := errors.CodeOr(repairErr, errors.EPersistFailed)
 			s.writeTaskStartError(w, http.StatusInternalServerError, requestID, code, repairErr.Error(), "inspect task state before retrying", clientRequestID, meta)
 			return true
 		}
@@ -721,10 +703,7 @@ func (s *Server) writeTaskStartIdempotencyResult(w http.ResponseWriter, requestI
 		}
 		repaired, repairErr := s.repairTaskStartFromClaimedInvocation(repoID, meta, clientRequestID, fingerprint)
 		if repairErr != nil {
-			code := errors.GetCode(repairErr)
-			if code == "" {
-				code = errors.EPersistFailed
-			}
+			code := errors.CodeOr(repairErr, errors.EPersistFailed)
 			s.writeTaskStartError(w, http.StatusInternalServerError, requestID, code, repairErr.Error(), "inspect task state before retrying", clientRequestID, meta)
 			return true
 		}

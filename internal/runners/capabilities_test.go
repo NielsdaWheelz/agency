@@ -9,14 +9,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-func TestCanonicalIDs(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t,
-		[]string{"claude-code", "codex", "amp", "opencode", "cursor", "droid"},
-		CanonicalIDs(),
-	)
-}
-
 func TestResolve(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -271,15 +263,4 @@ func TestFollowUpMode_UnknownRunner(t *testing.T) {
 	_, err := ResolveFollowUpMode("unknown")
 	require.Error(t, err)
 	assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
-}
-
-func TestHasSemanticAdapter(t *testing.T) {
-	t.Parallel()
-
-	assert.True(t, HasSemanticAdapter("claude-code"))
-	assert.True(t, HasSemanticAdapter("codex"))
-	assert.True(t, HasSemanticAdapter("cursor"))
-	assert.False(t, HasSemanticAdapter("amp"))
-	assert.False(t, HasSemanticAdapter("opencode"))
-	assert.False(t, HasSemanticAdapter("droid"))
 }

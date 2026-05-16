@@ -45,10 +45,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, false)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerArgConflict
-		}
+		code := errors.CodeOr(err, errors.ERunnerArgConflict)
 		hint := "remove reserved flags from runner_args"
 		if code == errors.ERunnerNotFound {
 			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
@@ -66,10 +63,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		hint := ""
 		switch code {
 		case errors.ERunnerNotFound:
@@ -137,10 +131,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeHeadedError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "", req.ClientRequestID, requestID)
 		return
 	}
@@ -241,10 +232,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		Env:                     gitEnv,
 	})
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(code), err.Error(), "", req.ClientRequestID, requestID)
 		return
 	}

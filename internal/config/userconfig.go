@@ -430,45 +430,12 @@ func ValidateUserConfig(cfg UserConfig) (UserConfig, error) {
 			return cfg, errors.New(errors.EInvalidUserConfig, "editors."+name+" must be a single executable (no args); use a wrapper script")
 		}
 	}
-	for name, runnerDefaults := range cfg.RunnerDefaults {
-		canonicalRunner, err := runners.Canonicalize(name)
-		if err != nil || canonicalRunner != name {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
+	for name, rd := range cfg.RunnerDefaults {
+		cleaned, err := validateRunnerDefaults(name, rd, errors.EInvalidUserConfig, true)
+		if err != nil {
+			return cfg, err
 		}
-		if canonicalRunner != runners.RunnerClaudeCode && canonicalRunner != runners.RunnerCodex && canonicalRunner != runners.RunnerCursor {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
-		}
-
-		model := strings.TrimSpace(runnerDefaults.Model)
-		effort := strings.TrimSpace(runnerDefaults.Effort)
-		permissionMode := strings.TrimSpace(runnerDefaults.PermissionMode)
-		if model == "" && effort == "" && permissionMode == "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+" requires at least one of model, effort, or permission_mode")
-		}
-		if runnerDefaults.Model != "" && model == "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".model must be a non-empty string")
-		}
-		if runnerDefaults.Effort != "" && effort == "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".effort must be a non-empty string")
-		}
-		if runnerDefaults.PermissionMode != "" && permissionMode == "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".permission_mode must be a non-empty string")
-		}
-		if canonicalRunner == runners.RunnerCursor && effort != "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults.cursor.effort is not supported")
-		}
-		if canonicalRunner != runners.RunnerClaudeCode && permissionMode != "" {
-			return cfg, errors.New(errors.EInvalidUserConfig, "runner_defaults."+name+".permission_mode is only supported for claude-code")
-		}
-
-		cfg.RunnerDefaults[canonicalRunner] = RunnerDefaults{
-			Model:          model,
-			Effort:         effort,
-			PermissionMode: permissionMode,
-		}
-		if canonicalRunner != name {
-			delete(cfg.RunnerDefaults, name)
-		}
+		cfg.RunnerDefaults[name] = cleaned
 	}
 	return cfg, nil
 }

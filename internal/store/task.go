@@ -29,6 +29,15 @@ const (
 	TaskStateArchived TaskState = "archived"
 )
 
+// TaskRetryState is the lifecycle state of a single task retry attempt.
+type TaskRetryState string
+
+const (
+	TaskRetryStateStarting TaskRetryState = "starting"
+	TaskRetryStateRunning  TaskRetryState = "running"
+	TaskRetryStateFailed   TaskRetryState = "failed"
+)
+
 // TaskMeta is the durable task record. A task owns the high-level delegation
 // workflow; worktrees and invocations remain the execution surfaces.
 type TaskMeta struct {
@@ -67,13 +76,13 @@ type TaskMeta struct {
 
 // TaskRetryRecord is the durable idempotency record for one retry request.
 type TaskRetryRecord struct {
-	RequestFingerprint string `json:"request_fingerprint"`
-	InvocationID       string `json:"invocation_id,omitempty"`
-	State              string `json:"state"`
-	CreatedAt          string `json:"created_at"`
-	UpdatedAt          string `json:"updated_at"`
-	ErrorCode          string `json:"error_code,omitempty"`
-	Error              string `json:"error,omitempty"`
+	RequestFingerprint string         `json:"request_fingerprint"`
+	InvocationID       string         `json:"invocation_id,omitempty"`
+	State              TaskRetryState `json:"state"`
+	CreatedAt          string         `json:"created_at"`
+	UpdatedAt          string         `json:"updated_at"`
+	ErrorCode          string         `json:"error_code,omitempty"`
+	Error              string         `json:"error,omitempty"`
 }
 
 // TaskRecord represents a discovered task with parsed metadata.

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"log"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
@@ -32,11 +33,13 @@ func (s *Server) recordInvocationWarning(repoID, invocationID, code, warning str
 		data[key] = value
 	}
 
-	_, _ = writer.Append(
+	if _, err := writer.Append(
 		s.Store.InvocationEventsPath(repoID, invocationID),
 		invocationID,
 		daemonWarningEventKind,
 		data,
 		eventlog.AppendOptions{},
-	)
+	); err != nil {
+		log.Printf("agencyd: append daemon warning for %s/%s: %v", repoID, invocationID, err)
+	}
 }

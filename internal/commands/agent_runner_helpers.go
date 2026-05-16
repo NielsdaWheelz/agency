@@ -124,19 +124,15 @@ func resolveStartRunnerAndArgs(ctx context.Context, fsys fs.FS, cwd string, ns *
 			}
 		}
 	}
-	if model == "" {
-		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
-			model = runnerDefaults.Model
+	if rd, ok := userCfg.RunnerDefaults[runner]; ok {
+		if model == "" {
+			model = rd.Model
 		}
-	}
-	if effort == "" {
-		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
-			effort = runnerDefaults.Effort
+		if effort == "" {
+			effort = rd.Effort
 		}
-	}
-	if permissionMode == "" {
-		if runnerDefaults, ok := userCfg.RunnerDefaults[runner]; ok {
-			permissionMode = runnerDefaults.PermissionMode
+		if permissionMode == "" {
+			permissionMode = rd.PermissionMode
 		}
 	}
 
@@ -366,10 +362,7 @@ func writeCommandJSON(w io.Writer, payload any) error {
 }
 
 func writeCommandJSONError(w io.Writer, err error) error {
-	code := errors.GetCode(err)
-	if code == "" {
-		code = errors.EInternal
-	}
+	code := errors.CodeOr(err, errors.EInternal)
 	payload := commandJSONBase{
 		OK:              false,
 		ErrorCode:       string(code),

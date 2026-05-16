@@ -269,6 +269,14 @@ func GetCode(err error) Code {
 	return ""
 }
 
+// CodeOr returns the error's code, or fallback if err carries no code.
+func CodeOr(err error, fallback Code) Code {
+	if code := GetCode(err); code != "" {
+		return code
+	}
+	return fallback
+}
+
 // AsAgencyError returns (*AgencyError, true) if err is or wraps an AgencyError.
 func AsAgencyError(err error) (*AgencyError, bool) {
 	var ae *AgencyError

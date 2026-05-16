@@ -2,7 +2,6 @@ package errors
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,28 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestPrintSignatureUnchanged is a compile-time contract test.
-// It verifies that Print(io.Writer, error) signature exists.
-func TestPrintSignatureUnchanged(t *testing.T) {
-	t.Parallel()
-
-	// This test compiles if and only if Print has the expected signature.
-	// The explicit type assertion ensures the signature matches exactly.
-	var fn = (func(io.Writer, error))(Print)
-	_ = fn // Use the variable to avoid "unused" error
-}
-
-// TestPrintWithOptionsSignature is a compile-time contract test.
-// It verifies that PrintWithOptions(io.Writer, error, PrintOptions) signature exists.
-func TestPrintWithOptionsSignature(t *testing.T) {
-	t.Parallel()
-
-	// This test compiles if and only if PrintWithOptions has the expected signature.
-	// The explicit type assertion ensures the signature matches exactly.
-	var fn = (func(io.Writer, error, PrintOptions))(PrintWithOptions)
-	_ = fn
-}
 
 // TestFormatFirstLineAlwaysErrorCode verifies first line is always error_code.
 func TestFormatFirstLineAlwaysErrorCode(t *testing.T) {

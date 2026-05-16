@@ -52,10 +52,7 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
+		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
 		s.writeFollowUpError(w, http.StatusNotFound, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations", req.ClientRequestID)
 		return
 	}

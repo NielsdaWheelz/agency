@@ -34,10 +34,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
+		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
 		status := http.StatusNotFound
 		if code == errors.EInvocationIDAmbiguous {
 			status = http.StatusConflict
@@ -121,10 +118,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	canonicalRunner, err := validateControlPlaneStartRunner(meta.Runner, meta.RunnerArgs, false)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerArgConflict
-		}
+		code := errors.CodeOr(err, errors.ERunnerArgConflict)
 		hint := "remove reserved flags from runner_args"
 		if code == errors.ERunnerNotFound {
 			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
@@ -134,10 +128,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(canonicalRunner, meta.RunnerArgs)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		hint := ""
 		if code == errors.ERunnerNotFound {
 			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
@@ -174,10 +165,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	profileEnv, err := config.ExecutionProfileEnv(userCfg, meta.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EExecutionProfileNotFound
-		}
+		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
 		s.writeHeadedError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "", "", requestID)
 		return
 	}

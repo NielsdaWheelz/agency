@@ -72,10 +72,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 		RequireBase:  req.RequireBase,
 	})
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ELandFailed
-		}
+		code := errors.CodeOr(err, errors.ELandFailed)
 
 		httpStatus := http.StatusInternalServerError
 		var conflictFiles []string
@@ -154,10 +151,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 		StopCallback: s.stopInvocationForDiscard,
 	})
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ELandFailed
-		}
+		code := errors.CodeOr(err, errors.ELandFailed)
 
 		httpStatus := http.StatusInternalServerError
 		switch code {
@@ -186,10 +180,7 @@ type landingMutation struct {
 func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, requestID, invocationID, repoID, lockName string, writeError func(http.ResponseWriter, int, string, string, string, string)) (*landingMutation, bool) {
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.GetCode(resolveErr)
-		if code == "" {
-			code = errors.EInvocationNotFound
-		}
+		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
 		status := http.StatusNotFound
 		if code == errors.EInvocationIDAmbiguous {
 			status = http.StatusConflict
@@ -205,10 +196,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 	}
 	profileEnv, err := s.executionProfileEnv(wtMeta.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EExecutionProfileNotFound
-		}
+		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
 		writeError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
 		return nil, false
 	}
@@ -218,10 +206,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 	if record.Meta.ExecutionProfile != wtMeta.ExecutionProfile {
 		invocationProfileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
 		if err != nil {
-			code := errors.GetCode(err)
-			if code == "" {
-				code = errors.EExecutionProfileNotFound
-			}
+			code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
 			writeError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
 			return nil, false
 		}

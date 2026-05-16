@@ -126,10 +126,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	}
 	canonicalRunner, err := validateControlPlaneStartRunner(runner, req.RunnerArgs, headless)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.ERunnerArgConflict
-		}
+		code := errors.CodeOr(err, errors.ERunnerArgConflict)
 		hint := "remove reserved flags from runner_args"
 		if code == errors.ERunnerNotFound {
 			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
@@ -149,10 +146,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	requestEnv := copyStringMap(req.Env)
 	execCtx, err := s.resolveExecutionContext(meta.RepoRoot, repoID, req.AgencyConfigPath, req.ExecutionProfile)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		s.writeTaskStartError(w, http.StatusBadRequest, requestID, code, apiErrorMessage(err), "", req.ClientRequestID, meta)
 		return
 	}
@@ -309,10 +303,7 @@ func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestI
 		}
 		repaired, repairErr := s.repairTaskRetryFromClaimedInvocation(meta.RepoID, meta, clientRequestID, fingerprint)
 		if repairErr != nil {
-			code := errors.GetCode(repairErr)
-			if code == "" {
-				code = errors.EPersistFailed
-			}
+			code := errors.CodeOr(repairErr, errors.EPersistFailed)
 			s.writeTaskStartError(w, http.StatusInternalServerError, requestID, code, repairErr.Error(), "inspect task state before retrying", clientRequestID, meta)
 			return true
 		}
@@ -329,7 +320,7 @@ func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestI
 			code = errors.Code(record.ErrorCode)
 		}
 		fail := newTaskStartFailure(http.StatusConflict, code, message, "inspect task state before retrying")
-		if record.State == "starting" && finalizeIncomplete {
+		if record.State == store.TaskRetryStateStarting && finalizeIncomplete {
 			s.markTaskRetryFailed(meta.RepoID, meta.TaskID, clientRequestID, fail)
 			if latest, err := s.Store.ReadTaskMeta(meta.RepoID, meta.TaskID); err == nil {
 				meta = latest
@@ -374,7 +365,7 @@ func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, cl
 		}
 		latest.RetryRequests[clientRequestID] = store.TaskRetryRecord{
 			RequestFingerprint: fingerprint,
-			State:              "starting",
+			State:              store.TaskRetryStateStarting,
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		}
@@ -399,7 +390,7 @@ func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, in
 		}
 		record := meta.RetryRequests[clientRequestID]
 		record.InvocationID = invMeta.InvocationID
-		record.State = "running"
+		record.State = store.TaskRetryStateRunning
 		record.UpdatedAt = now
 		meta.RetryRequests[clientRequestID] = record
 		meta.UpdatedAt = now
@@ -412,7 +403,7 @@ func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, fai
 		if !ok {
 			return
 		}
-		record.State = "failed"
+		record.State = store.TaskRetryStateFailed
 		record.ErrorCode = string(failure.code)
 		record.Error = failure.msg
 		record.UpdatedAt = s.Clock().UTC().Format(time.RFC3339)

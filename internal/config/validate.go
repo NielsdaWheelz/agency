@@ -28,38 +28,12 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	if cfg.Scripts.Archive.Path == "" {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.archive.path")
 	}
-	for name, runnerDefaults := range cfg.RunnerDefaults {
-		canonicalRunner, err := runners.Canonicalize(name)
-		if err != nil || canonicalRunner != name {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
+	for name, rd := range cfg.RunnerDefaults {
+		cleaned, err := validateRunnerDefaults(name, rd, errors.EInvalidAgencyJSON, false)
+		if err != nil {
+			return cfg, err
 		}
-		if canonicalRunner != runners.RunnerClaudeCode && canonicalRunner != runners.RunnerCodex && canonicalRunner != runners.RunnerCursor {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" is not supported; typed runner defaults are supported for runners claude-code, codex, cursor")
-		}
-
-		model := strings.TrimSpace(runnerDefaults.Model)
-		effort := strings.TrimSpace(runnerDefaults.Effort)
-		permissionMode := strings.TrimSpace(runnerDefaults.PermissionMode)
-		if permissionMode != "" || runnerDefaults.PermissionMode != "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+".permission_mode is not supported in agency.json")
-		}
-		if model == "" && effort == "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+" requires at least one of model or effort")
-		}
-		if runnerDefaults.Model != "" && model == "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+".model must be a non-empty string")
-		}
-		if runnerDefaults.Effort != "" && effort == "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+name+".effort must be a non-empty string")
-		}
-		if canonicalRunner == runners.RunnerCursor && effort != "" {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, "runner_defaults.cursor.effort is not supported")
-		}
-
-		cfg.RunnerDefaults[canonicalRunner] = RunnerDefaults{
-			Model:  model,
-			Effort: effort,
-		}
+		cfg.RunnerDefaults[name] = cleaned
 	}
 	cfg.Execution.Profile = strings.TrimSpace(cfg.Execution.Profile)
 	if cfg.Execution.Profile != "" && !IsValidExecutionProfileLabel(cfg.Execution.Profile) {
@@ -153,4 +127,47 @@ func ResolveCheckoutRoot(repoRoot, repoID, checkoutRoot string) (string, error) 
 // containsWhitespace returns true if s contains any whitespace character.
 func containsWhitespace(s string) bool {
 	return strings.ContainsFunc(s, unicode.IsSpace)
+}
+
+// validateRunnerDefaults validates and normalizes one runner_defaults entry.
+// agency.json (repo config) forbids permission_mode entirely; config.json
+// (user config) allows it for claude-code only. errCode tags the producing config.
+func validateRunnerDefaults(name string, rd RunnerDefaults, errCode errors.Code, allowPermissionMode bool) (RunnerDefaults, error) {
+	canonical, err := runners.Canonicalize(name)
+	unsupported := "runner_defaults." + name + " is not supported; typed runner defaults are supported for runners claude-code, codex, cursor"
+	if err != nil || canonical != name {
+		return RunnerDefaults{}, errors.New(errCode, unsupported)
+	}
+	if canonical != runners.RunnerClaudeCode && canonical != runners.RunnerCodex && canonical != runners.RunnerCursor {
+		return RunnerDefaults{}, errors.New(errCode, unsupported)
+	}
+	model := strings.TrimSpace(rd.Model)
+	effort := strings.TrimSpace(rd.Effort)
+	permissionMode := strings.TrimSpace(rd.PermissionMode)
+	if !allowPermissionMode && rd.PermissionMode != "" {
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults."+name+".permission_mode is not supported in agency.json")
+	}
+	if model == "" && effort == "" && permissionMode == "" {
+		need := "model or effort"
+		if allowPermissionMode {
+			need = "model, effort, or permission_mode"
+		}
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults."+name+" requires at least one of "+need)
+	}
+	if rd.Model != "" && model == "" {
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults."+name+".model must be a non-empty string")
+	}
+	if rd.Effort != "" && effort == "" {
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults."+name+".effort must be a non-empty string")
+	}
+	if allowPermissionMode && rd.PermissionMode != "" && permissionMode == "" {
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults."+name+".permission_mode must be a non-empty string")
+	}
+	if canonical == runners.RunnerCursor && effort != "" {
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults.cursor.effort is not supported")
+	}
+	if canonical != runners.RunnerClaudeCode && permissionMode != "" {
+		return RunnerDefaults{}, errors.New(errCode, "runner_defaults."+name+".permission_mode is only supported for claude-code")
+	}
+	return RunnerDefaults{Model: model, Effort: effort, PermissionMode: permissionMode}, nil
 }

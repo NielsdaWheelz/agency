@@ -266,10 +266,7 @@ func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktre
 	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
 	wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, worktreeRef, false)
 	if err != nil {
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EInternal
-		}
+		code := errors.CodeOr(err, errors.EInternal)
 		writeErr(http.StatusNotFound, string(code), err.Error(), "run 'agency worktree ls' to see available worktrees")
 		return nil, false
 	}
@@ -295,10 +292,7 @@ func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktre
 
 	if err := s.ensureWorktreeMergeInactive(repoIdentity.RepoID, wtRecord.WorktreeID, "start an invocation"); err != nil {
 		_ = unlockRepo()
-		code := errors.GetCode(err)
-		if code == "" {
-			code = errors.EWorktreeMergeActive
-		}
+		code := errors.CodeOr(err, errors.EWorktreeMergeActive)
 		writeErr(http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
 		return nil, false
 	}
