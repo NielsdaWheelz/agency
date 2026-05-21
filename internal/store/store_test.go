@@ -249,6 +249,53 @@ func TestReadInvocationMetaRejectsStrictViolations(t *testing.T) {
 	}
 }
 
+func TestScanInvocationsForRepoSortsNewestFirstAndMarksInvalidMetaBroken(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	s := NewStore(fs.NewRealFS(), dataDir, nil)
+	const repoID = "repo123"
+
+	for _, entry := range []struct {
+		id        string
+		startedAt time.Time
+		mutate    func(*InvocationMeta)
+	}{
+		{
+			id:        "inv-old",
+			startedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			id:        "inv-new",
+			startedAt: time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			id:        "inv-invalid-meta",
+			startedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+			mutate: func(meta *InvocationMeta) {
+				meta.Status = "paused"
+			},
+		},
+	} {
+		_, err := s.EnsureInvocationDir(repoID, entry.id)
+		require.NoError(t, err)
+		meta := NewInvocationMeta(entry.id, "", "wt-1", "/sandbox", "/checkouts/repo123", "work", "agency/sandbox-"+entry.id, "abc123", "claude-code", RunnerModeHeadless, entry.startedAt)
+		if entry.mutate != nil {
+			entry.mutate(meta)
+		}
+		require.NoError(t, s.WriteInvocationMeta(repoID, entry.id, meta))
+	}
+
+	records, err := ScanInvocationsForRepo(dataDir, repoID)
+	require.NoError(t, err)
+	require.Len(t, records, 3)
+	assert.Equal(t, "inv-new", records[0].InvocationID)
+	assert.Equal(t, "inv-old", records[1].InvocationID)
+	assert.Equal(t, "inv-invalid-meta", records[2].InvocationID)
+	assert.True(t, records[2].Broken)
+	assert.Nil(t, records[2].Meta)
+}
+
 func TestReadAndScanInvocationMetaRejectUnknownFields(t *testing.T) {
 	t.Parallel()
 

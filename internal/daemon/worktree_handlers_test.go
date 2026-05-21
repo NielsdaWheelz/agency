@@ -99,11 +99,13 @@ func writeWorktreeGuardInvocation(t *testing.T, st *store.Store, repoID, worktre
 
 func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 	t.Parallel()
+	missingRoot := filepath.Join(t.TempDir(), "missing")
 	tests := []struct {
-		name       string
-		req        WorktreeCreateRequest
-		wantCode   string
-		wantStatus int
+		name        string
+		req         WorktreeCreateRequest
+		wantCode    string
+		wantStatus  int
+		wantMessage string
 	}{
 		{
 			name:       "missing repo_root",
@@ -122,6 +124,13 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 			req:        WorktreeCreateRequest{RepoRoot: "/tmp/repo", Name: "my-feature"},
 			wantCode:   "E_INVALID_REQUEST",
 			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:        "invalid repo_root",
+			req:         WorktreeCreateRequest{RepoRoot: missingRoot, Name: "my-feature", BaseBranch: "main"},
+			wantCode:    "E_INVALID_ARGUMENT",
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "failed to resolve repo_root symlinks: lstat " + missingRoot + ": no such file or directory",
 		},
 	}
 
@@ -149,6 +158,9 @@ func TestHandleWorktreeCreate_ValidationErrors(t *testing.T) {
 
 			assert.Equal(t, tc.wantStatus, w.Code)
 			assert.Equal(t, tc.wantCode, resp.ErrorCode)
+			if tc.wantMessage != "" {
+				assert.Equal(t, tc.wantMessage, resp.Message)
+			}
 			assert.False(t, resp.OK, "expected OK=false")
 		})
 	}
@@ -399,7 +411,7 @@ func TestHandleWorktreeRm_StrictOptionalBodyWithUnknownLength(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, "E_INVALID_REQUEST", resp.ErrorCode)
-	assert.Contains(t, resp.Message, `unknown field "unknown"`)
+	assert.Equal(t, `invalid request body: unknown field "unknown"`, resp.Message)
 }
 
 func TestHandleWorktreeRm_Success(t *testing.T) {

@@ -22,12 +22,12 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	// Parse request body
 	var req CheckpointApplyRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
 	if req.CheckpointID <= 0 {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "checkpoint_id must be positive", "")
+		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "checkpoint_id must be positive", "")
 		return
 	}
 

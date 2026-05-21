@@ -198,70 +198,6 @@ func TestCreateInvalidName(t *testing.T) {
 	}
 }
 
-func TestCreate_PassesEnvToGit(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-	cr := testutil.NewFakeCommandRunner()
-	svc := NewService(st, cr, fsys, func() time.Time { return now })
-
-	env := map[string]string{"GH_CONFIG_DIR": "/tmp/agency-gh", "GIT_SSH_COMMAND": "ssh -F /tmp/work"}
-	result, err := svc.Create(context.Background(), CreateOpts{
-		Name:             "env-create",
-		RepoRoot:         "/repo/root",
-		RepoID:           "repo-1",
-		BaseBranch:       "main",
-		CheckoutRoot:     filepath.Join(dataDir, "checkouts", "repo-1"),
-		ExecutionProfile: "work",
-		Env:              env,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	require.NotEmpty(t, cr.Calls)
-	assert.Contains(t, cr.Calls[0], "worktree add")
-	assert.Equal(t, env, cr.CallEnvs[0])
-}
-
-func TestRemove_PassesEnvToGit(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-
-	repoID := "repo-1"
-	wtID := "20260201120000-env"
-	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
-	require.NoError(t, err)
-
-	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
-	treePath := filepath.Join(checkoutRoot, "worktrees", "env-remove-env")
-	meta := store.NewIntegrationWorktreeMeta(
-		wtID, "env-remove", repoID,
-		"agency/env-remove-env", "main",
-		treePath, checkoutRoot, "work", now,
-	)
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
-
-	cr := testutil.NewFakeCommandRunner()
-	svc := NewService(st, cr, fsys, func() time.Time { return now })
-
-	env := map[string]string{"GH_CONFIG_DIR": "/tmp/agency-gh", "GIT_SSH_COMMAND": "ssh -F /tmp/work"}
-	err = svc.Remove(context.Background(), repoID, wtID, RemoveOpts{
-		RepoRoot: "/repo/root",
-		Env:      env,
-	})
-	require.NoError(t, err)
-	require.Len(t, cr.CallEnvs, 2)
-	assert.Equal(t, env, cr.CallEnvs[0])
-	assert.Equal(t, env, cr.CallEnvs[1])
-}
-
 func TestHasIntegrationMarker(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
@@ -279,134 +215,101 @@ func TestHasIntegrationMarker(t *testing.T) {
 	assert.True(t, HasIntegrationMarker(tmpDir), "should return true for dir with marker")
 }
 
-// TestRemove_GitFails verifies that Remove returns E_WORKTREE_REMOVE_FAILED
-// when the git worktree remove command fails with a non-zero exit code.
-func TestRemove_GitFails(t *testing.T) {
+func TestRemove_GitRemoveFailures(t *testing.T) {
 	t.Parallel()
-	dataDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
 
-	repoID := "abc123"
-	wtID := "20260201120000-f1a2"
-
-	// Create worktree record directory and write valid meta.json
-	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
-	require.NoError(t, err)
-
-	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
-	treePath := filepath.Join(checkoutRoot, "worktrees", "rm-fail-test-f1a2")
-	meta := store.NewIntegrationWorktreeMeta(
-		wtID, "rm-fail-test", repoID,
-		"agency/rm-fail-test-f1a2", "main",
-		treePath, checkoutRoot, "work", now,
-	)
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
-
-	// Set up fake runner that returns failure for git worktree remove
-	cr := testutil.NewFakeCommandRunner()
-	repoRoot := "/fake/repo"
-	gitKey := fmt.Sprintf("git -C %s worktree remove %s", repoRoot, treePath)
-	cr.Responses[gitKey] = testutil.FakeResponse{
-		Stderr:   "fatal: some git error",
-		ExitCode: 128,
+	tests := []struct {
+		name     string
+		response testutil.FakeResponse
+	}{
+		{
+			name: "non-zero exit",
+			response: testutil.FakeResponse{
+				Stderr:   "fatal: some git error",
+				ExitCode: 128,
+			},
+		},
+		{
+			name: "runner error",
+			response: testutil.FakeResponse{
+				Err: fmt.Errorf("exec: git not found"),
+			},
+		},
 	}
 
-	svc := NewService(st, cr, fsys, func() time.Time { return now })
-	ctx := context.Background()
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	err = svc.Remove(ctx, repoID, wtID, RemoveOpts{
-		RepoRoot: repoRoot,
-		Force:    false,
-	})
-	require.Error(t, err)
-	assert.Equal(t, errors.EWorktreeRemoveFailed, errors.GetCode(err),
-		"expected E_WORKTREE_REMOVE_FAILED when git worktree remove exits non-zero")
+			dataDir := t.TempDir()
+			fsys := fs.NewRealFS()
+			now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+			st := store.NewStore(fsys, dataDir, func() time.Time { return now })
+
+			repoID := "abc123"
+			wtID := "20260201120000-f1a2"
+			_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
+			require.NoError(t, err)
+
+			checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
+			treePath := filepath.Join(checkoutRoot, "worktrees", "rm-fail-test-f1a2")
+			meta := store.NewIntegrationWorktreeMeta(
+				wtID, "rm-fail-test", repoID,
+				"agency/rm-fail-test-f1a2", "main",
+				treePath, checkoutRoot, "work", now,
+			)
+			require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
+
+			cr := testutil.NewFakeCommandRunner()
+			repoRoot := "/fake/repo"
+			gitKey := fmt.Sprintf("git -C %s worktree remove %s", repoRoot, treePath)
+			cr.Responses[gitKey] = tt.response
+
+			svc := NewService(st, cr, fsys, func() time.Time { return now })
+			err = svc.Remove(context.Background(), repoID, wtID, RemoveOpts{
+				RepoRoot: repoRoot,
+				Force:    false,
+			})
+			require.Error(t, err)
+			assert.Equal(t, errors.EWorktreeRemoveFailed, errors.GetCode(err))
+		})
+	}
 }
 
 func TestRemove_DirtyWorktree(t *testing.T) {
-	t.Parallel()
 	dataDir := t.TempDir()
 	fsys := fs.NewRealFS()
 	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-
-	repoID := "abc123"
-	wtID := "20260201120000-f1a2"
-
-	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
-	require.NoError(t, err)
-
-	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
-	treePath := filepath.Join(checkoutRoot, "worktrees", "dirty-test-f1a2")
-	meta := store.NewIntegrationWorktreeMeta(
-		wtID, "dirty-test", repoID,
-		"agency/dirty-test-f1a2", "main",
-		treePath, checkoutRoot, "work", now,
-	)
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
-
-	cr := testutil.NewFakeCommandRunner()
-	cr.Responses["git status --porcelain"] = testutil.FakeResponse{
-		Stdout:   " M README.md\n",
-		ExitCode: 0,
-	}
-
+	cr := exec.NewRealRunner()
 	svc := NewService(st, cr, fsys, func() time.Time { return now })
 
-	err = svc.Remove(context.Background(), repoID, wtID, RemoveOpts{
-		RepoRoot: "/fake/repo",
+	repoRoot := testutil.SetupGitRepo(t)
+	repoID := "abc123"
+	result, err := svc.Create(context.Background(), CreateOpts{
+		Name:             "dirty-test",
+		RepoRoot:         repoRoot,
+		RepoID:           repoID,
+		BaseBranch:       "main",
+		CheckoutRoot:     filepath.Join(dataDir, "checkouts", repoID),
+		ExecutionProfile: "work",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(result.TreePath, "README.md"), []byte("# Dirty\n"), 0o644))
+
+	err = svc.Remove(context.Background(), repoID, result.WorktreeID, RemoveOpts{
+		RepoRoot: repoRoot,
 		Force:    false,
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.EDirtyWorktree, errors.GetCode(err))
-	assert.NotContains(t, cr.Calls, "git -C /fake/repo worktree remove "+treePath)
-}
 
-// TestRemove_GitRunError verifies that Remove returns E_WORKTREE_REMOVE_FAILED
-// when the git worktree remove command itself fails to execute (e.g., binary not found).
-func TestRemove_GitRunError(t *testing.T) {
-	t.Parallel()
-	dataDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-
-	repoID := "abc123"
-	wtID := "20260201120000-f1a2"
-
-	// Create worktree record directory and write valid meta.json
-	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
-	require.NoError(t, err)
-
-	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
-	treePath := filepath.Join(checkoutRoot, "worktrees", "rm-runerr-test-f1a2")
-	meta := store.NewIntegrationWorktreeMeta(
-		wtID, "rm-runerr-test", repoID,
-		"agency/rm-runerr-test-f1a2", "main",
-		treePath, checkoutRoot, "work", now,
-	)
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
-
-	// Set up fake runner that returns an error (not a non-zero exit, but a real error)
-	cr := testutil.NewFakeCommandRunner()
-	repoRoot := "/fake/repo"
-	gitKey := fmt.Sprintf("git -C %s worktree remove %s", repoRoot, treePath)
-	cr.Responses[gitKey] = testutil.FakeResponse{
-		Err: fmt.Errorf("exec: git not found"),
-	}
-
-	svc := NewService(st, cr, fsys, func() time.Time { return now })
-	ctx := context.Background()
-
-	err = svc.Remove(ctx, repoID, wtID, RemoveOpts{
-		RepoRoot: repoRoot,
-		Force:    false,
-	})
-	require.Error(t, err)
-	assert.Equal(t, errors.EWorktreeRemoveFailed, errors.GetCode(err),
-		"expected E_WORKTREE_REMOVE_FAILED when git command runner returns error")
+	_, statErr := os.Stat(result.TreePath)
+	assert.NoError(t, statErr)
+	meta, readErr := st.ReadIntegrationWorktreeMeta(repoID, result.WorktreeID)
+	require.NoError(t, readErr)
+	assert.Equal(t, store.WorktreeStatePresent, meta.State)
 }
 
 // TestRemove_AlreadyArchived verifies that Remove returns E_WORKTREE_NOT_FOUND

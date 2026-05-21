@@ -30,7 +30,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	// Parse request body
 	var req WorktreeCreateRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
@@ -51,13 +51,13 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	// Canonicalize repo_root: Abs -> EvalSymlinks -> git rev-parse --show-toplevel
 	repoRoot, err := filepath.Abs(req.RepoRoot)
 	if err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest),
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidArgument),
 			"failed to resolve repo_root: "+err.Error(), "")
 		return
 	}
 	repoRoot, err = filepath.EvalSymlinks(repoRoot)
 	if err != nil {
-		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidRequest),
+		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.EInvalidArgument),
 			"failed to resolve repo_root symlinks: "+err.Error(), "")
 		return
 	}
@@ -242,7 +242,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	// Parse request body
 	var req WorktreeRmRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
+		s.writeWorktreeRmError(w, http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 

@@ -2,9 +2,7 @@
 package daemon
 
 import (
-	"encoding/json"
 	stderrors "errors"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,20 +67,13 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 	requestID := getOrCreateRequestID(r)
 
 	var req RepoRegisterRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: "+err.Error(), "", nil)
-		return
-	}
-	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); err != io.EOF {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: expected a single JSON object", "", nil)
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", nil)
 		return
 	}
 
 	if req.RepoRoot == "" {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_root is required", "", nil)
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_root is required", "", nil)
 		return
 	}
 
@@ -407,21 +398,14 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 	requestID := getOrCreateRequestID(r)
 
 	var req RepoRmRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: "+err.Error(), "", nil)
-		return
-	}
-	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); err != io.EOF {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "invalid request body: expected a single JSON object", "", nil)
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", nil)
 		return
 	}
 
 	repoRef := strings.TrimSpace(req.RepoRef)
 	if repoRef == "" {
-		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_ref is required", "", nil)
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_ref is required", "", nil)
 		return
 	}
 

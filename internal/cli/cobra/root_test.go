@@ -186,12 +186,6 @@ func TestRepoTarget_ActionFlagsAreRejectedOutsideAction(t *testing.T) {
 	assert.Contains(t, err.Error(), "--yes is not valid")
 }
 
-func TestAgentStart_HeadlessFlagRejected(t *testing.T) {
-	_, _, err := executeCmd("agent", "start", "--headless")
-	require.Error(t, err, "expected legacy headless flag to be rejected")
-	assert.Contains(t, err.Error(), "unknown flag: --headless")
-}
-
 func TestAgentStart_InvalidModeReturnsInvalidArgument(t *testing.T) {
 	_, _, err := executeCmd("agent", "start", "--mode", "bogus")
 	require.Error(t, err, "expected invalid mode to be rejected")

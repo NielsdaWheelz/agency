@@ -29,7 +29,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	// Parse request body
 	var req LandRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeLandError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", nil)
+		s.writeLandError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", nil)
 		return
 	}
 
@@ -132,7 +132,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	// Parse request body (currently empty, but allow for future expansion)
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeDiscardError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
+		s.writeDiscardError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 

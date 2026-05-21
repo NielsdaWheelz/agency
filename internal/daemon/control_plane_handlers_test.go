@@ -202,6 +202,63 @@ func TestControlPlaneStartFingerprintIgnoresProfileEnvValues(t *testing.T) {
 	assert.NotEqual(t, first, fourth)
 }
 
+func TestControlPlaneStart_InvalidRepoRootReturnsInvalidArgument(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	missingRoot := filepath.Join(tmpDir, "missing")
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	reqPayload := ControlPlaneStartRequest{
+		ClientRequestID: "test-uuid",
+		RepoRoot:        missingRoot,
+		WorktreeRef:     "wt-1",
+		Runner:          "claude-code",
+		Prompt:          "test",
+	}
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleControlPlaneStartHeadless(w, req)
+
+	var resp ControlPlaneStartResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.False(t, resp.OK, "expected OK=false")
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Equal(t, "failed to resolve repo_root symlinks: lstat "+missingRoot+": no such file or directory", resp.Message)
+}
+
+func TestControlPlaneStartHeaded_InvalidRepoRootReturnsInvalidArgument(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	missingRoot := filepath.Join(tmpDir, "missing")
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
+
+	reqPayload := ControlPlaneStartHeadedRequest{
+		ClientRequestID: "test-uuid",
+		RepoRoot:        missingRoot,
+		WorktreeRef:     "wt-1",
+		Runner:          "claude-code",
+	}
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/invocations/start_headed", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleControlPlaneStartHeaded(w, req)
+
+	var resp ControlPlaneStartHeadedResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.False(t, resp.OK, "expected OK=false")
+	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
+	assert.Equal(t, "failed to resolve repo_root symlinks: lstat "+missingRoot+": no such file or directory", resp.Message)
+}
+
 func TestFindInvocationByClientRequestIDIgnoresTaskInvocations(t *testing.T) {
 	t.Parallel()
 

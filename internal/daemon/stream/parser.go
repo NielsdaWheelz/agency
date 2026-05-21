@@ -387,7 +387,7 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 
 	if event.Kind == EventKindToolEnd {
 		toolName := checkpointToolNameFromEvent(event.Data)
-		if toolName == "" || !MutatingStreamTools[toolName] {
+		if toolName == "" || !isMutatingToolName(toolName) {
 			return
 		}
 		notifyFn(CheckpointNotification{
@@ -407,13 +407,13 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 			var mutating []string
 			if toolNames, ok := event.Data["tool_names"].([]string); ok {
 				for _, name := range toolNames {
-					if MutatingStreamTools[name] {
+					if isMutatingToolName(name) {
 						mutating = append(mutating, name)
 					}
 				}
 			} else if toolNamesIface, ok := event.Data["tool_names"].([]interface{}); ok {
 				for _, nameIface := range toolNamesIface {
-					if name, ok := nameIface.(string); ok && MutatingStreamTools[name] {
+					if name, ok := nameIface.(string); ok && isMutatingToolName(name) {
 						mutating = append(mutating, name)
 					}
 				}

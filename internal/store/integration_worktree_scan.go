@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 )
 
 // IntegrationWorktreeRecord represents a discovered integration worktree with its parsed metadata.
@@ -101,18 +100,9 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 			return records[i].WorktreeID < records[j].WorktreeID
 		}
 
-		// Parse created_at timestamps
-		ti, erri := time.Parse(time.RFC3339, records[i].Meta.CreatedAt)
-		tj, errj := time.Parse(time.RFC3339, records[j].Meta.CreatedAt)
-
-		// If either timestamp is invalid, fall back to worktree_id
-		if erri != nil || errj != nil {
-			return records[i].WorktreeID < records[j].WorktreeID
-		}
-
 		// Sort by created_at ascending
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
+		if records[i].Meta.CreatedAt != records[j].Meta.CreatedAt {
+			return records[i].Meta.CreatedAt < records[j].Meta.CreatedAt
 		}
 
 		// Tie-breaker: worktree_id ascending

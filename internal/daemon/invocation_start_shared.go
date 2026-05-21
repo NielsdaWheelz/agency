@@ -228,12 +228,12 @@ func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, e
 func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot string, writeErr controlPlaneStartErrorWriter) (string, identity.RepoIdentity, bool) {
 	repoRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "failed to resolve repo_root: "+err.Error(), "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidArgument), "failed to resolve repo_root: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
 	repoRoot, err = filepath.EvalSymlinks(repoRoot)
 	if err != nil {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "failed to resolve repo_root symlinks: "+err.Error(), "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidArgument), "failed to resolve repo_root symlinks: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
 	insideManagedTree, err := s.isInsideAgencyManagedTree(repoRoot)

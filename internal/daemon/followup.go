@@ -31,7 +31,7 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 
 	var req ControlPlaneFollowUpRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeFollowUpError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", "")
+		s.writeFollowUpError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", "")
 		return
 	}
 

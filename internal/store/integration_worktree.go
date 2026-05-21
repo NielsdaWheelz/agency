@@ -264,6 +264,17 @@ func validateIntegrationWorktreeMeta(meta IntegrationWorktreeMeta, repoID, workt
 			},
 		)
 	}
+	for _, timestamp := range []struct {
+		field string
+		value string
+	}{
+		{field: "created_at", value: meta.CreatedAt},
+		{field: "last_used_at", value: meta.LastUsedAt},
+	} {
+		if err := validateCanonicalStoreTimestamp("integration worktree meta.json", "meta_path", metaPath, timestamp.field, timestamp.value); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

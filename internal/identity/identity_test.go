@@ -105,7 +105,7 @@ func TestParseGitHubOwnerRepo(t *testing.T) {
 			wantOK: false,
 		},
 
-		// ssh:// URLs (unsupported in v1)
+		// Unsupported URL forms
 		{
 			name:   "ssh:// URL",
 			raw:    "ssh://git@github.com/owner/repo.git",

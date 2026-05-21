@@ -7,7 +7,6 @@ import (
 )
 
 // SchemaVersion is the current schema version for checkpoints.json.
-// Bumped to 1.1 for semantic trigger metadata (Trigger, ToolName, StreamSeq, Description).
 const SchemaVersion = "1.1"
 
 // MaxCheckpoints is the maximum number of checkpoints retained per invocation.
@@ -48,18 +47,18 @@ type Checkpoint struct {
 	// Used to detect duplicate checkpoints with identical content.
 	TreeSHA string `json:"tree_sha,omitempty"`
 
-	// Trigger describes what caused this checkpoint (schema 1.1+).
+	// Trigger describes what caused this checkpoint.
 	// Values: "tool_end", "drift", "poll", "shutdown", "manual".
 	Trigger string `json:"trigger,omitempty"`
 
-	// ToolName is the tool that completed when trigger is "tool_end" (schema 1.1+).
+	// ToolName is the tool that completed when trigger is "tool_end".
 	// Examples: "Edit", "Write", "Bash", "NotebookEdit".
 	ToolName string `json:"tool_name,omitempty"`
 
-	// StreamSeq is the stream.jsonl sequence number that triggered this checkpoint (schema 1.1+).
+	// StreamSeq is the stream.jsonl sequence number that triggered this checkpoint.
 	StreamSeq uint64 `json:"stream_seq,omitempty"`
 
-	// Description is a human-readable label auto-generated from trigger context (schema 1.1+).
+	// Description is a human-readable label auto-generated from trigger context.
 	// Examples: "After Edit", "After Bash", "Drift checkpoint", "Final checkpoint".
 	Description string `json:"description,omitempty"`
 
@@ -163,11 +162,6 @@ func NewEvent(invocationID string, seq uint64, kind EventKind, data map[string]a
 	}
 }
 
-// ValidSchemaVersion reports whether v matches the current checkpoints.json schema version.
-func ValidSchemaVersion(v string) bool {
-	return v == SchemaVersion
-}
-
 // CheckpointCreatedData returns the data map for a checkpoint_created event.
 func CheckpointCreatedData(checkpointID int, includesUntracked bool, sandboxHeadSHA string) map[string]any {
 	return map[string]any{
@@ -245,22 +239,6 @@ const (
 	TriggerManual   = "manual"
 )
 
-// MutatingTools is the set of tool names that modify the filesystem and
-// should trigger a checkpoint on completion.
-var MutatingTools = map[string]bool{
-	"Edit":         true,
-	"Write":        true,
-	"MultiEdit":    true,
-	"NotebookEdit": true,
-	"Bash":         true,
-	"FileChange":   true,
-}
-
-// IsMutatingTool reports whether the given tool name modifies the filesystem.
-func IsMutatingTool(name string) bool {
-	return MutatingTools[name]
-}
-
 // Config holds the checkpoint engine configuration.
 type Config struct {
 	// IncludeUntracked determines whether untracked files are included in snapshots.
@@ -275,7 +253,7 @@ type Config struct {
 	// Semantic trigger checkpoints are NOT rate-limited (each tool completion is distinct).
 	RateLimit time.Duration
 
-	// PollInterval is the interval for the fallback polling check.
+	// PollInterval is the interval for polling-based drift checks.
 	PollInterval time.Duration
 
 	// DriftInterval is the minimum time between fsnotify-based drift checkpoints.

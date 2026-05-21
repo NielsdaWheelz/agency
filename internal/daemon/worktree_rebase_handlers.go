@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"strings"
 
@@ -27,8 +26,9 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	if decodeErr := decodeWorktreeRebaseRequest(r.Body); decodeErr != "" {
-		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), decodeErr, "")
+	var req struct{}
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
+		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
@@ -183,12 +183,4 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 	}
 
 	return nil
-}
-
-func decodeWorktreeRebaseRequest(body io.Reader) string {
-	var req struct{}
-	if err := decodeOptionalStrictJSON(body, &req); err != nil {
-		return prSyncDecodeErrorMessage(err)
-	}
-	return ""
 }

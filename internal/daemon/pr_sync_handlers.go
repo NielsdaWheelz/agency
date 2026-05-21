@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -591,49 +590,4 @@ func prSyncHintFromError(err error) string {
 		}
 	}
 	return ""
-}
-
-func decodePRSyncRequest(body io.Reader) (WorktreePRSyncRequest, string) {
-	var req WorktreePRSyncRequest
-	if err := decodeOptionalStrictJSON(body, &req); err != nil {
-		return WorktreePRSyncRequest{}, prSyncDecodeErrorMessage(err)
-	}
-	return req, ""
-}
-
-func prSyncDecodeErrorMessage(err error) string {
-	msg := strings.TrimSpace(err.Error())
-	if msg == "expected a JSON object" || msg == "expected a single JSON object" {
-		return "invalid request body: " + msg
-	}
-
-	if unknownField, ok := prSyncUnknownFieldName(err); ok {
-		return fmt.Sprintf("invalid request body: unknown field %q", unknownField)
-	}
-
-	if _, ok := err.(*json.SyntaxError); ok || err == io.ErrUnexpectedEOF {
-		return "invalid request body: malformed JSON"
-	}
-
-	if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
-		if field := strings.TrimSpace(typeErr.Field); field != "" {
-			return fmt.Sprintf("invalid request body: field %q must be %s", field, typeErr.Type.String())
-		}
-		return "invalid request body: invalid value type"
-	}
-
-	return "invalid request body: malformed JSON"
-}
-
-func prSyncUnknownFieldName(err error) (string, bool) {
-	const prefix = "json: unknown field "
-	msg := strings.TrimSpace(err.Error())
-	if !strings.HasPrefix(msg, prefix) {
-		return "", false
-	}
-	field := strings.TrimSpace(strings.Trim(strings.TrimPrefix(msg, prefix), `"`))
-	if field == "" {
-		return "", false
-	}
-	return field, true
 }

@@ -37,6 +37,15 @@ type timelineSortableEntry struct {
 	key timelineSortKey
 }
 
+type timelineJSONLEnvelope struct {
+	SchemaVersion string                 `json:"schema_version"`
+	Seq           uint64                 `json:"seq"`
+	Timestamp     string                 `json:"timestamp"`
+	Kind          string                 `json:"kind"`
+	Event         string                 `json:"event"`
+	Data          map[string]interface{} `json:"data"`
+}
+
 // handleGetInvocationTimeline handles GET /invocations/{ref}/timeline.
 func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	requestID := getOrCreateRequestID(r)
@@ -185,7 +194,7 @@ func readTimelineJSONL(
 	fallbackTimestamp string,
 	source string,
 	sourceRank int,
-	build func(line jsonl.Line, fallbackTimestamp string) (timelineSortableEntry, error),
+	build func(lineNumber int, event timelineJSONLEnvelope, fallbackTimestamp string) timelineSortableEntry,
 ) ([]timelineSortableEntry, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -200,10 +209,31 @@ func readTimelineJSONL(
 	lastLineNumber := 0
 	visitErr := jsonl.Visit(f, maxTimelineLineBytes, jsonl.VisitOptions{}, func(line jsonl.Line) error {
 		lastLineNumber = line.Number
-		entry, buildErr := build(line, fallbackTimestamp)
-		if buildErr != nil {
-			return buildErr
+		if line.Oversized {
+			entries = append(entries, newTimelineReadFailureEntry(
+				source,
+				sourceRank,
+				line.Number,
+				fallbackTimestamp,
+				"line_too_large",
+				nil,
+			))
+			return nil
 		}
+
+		var event timelineJSONLEnvelope
+		if err := json.Unmarshal(line.Bytes, &event); err != nil {
+			entries = append(entries, newTimelineReadFailureEntry(
+				source,
+				sourceRank,
+				line.Number,
+				fallbackTimestamp,
+				"json_unmarshal_failed",
+				err,
+			))
+			return nil
+		}
+		entry := build(line.Number, event, fallbackTimestamp)
 		entries = append(entries, entry)
 		return nil
 	})
@@ -225,56 +255,29 @@ func readTimelineJSONL(
 	return entries, nil
 }
 
-func buildStreamTimelineEntry(line jsonl.Line, fallbackTimestamp string) (timelineSortableEntry, error) {
-	if line.Oversized {
-		return newTimelineReadFailureEntry(
-			"stream",
-			timelineSourceRankStream,
-			line.Number,
-			fallbackTimestamp,
-			"line_too_large",
-			nil,
-		), nil
-	}
-	var event struct {
-		SchemaVersion string                 `json:"schema_version"`
-		Seq           uint64                 `json:"seq"`
-		Timestamp     string                 `json:"timestamp"`
-		Kind          string                 `json:"kind"`
-		Data          map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(line.Bytes, &event); err != nil {
-		return newTimelineReadFailureEntry(
-			"stream",
-			timelineSourceRankStream,
-			line.Number,
-			fallbackTimestamp,
-			"json_unmarshal_failed",
-			err,
-		), nil
-	}
+func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, fallbackTimestamp string) timelineSortableEntry {
 	if event.SchemaVersion != expectedTimelineSchema {
 		return newSchemaMismatchTimelineEntry(
 			"stream",
 			timelineSourceRankStream,
-			line.Number,
+			lineNumber,
 			event.Seq,
 			event.Timestamp,
 			fallbackTimestamp,
 			event.SchemaVersion,
 			event.Kind,
-		), nil
+		)
 	}
 	normalizedKind := strings.TrimSpace(event.Kind)
 	if normalizedKind == "" {
 		return newMissingEventKindTimelineEntry(
 			"stream",
 			timelineSourceRankStream,
-			line.Number,
+			lineNumber,
 			event.Seq,
 			event.Timestamp,
 			fallbackTimestamp,
-		), nil
+		)
 	}
 	kind := normalizedKind
 	switch normalizedKind {
@@ -300,49 +303,21 @@ func buildStreamTimelineEntry(line jsonl.Line, fallbackTimestamp string) (timeli
 			Data:      event.Data,
 		},
 		timelineSourceRankStream,
-	), nil
+	)
 }
 
-func buildInvocationEventTimelineEntry(line jsonl.Line, fallbackTimestamp string) (timelineSortableEntry, error) {
-	if line.Oversized {
-		return newTimelineReadFailureEntry(
-			"invocation_event",
-			timelineSourceRankEvent,
-			line.Number,
-			fallbackTimestamp,
-			"line_too_large",
-			nil,
-		), nil
-	}
-	var event struct {
-		SchemaVersion string                 `json:"schema_version"`
-		Seq           uint64                 `json:"seq"`
-		Timestamp     string                 `json:"timestamp"`
-		Kind          string                 `json:"kind"`
-		Event         string                 `json:"event"`
-		Data          map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(line.Bytes, &event); err != nil {
-		return newTimelineReadFailureEntry(
-			"invocation_event",
-			timelineSourceRankEvent,
-			line.Number,
-			fallbackTimestamp,
-			"json_unmarshal_failed",
-			err,
-		), nil
-	}
+func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelope, fallbackTimestamp string) timelineSortableEntry {
 	if event.SchemaVersion != expectedTimelineSchema {
 		return newSchemaMismatchTimelineEntry(
 			"invocation_event",
 			timelineSourceRankEvent,
-			line.Number,
+			lineNumber,
 			event.Seq,
 			event.Timestamp,
 			fallbackTimestamp,
 			event.SchemaVersion,
 			nonEmpty(event.Kind, event.Event),
-		), nil
+		)
 	}
 
 	kind := strings.TrimSpace(event.Kind)
@@ -353,11 +328,11 @@ func buildInvocationEventTimelineEntry(line jsonl.Line, fallbackTimestamp string
 		return newMissingEventKindTimelineEntry(
 			"invocation_event",
 			timelineSourceRankEvent,
-			line.Number,
+			lineNumber,
 			event.Seq,
 			event.Timestamp,
 			fallbackTimestamp,
-		), nil
+		)
 	}
 	entryKind := "invocation_event"
 	if strings.HasPrefix(kind, "agency.checkpoint_") {
@@ -366,7 +341,7 @@ func buildInvocationEventTimelineEntry(line jsonl.Line, fallbackTimestamp string
 		entryKind = "followup_prompt"
 	}
 
-	entryID := "inv_event:line:" + strconv.Itoa(line.Number) + ":" + kind
+	entryID := "inv_event:line:" + strconv.Itoa(lineNumber) + ":" + kind
 	if event.Seq > 0 {
 		entryID = "inv_event:" + strconv.FormatUint(event.Seq, 10) + ":" + kind
 	}
@@ -387,7 +362,7 @@ func buildInvocationEventTimelineEntry(line jsonl.Line, fallbackTimestamp string
 			Data:      payload,
 		},
 		timelineSourceRankEvent,
-	), nil
+	)
 }
 
 func newTimelineReadFailureEntry(

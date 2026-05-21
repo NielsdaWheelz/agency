@@ -96,7 +96,18 @@ func TestRepoRegister_EmptyRepoRoot(t *testing.T) {
 
 	_, err := env.Client.RegisterRepo(ctx, "")
 	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidRequest, errors.GetCode(err))
 	assert.Contains(t, err.Error(), "repo_root is required")
+}
+
+func TestRepoRm_EmptyRepoRefReturnsInvalidRequest(t *testing.T) {
+	t.Parallel()
+	env := startTestDaemon(t)
+
+	_, err := env.Client.RepoRm(context.Background(), "")
+	require.Error(t, err)
+	assert.Equal(t, errors.EInvalidRequest, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "repo_ref is required")
 }
 
 // TestListRepos_Empty verifies GET /repos returns empty list initially.

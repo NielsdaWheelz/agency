@@ -152,12 +152,24 @@ func TestHandleWorktreeRebase_Success(t *testing.T) {
 	assert.Equal(t, "main", resp.BaseBranch)
 }
 
-func TestDecodeWorktreeRebaseRequest_TrailingObjectRejected(t *testing.T) {
+func TestHandleWorktreeRebase_TrailingObjectRejected(t *testing.T) {
 	t.Parallel()
 
-	msg := decodeWorktreeRebaseRequest(bytes.NewReader([]byte(`{} {}`)))
+	env := setupReadTestEnv(t)
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/wt-1/rebase?repo_id="+env.RepoID,
+		[]byte(`{} {}`),
+	)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 
-	assert.Equal(t, "invalid request body: expected a single JSON object", msg)
+	var resp WorktreeRebaseResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
+	assert.Equal(t, "invalid request body: expected a single JSON object", resp.Message)
 }
 
 func doWorktreeRequestWithBody(t *testing.T, env *readTestEnv, method, path string, body []byte) *httptest.ResponseRecorder {

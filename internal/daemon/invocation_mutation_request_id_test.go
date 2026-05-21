@@ -109,25 +109,25 @@ func TestInvocationNoBodyMutations_StrictOptionalBody(t *testing.T) {
 			name: "stop unknown field",
 			path: "/invocations/inv-1/stop?repo_id=repo-1",
 			body: []byte(`{"unknown":true}`),
-			want: `unknown field "unknown"`,
+			want: `invalid request body: unknown field "unknown"`,
 		},
 		{
 			name: "kill trailing object",
 			path: "/invocations/inv-1/kill?repo_id=repo-1",
 			body: []byte(`{} {}`),
-			want: "expected a single JSON object",
+			want: "invalid request body: expected a single JSON object",
 		},
 		{
 			name: "recreate unknown field",
 			path: "/invocations/inv-1/recreate?repo_id=repo-1",
 			body: []byte(`{"unknown":true}`),
-			want: `unknown field "unknown"`,
+			want: `invalid request body: unknown field "unknown"`,
 		},
 		{
 			name: "recreate trailing object",
 			path: "/invocations/inv-1/recreate?repo_id=repo-1",
 			body: []byte(`{} {}`),
-			want: "expected a single JSON object",
+			want: "invalid request body: expected a single JSON object",
 		},
 	}
 
@@ -148,7 +148,7 @@ func TestInvocationNoBodyMutations_StrictOptionalBody(t *testing.T) {
 			var payload map[string]any
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
 			assert.Equal(t, "E_INVALID_REQUEST", payload["error_code"])
-			assert.Contains(t, payload["message"], tt.want)
+			assert.Equal(t, tt.want, payload["message"])
 		})
 	}
 }

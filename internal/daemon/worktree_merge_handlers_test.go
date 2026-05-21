@@ -40,6 +40,26 @@ func TestHandleWorktreeMerge_MissingRepoIDRemainsInvalidRequest(t *testing.T) {
 	assert.Equal(t, "repo_id query parameter is required", resp.Message)
 }
 
+func TestHandleWorktreeMerge_StrictDecodeFailure(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/wt-1/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"unknown":true}`),
+	)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp WorktreePRMergeResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
+	assert.Equal(t, `invalid request body: unknown field "unknown"`, resp.Message)
+}
+
 func TestHandleWorktreeMerge_RequiresConfirmation(t *testing.T) {
 	t.Parallel()
 

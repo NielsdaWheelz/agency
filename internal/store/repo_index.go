@@ -48,7 +48,7 @@ func (s *Store) LoadRepoIndex() (RepoIndex, error) {
 	if err := decodeStrictJSON(data, &idx); err != nil {
 		return RepoIndex{}, errors.Wrap(errors.EStoreCorrupt, "invalid json in repo_index.json", err)
 	}
-	if err := validateRepoIndex(idx); err != nil {
+	if err := validateRepoIndex(path, idx); err != nil {
 		return RepoIndex{}, err
 	}
 
@@ -123,7 +123,7 @@ func (s *Store) SaveRepoIndex(idx RepoIndex) error {
 	return nil
 }
 
-func validateRepoIndex(idx RepoIndex) error {
+func validateRepoIndex(path string, idx RepoIndex) error {
 	if idx.SchemaVersion == "" {
 		return errors.New(errors.EStoreCorrupt, "repo_index.json: missing schema_version")
 	}
@@ -139,6 +139,9 @@ func validateRepoIndex(idx RepoIndex) error {
 		}
 		if entry.RepoID != filepath.Base(filepath.Clean(filepath.Join("repos", entry.RepoID))) {
 			return errors.New(errors.EStoreCorrupt, "repo_index.json: repo entry has invalid repo_id")
+		}
+		if err := validateCanonicalStoreTimestamp("repo_index.json", "repo_index_path", path, "last_seen_at", entry.LastSeenAt); err != nil {
+			return err
 		}
 		for _, path := range entry.Paths {
 			if path == "" || !filepath.IsAbs(path) {

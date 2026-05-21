@@ -22,7 +22,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", "", requestID)
+		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", "", requestID)
 		return
 	}
 

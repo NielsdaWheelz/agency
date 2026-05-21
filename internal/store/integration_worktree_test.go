@@ -215,16 +215,39 @@ func TestScanIntegrationWorktreesForRepo(t *testing.T) {
 	wt3Dir := filepath.Join(wtDir, "20260131120000-e5f6")
 	require.NoError(t, os.Mkdir(wt3Dir, 0o755))
 
+	wt4Dir := filepath.Join(wtDir, "20260131113000-d5e6")
+	require.NoError(t, os.Mkdir(wt4Dir, 0o755))
+	meta4 := &IntegrationWorktreeMeta{
+		SchemaVersion:    SchemaVersion,
+		WorktreeID:       "20260131113000-d5e6",
+		Name:             "feature-invalid",
+		RepoID:           repoID,
+		Branch:           "agency/feature-invalid-d5e6",
+		BaseBranch:       "main",
+		TreePath:         filepath.Join(tmpDir, "checkouts", repoID, "worktrees", "feature-invalid-d5e6"),
+		CheckoutRoot:     filepath.Join(tmpDir, "checkouts", repoID),
+		ExecutionProfile: "work",
+		State:            "removed",
+		CreatedAt:        "2026-01-31T11:30:00Z",
+	}
+	data4, _ := json.MarshalIndent(meta4, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(wt4Dir, "meta.json"), data4, 0o644))
+
 	// Scan
 	records, err := ScanIntegrationWorktreesForRepo(tmpDir, repoID)
 	require.NoError(t, err)
 
-	assert.Len(t, records, 3)
+	assert.Len(t, records, 4)
 
 	// Records should be sorted by created_at (broken last)
 	assert.Equal(t, "feature-a", records[0].Name)
 	assert.Equal(t, "feature-b", records[1].Name)
-	assert.True(t, records[2].Broken, "third record should be broken")
+	assert.Equal(t, "20260131113000-d5e6", records[2].WorktreeID)
+	assert.True(t, records[2].Broken)
+	assert.Nil(t, records[2].Meta)
+	assert.Equal(t, "20260131120000-e5f6", records[3].WorktreeID)
+	assert.True(t, records[3].Broken)
+	assert.Nil(t, records[3].Meta)
 }
 
 // TestLoad_CorruptWorktreeMeta verifies that reading a corrupt meta.json

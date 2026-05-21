@@ -1887,53 +1887,6 @@ func TestEngine_createCheckpointInternal_EventAppendFailure(t *testing.T) {
 	assert.ErrorContains(t, err, "checkpoint_created")
 }
 
-// ---------------------------------------------------------------------------
-// Semantic trigger tests (RED phase — new checkpoint trigger system)
-// ---------------------------------------------------------------------------
-
-func TestIsMutatingTool(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		want bool
-	}{
-		{"Edit", true},
-		{"Write", true},
-		{"Bash", true},
-		{"NotebookEdit", true},
-		{"MultiEdit", true},
-		{"Read", false},
-		{"Glob", false},
-		{"Grep", false},
-		{"WebSearch", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsMutatingTool(tt.name))
-		})
-	}
-}
-
-func TestValidSchemaVersion(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		v    string
-		want bool
-	}{
-		{"1.1", true},
-		{"1.0", false},
-		{"2.0", false},
-		{"", false},
-		{"0.9", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.v, func(t *testing.T) {
-			assert.Equal(t, tt.want, ValidSchemaVersion(tt.v))
-		})
-	}
-}
-
 func TestDefaultConfig_DriftInterval(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()

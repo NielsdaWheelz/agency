@@ -72,27 +72,6 @@ func Load(worktreePath string) (*RunnerStatus, error) {
 	return &status, nil
 }
 
-// LoadWithModTime reads the runner_status.json and returns both the status and file modification time.
-// Returns (nil, zero time, nil) if the file does not exist.
-func LoadWithModTime(worktreePath string) (*RunnerStatus, time.Time, error) {
-	path := StatusPath(worktreePath)
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, time.Time{}, nil
-		}
-		return nil, time.Time{}, fmt.Errorf("failed to stat runner status file: %w", err)
-	}
-
-	status, err := Load(worktreePath)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-
-	return status, info.ModTime(), nil
-}
-
 // Validate checks that the RunnerStatus has valid values.
 // Returns nil if valid, or an error describing the validation failure.
 func (s *RunnerStatus) Validate() error {

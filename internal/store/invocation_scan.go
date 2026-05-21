@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 )
 
 // InvocationRecord represents a discovered invocation with its parsed metadata.
@@ -120,18 +119,9 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 			return records[i].InvocationID > records[j].InvocationID
 		}
 
-		// Parse started_at timestamps
-		ti, erri := time.Parse(time.RFC3339, records[i].Meta.StartedAt)
-		tj, errj := time.Parse(time.RFC3339, records[j].Meta.StartedAt)
-
-		// If either timestamp is invalid, fall back to invocation_id
-		if erri != nil || errj != nil {
-			return records[i].InvocationID > records[j].InvocationID
-		}
-
 		// Sort by started_at descending (newest first)
-		if !ti.Equal(tj) {
-			return ti.After(tj)
+		if records[i].Meta.StartedAt != records[j].Meta.StartedAt {
+			return records[i].Meta.StartedAt > records[j].Meta.StartedAt
 		}
 
 		// Tie-breaker: invocation_id descending

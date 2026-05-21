@@ -224,6 +224,18 @@ func (s *Store) ReadIntegrationWorktreeMerge(repoID, worktreeID string) (*Integr
 			},
 		)
 	}
+	for _, timestamp := range []struct {
+		field string
+		value string
+	}{
+		{field: "started_at", value: meta.StartedAt},
+		{field: "updated_at", value: meta.UpdatedAt},
+		{field: "finished_at", value: meta.FinishedAt},
+	} {
+		if err := validateCanonicalStoreTimestamp("integration worktree merge.json", "merge_path", mergePath, timestamp.field, timestamp.value); err != nil {
+			return nil, err
+		}
+	}
 
 	return &meta, nil
 }

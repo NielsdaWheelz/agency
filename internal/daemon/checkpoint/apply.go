@@ -308,7 +308,7 @@ func (a *Applier) loadCheckpoints() (*CheckpointsFile, error) {
 	if err := json.Unmarshal(data, &cpFile); err != nil {
 		return nil, err
 	}
-	if !ValidSchemaVersion(cpFile.SchemaVersion) {
+	if cpFile.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
 	}
 
@@ -355,7 +355,7 @@ func LoadCheckpointsFile(fsys fs.FS, checkpointsDir string) (*CheckpointsFile, e
 		return nil, err
 	}
 
-	if !ValidSchemaVersion(cpFile.SchemaVersion) {
+	if cpFile.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
 	}
 

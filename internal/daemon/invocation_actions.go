@@ -18,7 +18,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
@@ -271,7 +271,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		writeKillError(http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "")
+		writeKillError(http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 

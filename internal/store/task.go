@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -146,13 +145,6 @@ func (s *Store) UpdateTaskMeta(repoID, taskID string, updateFn func(*TaskMeta)) 
 		return err
 	}
 	updateFn(meta)
-	if meta.UpdatedAt == "" {
-		now := time.Now
-		if s.Now != nil {
-			now = s.Now
-		}
-		meta.UpdatedAt = now().UTC().Format(time.RFC3339)
-	}
 	return s.WriteTaskMeta(repoID, taskID, meta)
 }
 
@@ -250,13 +242,8 @@ func ScanTasksForRepo(dataDir, repoID string) ([]TaskRecord, error) {
 		if records[i].Broken && records[j].Broken {
 			return records[i].TaskID > records[j].TaskID
 		}
-		ti, erri := time.Parse(time.RFC3339, records[i].Meta.CreatedAt)
-		tj, errj := time.Parse(time.RFC3339, records[j].Meta.CreatedAt)
-		if erri != nil || errj != nil {
-			return records[i].TaskID > records[j].TaskID
-		}
-		if !ti.Equal(tj) {
-			return ti.After(tj)
+		if records[i].Meta.CreatedAt != records[j].Meta.CreatedAt {
+			return records[i].Meta.CreatedAt > records[j].Meta.CreatedAt
 		}
 		return records[i].TaskID > records[j].TaskID
 	})
@@ -331,6 +318,46 @@ func validateTaskMeta(meta TaskMeta, repoID, taskID, metaPath string) error {
 			},
 		)
 	}
+	for _, timestamp := range []struct {
+		field string
+		value string
+	}{
+		{field: "created_at", value: meta.CreatedAt},
+		{field: "updated_at", value: meta.UpdatedAt},
+	} {
+		if err := validateCanonicalStoreTimestamp("task meta.json", "meta_path", metaPath, timestamp.field, timestamp.value); err != nil {
+			return err
+		}
+	}
+	for retryID, record := range meta.RetryRequests {
+		if retryID == "" || record.RequestFingerprint == "" || record.State == "" || record.CreatedAt == "" || record.UpdatedAt == "" {
+			return errors.NewWithDetails(
+				errors.EStoreCorrupt,
+				"task meta.json retry record missing required fields",
+				map[string]string{
+					"meta_path": metaPath,
+					"retry_id":  retryID,
+				},
+			)
+		}
+		if err := validateCanonicalStoreTimestamp("task retry record", "meta_path", metaPath, "created_at", record.CreatedAt); err != nil {
+			return err
+		}
+		if err := validateCanonicalStoreTimestamp("task retry record", "meta_path", metaPath, "updated_at", record.UpdatedAt); err != nil {
+			return err
+		}
+		if !validTaskRetryState(record.State) {
+			return errors.NewWithDetails(
+				errors.EStoreCorrupt,
+				"task meta.json has unsupported retry state",
+				map[string]string{
+					"meta_path": metaPath,
+					"retry_id":  retryID,
+					"state":     string(record.State),
+				},
+			)
+		}
+	}
 	return nil
 }
 
@@ -346,6 +373,15 @@ func validTaskState(state TaskState) bool {
 func validRunnerMode(mode RunnerMode) bool {
 	switch mode {
 	case RunnerModeHeaded, RunnerModeHeadless:
+		return true
+	default:
+		return false
+	}
+}
+
+func validTaskRetryState(state TaskRetryState) bool {
+	switch state {
+	case TaskRetryStateStarting, TaskRetryStateRunning, TaskRetryStateFailed:
 		return true
 	default:
 		return false

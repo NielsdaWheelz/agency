@@ -27,8 +27,6 @@ func TestResolveAgentRunner(t *testing.T) {
 		{name: "opencode", input: "opencode", def: "claude-code", want: "opencode"},
 		{name: "cursor canonical", input: "cursor", def: "claude-code", want: "cursor"},
 		{name: "droid", input: "droid", def: "claude-code", want: "droid"},
-		{name: "legacy claude alias rejected", input: "claude", def: "codex", wantErr: true},
-		{name: "legacy cursor-cli alias rejected", input: "cursor-cli", def: "claude-code", wantErr: true},
 		{name: "unknown rejected", input: "unknown", def: "claude-code", wantErr: true},
 	}
 

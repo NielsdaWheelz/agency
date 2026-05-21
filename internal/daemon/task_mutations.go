@@ -62,7 +62,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	}
 	var req TaskRetryRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidRequest, "invalid request body: "+err.Error(), "", req.ClientRequestID, nil)
+		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidRequest, strictJSONDecodeErrorMessage(err), "", req.ClientRequestID, nil)
 		return
 	}
 	if req.ClientRequestID == "" {

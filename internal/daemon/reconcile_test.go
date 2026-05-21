@@ -709,10 +709,6 @@ func TestReconcile_ShutdownOrdering(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// New tests: Landing status, idempotence, recovery, multi-invocation, fallback
-// ---------------------------------------------------------------------------
-
 func TestReconcile_LandingStatusPreserved(t *testing.T) {
 	t.Parallel()
 	// Test: LandingStatus is never modified through a transition

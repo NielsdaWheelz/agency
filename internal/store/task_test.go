@@ -177,7 +177,7 @@ func TestScanTasksForRepoRejectsStrictMetaViolations(t *testing.T) {
 		mutate func(*TaskMeta)
 	}{
 		{
-			id: "legacy-schema",
+			id: "unsupported-schema-version",
 			mutate: func(meta *TaskMeta) {
 				meta.SchemaVersion = "1.0"
 			},
@@ -210,6 +210,55 @@ func TestScanTasksForRepoRejectsStrictMetaViolations(t *testing.T) {
 			id: "repo-id-mismatch",
 			mutate: func(meta *TaskMeta) {
 				meta.RepoID = "other-repo"
+			},
+		},
+		{
+			id: "missing-retry-request-fingerprint",
+			mutate: func(meta *TaskMeta) {
+				meta.RetryRequests = map[string]TaskRetryRecord{
+					"retry-1": {
+						State:     TaskRetryStateStarting,
+						CreatedAt: meta.CreatedAt,
+						UpdatedAt: meta.UpdatedAt,
+					},
+				}
+			},
+		},
+		{
+			id: "missing-retry-created-at",
+			mutate: func(meta *TaskMeta) {
+				meta.RetryRequests = map[string]TaskRetryRecord{
+					"retry-1": {
+						RequestFingerprint: "retry-fp",
+						State:              TaskRetryStateStarting,
+						UpdatedAt:          meta.UpdatedAt,
+					},
+				}
+			},
+		},
+		{
+			id: "missing-retry-updated-at",
+			mutate: func(meta *TaskMeta) {
+				meta.RetryRequests = map[string]TaskRetryRecord{
+					"retry-1": {
+						RequestFingerprint: "retry-fp",
+						State:              TaskRetryStateStarting,
+						CreatedAt:          meta.CreatedAt,
+					},
+				}
+			},
+		},
+		{
+			id: "invalid-retry-state",
+			mutate: func(meta *TaskMeta) {
+				meta.RetryRequests = map[string]TaskRetryRecord{
+					"retry-1": {
+						RequestFingerprint: "retry-fp",
+						State:              "paused",
+						CreatedAt:          meta.CreatedAt,
+						UpdatedAt:          meta.UpdatedAt,
+					},
+				}
 			},
 		},
 	}

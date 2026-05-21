@@ -23,7 +23,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	var req ControlPlaneStartRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "invalid request body: "+err.Error(), "", "")
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", "")
 		return
 	}
 	if req.ClientRequestID == "" {

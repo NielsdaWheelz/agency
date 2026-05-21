@@ -18,14 +18,14 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 
-	req, decodeErr := decodePRSyncRequest(r.Body)
-	if decodeErr != "" {
+	var req WorktreePRSyncRequest
+	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
 		s.writeWorktreePRSyncError(
 			w,
 			http.StatusBadRequest,
 			requestID,
 			string(errors.EInvalidRequest),
-			decodeErr,
+			strictJSONDecodeErrorMessage(err),
 			"",
 		)
 		return

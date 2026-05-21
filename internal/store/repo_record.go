@@ -68,7 +68,7 @@ func (s *Store) LoadRepoRecord(repoID string) (RepoRecord, bool, error) {
 	if err != nil {
 		return RepoRecord{}, false, errors.Wrap(errors.EStoreCorrupt, "invalid json in repo.json", err)
 	}
-	if err := validateRepoRecord(rec, repoID, fields); err != nil {
+	if err := validateRepoRecord(path, rec, repoID, fields); err != nil {
 		return RepoRecord{}, false, err
 	}
 
@@ -138,7 +138,7 @@ func (s *Store) SaveRepoRecord(rec RepoRecord) error {
 	return nil
 }
 
-func validateRepoRecord(rec RepoRecord, repoID string, fields map[string]json.RawMessage) error {
+func validateRepoRecord(path string, rec RepoRecord, repoID string, fields map[string]json.RawMessage) error {
 	for _, field := range []string{
 		"schema_version",
 		"repo_key",
@@ -180,6 +180,17 @@ func validateRepoRecord(rec RepoRecord, repoID string, fields map[string]json.Ra
 	if !filepath.IsAbs(rec.RepoRootLastSeen) || (rec.PreferredRoot != "" && !filepath.IsAbs(rec.PreferredRoot)) ||
 		(rec.AgencyJSONPath != "" && !filepath.IsAbs(rec.AgencyJSONPath)) {
 		return errors.New(errors.EStoreCorrupt, "repo.json: paths must be absolute")
+	}
+	for _, timestamp := range []struct {
+		field string
+		value string
+	}{
+		{field: "created_at", value: rec.CreatedAt},
+		{field: "updated_at", value: rec.UpdatedAt},
+	} {
+		if err := validateCanonicalStoreTimestamp("repo.json", "repo_path", path, timestamp.field, timestamp.value); err != nil {
+			return err
+		}
 	}
 	if rec.OriginPresent && (rec.OriginURL == "" || rec.OriginHost == "") {
 		return errors.New(errors.EStoreCorrupt, "repo.json: origin fields missing for present origin")

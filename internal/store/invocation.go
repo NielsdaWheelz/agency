@@ -517,6 +517,21 @@ func validateInvocationMeta(meta InvocationMeta, invocationID, metaPath string, 
 			},
 		)
 	}
+	for _, timestamp := range []struct {
+		field string
+		value string
+	}{
+		{field: "started_at", value: meta.StartedAt},
+		{field: "finished_at", value: meta.FinishedAt},
+		{field: "last_output_at", value: meta.LastOutputAt},
+		{field: "stop_requested_at", value: meta.StopRequestedAt},
+		{field: "claimed_at", value: meta.ClaimedAt},
+		{field: "orphaned_at", value: meta.OrphanedAt},
+	} {
+		if err := validateCanonicalStoreTimestamp("invocation meta.json", "meta_path", metaPath, timestamp.field, timestamp.value); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

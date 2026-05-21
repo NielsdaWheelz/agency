@@ -54,7 +54,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 			http.StatusBadRequest,
 			requestID,
 			string(errors.EInvalidRequest),
-			"invalid request body: "+err.Error(),
+			strictJSONDecodeErrorMessage(err),
 			"",
 		)
 		return

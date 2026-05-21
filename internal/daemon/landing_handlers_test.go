@@ -125,7 +125,7 @@ func TestHandleLandDiscard_StrictOptionalBody(t *testing.T) {
 			var payload map[string]any
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
 			assert.Equal(t, "E_INVALID_REQUEST", payload["error_code"])
-			assert.Contains(t, payload["message"], `unknown field "unknown"`)
+			assert.Equal(t, `invalid request body: unknown field "unknown"`, payload["message"])
 		})
 	}
 }

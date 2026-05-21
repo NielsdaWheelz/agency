@@ -56,27 +56,6 @@ func TestLoad_Invalid(t *testing.T) {
 	assert.Nil(t, status)
 }
 
-func TestLoadWithModTime(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	stateDir := filepath.Join(tmpDir, ".agency", "state")
-	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-
-	content := `{
-		"schema_version": "2.0",
-		"state": "running",
-		"updated_at": "2026-01-19T12:00:00Z",
-		"summary": "Test summary"
-	}`
-	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "runner_status.json"), []byte(content), 0o644))
-
-	status, modTime, err := LoadWithModTime(tmpDir)
-	require.NoError(t, err)
-	require.NotNil(t, status)
-	assert.False(t, modTime.IsZero())
-}
-
 func TestRunnerStatus_Validate(t *testing.T) {
 	t.Parallel()
 

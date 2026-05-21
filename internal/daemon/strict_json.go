@@ -3,8 +3,10 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 func decodeStrictJSON(body io.Reader, dst any) error {
@@ -55,4 +57,49 @@ func decodeRawStrictJSON(raw json.RawMessage, dst any) error {
 		return err
 	}
 	return nil
+}
+
+type requestShapeError struct {
+	message string
+}
+
+func (e *requestShapeError) Error() string {
+	return e.message
+}
+
+func newRequestShapeError(format string, args ...any) error {
+	return &requestShapeError{message: fmt.Sprintf(format, args...)}
+}
+
+func strictJSONDecodeErrorMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "expected a JSON object" || msg == "expected a single JSON object" {
+		return "invalid request body: " + msg
+	}
+
+	const unknownFieldPrefix = "json: unknown field "
+	if strings.HasPrefix(msg, unknownFieldPrefix) {
+		field := strings.TrimSpace(strings.Trim(strings.TrimPrefix(msg, unknownFieldPrefix), `"`))
+		if field != "" {
+			return fmt.Sprintf("invalid request body: unknown field %q", field)
+		}
+	}
+
+	if _, ok := err.(*json.SyntaxError); ok || err == io.ErrUnexpectedEOF {
+		return "invalid request body: malformed JSON"
+	}
+
+	if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
+		if field := strings.TrimSpace(typeErr.Field); field != "" {
+			return fmt.Sprintf("invalid request body: field %q must be %s", field, typeErr.Type.String())
+		}
+		return "invalid request body: invalid value type"
+	}
+
+	var shapeErr *requestShapeError
+	if stderrors.As(err, &shapeErr) {
+		return "invalid request body: " + shapeErr.Error()
+	}
+
+	return "invalid request body: malformed JSON"
 }

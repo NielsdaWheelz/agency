@@ -212,7 +212,7 @@ type CheckpointDTO struct {
 	IncludesUntracked bool   `json:"includes_untracked"`
 	Degraded          bool   `json:"degraded"`
 
-	// Semantic trigger metadata (schema 1.1+).
+	// Semantic trigger metadata.
 	Trigger     string `json:"trigger,omitempty"`
 	ToolName    string `json:"tool_name,omitempty"`
 	StreamSeq   uint64 `json:"stream_seq,omitempty"`

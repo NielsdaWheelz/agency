@@ -43,7 +43,7 @@ func (e *Engine) loadCheckpoints() (*CheckpointsFile, error) {
 	if err := json.Unmarshal(data, &cpFile); err != nil {
 		return nil, err
 	}
-	if !ValidSchemaVersion(cpFile.SchemaVersion) {
+	if cpFile.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
 	}
 	return &cpFile, nil

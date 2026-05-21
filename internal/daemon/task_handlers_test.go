@@ -124,14 +124,21 @@ func TestTaskMutationRequestShapeErrorsReturnInvalidRequest(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), t.TempDir(), time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), t.TempDir())
 	tests := []struct {
-		name   string
-		method string
-		path   string
-		body   string
+		name        string
+		method      string
+		path        string
+		body        string
+		wantMessage string
 	}{
 		{name: "archive missing repo", method: http.MethodPost, path: "/tasks/task-1/archive"},
 		{name: "retry missing repo", method: http.MethodPost, path: "/tasks/task-1/retry", body: `{"client_request_id":"retry-1","prompt":"again"}`},
-		{name: "retry invalid body", method: http.MethodPost, path: "/tasks/task-1/retry?repo_id=repo-1", body: `{"client_request_id":"retry-1","unknown":true}`},
+		{
+			name:        "retry invalid body",
+			method:      http.MethodPost,
+			path:        "/tasks/task-1/retry?repo_id=repo-1",
+			body:        `{"client_request_id":"retry-1","unknown":true}`,
+			wantMessage: `invalid request body: unknown field "unknown"`,
+		},
 		{name: "retry missing client request id", method: http.MethodPost, path: "/tasks/task-1/retry?repo_id=repo-1", body: `{"prompt":"again"}`},
 	}
 
@@ -148,6 +155,9 @@ func TestTaskMutationRequestShapeErrorsReturnInvalidRequest(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
 			assert.False(t, payload.OK)
 			assert.Equal(t, string(errors.EInvalidRequest), payload.ErrorCode)
+			if tt.wantMessage != "" {
+				assert.Equal(t, tt.wantMessage, payload.Message)
+			}
 		})
 	}
 }
@@ -196,71 +206,6 @@ func TestStartRequestsRejectInvalidEnvKeys(t *testing.T) {
 			err := json.Unmarshal([]byte(tt.body), tt.dst)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "env keys must be non-empty and must not contain '='")
-		})
-	}
-}
-
-func TestDecodeStrictJSONRejectsUnknownFieldsAndTrailingObjects(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		body string
-		dst  any
-		want string
-	}{
-		{
-			name: "custom request unknown field",
-			body: `{"client_request_id":"req-1","unknown":true}`,
-			dst:  &ControlPlaneStartRequest{},
-			want: `unknown field "unknown"`,
-		},
-		{
-			name: "trailing object",
-			body: `{"client_request_id":"req-1"} {}`,
-			dst:  &TaskRetryRequest{},
-			want: "expected a single JSON object",
-		},
-		{
-			name: "required null",
-			body: `null`,
-			dst:  &TaskRetryRequest{},
-			want: "expected a JSON object",
-		},
-		{
-			name: "optional empty",
-			body: ``,
-			dst:  &struct{}{},
-		},
-		{
-			name: "optional null",
-			body: `null`,
-			dst:  &struct{}{},
-			want: "expected a JSON object",
-		},
-		{
-			name: "optional trailing object",
-			body: `{} {}`,
-			dst:  &struct{}{},
-			want: "expected a single JSON object",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var err error
-			if strings.HasPrefix(tt.name, "optional") {
-				err = decodeOptionalStrictJSON(strings.NewReader(tt.body), tt.dst)
-			} else {
-				err = decodeStrictJSON(strings.NewReader(tt.body), tt.dst)
-			}
-			if tt.want == "" {
-				require.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
 }

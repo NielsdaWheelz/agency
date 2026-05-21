@@ -65,7 +65,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 
 	var req TaskStartRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "invalid request body: "+err.Error(), "", "")
+		writeErr(http.StatusBadRequest, errors.EInvalidRequest, strictJSONDecodeErrorMessage(err), "", "")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)

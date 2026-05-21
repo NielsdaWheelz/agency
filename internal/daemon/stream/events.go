@@ -170,13 +170,16 @@ type CheckpointNotification struct {
 	Seq uint64
 }
 
-// MutatingStreamTools is the set of tool names that modify the filesystem.
-// Duplicated from checkpoint package to avoid circular import.
-var MutatingStreamTools = map[string]bool{
+// mutatingToolNames is the set of stream tool names that modify the filesystem.
+var mutatingToolNames = map[string]bool{
 	"Edit":         true,
 	"Write":        true,
 	"MultiEdit":    true,
 	"NotebookEdit": true,
 	"Bash":         true,
 	"FileChange":   true,
+}
+
+func isMutatingToolName(name string) bool {
+	return mutatingToolNames[name]
 }
